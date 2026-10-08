@@ -202,7 +202,7 @@ fun EditorScreen(
             canRedo = model.canRedo,
         )
         BoxWithConstraints(Modifier.fillMaxSize()) {
-            val compactHeight = maxHeight < 480.dp && maxWidth >= 600.dp
+            val compactHeight = maxHeight < 480.dp
             val wide = maxWidth >= 840.dp && !compactHeight
             val selected = model.selectedClip
 
@@ -221,7 +221,7 @@ fun EditorScreen(
                                 compact = true,
                             )
                             Column(
-                                Modifier.width(160.dp).fillMaxHeight()
+                                Modifier.width(if (maxWidth < 600.dp) 128.dp else 160.dp).fillMaxHeight()
                                     .background(CutColors.surface).verticalScroll(rememberScrollState())
                                     .padding(6.dp),
                             ) {
@@ -246,7 +246,8 @@ fun EditorScreen(
             onTrim = onClipTrimmed,
             onTrimStart = model::beginTrim,
             onTrimEnd = model::finishTrim,
-                            modifier = Modifier.fillMaxWidth().height(117.dp),
+                            showHint = false,
+                            modifier = Modifier.fillMaxWidth().height(130.dp),
                         )
                     }
                 }
@@ -324,7 +325,7 @@ fun EditorScreen(
             onTrim = onClipTrimmed,
             onTrimStart = model::beginTrim,
             onTrimEnd = model::finishTrim,
-                            modifier = Modifier.fillMaxWidth().height(122.dp),
+                            modifier = Modifier.fillMaxWidth().height(148.dp),
                         )
                         if (showTrim && selected != null) {
                             TrimEditor(

@@ -54,6 +54,7 @@ fun TimelineStrip(
     onTrim: (Long, Long, Long) -> Unit,
     onTrimStart: () -> Unit,
     onTrimEnd: () -> Unit,
+    showHint: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier.background(CutColors.surface).padding(vertical = 10.dp)) {
@@ -179,12 +180,14 @@ fun TimelineStrip(
                 }
             }
         }
-        Text(
-            "클립 선택 · 가장자리 드래그로 자르기 · 길게 눌러 순서 변경",
-            color = CutColors.mutedText,
-            fontSize = 11.sp,
-            modifier = Modifier.padding(start = 16.dp, top = 6.dp),
-        )
+        if (showHint) {
+            Text(
+                "클립 선택 · 가장자리 드래그로 자르기 · 길게 눌러 순서 변경",
+                color = CutColors.mutedText,
+                fontSize = 11.sp,
+                modifier = Modifier.padding(start = 16.dp, top = 6.dp),
+            )
+        }
     }
 }
 

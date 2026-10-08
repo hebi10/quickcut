@@ -44,6 +44,7 @@ ffmpeg -hide_banner -loglevel error -y \
   -f lavfi -i sine=frequency=440:sample_rate=44100 \
   -t 3 -c:v libx264 -preset ultrafast -pix_fmt yuv420p \
   -c:a aac -b:a 64k -shortest \
+  -metadata creation_time=2021-01-01T00:00:00Z \
   app/src/androidTest/assets/quickcut_fixture.mp4
 
 gradle --no-daemon :app:connectedDebugAndroidTest

@@ -10,6 +10,7 @@ on:
       - "app/src/main/java/com/hebi/quickcut/media/**"
       - "app/src/main/java/com/hebi/quickcut/editor/**"
       - "app/src/main/java/com/hebi/quickcut/ui/**"
+      - "app/src/main/java/com/hebi/quickcut/batch/**"
 
 permissions:
   contents: read

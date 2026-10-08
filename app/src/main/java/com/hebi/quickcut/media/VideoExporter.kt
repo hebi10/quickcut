@@ -43,11 +43,12 @@ class VideoExporter(private val context: Context) {
                     )
             }
         } else null
+        val outputTimestampMs = originalDate?.epochMs ?: System.currentTimeMillis()
         val temporary = File.createTempFile("quickcut_", ".mp4", context.cacheDir)
         try {
             check(temporary.delete()) { "임시 출력 파일을 준비하지 못했습니다." }
             withContext(Dispatchers.Main.immediate) {
-                transform(timeline, temporary, onProgress, originalDate?.epochMs)
+                transform(timeline, temporary, onProgress, outputTimestampMs)
             }
             withContext(Dispatchers.IO) {
                 MediaReader.validateExport(temporary)
@@ -88,7 +89,7 @@ class VideoExporter(private val context: Context) {
         timeline: EditTimeline,
         file: File,
         onProgress: (Int?) -> Unit,
-        originalTimestampMs: Long?,
+        outputTimestampMs: Long,
     ): Unit = suspendCancellableCoroutine { continuation ->
         val main = Handler(Looper.getMainLooper())
         val progress = ProgressHolder()
@@ -109,21 +110,17 @@ class VideoExporter(private val context: Context) {
         }
         transformer = Transformer.Builder(context)
             .apply {
-                if (originalTimestampMs != null) {
-                    val timestampSeconds = Mp4TimestampData.unixTimeToMp4TimeSeconds(
-                        originalTimestampMs
+                val timestampSeconds = Mp4TimestampData.unixTimeToMp4TimeSeconds(
+                    outputTimestampMs
+                )
+                setMuxerFactory(
+                    InAppMp4Muxer.Factory(
+                        InAppMp4Muxer.MetadataProvider { entries ->
+                            entries.removeAll { it is Mp4TimestampData }
+                            entries.add(Mp4TimestampData(timestampSeconds, timestampSeconds))
+                        }
                     )
-                    setMuxerFactory(
-                        InAppMp4Muxer.Factory(
-                            InAppMp4Muxer.MetadataProvider { entries ->
-                                entries.removeAll { it is Mp4TimestampData }
-                                entries.add(
-                                    Mp4TimestampData(timestampSeconds, timestampSeconds)
-                                )
-                            }
-                        )
-                    )
-                }
+                )
             }
             .experimentalSetTrimOptimizationEnabled(timeline.clips.size == 1)
             .addListener(object : Transformer.Listener {

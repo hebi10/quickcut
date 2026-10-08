@@ -202,8 +202,9 @@ fun EditorScreen(
             canRedo = model.canRedo,
         )
         BoxWithConstraints(Modifier.fillMaxSize()) {
+            val availableWidth = maxWidth
             val compactHeight = maxHeight < 480.dp
-            val wide = maxWidth >= 840.dp && !compactHeight
+            val wide = availableWidth >= 840.dp && !compactHeight
             val selected = model.selectedClip
 
             when {
@@ -221,7 +222,7 @@ fun EditorScreen(
                                 compact = true,
                             )
                             Column(
-                                Modifier.width(if (maxWidth < 600.dp) 128.dp else 160.dp).fillMaxHeight()
+                                Modifier.width(if (availableWidth < 600.dp) 128.dp else 160.dp).fillMaxHeight()
                                     .background(CutColors.surface).verticalScroll(rememberScrollState())
                                     .padding(6.dp),
                             ) {

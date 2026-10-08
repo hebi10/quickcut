@@ -125,5 +125,5 @@ Media3는 조건이 맞을 때 transmuxing/trim optimization을 적용하지만,
 - 과거 GitHub Actions 실패 원인은 테스트 환경의 디스크 부족과 여러 줄 셸 반복문 실행 방식이었습니다.
 - 대응: GitHub 실행 환경의 불필요한 도구를 정리하고, 테스트 명령을 `scripts/android-emulator-check.sh`에서 실행하도록 수정했습니다.
 - Android 15(API 35) 에뮬레이터의 기본 영상 자르기, 클립 연결, 부분/전체 음소거 출력 4개 테스트가 모두 통과했습니다.
-- 최신 테스트는 결과 파일 길이 오차를 ±300ms로 검사하며, 스마트폰·태블릿 크기별 시작 화면 스크린샷을 산출합니다. 최종 검증 상태는 [Actions 실행 기록](https://github.com/hebi10/quickcut/actions)으로 확인합니다.
+- 최신 테스트는 결과 파일 길이 오차를 ±300ms로 검사했고, **4개 테스트 모두 통과했습니다.** 스마트폰·태블릿 크기별 시작 화면 스크린샷도 생성했으며 제목 대비 문제 수정 사항을 확인했습니다. [최종 에뮬레이터 검사](https://github.com/hebi10/quickcut/actions/runs/37733293923) 및 [09 검증 보고서](09_EMULATOR_QA.md)를 참고합니다.
 - 계측 테스트 통과는 모든 기기·코덱·HDR·4K 동작을 보증하지 않습니다.

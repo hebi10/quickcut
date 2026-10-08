@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import androidx.annotation.OptIn
+import androidx.media3.common.util.ExperimentalApi
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.transformer.Composition
 import androidx.media3.transformer.ExportException
@@ -19,7 +20,7 @@ import kotlinx.coroutines.withContext
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
-@OptIn(UnstableApi::class)
+@OptIn(UnstableApi::class, ExperimentalApi::class)
 class VideoExporter(private val context: Context) {
     suspend fun export(
         timeline: EditTimeline,

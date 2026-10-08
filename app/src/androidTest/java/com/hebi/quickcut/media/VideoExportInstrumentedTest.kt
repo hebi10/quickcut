@@ -18,7 +18,11 @@ class VideoExportInstrumentedTest {
     fun trimmedVideoIsSavedAndPlayable() {
         runBlocking {
             val context = InstrumentationRegistry.getInstrumentation().targetContext
-            val source = File(context.getExternalFilesDir(null), "quickcut_fixture.mp4")
+            val source = File(context.cacheDir, "quickcut_fixture.mp4")
+            InstrumentationRegistry.getInstrumentation().context.assets
+                .open("quickcut_fixture.mp4").use { input ->
+                    source.outputStream().use { output -> input.copyTo(output) }
+                }
             assertTrue("The emulator fixture is missing", source.exists())
 
             val input = Uri.fromFile(source)
@@ -46,6 +50,7 @@ class VideoExportInstrumentedTest {
                 assertTrue("Trimmed video is unexpectedly long", exported.durationMs <= 3_200L)
             } finally {
                 context.contentResolver.delete(outputUri, null, null)
+                source.delete()
             }
         }
     }

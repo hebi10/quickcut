@@ -49,9 +49,8 @@ jobs:
             adb shell am start -W -n com.hebi.quickcut/.MainActivity
             sleep 3
             adb exec-out screencap -p > quickcut-start.png
-            ffmpeg -hide_banner -loglevel error -y -f lavfi -i color=c=blue:s=320x240:r=30 -f lavfi -i sine=frequency=440:sample_rate=44100 -t 3 -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a aac -b:a 64k -shortest quickcut-fixture.mp4
-            adb shell mkdir -p /sdcard/Android/data/com.hebi.quickcut/files
-            adb push quickcut-fixture.mp4 /sdcard/Android/data/com.hebi.quickcut/files/quickcut_fixture.mp4
+            mkdir -p app/src/androidTest/assets
+            ffmpeg -hide_banner -loglevel error -y -f lavfi -i color=c=blue:s=320x240:r=30 -f lavfi -i sine=frequency=440:sample_rate=44100 -t 3 -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a aac -b:a 64k -shortest app/src/androidTest/assets/quickcut_fixture.mp4
             gradle --no-daemon :app:connectedDebugAndroidTest
             for i in 1 2 3; do
               adb shell uiautomator dump /sdcard/quickcut-ui.xml > /dev/null 2>&1 || true

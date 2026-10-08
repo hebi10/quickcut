@@ -5,7 +5,7 @@ plugins {
 
 android {
     namespace = "com.hebi.quickcut"
-    compileSdk = 37
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.hebi.quickcut"

@@ -5,7 +5,6 @@ import android.content.Context
 import android.net.Uri
 import android.os.Environment
 import android.system.Os
-import android.system.StructTimeval
 import android.provider.MediaStore
 import java.io.File
 import java.io.IOException
@@ -61,11 +60,14 @@ class GalleryWriter(private val context: Context) {
             // MediaStore DATE_MODIFIED and DATE_TAKEN are read-only derived columns.
             // Preserve the underlying file's mtime instead of trying to write them.
             if (originalTimestampMs != null) {
-                val timestamp = StructTimeval.fromMillis(originalTimestampMs)
-                val handle = resolver.openFileDescriptor(uri, "rw")
-                    ?: throw IOException("원본 날짜를 저장 파일에 적용하지 못했습니다.")
-                handle.use {
-                    Os.futimes(it.fileDescriptor, timestamp, timestamp)
+                // DATE_TAKEN is indexed from the embedded MP4 timestamp. When
+                // possible, also update filesystem modification time for gallery
+                // apps that sort by file mtime. Not all devices permit this.
+                runCatching {
+                    resolver.openFileDescriptor(uri, "rw")?.use { descriptor ->
+                        val localPath = Os.readlink("/proc/self/fd/" + descriptor.fd)
+                        File(localPath).setLastModified(originalTimestampMs)
+                    }
                 }
             }
             val changes = ContentValues().apply {

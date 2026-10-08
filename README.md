@@ -54,12 +54,10 @@
 | AndroidX Media3 | 1.11.1 |
 | Android API | minSdk 29, targetSdk 36, compileSdk 36 |
 
-Android Studio에서 저장소 루트의 Gradle 프로젝트를 여세요. **현재 저장소에는 Gradle Wrapper JAR과 실행 스크립트가 포함되지 않습니다.** 시스템에 Gradle 9.4.1이 설치된 경우 아래 명령으로 wrapper를 생성한 후, Android Studio의 Gradle Sync와 테스트를 수행할 수 있습니다.
+Android Studio에서 저장소 루트의 Gradle 프로젝트를 여세요. 공식 Gradle 9.4.1 Wrapper(`gradlew`, `gradlew.bat`, Wrapper JAR)가 저장소에 포함되어 있으므로 별도 Gradle 설치 없이 빌드할 수 있습니다. JDK 17 및 Android SDK API 36은 필요합니다.
 
 ```powershell
-gradle wrapper --gradle-version 9.4.1
-gradle :app:testDebugUnitTest
-gradle :app:assembleDebug
+.\gradlew.bat :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
 ```
 
 설치된 Android SDK에서 API 36과 Build Tools 36.0.0을 사용합니다. 원격 빌드는 [Actions](../../actions)에서 Gradle 9.4.1을 설정해 실행하도록 구성했습니다.

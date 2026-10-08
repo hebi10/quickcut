@@ -27,10 +27,11 @@ import kotlinx.coroutines.withContext
 @Composable
 fun ClipThumbnail(uri: String, timeMs: Long, modifier: Modifier = Modifier) {
     val context = LocalContext.current
-    var frame by remember(uri, timeMs) { mutableStateOf<ImageBitmap?>(null) }
-    LaunchedEffect(uri, timeMs) {
+    val sampledTimeMs = timeMs / 2_000L * 2_000L
+    var frame by remember(uri, sampledTimeMs) { mutableStateOf<ImageBitmap?>(null) }
+    LaunchedEffect(uri, sampledTimeMs) {
         val bitmap = withContext(Dispatchers.IO) {
-            MediaReader.thumbnail(context.applicationContext, Uri.parse(uri), timeMs)
+            MediaReader.thumbnail(context.applicationContext, Uri.parse(uri), sampledTimeMs)
         }
         frame = bitmap?.asImageBitmap()
     }

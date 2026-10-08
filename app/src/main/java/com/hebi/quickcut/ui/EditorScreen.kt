@@ -23,6 +23,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.AutoMirrored
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.ArrowBack
@@ -58,7 +59,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -136,11 +137,14 @@ fun EditorScreen(
 
     LaunchedEffect(model.timeline) {
         if (!model.timeline.isEmpty) {
+            delay(160)
             try {
                 player.pause()
-                player.setComposition(CompositionFactory.from(model.timeline))
+                player.setComposition(
+                    CompositionFactory.from(model.timeline),
+                    model.playPositionMs,
+                )
                 player.prepare()
-                player.seekTo(model.playPositionMs)
             } catch (_: Exception) {
                 model.reportError("현재 영상 구성을 미리 볼 수 없습니다.")
             }
@@ -164,6 +168,12 @@ fun EditorScreen(
         model.selectClip(id)
         player.seekTo(model.playPositionMs)
     }
+    val onClipMoved: (Long, Int) -> Unit = { id, direction ->
+        model.moveClip(id, direction)
+    }
+    val onClipTrimmed: (Long, Long, Long) -> Unit = { id, start, end ->
+        model.trimClip(id, start, end)
+    }
     val onAction: (String) -> Unit = { key ->
         when (key) {
             "trim" -> showTrim = !showTrim
@@ -185,7 +195,7 @@ fun EditorScreen(
             onSave = save,
         )
         BoxWithConstraints(Modifier.fillMaxSize()) {
-            val compactHeight = maxHeight < 480.dp
+            val compactHeight = maxHeight < 480.dp && maxWidth >= 600.dp
             val wide = maxWidth >= 840.dp && !compactHeight
             val selected = model.selectedClip
 
@@ -225,6 +235,8 @@ fun EditorScreen(
                             selectedId = model.selectedId,
                             playheadMs = model.playPositionMs,
                             onSelect = onSelect,
+            onMove = onClipMoved,
+            onTrim = onClipTrimmed,
                             modifier = Modifier.fillMaxWidth().height(117.dp),
                         )
                     }
@@ -274,6 +286,8 @@ fun EditorScreen(
                             selectedId = model.selectedId,
                             playheadMs = model.playPositionMs,
                             onSelect = onSelect,
+            onMove = onClipMoved,
+            onTrim = onClipTrimmed,
                             modifier = Modifier.fillMaxWidth().height(155.dp),
                         )
                     }
@@ -295,6 +309,8 @@ fun EditorScreen(
                             selectedId = model.selectedId,
                             playheadMs = model.playPositionMs,
                             onSelect = onSelect,
+            onMove = onClipMoved,
+            onTrim = onClipTrimmed,
                             modifier = Modifier.fillMaxWidth().height(122.dp),
                         )
                         if (showTrim && selected != null) {
@@ -381,7 +397,7 @@ private fun EditorHeader(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
-            Icon(Icons.Outlined.ArrowBack, contentDescription = "편집 종료")
+            Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "편집 종료")
         }
         Text("편집", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.weight(1f))

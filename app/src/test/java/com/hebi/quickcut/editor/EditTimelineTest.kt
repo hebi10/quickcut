@@ -55,6 +55,47 @@ class EditTimelineTest {
         assertEquals(TimelinePosition(1, 10_000), plan.positionFor(999_000))
     }
 
+    @Test fun trimRejectsInvalidRangeAndKeepsOriginal() {
+        val original = EditTimeline(listOf(source))
+        assertThrows(IllegalArgumentException::class.java) {
+            original.updateRange(1, 30_000, 30_000)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            original.updateRange(1, 3_000, 3_099)
+        }
+        assertEquals(30_000L, original.totalDurationMs)
+    }
+
+    @Test fun splitPreservesAudioAndMuteSettings() {
+        val initial = source.copy(muted = true, hasAudio = false)
+        val result = EditTimeline(listOf(initial)).split(1, 10_000, newId = 4)
+        assertTrue(result.clips.all { it.muted && !it.hasAudio })
+        assertEquals(30_000L, result.totalDurationMs)
+        assertEquals(10_000L, result.clips[1].startMs)
+    }
+
+    @Test fun movingAtBoundaryDoesNotChangeOrdering() {
+        val another = source.copy(id = 3)
+        val original = EditTimeline(listOf(source, another))
+        assertEquals(original, original.move(1, -1))
+        assertEquals(original, original.move(3, 1))
+    }
+
+    @Test fun appendPreservesSequenceAndDuration() {
+        val first = EditTimeline(listOf(source))
+        val second = source.copy(id = 9, startMs = 5_000L, endMs = 9_000L)
+        val result = first.append(listOf(second))
+        assertEquals(listOf(1L, 9L), result.clips.map { it.id })
+        assertEquals(34_000L, result.totalDurationMs)
+        assertEquals(30_000L, first.totalDurationMs)
+    }
+
+    @Test fun splitRejectsExistingClipId() {
+        assertThrows(IllegalArgumentException::class.java) {
+            EditTimeline(listOf(source)).split(1, 10_000, newId = 1)
+        }
+    }
+
     @Test fun timecodeIsStable() {
         assertEquals("01:23.4", formatTime(83_400))
         assertEquals("01:01:01.0", formatTime(3_661_000))

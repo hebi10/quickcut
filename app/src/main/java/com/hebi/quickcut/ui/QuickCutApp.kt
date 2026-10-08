@@ -53,7 +53,7 @@ fun QuickCutApp(model: EditorViewModel = viewModel()) {
     BackHandler(enabled = model.page != QuickCutPage.PICKER) {
         when (model.page) {
             QuickCutPage.EDITOR -> model.requestExit()
-            QuickCutPage.EXPORTING -> model.cancelExport()
+            QuickCutPage.EXPORTING -> if (!model.isFinalizing) model.cancelExport()
             QuickCutPage.COMPLETED -> model.startNew()
             else -> Unit
         }
@@ -74,10 +74,11 @@ fun QuickCutApp(model: EditorViewModel = viewModel()) {
                 save = { model.startExport(context) },
             )
             QuickCutPage.EXPORTING -> CenterStatus(
-                title = "영상 저장 중",
-                subtitle = "갤러리에 저장합니다.",
-                progress = model.progressPercent,
-                onCancel = model::cancelExport,
+                title = if (model.isFinalizing) "갤러리 등록 중" else "영상 저장 중",
+                subtitle = if (model.isFinalizing)
+                    "결과물을 확인하고 있습니다." else "영상을 처리하고 있습니다.",
+                progress = if (model.isFinalizing) null else model.progressPercent,
+                onCancel = if (model.isFinalizing) null else model::cancelExport,
             )
             QuickCutPage.COMPLETED -> CompletedScreen(
                 videoUri = model.completedUri?.toString(),

@@ -31,6 +31,13 @@ if [ "$found_screen" != true ]; then
 fi
 echo "QuickCut start screen verified"
 
+adb shell wm size 1280x800
+adb shell wm density 160
+sleep 3
+adb exec-out screencap -p > quickcut-tablet-start.png
+adb shell wm size reset
+adb shell wm density reset
+
 mkdir -p app/src/androidTest/assets
 ffmpeg -hide_banner -loglevel error -y \
   -f lavfi -i color=c=blue:s=320x240:r=30 \

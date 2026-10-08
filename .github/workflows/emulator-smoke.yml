@@ -9,6 +9,7 @@ on:
       - "app/src/androidTest/**"
       - "app/src/main/java/com/hebi/quickcut/media/**"
       - "app/src/main/java/com/hebi/quickcut/editor/**"
+      - "app/src/main/java/com/hebi/quickcut/ui/**"
 
 permissions:
   contents: read
@@ -66,7 +67,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: quickcut-emulator-start
-          path: quickcut-start.png
+          path: |
+            quickcut-start.png
+            quickcut-tablet-start.png
           if-no-files-found: ignore
       - name: Upload instrumentation test results
         if: always()

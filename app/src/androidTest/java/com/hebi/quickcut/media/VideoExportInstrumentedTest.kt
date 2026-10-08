@@ -2,6 +2,8 @@ package com.hebi.quickcut.media
 
 import android.content.Context
 import android.net.Uri
+import android.os.SystemClock
+import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.hebi.quickcut.editor.EditTimeline
@@ -9,6 +11,7 @@ import com.hebi.quickcut.editor.VideoClip
 import java.io.File
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlin.math.abs
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -39,10 +42,9 @@ class VideoExportInstrumentedTest {
     private suspend fun assertExport(
         context: Context,
         timeline: EditTimeline,
-        minDurationMs: Long,
-        maxDurationMs: Long,
         expectAudio: Boolean,
     ) {
+        val started = SystemClock.elapsedRealtime()
         val outputUri = withTimeout(120_000L) {
             VideoExporter(context).export(
                 timeline = timeline,
@@ -51,14 +53,20 @@ class VideoExportInstrumentedTest {
             )
         }
         try {
+            val elapsedMs = SystemClock.elapsedRealtime() - started
             val exported = MediaReader.metadata(context, outputUri)
-            assertTrue(
-                "Trimmed output is too short: " + exported.durationMs,
-                exported.durationMs >= minDurationMs,
+            val expectedDurationMs = timeline.totalDurationMs
+            Log.i(
+                "QuickCutExportTest",
+                "clips=" + timeline.clips.size +
+                    " targetDurationMs=" + expectedDurationMs +
+                    " outputDurationMs=" + exported.durationMs +
+                    " elapsedMs=" + elapsedMs,
             )
             assertTrue(
-                "Trimmed output is too long: " + exported.durationMs,
-                exported.durationMs <= maxDurationMs,
+                "Expected duration " + expectedDurationMs +
+                    "ms but output was " + exported.durationMs + "ms",
+                abs(exported.durationMs - expectedDurationMs) <= 300L,
             )
             if (expectAudio) {
                 assertTrue("Expected an audio track", exported.hasAudio)
@@ -81,7 +89,7 @@ class VideoExportInstrumentedTest {
                 endMs = 2_500L,
                 hasAudio = metadata.hasAudio,
             )
-            assertExport(context, EditTimeline(listOf(clip)), 1_200L, 3_200L, true)
+            assertExport(context, EditTimeline(listOf(clip)), true)
         }
     }
 
@@ -97,7 +105,7 @@ class VideoExportInstrumentedTest {
                 hasAudio = metadata.hasAudio,
             )
             val last = first.copy(id = 2, startMs = 1_900L, endMs = 2_900L)
-            assertExport(context, EditTimeline(listOf(first, last)), 1_300L, 2_800L, true)
+            assertExport(context, EditTimeline(listOf(first, last)), true)
         }
     }
 
@@ -119,7 +127,7 @@ class VideoExportInstrumentedTest {
                 endMs = 2_800L,
                 muted = false,
             )
-            assertExport(context, EditTimeline(listOf(silent, audible)), 2_000L, 3_400L, true)
+            assertExport(context, EditTimeline(listOf(silent, audible)), true)
         }
     }
 
@@ -135,7 +143,7 @@ class VideoExportInstrumentedTest {
                 muted = true,
                 hasAudio = metadata.hasAudio,
             )
-            assertExport(context, EditTimeline(listOf(silent)), 1_300L, 3_000L, false)
+            assertExport(context, EditTimeline(listOf(silent)), false)
         }
     }
 }

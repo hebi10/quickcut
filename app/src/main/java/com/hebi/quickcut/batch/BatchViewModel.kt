@@ -68,17 +68,22 @@ class BatchViewModel : ViewModel() {
 
     private var stored = false
     private var job: Job? = null
+    // Only files exported successfully in the current run are eligible
+    // for an original-media operation. Prior runs are never included.
+    private var sourceUrisSavedThisRun by mutableStateOf<List<String>>(emptyList())
 
     val isRunning: Boolean get() = runState == BatchRunState.RUNNING
     val successes: Int get() = files.count { it.status == BatchFileStatus.SAVED }
     val failures: Int get() = files.count { it.status == BatchFileStatus.FAILED }
     val skips: Int get() = files.count { it.status == BatchFileStatus.SKIPPED }
     val originalCandidates: List<String>
-        get() = files.filter { it.status == BatchFileStatus.SAVED }
-            .map { it.uri }.distinct()
+        get() = sourceUrisSavedThisRun.distinct().filter { candidate ->
+            files.any { it.uri == candidate && it.status == BatchFileStatus.SAVED }
+        }
     val savedOutputForConfirmation: Uri?
-        get() = files.firstOrNull { it.status == BatchFileStatus.SAVED }
-            ?.savedOutputUri?.let(Uri::parse)
+        get() = files.firstOrNull {
+            it.status == BatchFileStatus.SAVED && it.uri in originalCandidates
+        }?.savedOutputUri?.let(Uri::parse)
 
     fun loadTemplates(context: Context) {
         if (stored) return
@@ -222,14 +227,26 @@ class BatchViewModel : ViewModel() {
         val selectedDateMode = saveDateMode
         val selectedOriginalAction = originalAction
         performedOriginalAction = selectedOriginalAction
+        // Reset the *next* run's deletion option before this job starts.
+        // An old template or retry cannot silently re-enable deletion.
+        originalAction = OriginalAction.KEEP
         originalStatus = OriginalActionStatus.NONE
+        sourceUrisSavedThisRun = emptyList()
         if (!retryOnly) {
-            files = files.map { it.copy(
-                status = if (it.durationMs >= 100L) BatchFileStatus.WAITING else BatchFileStatus.SKIPPED,
-                reason = if (it.durationMs < 100L) "영상 정보를 읽을 수 없습니다." else null,
-                progress = null,
-                savedOutputUri = null,
-            ) }
+            files = files.map { file ->
+                if (file.status == BatchFileStatus.SAVED) file else file.copy(
+                    status = if (file.durationMs >= 100L) {
+                        BatchFileStatus.WAITING
+                    } else {
+                        BatchFileStatus.SKIPPED
+                    },
+                    reason = if (file.durationMs < 100L) {
+                        "영상 정보를 읽을 수 없습니다."
+                    } else null,
+                    progress = null,
+                    savedOutputUri = null,
+                )
+            }
         }
         runState = BatchRunState.RUNNING
         notification = null
@@ -237,7 +254,8 @@ class BatchViewModel : ViewModel() {
             try {
                 val sourceRows = files.toList()
                 for (row in sourceRows) {
-                    if (retryOnly && row.status == BatchFileStatus.SAVED) continue
+                    // Previously completed files are never exported twice.
+                    if (row.status == BatchFileStatus.SAVED) continue
                     if (row.durationMs < 100L) continue
                     if (selectedDateMode == SaveDateMode.ORIGINAL && row.originalDate == null) {
                         update(row.uri) {
@@ -271,6 +289,10 @@ class BatchViewModel : ViewModel() {
                                 update(row.uri) {
                                     it.copy(status=BatchFileStatus.SAVED,progress=100,
                                         savedOutputUri=result.toString(),reason=null)
+                                }
+                                if (selectedOriginalAction != OriginalAction.KEEP) {
+                                    sourceUrisSavedThisRun =
+                                        sourceUrisSavedThisRun + row.uri
                                 }
                             } catch (cancelled: CancellationException) {
                                 update(row.uri) {
@@ -344,6 +366,7 @@ class BatchViewModel : ViewModel() {
     fun resetBatch() {
         if (isRunning) return
         files = emptyList()
+        sourceUrisSavedThisRun = emptyList()
         completedCount = 0
         runState = BatchRunState.SETUP
         originalAction = OriginalAction.KEEP

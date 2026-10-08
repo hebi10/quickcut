@@ -11,6 +11,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.hebi.quickcut.media.MediaReader
 import com.hebi.quickcut.media.VideoExporter
+import com.hebi.quickcut.media.SaveDateMode
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -41,6 +42,8 @@ class EditorViewModel : ViewModel() {
     var showExitConfirmation by mutableStateOf(false)
         private set
     var originalAction by mutableStateOf(OriginalAction.KEEP)
+        private set
+    var savedDateMode by mutableStateOf(SaveDateMode.CURRENT)
         private set
     var originalActionStatus by mutableStateOf(OriginalActionStatus.NONE)
         private set
@@ -262,11 +265,16 @@ class EditorViewModel : ViewModel() {
         timeline = timeline.toggleMute(id)
     }
 
-    fun startExport(context: Context, selectedOriginalAction: OriginalAction = OriginalAction.KEEP) {
+    fun startExport(
+        context: Context,
+        selectedOriginalAction: OriginalAction = OriginalAction.KEEP,
+        selectedDateMode: SaveDateMode = SaveDateMode.CURRENT,
+    ) {
         if (timeline.isEmpty || page != QuickCutPage.EDITOR) return
         val snapshot = timeline
         val sourceSnapshot = uniqueExportSources(snapshot)
         originalAction = selectedOriginalAction
+        savedDateMode = selectedDateMode
         originalActionStatus = OriginalActionStatus.NONE
         originalsFromSavedTimeline = emptyList()
         page = QuickCutPage.EXPORTING
@@ -281,6 +289,7 @@ class EditorViewModel : ViewModel() {
                         isFinalizing = true
                         progressPercent = null
                     },
+                    saveDateMode = selectedDateMode,
                 )
                 completedUri = uri
                 originalsFromSavedTimeline = if (originalAction == OriginalAction.KEEP) {
@@ -370,6 +379,7 @@ class EditorViewModel : ViewModel() {
         playPositionMs = 0L
         completedUri = null
         originalAction = OriginalAction.KEEP
+        savedDateMode = SaveDateMode.CURRENT
         originalActionStatus = OriginalActionStatus.NONE
         originalsFromSavedTimeline = emptyList()
         errorMessage = null

@@ -52,17 +52,25 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.hebi.quickcut.batch.BatchScreen
+import com.hebi.quickcut.batch.BatchViewModel
 import com.hebi.quickcut.editor.EditorViewModel
 import com.hebi.quickcut.editor.OriginalAction
 import com.hebi.quickcut.editor.OriginalActionStatus
 import com.hebi.quickcut.media.OriginalMediaActions
+import com.hebi.quickcut.media.SaveDateMode
 import com.hebi.quickcut.editor.QuickCutPage
 
 @Composable
-fun QuickCutApp(model: EditorViewModel = viewModel()) {
+fun QuickCutApp(
+    model: EditorViewModel = viewModel(),
+    batchModel: BatchViewModel = viewModel(),
+) {
     val context = LocalContext.current
+    var showBatch by rememberSaveable { mutableStateOf(false) }
     var showSaveOptions by rememberSaveable { mutableStateOf(false) }
     var selectedSaveAction by rememberSaveable { mutableStateOf(OriginalAction.KEEP) }
+    var selectedSaveDateMode by rememberSaveable { mutableStateOf(SaveDateMode.CURRENT) }
     val originalActionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartIntentSenderForResult()
     ) { result ->
@@ -78,8 +86,21 @@ fun QuickCutApp(model: EditorViewModel = viewModel()) {
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         model.importVideos(context, uris, append = model.page == QuickCutPage.EDITOR)
     }
+    val batchPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
+        batchModel.addVideos(context, uris)
+    }
+    val batchOriginalLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        batchModel.originalApprovalResult(result.resultCode == Activity.RESULT_OK)
+    }
+    LaunchedEffect(showBatch) {
+        if (showBatch) batchModel.loadTemplates(context)
+    }
 
-    BackHandler(enabled = model.page != QuickCutPage.PICKER) {
+    BackHandler(enabled = !showBatch && model.page != QuickCutPage.PICKER) {
         when (model.page) {
             QuickCutPage.EDITOR -> model.requestExit()
             QuickCutPage.EXPORTING -> if (!model.isFinalizing) model.cancelExport()
@@ -94,9 +115,33 @@ fun QuickCutApp(model: EditorViewModel = viewModel()) {
             .background(CutColors.background)
             .safeDrawingPadding(),
     ) {
-        when (model.page) {
+        if (showBatch) {
+            BatchScreen(
+                model = batchModel,
+                onSelectVideos = { batchPicker.launch(arrayOf("video/*")) },
+                onBack = { showBatch = false },
+                onApproveOriginals = { sources, outputUri, action ->
+                    try {
+                        val request = OriginalMediaActions.prepareRequest(
+                            context = context,
+                            originalSources = sources,
+                            savedOutput = outputUri,
+                            action = action,
+                        )
+                        batchModel.launchingOriginalApproval()
+                        batchOriginalLauncher.launch(request)
+                    } catch (error: Exception) {
+                        batchModel.originalApprovalUnsupported(
+                            "편집 결과는 저장됐지만 원본은 삭제하지 않았습니다. " +
+                                (error.localizedMessage ?: "이 파일의 원본 처리가 지원되지 않습니다.")
+                        )
+                    }
+                },
+            )
+        } else when (model.page) {
             QuickCutPage.PICKER -> StartScreen(
                 onSelect = { picker.launch(arrayOf("video/*")) },
+                onBatch = { showBatch = true },
                 canRestore = model.canUndo,
                 onRestore = model::undo,
             )
@@ -131,6 +176,7 @@ fun QuickCutApp(model: EditorViewModel = viewModel()) {
                 },
                 onNew = model::startNew,
                 originalAction = model.originalAction,
+                savedDateMode = model.savedDateMode,
                 originalStatus = model.originalActionStatus,
                 originalCount = model.originalsFromSavedTimeline.size,
                 onRetryOriginalAction = model::showOriginalDeletionConfirmation,
@@ -141,7 +187,11 @@ fun QuickCutApp(model: EditorViewModel = viewModel()) {
 
     if (showSaveOptions && model.page == QuickCutPage.EDITOR) {
         AlertDialog(
-            onDismissRequest = { showSaveOptions = false; selectedSaveAction = OriginalAction.KEEP },
+            onDismissRequest = {
+                showSaveOptions = false
+                selectedSaveAction = OriginalAction.KEEP
+                selectedSaveDateMode = SaveDateMode.CURRENT
+            },
             title = { Text("저장 설정") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -164,6 +214,29 @@ fun QuickCutApp(model: EditorViewModel = viewModel()) {
                             Text(label, color = CutColors.primaryText)
                         }
                     }
+                    Text("저장 날짜", color = CutColors.primaryText)
+                    listOf(
+                        SaveDateMode.CURRENT to "현재 날짜로 저장 (최신 영상)",
+                        SaveDateMode.ORIGINAL to "원본 날짜 유지",
+                    ).forEach { (mode, label) ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                                .clickable { selectedSaveDateMode = mode },
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(
+                                selected = selectedSaveDateMode == mode,
+                                onClick = null,
+                            )
+                            Text(label, color = CutColors.primaryText)
+                        }
+                    }
+                    Text(
+                        "여러 원본을 합친 경우 첫 영상 날짜를 사용합니다. 원본 날짜 정보가 없으면 " +
+                            "해당 방식의 저장이 취소됩니다.",
+                        color = CutColors.secondaryText,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
                     Text(
                         "저장이 실패하거나 취소되면 원본은 유지됩니다. " +
                             "휴지통 이동·영구 삭제는 저장 후 별도 확인과 Android 승인이 필요합니다.",
@@ -176,14 +249,19 @@ fun QuickCutApp(model: EditorViewModel = viewModel()) {
                 Button(
                     onClick = {
                         showSaveOptions = false
-                        model.startExport(context, selectedSaveAction)
+                        model.startExport(context, selectedSaveAction, selectedSaveDateMode)
                         selectedSaveAction = OriginalAction.KEEP
+                        selectedSaveDateMode = SaveDateMode.CURRENT
                     },
                     shape = RoundedCornerShape(4.dp),
                 ) { Text("저장 시작") }
             },
             dismissButton = {
-                TextButton(onClick = { showSaveOptions = false; selectedSaveAction = OriginalAction.KEEP }) { Text("취소") }
+                TextButton(onClick = {
+                    showSaveOptions = false
+                    selectedSaveAction = OriginalAction.KEEP
+                    selectedSaveDateMode = SaveDateMode.CURRENT
+                }) { Text("취소") }
             },
             containerColor = CutColors.panel,
             shape = RoundedCornerShape(4.dp),
@@ -282,6 +360,7 @@ fun QuickCutApp(model: EditorViewModel = viewModel()) {
 @Composable
 private fun StartScreen(
     onSelect: () -> Unit,
+    onBatch: () -> Unit,
     canRestore: Boolean,
     onRestore: () -> Unit,
 ) {
@@ -311,6 +390,13 @@ private fun StartScreen(
                 shape = RoundedCornerShape(4.dp),
             ) {
                 Text("영상 선택", fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+            }
+            OutlinedButton(
+                onClick = onBatch,
+                modifier = Modifier.fillMaxWidth().height(56.dp),
+                shape = RoundedCornerShape(4.dp),
+            ) {
+                Text("템플릿 · 일괄 편집", fontSize = 16.sp)
             }
             Text(
                 text = "영상을 선택해 편집하세요",
@@ -381,6 +467,7 @@ private fun CompletedScreen(
     onOpen: () -> Unit,
     onNew: () -> Unit,
     originalAction: OriginalAction,
+    savedDateMode: SaveDateMode,
     originalStatus: OriginalActionStatus,
     originalCount: Int,
     onRetryOriginalAction: () -> Unit,
@@ -400,6 +487,9 @@ private fun CompletedScreen(
         Text("저장 완료", color = CutColors.primaryText, fontSize = 28.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(10.dp))
         Text("영상이 갤러리에 저장되었습니다.", color = CutColors.secondaryText)
+        if (savedDateMode == SaveDateMode.ORIGINAL) {
+            Text("원본 날짜 기준으로 저장했습니다.", color = CutColors.secondaryText)
+        }
         Spacer(Modifier.height(28.dp))
         if (videoUri != null) {
             ClipThumbnail(

@@ -4,23 +4,37 @@ import android.content.ContentValues
 import android.content.Context
 import android.net.Uri
 import android.os.Environment
+import android.system.Os
+import android.system.StructTimeval
 import android.provider.MediaStore
 import java.io.File
 import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 
 class GalleryWriter(private val context: Context) {
-    suspend fun save(file: File): Uri = withContext(Dispatchers.IO) {
+    suspend fun save(
+        file: File,
+        originalTimestampMs: Long? = null,
+        outputBaseName: String? = null,
+    ): Uri = withContext(Dispatchers.IO) {
         require(file.isFile && file.length() > 0L) { "저장할 영상 파일이 없습니다." }
         val resolver = context.contentResolver
-        val name = "QuickCut_" +
-            SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date()) + ".mp4"
+        val dateString = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())
+        val basename = outputBaseName
+            ?.substringBeforeLast('.')
+            ?.replace(Regex("""[^\p{L}\p{N}._-]+"""), "_")
+            ?.take(56)
+            ?.trim('_', '.', ' ')
+            ?.takeIf { it.isNotBlank() }
+        val name = (basename?.let { it + "_QuickCut_" } ?: "QuickCut_") +
+            dateString + "_" + UUID.randomUUID().toString().take(6) + ".mp4"
         val values = ContentValues().apply {
             put(MediaStore.Video.Media.DISPLAY_NAME, name)
             put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
@@ -44,6 +58,16 @@ class GalleryWriter(private val context: Context) {
                 }
             }
             currentCoroutineContext().ensureActive()
+            // MediaStore DATE_MODIFIED and DATE_TAKEN are read-only derived columns.
+            // Preserve the underlying file's mtime instead of trying to write them.
+            if (originalTimestampMs != null) {
+                val timestamp = StructTimeval.fromMillis(originalTimestampMs)
+                val handle = resolver.openFileDescriptor(uri, "rw")
+                    ?: throw IOException("원본 날짜를 저장 파일에 적용하지 못했습니다.")
+                handle.use {
+                    Os.futimes(it.fileDescriptor, timestamp, timestamp)
+                }
+            }
             val changes = ContentValues().apply {
                 put(MediaStore.Video.Media.IS_PENDING, 0)
             }

@@ -52,6 +52,8 @@ fun TimelineStrip(
     onSelect: (Long) -> Unit,
     onMove: (Long, Int) -> Unit,
     onTrim: (Long, Long, Long) -> Unit,
+    onTrimStart: () -> Unit,
+    onTrimEnd: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier.background(CutColors.surface).padding(vertical = 10.dp)) {
@@ -148,6 +150,8 @@ fun TimelineStrip(
                                 clipId = clip.id,
                                 start = true,
                                 modifier = Modifier.align(Alignment.CenterStart),
+                                onDragStart = onTrimStart,
+                                onDragEnd = onTrimEnd,
                                 onDragAmount = { dx ->
                                     val c = currentClip
                                     val deltaMs = (dx / tilePx * c.durationMs).roundToLong()
@@ -160,6 +164,8 @@ fun TimelineStrip(
                                 clipId = clip.id,
                                 start = false,
                                 modifier = Modifier.align(Alignment.CenterEnd),
+                                onDragStart = onTrimStart,
+                                onDragEnd = onTrimEnd,
                                 onDragAmount = { dx ->
                                     val c = currentClip
                                     val deltaMs = (dx / tilePx * c.durationMs).roundToLong()
@@ -187,14 +193,22 @@ private fun TrimHandle(
     clipId: Long,
     start: Boolean,
     modifier: Modifier,
+    onDragStart: () -> Unit,
+    onDragEnd: () -> Unit,
     onDragAmount: (Float) -> Unit,
 ) {
     val updatedCallback by rememberUpdatedState(onDragAmount)
+    val updatedStart by rememberUpdatedState(onDragStart)
+    val updatedEnd by rememberUpdatedState(onDragEnd)
     Box(
         modifier = modifier
             .width(48.dp).fillMaxHeight()
             .pointerInput(clipId, start) {
-                detectDragGestures { change, dragAmount ->
+                detectDragGestures(
+                    onDragStart = { updatedStart() },
+                    onDragEnd = { updatedEnd() },
+                    onDragCancel = { updatedEnd() },
+                ) { change, dragAmount ->
                     change.consume()
                     updatedCallback(dragAmount.x)
                 }

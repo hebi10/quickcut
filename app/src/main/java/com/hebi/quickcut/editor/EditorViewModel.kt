@@ -43,6 +43,63 @@ class EditorViewModel : ViewModel() {
 
     private var nextId = 1L
     private var exportJob: Job? = null
+    private val history = EditHistory()
+    private var activeTrim: EditCheckpoint? = null
+
+    var canUndo by mutableStateOf(false)
+        private set
+    var canRedo by mutableStateOf(false)
+        private set
+
+    private fun checkpoint() = EditCheckpoint(timeline, selectedId, playPositionMs)
+
+    private fun updateHistoryButtons() {
+        canUndo = history.canUndo
+        canRedo = history.canRedo
+    }
+
+    private fun finishActiveTrim() {
+        val baseline = activeTrim ?: return
+        activeTrim = null
+        if (baseline.timeline != timeline) {
+            history.record(baseline)
+            updateHistoryButtons()
+        }
+    }
+
+    fun beginTrim() {
+        if (activeTrim == null && page == QuickCutPage.EDITOR) activeTrim = checkpoint()
+    }
+
+    fun finishTrim() = finishActiveTrim()
+
+    private fun recordChange() {
+        finishActiveTrim()
+        history.record(checkpoint())
+        updateHistoryButtons()
+    }
+
+    fun undo() {
+        finishActiveTrim()
+        val previous = history.undo(checkpoint()) ?: return
+        restoreCheckpoint(previous)
+        updateHistoryButtons()
+    }
+
+    fun redo() {
+        finishActiveTrim()
+        val next = history.redo(checkpoint()) ?: return
+        restoreCheckpoint(next)
+        updateHistoryButtons()
+    }
+
+    private fun restoreCheckpoint(restored: EditCheckpoint) {
+        timeline = restored.timeline
+        selectedId = restored.selectedId?.takeIf { timeline.clipAt(it) != null }
+            ?: timeline.clips.firstOrNull()?.id
+        playPositionMs = restored.playPositionMs.coerceIn(0L, timeline.totalDurationMs)
+        page = if (timeline.isEmpty) QuickCutPage.PICKER else QuickCutPage.EDITOR
+    }
 
     val selectedClip: VideoClip?
         get() = selectedId?.let(timeline::clipAt)
@@ -94,6 +151,13 @@ class EditorViewModel : ViewModel() {
                     )
                 }
                 val wasAppending = append && !timeline.isEmpty
+                if (wasAppending) {
+                    recordChange()
+                } else {
+                    history.clear()
+                    activeTrim = null
+                    updateHistoryButtons()
+                }
                 timeline = if (wasAppending) timeline.append(clips) else EditTimeline(clips)
                 selectedId = if (wasAppending) selectedId ?: clips.first().id else clips.first().id
                 playPositionMs = if (wasAppending) {
@@ -137,6 +201,8 @@ class EditorViewModel : ViewModel() {
     fun trimClip(id: Long, startMs: Long, endMs: Long) {
         if (timeline.clipAt(id) == null) return
         val edited = runCatching { timeline.updateRange(id, startMs, endMs) }.getOrNull() ?: return
+        if (edited == timeline) return
+        if (activeTrim == null) recordChange()
         timeline = edited
         playPositionMs = playPositionMs.coerceIn(0L, timeline.totalDurationMs)
     }
@@ -146,12 +212,14 @@ class EditorViewModel : ViewModel() {
         val index = timeline.clips.indexOfFirst { it.id == selectedId }
         val clip = timeline.clips[index]
         val offset = playPositionMs - timeline.startOf(index)
+        recordChange()
         timeline = timeline.split(clip.id, offset, nextId++)
     }
 
     fun deleteSelected() {
         val id = selectedId ?: return
         val oldIndex = timeline.clips.indexOfFirst { it.id == id }
+        recordChange()
         timeline = timeline.delete(id)
         if (timeline.isEmpty) {
             selectedId = null
@@ -167,7 +235,10 @@ class EditorViewModel : ViewModel() {
 
     fun moveClip(id: Long, direction: Int) {
         if (timeline.clipAt(id) == null) return
-        timeline = timeline.move(id, direction)
+        val updated = timeline.move(id, direction)
+        if (updated == timeline) return
+        recordChange()
+        timeline = updated
         val index = timeline.clips.indexOfFirst { it.id == id }
         if (index >= 0) {
             selectedId = id
@@ -181,6 +252,7 @@ class EditorViewModel : ViewModel() {
 
     fun toggleMute() {
         val id = selectedId ?: return
+        recordChange()
         timeline = timeline.toggleMute(id)
     }
 
@@ -231,6 +303,9 @@ class EditorViewModel : ViewModel() {
     fun discardEditing() {
         showExitConfirmation = false
         timeline = EditTimeline()
+        history.clear()
+        activeTrim = null
+        updateHistoryButtons()
         selectedId = null
         playPositionMs = 0L
         completedUri = null

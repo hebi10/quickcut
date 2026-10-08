@@ -66,7 +66,11 @@ fun QuickCutApp(model: EditorViewModel = viewModel()) {
             .safeDrawingPadding(),
     ) {
         when (model.page) {
-            QuickCutPage.PICKER -> StartScreen { picker.launch(arrayOf("video/*")) }
+            QuickCutPage.PICKER -> StartScreen(
+                onSelect = { picker.launch(arrayOf("video/*")) },
+                canRestore = model.canUndo,
+                onRestore = model::undo,
+            )
             QuickCutPage.IMPORTING -> CenterStatus("영상 불러오는 중", "선택한 파일을 확인하고 있습니다.", null)
             QuickCutPage.EDITOR -> EditorScreen(
                 model = model,
@@ -135,7 +139,11 @@ fun QuickCutApp(model: EditorViewModel = viewModel()) {
 }
 
 @Composable
-private fun StartScreen(onSelect: () -> Unit) {
+private fun StartScreen(
+    onSelect: () -> Unit,
+    canRestore: Boolean,
+    onRestore: () -> Unit,
+) {
     Box(Modifier.fillMaxSize()) {
         Text(
             text = "QuickCut",
@@ -167,6 +175,15 @@ private fun StartScreen(onSelect: () -> Unit) {
                 color = CutColors.secondaryText,
                 style = MaterialTheme.typography.bodyMedium,
             )
+            if (canRestore) {
+                OutlinedButton(
+                    onClick = onRestore,
+                    modifier = Modifier.fillMaxWidth().height(52.dp),
+                    shape = RoundedCornerShape(4.dp),
+                ) {
+                    Text("이전 편집 복원")
+                }
+            }
         }
     }
 }

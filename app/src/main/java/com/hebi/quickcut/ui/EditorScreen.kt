@@ -33,6 +33,8 @@ import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Reorder
+import androidx.compose.material.icons.outlined.Undo
+import androidx.compose.material.icons.outlined.Redo
 import androidx.compose.material.icons.outlined.VolumeOff
 import androidx.compose.material.icons.outlined.VolumeUp
 import androidx.compose.material3.AlertDialog
@@ -194,6 +196,10 @@ fun EditorScreen(
             onBack = model::requestExit,
             onAdd = addVideos,
             onSave = save,
+            onUndo = model::undo,
+            onRedo = model::redo,
+            canUndo = model.canUndo,
+            canRedo = model.canRedo,
         )
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val compactHeight = maxHeight < 480.dp && maxWidth >= 600.dp
@@ -227,7 +233,7 @@ fun EditorScreen(
                                     showTrim = showTrim,
                                 )
                                 if (showTrim && selected != null) {
-                                    TrimEditor(selected, model::trimSelected)
+                                    TrimEditor(selected, model::trimSelected, model::beginTrim, model::finishTrim)
                                 }
                             }
                         }
@@ -238,6 +244,8 @@ fun EditorScreen(
                             onSelect = onSelect,
             onMove = onClipMoved,
             onTrim = onClipTrimmed,
+            onTrimStart = model::beginTrim,
+            onTrimEnd = model::finishTrim,
                             modifier = Modifier.fillMaxWidth().height(117.dp),
                         )
                     }
@@ -278,7 +286,7 @@ fun EditorScreen(
                                 )
                                 if (showTrim && selected != null) {
                                     Spacer(Modifier.height(8.dp))
-                                    TrimEditor(selected, model::trimSelected)
+                                    TrimEditor(selected, model::trimSelected, model::beginTrim, model::finishTrim)
                                 }
                             }
                         }
@@ -289,6 +297,8 @@ fun EditorScreen(
                             onSelect = onSelect,
             onMove = onClipMoved,
             onTrim = onClipTrimmed,
+            onTrimStart = model::beginTrim,
+            onTrimEnd = model::finishTrim,
                             modifier = Modifier.fillMaxWidth().height(155.dp),
                         )
                     }
@@ -312,12 +322,16 @@ fun EditorScreen(
                             onSelect = onSelect,
             onMove = onClipMoved,
             onTrim = onClipTrimmed,
+            onTrimStart = model::beginTrim,
+            onTrimEnd = model::finishTrim,
                             modifier = Modifier.fillMaxWidth().height(122.dp),
                         )
                         if (showTrim && selected != null) {
                             TrimEditor(
                                 selected,
                                 model::trimSelected,
+                                model::beginTrim,
+                                model::finishTrim,
                                 modifier = Modifier.fillMaxWidth()
                                     .background(CutColors.surface)
                                     .padding(horizontal = 14.dp),
@@ -392,6 +406,10 @@ private fun EditorHeader(
     onBack: () -> Unit,
     onAdd: () -> Unit,
     onSave: () -> Unit,
+    onUndo: () -> Unit,
+    onRedo: () -> Unit,
+    canUndo: Boolean,
+    canRedo: Boolean,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 8.dp),
@@ -402,6 +420,12 @@ private fun EditorHeader(
         }
         Text("편집", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.weight(1f))
+        IconButton(onClick = onUndo, enabled = canUndo, modifier = Modifier.size(48.dp)) {
+            Icon(Icons.Outlined.Undo, contentDescription = "실행 취소")
+        }
+        IconButton(onClick = onRedo, enabled = canRedo, modifier = Modifier.size(48.dp)) {
+            Icon(Icons.Outlined.Redo, contentDescription = "다시 실행")
+        }
         IconButton(onClick = onAdd, modifier = Modifier.size(48.dp)) {
             Icon(Icons.Outlined.Add, contentDescription = "영상 추가")
         }
@@ -568,6 +592,8 @@ private fun ToolButtons(
 private fun TrimEditor(
     clip: VideoClip,
     onTrim: (Long, Long) -> Unit,
+    onBeginTrim: () -> Unit,
+    onEndTrim: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier.padding(vertical = 8.dp)) {
@@ -577,9 +603,13 @@ private fun TrimEditor(
             onValueChange = { range ->
                 val start = range.start.roundToLong().coerceIn(0L, clip.sourceDurationMs)
                 val end = range.endInclusive.roundToLong().coerceIn(0L, clip.sourceDurationMs)
-                if (end - start >= 100L) onTrim(start, end)
+                if (end - start >= 100L) {
+                    onBeginTrim()
+                    onTrim(start, end)
+                }
             },
             valueRange = 0f..clip.sourceDurationMs.toFloat(),
+            onValueChangeFinished = onEndTrim,
             modifier = Modifier.fillMaxWidth(),
         )
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {

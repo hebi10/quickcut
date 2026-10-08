@@ -227,9 +227,6 @@ class BatchViewModel : ViewModel() {
         val selectedDateMode = saveDateMode
         val selectedOriginalAction = originalAction
         performedOriginalAction = selectedOriginalAction
-        // Reset the *next* run's deletion option before this job starts.
-        // An old template or retry cannot silently re-enable deletion.
-        originalAction = OriginalAction.KEEP
         originalStatus = OriginalActionStatus.NONE
         sourceUrisSavedThisRun = emptyList()
         if (!retryOnly) {
@@ -316,6 +313,9 @@ class BatchViewModel : ViewModel() {
                     } else it
                 }
             } finally {
+                // Keep the selected action visible during rendering. The next
+                // batch always resets to KEEP even if the prior run selected trash.
+                originalAction = OriginalAction.KEEP
                 runState = BatchRunState.FINISHED
                 originalStatus = if (performedOriginalAction != OriginalAction.KEEP &&
                     originalCandidates.isNotEmpty()) OriginalActionStatus.READY

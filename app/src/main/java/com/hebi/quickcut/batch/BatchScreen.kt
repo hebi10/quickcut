@@ -150,14 +150,20 @@ fun BatchScreen(
     if (model.originalStatus == OriginalActionStatus.CONFIRMING) {
         val permanent = model.performedOriginalAction == OriginalAction.DELETE
         val action = if (permanent) "영구 삭제" else "휴지통 이동"
+        val candidateUris = model.originalCandidates.toSet()
+        val selectedNames = model.files.filter { it.uri in candidateUris }
+            .take(5).joinToString("\n") { "• " + it.displayName.take(60) }
+        val remaining = (candidateUris.size - 5).coerceAtLeast(0)
         AlertDialog(
             onDismissRequest = model::keepOriginals,
             title = { Text("원본 " + action + " 최종 확인") },
             text = {
                 Text(
                     "저장 성공 원본 " + model.originalCandidates.size + "개만 " +
-                        action + " 요청합니다. 실패·건너뜀 원본은 삭제하지 않습니다.\n" +
-                        "영구 삭제는 복원되지 않을 수 있으며 Android 승인이 한 번 더 표시됩니다."
+                        action + " 요청합니다. 실패·건너뜀 원본은 삭제하지 않습니다.\n\n" +
+                        "대상 파일:\n" + selectedNames +
+                        (if (remaining > 0) "\n그 외 " + remaining + "개" else "") +
+                        "\n\n영구 삭제는 복원되지 않을 수 있으며 Android 승인이 한 번 더 표시됩니다."
                 )
             },
             confirmButton = {

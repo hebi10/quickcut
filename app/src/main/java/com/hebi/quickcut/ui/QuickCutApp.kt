@@ -147,6 +147,7 @@ private fun StartScreen(
     Box(Modifier.fillMaxSize()) {
         Text(
             text = "QuickCut",
+            color = CutColors.primaryText,
             fontSize = 24.sp,
             fontWeight = FontWeight.SemiBold,
             modifier = Modifier.align(Alignment.TopStart).padding(20.dp),
@@ -200,7 +201,7 @@ private fun CenterStatus(
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text(title, fontSize = 26.sp, fontWeight = FontWeight.SemiBold)
+        Text(title, color = CutColors.primaryText, fontSize = 26.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(12.dp))
         Text(subtitle, color = CutColors.secondaryText)
         Spacer(Modifier.height(40.dp))
@@ -213,7 +214,7 @@ private fun CenterStatus(
                     modifier = Modifier.size(132.dp),
                     strokeWidth = 6.dp,
                 )
-                Text(text = progress.toString() + "%", fontSize = 25.sp)
+                Text(text = progress.toString() + "%", color = CutColors.primaryText, fontSize = 25.sp)
             }
         }
         Spacer(Modifier.height(32.dp))
@@ -251,7 +252,7 @@ private fun CompletedScreen(
             modifier = Modifier.size(80.dp),
         )
         Spacer(Modifier.height(16.dp))
-        Text("저장 완료", fontSize = 28.sp, fontWeight = FontWeight.SemiBold)
+        Text("저장 완료", color = CutColors.primaryText, fontSize = 28.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(10.dp))
         Text("영상이 갤러리에 저장되었습니다.", color = CutColors.secondaryText)
         Spacer(Modifier.height(28.dp))

@@ -1,8 +1,10 @@
 package com.hebi.quickcut.ui
 
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.Color
 
 object CutColors {
@@ -30,5 +32,9 @@ private val colorScheme = darkColorScheme(
 
 @Composable
 fun QuickCutTheme(content: @Composable () -> Unit) {
-    MaterialTheme(colorScheme = colorScheme, content = content)
+    MaterialTheme(colorScheme = colorScheme) {
+        CompositionLocalProvider(LocalContentColor provides CutColors.primaryText) {
+            content()
+        }
+    }
 }

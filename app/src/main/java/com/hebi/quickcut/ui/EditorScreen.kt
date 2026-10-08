@@ -275,6 +275,7 @@ fun EditorScreen(
                                     Text("선택 클립", color = CutColors.secondaryText, fontSize = 12.sp)
                                     Spacer(Modifier.height(8.dp))
                                     Text("클립 " + (model.timeline.clips.indexOf(it) + 1),
+                                        color = CutColors.primaryText,
                                         fontWeight = FontWeight.SemiBold)
                                     Text(formatTime(it.durationMs), color = CutColors.secondaryText)
                                 }
@@ -420,7 +421,7 @@ private fun EditorHeader(
         IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
             Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "편집 종료")
         }
-        Text("편집", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+        Text("편집", color = CutColors.primaryText, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.weight(1f))
         IconButton(onClick = onUndo, enabled = canUndo, modifier = Modifier.size(48.dp)) {
             Icon(Icons.Outlined.Undo, contentDescription = "실행 취소")
@@ -599,7 +600,7 @@ private fun TrimEditor(
     modifier: Modifier = Modifier,
 ) {
     Column(modifier.padding(vertical = 8.dp)) {
-        Text("자르기 범위", fontSize = 13.sp, fontWeight = FontWeight.Medium)
+        Text("자르기 범위", color = CutColors.primaryText, fontSize = 13.sp, fontWeight = FontWeight.Medium)
         RangeSlider(
             value = clip.startMs.toFloat()..clip.endMs.toFloat(),
             onValueChange = { range ->

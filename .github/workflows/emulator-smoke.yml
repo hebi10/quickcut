@@ -25,6 +25,15 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "9.4.1"
+      - name: Reclaim runner disk space for Android emulator
+        run: |
+          echo "Available disk before cleanup:"
+          df -h /
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/powershell
+          sudo rm -rf /usr/local/lib/android/sdk/ndk
+          sudo apt-get clean
+          echo "Available disk after cleanup:"
+          df -h /
       - name: Install test-video encoder
         run: |
           sudo apt-get update -qq

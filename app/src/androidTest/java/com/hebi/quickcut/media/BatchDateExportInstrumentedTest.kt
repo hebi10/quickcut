@@ -39,7 +39,7 @@ class BatchDateExportInstrumentedTest {
             val planned = template.plan(uri.toString(), metadata.durationMs, metadata.hasAudio)
             assertTrue("Batch template must create a clip", planned is BatchPlan.Ready)
             val timeline = (planned as BatchPlan.Ready).timeline
-            assertEquals(2_000L, timeline.totalDurationMs)
+            assertEquals(metadata.durationMs - 1_000L, timeline.totalDurationMs)
             val output = withTimeout(120_000L) {
                 VideoExporter(context).export(
                     timeline = timeline,

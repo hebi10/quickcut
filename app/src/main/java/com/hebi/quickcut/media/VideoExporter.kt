@@ -38,7 +38,20 @@ class VideoExporter(private val context: Context) {
                 MediaReader.validateExport(temporary)
             }
             onFinalizing()
-            return GalleryWriter(context).save(temporary)
+            val exportedUri = GalleryWriter(context).save(temporary)
+            try {
+                // A registered URI must be readable and contain a playable video before
+                // optional original deletion can even be offered in the success screen.
+                withContext(Dispatchers.IO) {
+                    MediaReader.metadata(context, exportedUri)
+                }
+            } catch (error: Exception) {
+                withContext(Dispatchers.IO) {
+                    runCatching { context.contentResolver.delete(exportedUri, null, null) }
+                }
+                throw error
+            }
+            return exportedUri
         } finally {
             temporary.delete()
         }

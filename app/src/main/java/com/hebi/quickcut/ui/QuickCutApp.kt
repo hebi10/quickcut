@@ -1,11 +1,15 @@
 package com.hebi.quickcut.ui
 
+import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,6 +18,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
@@ -28,10 +33,17 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -41,11 +53,28 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.hebi.quickcut.editor.EditorViewModel
+import com.hebi.quickcut.editor.OriginalAction
+import com.hebi.quickcut.editor.OriginalActionStatus
+import com.hebi.quickcut.media.OriginalMediaActions
 import com.hebi.quickcut.editor.QuickCutPage
 
 @Composable
 fun QuickCutApp(model: EditorViewModel = viewModel()) {
     val context = LocalContext.current
+    var showSaveOptions by rememberSaveable { mutableStateOf(false) }
+    var selectedSaveAction by rememberSaveable { mutableStateOf(OriginalAction.KEEP) }
+    val originalActionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        model.onOriginalSystemResult(result.resultCode == Activity.RESULT_OK)
+    }
+    LaunchedEffect(model.completedUri, model.originalActionStatus) {
+        if (model.page == QuickCutPage.COMPLETED &&
+            model.originalActionStatus == OriginalActionStatus.READY
+        ) {
+            model.showOriginalDeletionConfirmation()
+        }
+    }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         model.importVideos(context, uris, append = model.page == QuickCutPage.EDITOR)
     }
@@ -75,7 +104,7 @@ fun QuickCutApp(model: EditorViewModel = viewModel()) {
             QuickCutPage.EDITOR -> EditorScreen(
                 model = model,
                 addVideos = { picker.launch(arrayOf("video/*")) },
-                save = { model.startExport(context) },
+                save = { showSaveOptions = true },
             )
             QuickCutPage.EXPORTING -> CenterStatus(
                 title = if (model.isFinalizing) "갤러리 등록 중" else "영상 저장 중",
@@ -101,8 +130,117 @@ fun QuickCutApp(model: EditorViewModel = viewModel()) {
                     }
                 },
                 onNew = model::startNew,
+                originalAction = model.originalAction,
+                originalStatus = model.originalActionStatus,
+                originalCount = model.originalsFromSavedTimeline.size,
+                onRetryOriginalAction = model::showOriginalDeletionConfirmation,
             )
         }
+    }
+
+
+    if (showSaveOptions && model.page == QuickCutPage.EDITOR) {
+        AlertDialog(
+            onDismissRequest = { showSaveOptions = false },
+            title = { Text("저장 설정") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("저장 완료 후 원본 동영상 처리", color = CutColors.primaryText)
+                    listOf(
+                        OriginalAction.KEEP to "원본 유지 (기본값)",
+                        OriginalAction.TRASH to "원본 휴지통으로 이동",
+                        OriginalAction.DELETE to "원본 영구 삭제",
+                    ).forEach { (action, label) ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth()
+                                .heightIn(min = 48.dp)
+                                .clickable { selectedSaveAction = action },
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(
+                                selected = selectedSaveAction == action,
+                                onClick = null,
+                            )
+                            Text(label, color = CutColors.primaryText)
+                        }
+                    }
+                    Text(
+                        "저장이 실패하거나 취소되면 원본은 유지됩니다. " +
+                            "휴지통 이동·영구 삭제는 저장 후 별도 확인과 Android 승인이 필요합니다.",
+                        color = CutColors.secondaryText,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showSaveOptions = false
+                        model.startExport(context, selectedSaveAction)
+                        selectedSaveAction = OriginalAction.KEEP
+                    },
+                    shape = RoundedCornerShape(4.dp),
+                ) { Text("저장 시작") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSaveOptions = false }) { Text("취소") }
+            },
+            containerColor = CutColors.panel,
+            shape = RoundedCornerShape(4.dp),
+        )
+    }
+
+    if (model.page == QuickCutPage.COMPLETED &&
+        model.originalActionStatus == OriginalActionStatus.CONFIRMING
+    ) {
+        val permanent = model.originalAction == OriginalAction.DELETE
+        val originalCount = model.originalsFromSavedTimeline.size
+        AlertDialog(
+            onDismissRequest = model::skipOriginalDeletion,
+            title = {
+                Text(if (permanent) "원본 영구 삭제 확인" else "원본 휴지통 이동 확인")
+            },
+            text = {
+                Text(
+                    "편집 결과는 갤러리에 저장됐습니다.\n" +
+                        "원본 동영상 " + originalCount + "개를 " +
+                        (if (permanent) "영구 삭제하시겠습니까?\n삭제 후 복구할 수 없을 수 있습니다."
+                         else "휴지통으로 이동하시겠습니까?\n기기 정책에 따라 나중에 복원할 수 있습니다.") +
+                        "\nAndroid의 추가 승인 화면이 표시됩니다."
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        try {
+                            val outputUri = model.completedUri
+                                ?: throw IllegalStateException("저장 결과를 확인할 수 없습니다.")
+                            val request = OriginalMediaActions.prepareRequest(
+                                context = context,
+                                originalSources = model.originalsFromSavedTimeline,
+                                savedOutput = outputUri,
+                                action = model.originalAction,
+                            )
+                            model.markOriginalSystemPrompt()
+                            originalActionLauncher.launch(request)
+                        } catch (error: Exception) {
+                            model.markOriginalUnsupported(
+                                "편집 결과는 저장됐지만 원본은 삭제하지 않았습니다. " +
+                                    (error.localizedMessage ?: "이 파일의 원본 처리가 지원되지 않습니다.")
+                            )
+                        }
+                    },
+                    shape = RoundedCornerShape(4.dp),
+                ) {
+                    Text(if (permanent) "영구 삭제 요청" else "휴지통 이동 요청")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = model::skipOriginalDeletion) { Text("원본 유지") }
+            },
+            containerColor = CutColors.panel,
+            shape = RoundedCornerShape(4.dp),
+        )
     }
 
     model.errorMessage?.let { text ->
@@ -239,9 +377,13 @@ private fun CompletedScreen(
     videoUri: String?,
     onOpen: () -> Unit,
     onNew: () -> Unit,
+    originalAction: OriginalAction,
+    originalStatus: OriginalActionStatus,
+    originalCount: Int,
+    onRetryOriginalAction: () -> Unit,
 ) {
     Column(
-        modifier = Modifier.fillMaxSize().padding(24.dp),
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
@@ -262,6 +404,34 @@ private fun CompletedScreen(
                 timeMs = 0L,
                 modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth().height(210.dp),
             )
+        }
+        if (originalAction != OriginalAction.KEEP) {
+            Spacer(Modifier.height(18.dp))
+            val actionLabel = if (originalAction == OriginalAction.TRASH) "휴지통 이동" else "영구 삭제"
+            val statusLabel = when (originalStatus) {
+                OriginalActionStatus.READY,
+                OriginalActionStatus.CONFIRMING -> "원본 " + originalCount + "개 " + actionLabel + " 확인 대기 중"
+                OriginalActionStatus.SYSTEM_PROMPT -> "Android 원본 처리 승인 대기 중"
+                OriginalActionStatus.COMPLETED -> "원본 " + originalCount + "개 " + actionLabel + " 완료"
+                OriginalActionStatus.SKIPPED -> "원본은 삭제하지 않고 유지했습니다."
+                OriginalActionStatus.UNSUPPORTED -> "원본 처리를 지원하지 않아 파일을 유지했습니다."
+                OriginalActionStatus.NONE -> "원본 유지"
+            }
+            Text(
+                statusLabel,
+                color = CutColors.secondaryText,
+                style = MaterialTheme.typography.bodyMedium,
+                textAlign = TextAlign.Center,
+            )
+            if (originalStatus == OriginalActionStatus.SKIPPED ||
+                originalStatus == OriginalActionStatus.UNSUPPORTED
+            ) {
+                OutlinedButton(
+                    onClick = onRetryOriginalAction,
+                    modifier = Modifier.height(48.dp),
+                    shape = RoundedCornerShape(4.dp),
+                ) { Text("원본 " + actionLabel + " 다시 요청") }
+            }
         }
         Spacer(Modifier.height(28.dp))
         Column(

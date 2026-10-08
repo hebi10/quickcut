@@ -40,6 +40,12 @@ class EditorViewModel : ViewModel() {
         private set
     var showExitConfirmation by mutableStateOf(false)
         private set
+    var originalAction by mutableStateOf(OriginalAction.KEEP)
+        private set
+    var originalActionStatus by mutableStateOf(OriginalActionStatus.NONE)
+        private set
+    var originalsFromSavedTimeline by mutableStateOf<List<String>>(emptyList())
+        private set
 
     private var nextId = 1L
     private var exportJob: Job? = null
@@ -256,9 +262,13 @@ class EditorViewModel : ViewModel() {
         timeline = timeline.toggleMute(id)
     }
 
-    fun startExport(context: Context) {
+    fun startExport(context: Context, selectedOriginalAction: OriginalAction = OriginalAction.KEEP) {
         if (timeline.isEmpty || page != QuickCutPage.EDITOR) return
         val snapshot = timeline
+        val sourceSnapshot = uniqueExportSources(snapshot)
+        originalAction = selectedOriginalAction
+        originalActionStatus = OriginalActionStatus.NONE
+        originalsFromSavedTimeline = emptyList()
         page = QuickCutPage.EXPORTING
         isFinalizing = false
         progressPercent = null
@@ -273,6 +283,16 @@ class EditorViewModel : ViewModel() {
                     },
                 )
                 completedUri = uri
+                originalsFromSavedTimeline = if (originalAction == OriginalAction.KEEP) {
+                    emptyList()
+                } else {
+                    sourceSnapshot
+                }
+                originalActionStatus = if (originalAction == OriginalAction.KEEP) {
+                    OriginalActionStatus.NONE
+                } else {
+                    OriginalActionStatus.READY
+                }
                 page = QuickCutPage.COMPLETED
             } catch (_: CancellationException) {
                 page = QuickCutPage.EDITOR
@@ -292,6 +312,46 @@ class EditorViewModel : ViewModel() {
         if (!isFinalizing) exportJob?.cancel()
     }
 
+    fun showOriginalDeletionConfirmation() {
+        if (page == QuickCutPage.COMPLETED &&
+            originalAction != OriginalAction.KEEP &&
+            originalActionStatus in listOf(
+                OriginalActionStatus.READY,
+                OriginalActionStatus.SKIPPED,
+                OriginalActionStatus.UNSUPPORTED,
+            )
+        ) {
+            originalActionStatus = OriginalActionStatus.CONFIRMING
+        }
+    }
+
+    fun skipOriginalDeletion() {
+        if (originalActionStatus == OriginalActionStatus.CONFIRMING) {
+            originalActionStatus = OriginalActionStatus.SKIPPED
+        }
+    }
+
+    fun markOriginalSystemPrompt() {
+        if (originalActionStatus == OriginalActionStatus.CONFIRMING) {
+            originalActionStatus = OriginalActionStatus.SYSTEM_PROMPT
+        }
+    }
+
+    fun onOriginalSystemResult(approved: Boolean) {
+        if (originalActionStatus == OriginalActionStatus.SYSTEM_PROMPT) {
+            originalActionStatus = if (approved) {
+                OriginalActionStatus.COMPLETED
+            } else {
+                OriginalActionStatus.SKIPPED
+            }
+        }
+    }
+
+    fun markOriginalUnsupported(detail: String) {
+        originalActionStatus = OriginalActionStatus.UNSUPPORTED
+        reportError(detail)
+    }
+
     fun requestExit() {
         if (page == QuickCutPage.EDITOR) showExitConfirmation = true
     }
@@ -309,6 +369,9 @@ class EditorViewModel : ViewModel() {
         selectedId = null
         playPositionMs = 0L
         completedUri = null
+        originalAction = OriginalAction.KEEP
+        originalActionStatus = OriginalActionStatus.NONE
+        originalsFromSavedTimeline = emptyList()
         errorMessage = null
         page = QuickCutPage.PICKER
     }

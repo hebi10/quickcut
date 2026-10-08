@@ -141,7 +141,7 @@ fun QuickCutApp(model: EditorViewModel = viewModel()) {
 
     if (showSaveOptions && model.page == QuickCutPage.EDITOR) {
         AlertDialog(
-            onDismissRequest = { showSaveOptions = false },
+            onDismissRequest = { showSaveOptions = false; selectedSaveAction = OriginalAction.KEEP },
             title = { Text("저장 설정") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -183,7 +183,7 @@ fun QuickCutApp(model: EditorViewModel = viewModel()) {
                 ) { Text("저장 시작") }
             },
             dismissButton = {
-                TextButton(onClick = { showSaveOptions = false }) { Text("취소") }
+                TextButton(onClick = { showSaveOptions = false; selectedSaveAction = OriginalAction.KEEP }) { Text("취소") }
             },
             containerColor = CutColors.panel,
             shape = RoundedCornerShape(4.dp),
@@ -231,6 +231,9 @@ fun QuickCutApp(model: EditorViewModel = viewModel()) {
                         }
                     },
                     shape = RoundedCornerShape(4.dp),
+                    colors = if (permanent) ButtonDefaults.buttonColors(
+                        containerColor = androidx.compose.ui.graphics.Color(0xFFBF4545)
+                    ) else ButtonDefaults.buttonColors(),
                 ) {
                     Text(if (permanent) "영구 삭제 요청" else "휴지통 이동 요청")
                 }
@@ -423,9 +426,7 @@ private fun CompletedScreen(
                 style = MaterialTheme.typography.bodyMedium,
                 textAlign = TextAlign.Center,
             )
-            if (originalStatus == OriginalActionStatus.SKIPPED ||
-                originalStatus == OriginalActionStatus.UNSUPPORTED
-            ) {
+            if (originalStatus == OriginalActionStatus.SKIPPED) {
                 OutlinedButton(
                     onClick = onRetryOriginalAction,
                     modifier = Modifier.height(48.dp),

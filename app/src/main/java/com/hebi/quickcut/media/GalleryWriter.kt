@@ -11,6 +11,8 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 
 class GalleryWriter(private val context: Context) {
@@ -31,8 +33,17 @@ class GalleryWriter(private val context: Context) {
             val stream = resolver.openOutputStream(uri)
                 ?: throw IOException("갤러리 파일을 열 수 없습니다.")
             stream.use { sink ->
-                file.inputStream().use { source -> source.copyTo(sink) }
+                file.inputStream().use { source ->
+                    val buffer = ByteArray(64 * 1024)
+                    while (true) {
+                        currentCoroutineContext().ensureActive()
+                        val count = source.read(buffer)
+                        if (count < 0) break
+                        sink.write(buffer, 0, count)
+                    }
+                }
             }
+            currentCoroutineContext().ensureActive()
             val changes = ContentValues().apply {
                 put(MediaStore.Video.Media.IS_PENDING, 0)
             }

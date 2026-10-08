@@ -23,6 +23,7 @@ class VideoExporter(private val context: Context) {
     suspend fun export(
         timeline: EditTimeline,
         onProgress: (Int?) -> Unit,
+        onFinalizing: () -> Unit,
     ): android.net.Uri {
         require(!timeline.isEmpty) { "편집할 영상이 없습니다." }
         val temporary = File.createTempFile("quickcut_", ".mp4", context.cacheDir)
@@ -31,7 +32,10 @@ class VideoExporter(private val context: Context) {
             withContext(Dispatchers.Main.immediate) {
                 transform(timeline, temporary, onProgress)
             }
-            onProgress(null)
+            withContext(Dispatchers.IO) {
+                MediaReader.validateExport(temporary)
+            }
+            onFinalizing()
             return GalleryWriter(context).save(temporary)
         } finally {
             temporary.delete()
@@ -80,10 +84,12 @@ class VideoExporter(private val context: Context) {
             .build()
 
         continuation.invokeOnCancellation {
-            main.post {
+            val stop = Runnable {
                 main.removeCallbacks(poller)
                 transformer.cancel()
             }
+            if (Looper.myLooper() == Looper.getMainLooper()) stop.run()
+            else main.post(stop)
         }
 
         try {

@@ -32,6 +32,8 @@ class EditorViewModel : ViewModel() {
         private set
     var progressPercent by mutableStateOf<Int?>(null)
         private set
+    var isFinalizing by mutableStateOf(false)
+        private set
     var completedUri by mutableStateOf<Uri?>(null)
         private set
     var errorMessage by mutableStateOf<String?>(null)
@@ -56,40 +58,63 @@ class EditorViewModel : ViewModel() {
 
     fun importVideos(context: Context, uris: List<Uri>, append: Boolean = false) {
         if (uris.isEmpty() || page == QuickCutPage.EXPORTING || page == QuickCutPage.IMPORTING) return
+        val previousPage = if (timeline.isEmpty) QuickCutPage.PICKER else QuickCutPage.EDITOR
+        val previousPosition = playPositionMs
         page = QuickCutPage.IMPORTING
         viewModelScope.launch {
             try {
-                val items = withContext(Dispatchers.IO) {
+                val results = withContext(Dispatchers.IO) {
                     uris.map { uri ->
-                        try {
-                            context.contentResolver.takePersistableUriPermission(
-                                uri, Intent.FLAG_GRANT_READ_URI_PERMISSION,
-                            )
-                        } catch (_: SecurityException) {
-                            // Temporary URI permission remains valid for this session.
+                        runCatching {
+                            try {
+                                context.contentResolver.takePersistableUriPermission(
+                                    uri, Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                                )
+                            } catch (_: SecurityException) {
+                                // Some providers grant only session-scoped access.
+                            } catch (_: IllegalArgumentException) {
+                                // Persistable access is not available from this provider.
+                            }
+                            uri to MediaReader.metadata(context.applicationContext, uri)
                         }
-                        val meta = MediaReader.metadata(context.applicationContext, uri)
-                        VideoClip(
-                            id = nextId++,
-                            uri = uri.toString(),
-                            sourceDurationMs = meta.durationMs,
-                            hasAudio = meta.hasAudio,
-                        )
                     }
                 }
-                timeline = if (append && !timeline.isEmpty) {
-                    timeline.append(items)
-                } else {
-                    EditTimeline(items)
+                val valid = results.mapNotNull { it.getOrNull() }
+                if (valid.isEmpty()) {
+                    reportError("선택한 영상을 열 수 없습니다. 다른 파일을 선택해 주세요.")
+                    page = previousPage
+                    return@launch
                 }
-                selectedId = if (append) selectedId ?: items.firstOrNull()?.id else items.firstOrNull()?.id
-                playPositionMs = 0L
-                errorMessage = null
+                val clips = valid.map { (uri, meta) ->
+                    VideoClip(
+                        id = nextId++,
+                        uri = uri.toString(),
+                        sourceDurationMs = meta.durationMs,
+                        hasAudio = meta.hasAudio,
+                    )
+                }
+                val wasAppending = append && !timeline.isEmpty
+                timeline = if (wasAppending) timeline.append(clips) else EditTimeline(clips)
+                selectedId = if (wasAppending) selectedId ?: clips.first().id else clips.first().id
+                playPositionMs = if (wasAppending) {
+                    previousPosition.coerceIn(0L, timeline.totalDurationMs)
+                } else {
+                    0L
+                }
+                val rejected = uris.size - valid.size
+                errorMessage = if (rejected > 0) {
+                    "지원하지 않는 영상 " + rejected + "개를 제외하고 " +
+                        valid.size + "개를 불러왔습니다."
+                } else {
+                    null
+                }
                 page = QuickCutPage.EDITOR
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (error: Exception) {
-                errorMessage = "영상을 불러올 수 없습니다. " +
-                    (error.localizedMessage ?: "다른 파일을 선택해 주세요.")
-                page = if (timeline.isEmpty) QuickCutPage.PICKER else QuickCutPage.EDITOR
+                reportError("영상을 불러올 수 없습니다. " +
+                    (error.localizedMessage ?: "다른 파일을 선택해 주세요."))
+                page = previousPage
             }
         }
     }
@@ -106,9 +131,13 @@ class EditorViewModel : ViewModel() {
     }
 
     fun trimSelected(startMs: Long, endMs: Long) {
-        val id = selectedId ?: return
-        val candidate = runCatching { timeline.updateRange(id, startMs, endMs) }.getOrNull() ?: return
-        timeline = candidate
+        selectedId?.let { trimClip(it, startMs, endMs) }
+    }
+
+    fun trimClip(id: Long, startMs: Long, endMs: Long) {
+        if (timeline.clipAt(id) == null) return
+        val edited = runCatching { timeline.updateRange(id, startMs, endMs) }.getOrNull() ?: return
+        timeline = edited
         playPositionMs = playPositionMs.coerceIn(0L, timeline.totalDurationMs)
     }
 
@@ -136,11 +165,18 @@ class EditorViewModel : ViewModel() {
         }
     }
 
-    fun moveSelected(direction: Int) {
-        val id = selectedId ?: return
+    fun moveClip(id: Long, direction: Int) {
+        if (timeline.clipAt(id) == null) return
         timeline = timeline.move(id, direction)
         val index = timeline.clips.indexOfFirst { it.id == id }
-        if (index >= 0) playPositionMs = timeline.startOf(index)
+        if (index >= 0) {
+            selectedId = id
+            playPositionMs = timeline.startOf(index)
+        }
+    }
+
+    fun moveSelected(direction: Int) {
+        selectedId?.let { moveClip(it, direction) }
     }
 
     fun toggleMute() {
@@ -150,22 +186,30 @@ class EditorViewModel : ViewModel() {
 
     fun startExport(context: Context) {
         if (timeline.isEmpty || page != QuickCutPage.EDITOR) return
+        val snapshot = timeline
         page = QuickCutPage.EXPORTING
+        isFinalizing = false
         progressPercent = null
         exportJob = viewModelScope.launch {
             try {
-                val uri = VideoExporter(context.applicationContext).export(timeline) {
-                    progressPercent = it
-                }
+                val uri = VideoExporter(context.applicationContext).export(
+                    timeline = snapshot,
+                    onProgress = { progressPercent = it },
+                    onFinalizing = {
+                        isFinalizing = true
+                        progressPercent = null
+                    },
+                )
                 completedUri = uri
                 page = QuickCutPage.COMPLETED
             } catch (_: CancellationException) {
                 page = QuickCutPage.EDITOR
             } catch (error: Exception) {
-                errorMessage = "저장에 실패했습니다. " +
-                    (error.localizedMessage ?: "다시 시도해 주세요.")
+                reportError("저장에 실패했습니다. " +
+                    (error.localizedMessage ?: "다시 시도해 주세요."))
                 page = QuickCutPage.EDITOR
             } finally {
+                isFinalizing = false
                 progressPercent = null
                 exportJob = null
             }
@@ -173,7 +217,7 @@ class EditorViewModel : ViewModel() {
     }
 
     fun cancelExport() {
-        exportJob?.cancel()
+        if (!isFinalizing) exportJob?.cancel()
     }
 
     fun requestExit() {
@@ -190,6 +234,7 @@ class EditorViewModel : ViewModel() {
         selectedId = null
         playPositionMs = 0L
         completedUri = null
+        errorMessage = null
         page = QuickCutPage.PICKER
     }
 

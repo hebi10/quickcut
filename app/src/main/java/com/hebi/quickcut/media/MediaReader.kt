@@ -4,6 +4,8 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import java.io.File
+import java.io.IOException
 
 data class VideoMetadata(
     val durationMs: Long,
@@ -21,6 +23,20 @@ object MediaReader {
             require(hasVideo && duration >= 100L) { "편집할 수 없는 영상입니다." }
             val hasAudio = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_HAS_AUDIO) == "yes"
             return VideoMetadata(duration, hasAudio)
+        } finally {
+            retriever.release()
+        }
+    }
+
+    fun validateExport(file: File) {
+        if (!file.isFile || file.length() == 0L) throw IOException("저장된 영상이 비어 있습니다.")
+        val retriever = MediaMetadataRetriever()
+        try {
+            retriever.setDataSource(file.absolutePath)
+            val video = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_HAS_VIDEO) == "yes"
+            val duration = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                ?.toLongOrNull() ?: 0L
+            if (!video || duration <= 0L) throw IOException("저장된 영상을 재생할 수 없습니다.")
         } finally {
             retriever.release()
         }

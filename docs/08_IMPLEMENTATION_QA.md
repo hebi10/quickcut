@@ -3,7 +3,8 @@
 - 기준일: 2026-10-08
 - 대상: QuickCut Android 0.1.0 개발판
 - 범위: 기존 기획의 1차 MVP
-- **자동 컴파일·JVM 단위 테스트·APK 빌드: 성공 기록 있음**
+- **자동 컴파일·JVM 단위 테스트·Lint·APK 빌드: 성공**
+- **Android 15(API 35) 에뮬레이터 MP4 내보내기 4개 계측 테스트: 성공** ([GitHub Actions](https://github.com/hebi10/quickcut/actions/runs/37732601223))
 - **실제 폰·태블릿에서 영상 처리 완료 검증: 미수행**
 
 ## 1. 기능 구현 상태
@@ -121,6 +122,8 @@ Media3는 조건이 맞을 때 transmuxing/trim optimization을 적용하지만,
 
 ## 8. 에뮬레이터 실행 환경 참고
 
-- 기존 API 35 에뮬레이터 CI 실패 원인은 GitHub 실행 환경의 userdata 파티션 디스크 부족이었습니다.
-- 대응: 에뮬레이터의 `disk-size: 2048M`, `ram-size: 1536M`로 조정했습니다.
-- **실제 MP4 트리밍 통합 테스트 통과 여부는 별도 확인 전까지 미검증입니다.**
+- 과거 GitHub Actions 실패 원인은 테스트 환경의 디스크 부족과 여러 줄 셸 반복문 실행 방식이었습니다.
+- 대응: GitHub 실행 환경의 불필요한 도구를 정리하고, 테스트 명령을 `scripts/android-emulator-check.sh`에서 실행하도록 수정했습니다.
+- Android 15(API 35) 에뮬레이터의 기본 영상 자르기, 클립 연결, 부분/전체 음소거 출력 4개 테스트가 모두 통과했습니다.
+- 최신 테스트는 결과 파일 길이 오차를 ±300ms로 검사하며, 스마트폰·태블릿 크기별 시작 화면 스크린샷을 산출합니다. 최종 검증 상태는 [Actions 실행 기록](https://github.com/hebi10/quickcut/actions)으로 확인합니다.
+- 계측 테스트 통과는 모든 기기·코덱·HDR·4K 동작을 보증하지 않습니다.

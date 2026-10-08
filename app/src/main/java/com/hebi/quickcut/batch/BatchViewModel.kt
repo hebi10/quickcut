@@ -109,8 +109,14 @@ class BatchViewModel : ViewModel() {
     }
 
     private fun currentDraft(): BatchTemplate? {
-        val head = parseMillis(draftLeadingSeconds) ?: return null
-        val tail = parseMillis(draftTrailingSeconds) ?: return null
+        // Disabled inputs must never block validation or alter the saved template.
+        // Keep their text in the editor state so switching modes restores it.
+        val head = if (draftMode.usesLeading) {
+            parseMillis(draftLeadingSeconds) ?: return null
+        } else 0L
+        val tail = if (draftMode.usesTrailing) {
+            parseMillis(draftTrailingSeconds) ?: return null
+        } else 0L
         return BatchTemplate(
             id = selectedTemplateId ?: UUID.randomUUID().toString(),
             name = draftName.trim(),

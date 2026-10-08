@@ -50,6 +50,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.KeyboardType
@@ -248,23 +249,25 @@ private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
                 model.draftMode = mode
             }
         }
+        val useLeading = model.draftMode.usesLeading
+        val useTrailing = model.draftMode.usesTrailing
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             OutlinedTextField(
-                value = model.draftLeadingSeconds,
+                value = if (useLeading) model.draftLeadingSeconds else "",
                 onValueChange = { model.draftLeadingSeconds = it.take(10) },
-                enabled = !disabled,
-                label = { Text("앞부분 (초)") },
+                enabled = !disabled && useLeading,
+                label = { Text(if (useLeading) "앞부분 (초)" else "앞부분 (미사용)") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(1f).testTag("batch-leading-seconds"),
                 singleLine = true,
             )
             OutlinedTextField(
-                value = model.draftTrailingSeconds,
+                value = if (useTrailing) model.draftTrailingSeconds else "",
                 onValueChange = { model.draftTrailingSeconds = it.take(10) },
-                enabled = !disabled,
-                label = { Text("뒷부분 (초)") },
+                enabled = !disabled && useTrailing,
+                label = { Text(if (useTrailing) "뒷부분 (초)" else "뒷부분 (미사용)") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(1f).testTag("batch-trailing-seconds"),
                 singleLine = true,
             )
         }

@@ -4,11 +4,12 @@ import com.hebi.quickcut.editor.EditTimeline
 import com.hebi.quickcut.editor.VideoClip
 import java.util.UUID
 
-enum class BatchClipMode {
-    REMOVE_EDGES,
-    KEEP_FIRST,
-    KEEP_LAST,
-    JOIN_EDGES,
+/** Which duration inputs actually apply to each batch edit operation. */
+enum class BatchClipMode(val usesLeading: Boolean, val usesTrailing: Boolean) {
+    REMOVE_EDGES(true, true),
+    KEEP_FIRST(true, false),
+    KEEP_LAST(false, true),
+    JOIN_EDGES(true, true),
 }
 
 data class BatchTemplate(

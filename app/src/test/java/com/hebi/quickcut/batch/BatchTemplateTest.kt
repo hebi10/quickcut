@@ -44,6 +44,31 @@ class BatchTemplateTest {
         assertTrue(BatchTemplate(leadingMs=0, trailingMs=0).checkValidity() != null)
         assertTrue(BatchTemplate(name="").checkValidity() != null)
     }
+
+    @Test fun modesEnableOnlyRelevantInputs() {
+        assertTrue(BatchClipMode.REMOVE_EDGES.usesLeading)
+        assertTrue(BatchClipMode.REMOVE_EDGES.usesTrailing)
+        assertTrue(BatchClipMode.KEEP_FIRST.usesLeading)
+        assertTrue(!BatchClipMode.KEEP_FIRST.usesTrailing)
+        assertTrue(!BatchClipMode.KEEP_LAST.usesLeading)
+        assertTrue(BatchClipMode.KEEP_LAST.usesTrailing)
+        assertTrue(BatchClipMode.JOIN_EDGES.usesLeading)
+        assertTrue(BatchClipMode.JOIN_EDGES.usesTrailing)
+    }
+
+    @Test fun irrelevantDurationIsZeroAndDoesNotAffectExtraction() {
+        val first = BatchTemplate(
+            mode = BatchClipMode.KEEP_FIRST, leadingMs = 3_000L, trailingMs = 0L
+        )
+        val last = BatchTemplate(
+            mode = BatchClipMode.KEEP_LAST, leadingMs = 0L, trailingMs = 3_000L
+        )
+        assertEquals(null, first.checkValidity())
+        assertEquals(null, last.checkValidity())
+        assertEquals(3_000L, (first.plan(uri, 20_000L, true) as BatchPlan.Ready).timeline.totalDurationMs)
+        assertEquals(3_000L, (last.plan(uri, 20_000L, true) as BatchPlan.Ready).timeline.totalDurationMs)
+    }
+
     @Test fun overlappingJoinIsSkipped() {
         val t = BatchTemplate(mode=BatchClipMode.JOIN_EDGES,leadingMs=8000,trailingMs=8000)
         assertTrue(t.plan(uri,10_000,true) is BatchPlan.Skip)

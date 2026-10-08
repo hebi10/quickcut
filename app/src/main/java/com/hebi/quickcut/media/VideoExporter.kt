@@ -3,6 +3,7 @@ package com.hebi.quickcut.media
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import androidx.annotation.OptIn
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.transformer.Composition
 import androidx.media3.transformer.ExportException

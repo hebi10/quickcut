@@ -70,6 +70,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.ExperimentalApi
+import androidx.annotation.OptIn
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.transformer.CompositionPlayer
 import androidx.media3.ui.AspectRatioFrameLayout

@@ -2,6 +2,7 @@ package com.hebi.quickcut.media
 
 import android.net.Uri
 import androidx.media3.common.MediaItem
+import androidx.annotation.OptIn
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.transformer.Composition
 import androidx.media3.transformer.EditedMediaItem

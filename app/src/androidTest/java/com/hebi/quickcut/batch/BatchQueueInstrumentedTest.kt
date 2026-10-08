@@ -31,6 +31,7 @@ class BatchQueueInstrumentedTest {
         val inputs = listOf(
             File(context.cacheDir, "quickcut_batch_queue_01.mp4"),
             File(context.cacheDir, "quickcut_batch_queue_02.mp4"),
+            File(context.cacheDir, "quickcut_batch_queue_03.mp4"),
         )
         val vm = BatchViewModel()
         try {
@@ -48,7 +49,7 @@ class BatchQueueInstrumentedTest {
                 vm.draftName = "앞뒤 반초 삭제"
                 vm.draftLeadingSeconds = "0.5"
                 vm.draftTrailingSeconds = "0.5"
-                vm.addVideos(context, inputs.map(Uri::fromFile))
+                vm.addVideos(context, inputs.take(2).map(Uri::fromFile))
             }
             withTimeout(30_000L) {
                 while (vm.isImporting || vm.files.size != 2) delay(100L)
@@ -78,6 +79,30 @@ class BatchQueueInstrumentedTest {
             assertEquals(beforeLengths, inputs.map(File::length))
             assertEquals(OriginalAction.KEEP, vm.originalAction)
             assertEquals(OriginalActionStatus.NONE, vm.originalStatus)
+
+            // A second batch can append new inputs without exporting previous
+            // successful files again. Only sources saved in the *second* run
+            // can become original deletion candidates for that run.
+            val originalOutputs = vm.files.map(BatchFile::savedOutputUri)
+            withContext(Dispatchers.Main) {
+                vm.originalAction = OriginalAction.TRASH
+                vm.addVideos(context, listOf(Uri.fromFile(inputs[2])))
+            }
+            withTimeout(30_000L) {
+                while (vm.isImporting || vm.files.size != 3) delay(100L)
+            }
+            withContext(Dispatchers.Main) { vm.start(context) }
+            withTimeout(150_000L) {
+                while (vm.runState != BatchRunState.FINISHED) delay(100L)
+            }
+            assertEquals(3, vm.successes)
+            assertEquals(originalOutputs, vm.files.take(2).map(BatchFile::savedOutputUri))
+            assertEquals(OriginalAction.KEEP, vm.originalAction)
+            assertEquals(OriginalAction.TRASH, vm.performedOriginalAction)
+            assertEquals(OriginalActionStatus.READY, vm.originalStatus)
+            assertEquals(listOf(Uri.fromFile(inputs[2]).toString()), vm.originalCandidates)
+            assertTrue(inputs.all(File::exists))
+            assertEquals(beforeLengths, inputs.map(File::length))
         } finally {
             vm.cancel()
             vm.files.mapNotNull(BatchFile::savedOutputUri).forEach { output ->

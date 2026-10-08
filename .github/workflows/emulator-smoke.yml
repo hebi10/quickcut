@@ -5,6 +5,10 @@ on:
   push:
     paths:
       - ".github/workflows/emulator-smoke.yml"
+      - "scripts/android-emulator-check.sh"
+      - "app/src/androidTest/**"
+      - "app/src/main/java/com/hebi/quickcut/media/**"
+      - "app/src/main/java/com/hebi/quickcut/editor/**"
 
 permissions:
   contents: read
@@ -56,30 +60,18 @@ jobs:
           emulator-boot-timeout: 300
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -no-metrics -partition-size 2048
           disable-animations: true
-          script: |
-            gradle --no-daemon :app:assembleDebug
-            adb install -r app/build/outputs/apk/debug/app-debug.apk
-            adb shell am start -W -n com.hebi.quickcut/.MainActivity
-            sleep 3
-            adb exec-out screencap -p > quickcut-start.png
-            mkdir -p app/src/androidTest/assets
-            ffmpeg -hide_banner -loglevel error -y -f lavfi -i color=c=blue:s=320x240:r=30 -f lavfi -i sine=frequency=440:sample_rate=44100 -t 3 -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a aac -b:a 64k -shortest app/src/androidTest/assets/quickcut_fixture.mp4
-            gradle --no-daemon :app:connectedDebugAndroidTest
-            for i in 1 2 3; do
-              adb shell uiautomator dump /sdcard/quickcut-ui.xml > /dev/null 2>&1 || true
-              if adb shell cat /sdcard/quickcut-ui.xml 2>/dev/null | grep -q "영상 선택"; then
-                echo "QuickCut start screen is visible"
-                exit 0
-              fi
-              sleep 2
-            done
-            adb logcat -d -s AndroidRuntime:E | tail -100
-            echo "Could not verify the QuickCut start screen"
-            exit 1
+          script: bash scripts/android-emulator-check.sh
       - name: Upload emulator screenshot
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: quickcut-emulator-start
           path: quickcut-start.png
+          if-no-files-found: ignore
+      - name: Upload instrumentation test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quickcut-instrumentation-results
+          path: app/build/outputs/androidTest-results/connected/
           if-no-files-found: ignore

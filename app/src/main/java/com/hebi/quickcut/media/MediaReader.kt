@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import android.util.LruCache
 import java.io.File
 import java.io.IOException
 
@@ -13,6 +14,10 @@ data class VideoMetadata(
 )
 
 object MediaReader {
+    private val thumbnailCache = object : LruCache<String, Bitmap>(12 * 1024 * 1024) {
+        override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount
+    }
+
     fun metadata(context: Context, uri: Uri): VideoMetadata {
         val retriever = MediaMetadataRetriever()
         try {
@@ -43,15 +48,18 @@ object MediaReader {
     }
 
     fun thumbnail(context: Context, uri: Uri, timeMs: Long): Bitmap? {
+        val snapped = timeMs.coerceAtLeast(0L) / 2_000L * 2_000L
+        val key = uri.toString() + ":" + snapped
+        thumbnailCache.get(key)?.let { return it }
         val retriever = MediaMetadataRetriever()
         return try {
             retriever.setDataSource(context, uri)
             retriever.getScaledFrameAtTime(
-                timeMs.coerceAtLeast(0L) * 1_000L,
+                snapped * 1_000L,
                 MediaMetadataRetriever.OPTION_CLOSEST_SYNC,
                 320,
                 180,
-            )
+            )?.also { frame -> thumbnailCache.put(key, frame) }
         } catch (_: Exception) {
             null
         } finally {

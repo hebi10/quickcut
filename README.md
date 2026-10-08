@@ -50,7 +50,7 @@
 | Android Gradle Plugin | 9.2.1 |
 | Gradle | 9.4.1 |
 | Kotlin Compose compiler plugin | 2.3.21 |
-| Jetpack Compose BOM | 2026.07.00 |
+| Jetpack Compose BOM | 2026.06.01 |
 | AndroidX Media3 | 1.11.1 |
 | Android API | minSdk 29, targetSdk 36, compileSdk 36 |
 

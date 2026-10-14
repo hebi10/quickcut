@@ -305,6 +305,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         if (timeline.clipAt(id) == null) return
         val edited = runCatching { timeline.updateRange(id, startMs, endMs) }.getOrNull() ?: return
         if (edited == timeline) return
+        needsReencodeConsent = false
         if (activeTrim == null) recordChange()
         timeline = edited
         playPositionMs = playPositionMs.coerceIn(0L, timeline.totalDurationMs)

@@ -21,13 +21,14 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class VideoExportInstrumentedTest {
     private suspend fun withFixture(
+        fixtureName: String = "quickcut_fixture.mp4",
         block: suspend (Context, Uri, VideoMetadata) -> Unit,
     ) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val source = File(context.cacheDir, "quickcut_fixture.mp4")
+        val source = File(context.cacheDir, fixtureName)
         try {
             InstrumentationRegistry.getInstrumentation().context.assets
-                .open("quickcut_fixture.mp4").use { input ->
+                .open(fixtureName).use { input ->
                     source.outputStream().use { output -> input.copyTo(output) }
                 }
             assertTrue("The emulator fixture is missing", source.length() > 0L)
@@ -126,6 +127,36 @@ class VideoExportInstrumentedTest {
                 assertTrue(exported.hasAudio)
             } finally {
                 context.contentResolver.delete(resultUri, null, null)
+            }
+        }
+    }
+
+    @Test
+    fun trimmingFourSecondsAtAKeyframeUsesDirectCopy() = runBlocking {
+        withFixture("quickcut_keyframes.mp4") { context, uri, metadata ->
+            val clip = VideoClip(
+                id = 1,
+                uri = uri.toString(),
+                sourceDurationMs = metadata.durationMs,
+                startMs = 4_000L,
+                endMs = metadata.durationMs,
+                hasAudio = metadata.hasAudio,
+            )
+            val plan = FastMp4Trimmer.prepare(context, clip)
+                ?: throw AssertionError("Four-second keyframe trim should be eligible")
+            val output = GalleryWriter(context).saveDirect(
+                outputBaseName = "test_trim_head_4s",
+                expectedDurationMs = clip.durationMs,
+                expectAudio = true,
+                writer = { fd -> FastMp4Trimmer.write(context, plan, fd) {} },
+                onFinalizing = {},
+            )
+            try {
+                val exported = MediaReader.metadata(context, output)
+                assertTrue(abs(exported.durationMs - clip.durationMs) <= 250L)
+                assertTrue(exported.hasAudio)
+            } finally {
+                context.contentResolver.delete(output, null, null)
             }
         }
     }

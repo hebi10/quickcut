@@ -299,35 +299,22 @@ private fun BatchHeader(onBack: () -> Unit) {
 private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
     val context = LocalContext.current
     val disabled = model.isRunning
+    var showAdvanced by rememberSaveable { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("내 템플릿", color = onSurface, fontWeight = FontWeight.SemiBold)
-        Row(
-            modifier = Modifier.horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        OutlinedButton(
+            onClick = onSelectVideos,
+            enabled = !disabled && !model.isImporting,
+            modifier = Modifier.fillMaxWidth().height(52.dp),
+            shape = RoundedCornerShape(4.dp),
         ) {
-            OutlinedButton(
-                onClick = { model.chooseTemplate(null) },
-                enabled = !disabled,
-                shape = RoundedCornerShape(4.dp),
-            ) { Text("직접 설정") }
-            model.templates.forEach { template ->
-                OutlinedButton(
-                    onClick = { model.chooseTemplate(template.id) },
-                    enabled = !disabled,
-                    shape = RoundedCornerShape(4.dp),
-                ) {
-                    Text((if (model.selectedTemplateId == template.id) "✓ " else "") +
-                        template.name)
-                }
-            }
+            Icon(Icons.Outlined.Add, contentDescription = null)
+            Spacer(Modifier.width(8.dp))
+            Text(if (model.isImporting) "영상 불러오는 중" else "영상 여러 개 선택 / 추가")
         }
-        OutlinedTextField(
-            value = model.draftName,
-            onValueChange = { model.draftName = it.take(40) },
-            enabled = !disabled,
-            label = { Text("템플릿 이름") },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
+        Text(
+            "자르기 설정 · 마지막 사용값 자동 복원",
+            color = onSurface,
+            fontWeight = FontWeight.SemiBold,
         )
         Text("편집 방식", color = secondary, fontSize = 13.sp)
         listOf(
@@ -374,6 +361,52 @@ private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
             )
             Text("원본 소리 음소거", color = onSurface)
         }
+        TextButton(
+            onClick = { showAdvanced = !showAdvanced },
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text(if (showAdvanced) "템플릿·저장 옵션 접기" else "템플릿·저장 옵션 펼치기") }
+        Text(
+            "저장 날짜: " + (if (model.saveDateMode == SaveDateMode.CURRENT)
+                "현재 날짜" else "원본 날짜") +
+                " · 저장 후 원본: " + when (model.originalAction) {
+                    OriginalAction.KEEP -> "유지"
+                    OriginalAction.TRASH -> "휴지통"
+                    OriginalAction.DELETE -> "영구 삭제"
+                },
+            color = secondary,
+            fontSize = 12.sp,
+        )
+        if (showAdvanced) {
+        Text("내 템플릿", color = onSurface, fontWeight = FontWeight.SemiBold)
+        Row(
+            modifier = Modifier.horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            OutlinedButton(
+                onClick = { model.chooseTemplate(null) },
+                enabled = !disabled,
+                shape = RoundedCornerShape(4.dp),
+            ) { Text("직접 설정") }
+            model.templates.forEach { template ->
+                OutlinedButton(
+                    onClick = { model.chooseTemplate(template.id) },
+                    enabled = !disabled,
+                    shape = RoundedCornerShape(4.dp),
+                ) {
+                    Text((if (model.selectedTemplateId == template.id) "✓ " else "") +
+                        template.name)
+                }
+            }
+        }
+        OutlinedTextField(
+            value = model.draftName,
+            onValueChange = { model.draftName = it.take(40) },
+            enabled = !disabled,
+            label = { Text("템플릿 이름") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+        )
+
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(
                 onClick = { model.saveTemplate(context) },
@@ -426,6 +459,8 @@ private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
             Icon(Icons.Outlined.Add, contentDescription = null)
             Spacer(Modifier.width(8.dp))
             Text(if (model.isImporting) "영상 불러오는 중" else "영상 여러 개 선택 / 추가")
+        }
+
         }
     }
 }

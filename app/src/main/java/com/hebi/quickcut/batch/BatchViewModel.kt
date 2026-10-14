@@ -60,7 +60,11 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
     private val settings = QuickCutSettings(application)
     private val lastDraft = settings.loadBatch()
 
-    suspend fun inspectExport(context: Context, retryOnly: Boolean): BatchExportOverview {
+    suspend fun inspectExport(
+        context: Context,
+        retryOnly: Boolean,
+        onProgress: (Int, Int) -> Unit = { _, _ -> },
+    ): BatchExportOverview {
         val template = previewTemplate()
             ?: throw IllegalArgumentException("편집 설정을 확인해 주세요.")
         val dateMode = saveDateMode
@@ -74,7 +78,8 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
         var skipped = 0
         val encodingFiles = mutableListOf<String>()
         val skippedFiles = mutableListOf<String>()
-        for (file in targets) {
+        for ((index, file) in targets.withIndex()) {
+            onProgress(index + 1, targets.size)
             if (dateMode == SaveDateMode.ORIGINAL && file.originalDate == null) {
                 skipped++
                 skippedFiles += file.displayName + " · 원본 날짜 없음"

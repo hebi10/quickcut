@@ -97,6 +97,11 @@ fun QuickCutApp(
     var selectedSaveDateMode by rememberSaveable {
         mutableStateOf(settings.loadSaveDate())
     }
+    var draftSaveDateMode by remember { mutableStateOf(selectedSaveDateMode) }
+    val openSaveOptions: () -> Unit = {
+        draftSaveDateMode = selectedSaveDateMode
+        showSaveOptions = true
+    }
     LaunchedEffect(selectedSaveDateMode) {
         settings.saveSaveDate(selectedSaveDateMode)
     }
@@ -275,13 +280,13 @@ fun QuickCutApp(
                         onBack = model::requestExit,
                         onDetailedEdit = { model.changeQuickMode(false) },
                         onSave = { beginExportAfterReview() },
-                        onSaveOptions = { showSaveOptions = true },
+                        onSaveOptions = openSaveOptions,
                     )
                 } else {
                     EditorScreen(
                         model = model,
                         addVideos = { picker.launch(arrayOf("video/*")) },
-                        save = { showSaveOptions = true },
+                        save = openSaveOptions,
                     )
                 }
             }
@@ -366,11 +371,11 @@ fun QuickCutApp(
                     ).forEach { (mode, label) ->
                         Row(
                             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
-                                .clickable { selectedSaveDateMode = mode },
+                                .clickable { draftSaveDateMode = mode },
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             RadioButton(
-                                selected = selectedSaveDateMode == mode,
+                                selected = draftSaveDateMode == mode,
                                 onClick = null,
                             )
                             Text(label, color = CutColors.primaryText)
@@ -393,6 +398,7 @@ fun QuickCutApp(
             confirmButton = {
                 Button(
                     onClick = {
+                        selectedSaveDateMode = draftSaveDateMode
                         showSaveOptions = false
                         beginExportAfterReview()
                     },

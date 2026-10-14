@@ -687,6 +687,7 @@ private fun StartScreen(
             Button(
                 onClick = onQuick,
                 modifier = Modifier.fillMaxWidth().height(56.dp),
+                shape = RoundedCornerShape(4.dp),
             ) {
                 Text("빠른 자르기 · 영상 1개", fontSize = 16.sp,
                     fontWeight = FontWeight.SemiBold)
@@ -694,6 +695,7 @@ private fun StartScreen(
             OutlinedButton(
                 onClick = onBatch,
                 modifier = Modifier.fillMaxWidth().height(54.dp),
+                shape = RoundedCornerShape(4.dp),
             ) { Text("일괄 편집 · 여러 영상") }
             TextButton(
                 onClick = onSelect,
@@ -703,6 +705,7 @@ private fun StartScreen(
                 OutlinedButton(
                     onClick = onRestore,
                     modifier = Modifier.fillMaxWidth().height(52.dp),
+                    shape = RoundedCornerShape(4.dp),
                 ) { Text("이전 편집 이어서 진행") }
             }
         }
@@ -793,6 +796,7 @@ private fun LastSettingsDialog(
                     onDismiss()
                 },
                 enabled = head != null && tail != null,
+                shape = RoundedCornerShape(4.dp),
             ) { Text("설정 저장") }
         },
         dismissButton = {

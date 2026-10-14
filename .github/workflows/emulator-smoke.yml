@@ -2,7 +2,21 @@ name: Android emulator smoke
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/emulator-smoke.yml"
+      - "scripts/android-emulator-check.sh"
+      - "app/src/androidTest/**"
+      - "app/src/main/AndroidManifest.xml"
+      - "app/src/main/java/com/hebi/quickcut/QuickCutApplication.kt"
+      - "app/src/main/java/com/hebi/quickcut/export/**"
+      - "app/build.gradle.kts"
+      - "app/src/main/java/com/hebi/quickcut/media/**"
+      - "app/src/main/java/com/hebi/quickcut/editor/**"
+      - "app/src/main/java/com/hebi/quickcut/ui/**"
+      - "app/src/main/java/com/hebi/quickcut/batch/**"
   push:
+    branches: [main]
     paths:
       - ".github/workflows/emulator-smoke.yml"
       - "scripts/android-emulator-check.sh"

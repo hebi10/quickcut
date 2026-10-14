@@ -93,7 +93,7 @@ fun QuickCutApp(
     var inspectingExport by remember { mutableStateOf(false) }
     var showExportCancelConfirmation by rememberSaveable { mutableStateOf(false) }
     var showSaveOptions by rememberSaveable { mutableStateOf(false) }
-    var selectedSaveAction by rememberSaveable { mutableStateOf(OriginalAction.KEEP) }
+    var selectedSaveAction by remember { mutableStateOf(OriginalAction.KEEP) }
     var selectedSaveDateMode by rememberSaveable {
         mutableStateOf(settings.loadSaveDate())
     }

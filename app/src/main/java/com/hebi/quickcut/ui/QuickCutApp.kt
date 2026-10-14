@@ -34,6 +34,11 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Checkbox
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
+import kotlin.math.roundToLong
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.MaterialTheme
@@ -564,61 +569,175 @@ fun QuickCutApp(
 
 @Composable
 private fun StartScreen(
+    onQuick: () -> Unit,
     onSelect: () -> Unit,
     onBatch: () -> Unit,
     canRestore: Boolean,
     onRestore: () -> Unit,
+    quickSettings: QuickTrimSettings,
+    dateMode: SaveDateMode,
+    onPreferences: () -> Unit,
 ) {
-    Box(Modifier.fillMaxSize()) {
-        Text(
-            text = "QuickCut",
-            color = CutColors.primaryText,
-            fontSize = 24.sp,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.align(Alignment.TopStart).padding(20.dp),
-        )
+    Column(
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+            .padding(20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
         Column(
-            modifier = Modifier.align(Alignment.Center).padding(horizontal = 24.dp).widthIn(max = 420.dp).fillMaxWidth(),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(20.dp),
+            modifier = Modifier.widthIn(max = 480.dp).fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Icon(
-                imageVector = Icons.Outlined.VideoLibrary,
-                contentDescription = null,
-                tint = CutColors.secondaryText,
-                modifier = Modifier.size(84.dp),
+            Text(
+                "QuickCut",
+                color = CutColors.primaryText,
+                fontSize = 26.sp,
+                fontWeight = FontWeight.SemiBold,
             )
-            Spacer(Modifier.height(4.dp))
-            Button(
-                onClick = onSelect,
-                modifier = Modifier.fillMaxWidth().height(56.dp),
-                shape = RoundedCornerShape(4.dp),
+            Text("필요한 구간만 빠르게 잘라 저장하세요.",
+                color = CutColors.secondaryText)
+            Column(
+                modifier = Modifier.fillMaxWidth()
+                    .background(CutColors.surface).padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Text("영상 선택", fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("마지막 사용 설정", color = CutColors.primaryText,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.weight(1f))
+                    TextButton(onClick = onPreferences) { Text("설정 변경") }
+                }
+                Text(
+                    "앞 " + (quickSettings.leadingMs / 1_000.0) +
+                        "초 삭제 · 뒤 " + (quickSettings.trailingMs / 1_000.0) + "초 삭제",
+                    color = CutColors.primaryText,
+                )
+                Text(
+                    (if (quickSettings.muteAudio) "음소거" else "소리 유지") +
+                        " · " + (if (dateMode == SaveDateMode.CURRENT)
+                            "현재 날짜 저장" else "원본 날짜 유지"),
+                    color = CutColors.secondaryText,
+                    fontSize = 13.sp,
+                )
+            }
+            Button(
+                onClick = onQuick,
+                modifier = Modifier.fillMaxWidth().height(56.dp),
+            ) {
+                Text("빠른 자르기 · 영상 1개", fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold)
             }
             OutlinedButton(
                 onClick = onBatch,
-                modifier = Modifier.fillMaxWidth().height(56.dp),
-                shape = RoundedCornerShape(4.dp),
-            ) {
-                Text("템플릿 · 일괄 편집", fontSize = 16.sp)
-            }
-            Text(
-                text = "영상을 선택해 편집하세요",
-                color = CutColors.secondaryText,
-                style = MaterialTheme.typography.bodyMedium,
-            )
+                modifier = Modifier.fillMaxWidth().height(54.dp),
+            ) { Text("일괄 편집 · 여러 영상") }
+            TextButton(
+                onClick = onSelect,
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+            ) { Text("상세 편집 (분할·연결·순서 변경)") }
             if (canRestore) {
                 OutlinedButton(
                     onClick = onRestore,
                     modifier = Modifier.fillMaxWidth().height(52.dp),
-                    shape = RoundedCornerShape(4.dp),
-                ) {
-                    Text("이전 편집 복원")
-                }
+                ) { Text("이전 편집 이어서 진행") }
             }
         }
     }
+}
+
+@Composable
+private fun LastSettingsDialog(
+    settings: QuickCutSettings,
+    dateMode: SaveDateMode,
+    onDateChange: (SaveDateMode) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val initial = remember(settings) { settings.loadQuick() }
+    var headText by remember(initial) {
+        mutableStateOf((initial.leadingMs / 1_000.0).toString().removeSuffix(".0"))
+    }
+    var tailText by remember(initial) {
+        mutableStateOf((initial.trailingMs / 1_000.0).toString().removeSuffix(".0"))
+    }
+    var mute by remember(initial) { mutableStateOf(initial.muteAudio) }
+    var chosenDate by remember(dateMode) { mutableStateOf(dateMode) }
+    fun timeValue(input: String): Long? {
+        val seconds = input.trim().replace(',', '.').toDoubleOrNull() ?: return null
+        if (!seconds.isFinite() || seconds !in 0.0..86_400.0) return null
+        return (seconds * 1000.0).roundToLong()
+    }
+    val head = timeValue(headText)
+    val tail = timeValue(tailText)
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("마지막 사용 설정") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text("새 영상 선택 시 자동 적용됩니다.", color = CutColors.secondaryText,
+                    style = MaterialTheme.typography.bodySmall)
+                OutlinedTextField(
+                    value = headText,
+                    onValueChange = { headText = it.take(12) },
+                    label = { Text("앞부분 삭제 (초)") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = tailText,
+                    onValueChange = { tailText = it.take(12) },
+                    label = { Text("뒷부분 삭제 (초)") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Row(
+                    Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                        .clickable { mute = !mute },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Checkbox(checked = mute, onCheckedChange = { mute = it })
+                    Text("영상 음소거")
+                }
+                Text("저장 날짜", fontWeight = FontWeight.SemiBold)
+                listOf(
+                    SaveDateMode.CURRENT to "현재 날짜 저장",
+                    SaveDateMode.ORIGINAL to "원본 날짜 유지",
+                ).forEach { (mode, label) ->
+                    Row(
+                        Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                            .clickable { chosenDate = mode },
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = chosenDate == mode, onClick = null)
+                        Text(label)
+                    }
+                }
+                Text("원본 휴지통 이동·영구 삭제는 자동 저장하지 않습니다.",
+                    color = CutColors.secondaryText,
+                    style = MaterialTheme.typography.bodySmall)
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    settings.saveQuick(QuickTrimSettings(head!!, tail!!, mute))
+                    onDateChange(chosenDate)
+                    onDismiss()
+                },
+                enabled = head != null && tail != null,
+            ) { Text("설정 저장") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("취소") }
+        },
+        containerColor = CutColors.panel,
+    )
 }
 
 @Composable

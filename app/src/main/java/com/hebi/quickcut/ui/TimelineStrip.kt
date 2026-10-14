@@ -20,12 +20,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -57,6 +59,7 @@ fun TimelineStrip(
     showHint: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
+    var zoom by rememberSaveable { mutableFloatStateOf(1f) }
     Column(modifier.background(CutColors.surface).padding(vertical = 10.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
@@ -68,6 +71,14 @@ fun TimelineStrip(
                 fontSize = 11.sp,
                 color = CutColors.mutedText,
             )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = { zoom = (zoom / 2f).coerceAtLeast(1f) },
+                    enabled = zoom > 1f) { Text("−") }
+                Text(zoom.toInt().toString() + "배", fontSize = 11.sp,
+                    color = CutColors.primaryText)
+                TextButton(onClick = { zoom = (zoom * 2f).coerceAtMost(16f) },
+                    enabled = zoom < 16f) { Text("+") }
+            }
         }
         Spacer(Modifier.height(8.dp))
         Row(
@@ -81,8 +92,9 @@ fun TimelineStrip(
                     val clipStart = timeline.startOf(index)
                     val isActive = playheadMs >= clipStart &&
                         (playheadMs < clipStart + clip.durationMs || index == timeline.clips.lastIndex)
-                    val tileWidth = if (selected) 190.dp
-                        else (clip.durationMs / 200f).coerceIn(108f, 260f).dp
+                    val baseWidth = if (selected) 190f
+                        else (clip.durationMs / 200f).coerceIn(108f, 260f)
+                    val tileWidth = (baseWidth * zoom).coerceAtMost(3_200f).dp
                     val tilePx = with(LocalDensity.current) { tileWidth.toPx() }
                     val currentClip by rememberUpdatedState(clip)
                     val currentMove by rememberUpdatedState(onMove)
@@ -100,7 +112,9 @@ fun TimelineStrip(
                             .pointerInput(clip.id) {
                                 detectDragGesturesAfterLongPress(
                                     onDragEnd = {
-                                        if (abs(dragOffsetPx) >= tilePx * 0.3f) {
+                                        if (abs(dragOffsetPx) >=
+                                            minOf(tilePx * 0.3f, 128.dp.toPx())
+                                        ) {
                                             currentMove(clip.id, if (dragOffsetPx > 0f) 1 else -1)
                                         }
                                         dragOffsetPx = 0f

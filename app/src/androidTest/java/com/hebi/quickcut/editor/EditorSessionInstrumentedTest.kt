@@ -26,7 +26,7 @@ class EditorSessionInstrumentedTest {
         val previous = store.load()
         val source = InstrumentationRegistry.getInstrumentation().context.assets
             .open("quickcut_keyframes.mp4")
-        source.use { it.copyTo(file.outputStream()) }
+        source.use { input -> file.outputStream().use { output -> input.copyTo(output) } }
         val first = EditorViewModel(app)
         try {
             withContext(Dispatchers.Main) {
@@ -56,6 +56,7 @@ class EditorSessionInstrumentedTest {
             assertEquals(7_000L, restarted.timeline.clips.single().endMs)
             assertTrue(restarted.quickMode)
         } finally {
+            delay(450L)
             if (previous == null) store.clear() else store.save(previous)
             file.delete()
         }

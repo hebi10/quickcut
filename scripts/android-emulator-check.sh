@@ -19,7 +19,7 @@ adb exec-out screencap -p > quickcut-start.png
 found_screen=false
 for attempt in 1 2 3 4 5; do
   if adb shell uiautomator dump /sdcard/quickcut-ui.xml >/dev/null 2>&1 &&
-     adb shell cat /sdcard/quickcut-ui.xml | grep -q "영상 선택"; then
+     adb shell cat /sdcard/quickcut-ui.xml | grep -q "빠른 자르기"; then
     found_screen=true
     break
   fi

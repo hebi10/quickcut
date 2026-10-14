@@ -261,7 +261,8 @@ fun QuickCutApp(
                         settings = settings,
                         onBack = model::requestExit,
                         onDetailedEdit = { model.changeQuickMode(false) },
-                        onSave = { showSaveOptions = true },
+                        onSave = { beginExportAfterReview() },
+                        onSaveOptions = { showSaveOptions = true },
                     )
                 } else {
                     EditorScreen(
@@ -321,7 +322,11 @@ fun QuickCutApp(
             },
             title = { Text("저장 설정") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(
+                    modifier = Modifier.heightIn(max = 400.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
                     Text("저장 완료 후 원본 동영상 처리", color = CutColors.primaryText)
                     listOf(
                         OriginalAction.KEEP to "원본 유지 (기본값)",

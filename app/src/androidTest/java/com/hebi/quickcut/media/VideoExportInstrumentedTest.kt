@@ -99,6 +99,38 @@ class VideoExportInstrumentedTest {
     }
 
     @Test
+    fun nativeRemuxWritesDirectlyToGalleryAndPreservesAudio() = runBlocking {
+        withFixture { context, uri, metadata ->
+            val clip = VideoClip(
+                id = 1,
+                uri = uri.toString(),
+                sourceDurationMs = metadata.durationMs,
+                startMs = 0L,
+                endMs = 2_000L,
+                hasAudio = metadata.hasAudio,
+            )
+            val plan = FastMp4Trimmer.prepare(context, clip)
+                ?: throw AssertionError("Expected a native fast trim for H264/AAC")
+            val resultUri = GalleryWriter(context).saveDirect(
+                outputBaseName = "test_fast_trim",
+                expectedDurationMs = clip.durationMs,
+                expectAudio = true,
+                writer = { fileDescriptor ->
+                    FastMp4Trimmer.write(context, plan, fileDescriptor) {}
+                },
+                onFinalizing = {},
+            )
+            try {
+                val exported = MediaReader.metadata(context, resultUri)
+                assertTrue(abs(exported.durationMs - clip.durationMs) <= 250L)
+                assertTrue(exported.hasAudio)
+            } finally {
+                context.contentResolver.delete(resultUri, null, null)
+            }
+        }
+    }
+
+    @Test
     fun trimmedVideoIsSavedAndPlayable() = runBlocking {
         withFixture { context, uri, metadata ->
             val clip = VideoClip(

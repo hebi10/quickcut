@@ -87,6 +87,7 @@ fun BatchScreen(
     var pendingOverview by remember { mutableStateOf<BatchExportOverview?>(null) }
     var pendingRetry by remember { mutableStateOf(false) }
     var inspecting by remember { mutableStateOf(false) }
+    var showStopConfirmation by rememberSaveable { mutableStateOf(false) }
     val requestExport: (Boolean) -> Unit = { retry ->
         if (!inspecting && !model.isRunning) {
             inspecting = true
@@ -120,7 +121,7 @@ fun BatchScreen(
     }
 
     val guardedBack = {
-        if (model.isRunning) model.cancel() else onBack()
+        if (model.isRunning) showStopConfirmation = true else onBack()
     }
     BackHandler(onBack = guardedBack)
 
@@ -149,7 +150,7 @@ fun BatchScreen(
                         }
                     }
                     BatchProgress(model)
-                    BatchActions(model, requestExport, inspecting)
+                    BatchActions(model, requestExport, inspecting) { showStopConfirmation = true }
                 }
             }
         } else {
@@ -176,12 +177,36 @@ fun BatchScreen(
         }
     }
 
+    if (showStopConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showStopConfirmation = false },
+            title = { Text("일괄 저장을 중단할까요?") },
+            text = { Text("이미 저장된 영상은 유지하고 진행 중인 파일은 취소합니다.") },
+            confirmButton = {
+                Button(onClick = {
+                    showStopConfirmation = false
+                    model.cancel()
+                }) { Text("저장 중단") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showStopConfirmation = false }) {
+                    Text("계속 저장")
+                }
+            },
+            containerColor = Color(0xFF202126),
+        )
+    }
+
     pendingOverview?.let { overview ->
         AlertDialog(
             onDismissRequest = { pendingOverview = null },
             title = { Text("저장 방식 선택") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(
+                    modifier = Modifier.heightIn(max = 360.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
                     Text("고속 저장 가능 " + overview.fast + "개 · " +
                         "재인코딩 가능성 " + overview.needsEncoding + "개 · " +
                         "건너뜀 " + overview.skipped + "개")
@@ -190,6 +215,26 @@ fun BatchScreen(
                             "정밀 저장을 선택한 경우에만 재인코딩을 허용합니다.",
                         color = secondary, style = MaterialTheme.typography.bodySmall,
                     )
+                    if (overview.encodingFiles.isNotEmpty()) {
+                        Text("재인코딩이 필요할 수 있는 파일",
+                            fontWeight = FontWeight.SemiBold)
+                        overview.encodingFiles.take(5).forEach {
+                            Text("· " + it, color = secondary,
+                                style = MaterialTheme.typography.bodySmall)
+                        }
+                        if (overview.encodingFiles.size > 5) {
+                            Text("그 외 " + (overview.encodingFiles.size - 5) + "개",
+                                color = secondary)
+                        }
+                    }
+                    if (overview.skippedFiles.isNotEmpty()) {
+                        Text("저장 대상에서 제외되는 파일",
+                            fontWeight = FontWeight.SemiBold)
+                        overview.skippedFiles.take(3).forEach {
+                            Text("· " + it, color = secondary,
+                                style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
                 }
             },
             confirmButton = {
@@ -477,6 +522,7 @@ private fun BatchActions(
     model: BatchViewModel,
     requestExport: (Boolean) -> Unit,
     inspecting: Boolean,
+    onCancel: () -> Unit,
 ) {
     val context = LocalContext.current
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -489,7 +535,7 @@ private fun BatchActions(
             }
             BatchRunState.RUNNING -> {
                 OutlinedButton(
-                    onClick = model::cancel,
+                    onClick = onCancel,
                     modifier = Modifier.fillMaxWidth().height(52.dp),
                     shape = RoundedCornerShape(4.dp),
                 ) { Text("일괄 저장 중단") }

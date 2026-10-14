@@ -35,6 +35,7 @@ class VideoExporter(private val context: Context) {
         onFinalizing: () -> Unit,
         saveDateMode: SaveDateMode = SaveDateMode.CURRENT,
         outputBaseName: String? = null,
+        exportMode: ExportMode = ExportMode.ALLOW_REENCODE,
     ): android.net.Uri {
         require(!timeline.isEmpty) { "편집할 영상이 없습니다." }
         val originalDate = if (saveDateMode == SaveDateMode.ORIGINAL) {
@@ -76,16 +77,29 @@ class VideoExporter(private val context: Context) {
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (unsupported: FastTrimUnavailableException) {
-                    // GalleryWriter removes the failed pending output before retrying.
+                    if (exportMode == ExportMode.FAST_ONLY) {
+                        throw ReencodeRequiredException("고속 저장을 완료할 수 없습니다. 정밀 저장을 선택해 주세요.", unsupported)
+                    }
                     Log.w("QuickCutExport", "Fast remux unsupported; using Media3", unsupported)
                 } catch (unsupported: IllegalStateException) {
+                    if (exportMode == ExportMode.FAST_ONLY) {
+                        throw ReencodeRequiredException("고속 저장을 완료할 수 없습니다. 정밀 저장을 선택해 주세요.", unsupported)
+                    }
                     Log.w("QuickCutExport", "Native remux unavailable; using Media3", unsupported)
                 } catch (unsupported: IllegalArgumentException) {
+                    if (exportMode == ExportMode.FAST_ONLY) {
+                        throw ReencodeRequiredException("고속 저장을 완료할 수 없습니다. 정밀 저장을 선택해 주세요.", unsupported)
+                    }
                     Log.w("QuickCutExport", "Native remux rejected input; using Media3", unsupported)
                 }
             }
         }
 
+        if (exportMode == ExportMode.FAST_ONLY) {
+            throw ReencodeRequiredException(
+                "현재 자르기 위치 또는 저장 옵션에서는 고속 복사를 사용할 수 없습니다. 정밀 저장을 선택해 주세요."
+            )
+        }
         val temporary = File.createTempFile("quickcut_", ".mp4", context.cacheDir)
         try {
             check(temporary.delete()) { "임시 출력 파일을 준비하지 못했습니다." }
@@ -210,3 +224,5 @@ class VideoExporter(private val context: Context) {
         }
     }
 }
+
+class ReencodeRequiredException(message: String, cause: Throwable? = null) : IOException(message, cause)

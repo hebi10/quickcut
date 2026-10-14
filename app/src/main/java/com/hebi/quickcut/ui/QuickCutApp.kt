@@ -34,11 +34,18 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Checkbox
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
+import kotlin.math.roundToLong
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -52,6 +59,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.hebi.quickcut.batch.BatchScreen
 import com.hebi.quickcut.batch.BatchViewModel
 import com.hebi.quickcut.editor.EditorViewModel
@@ -59,6 +69,12 @@ import com.hebi.quickcut.editor.OriginalAction
 import com.hebi.quickcut.editor.OriginalActionStatus
 import com.hebi.quickcut.media.OriginalMediaActions
 import com.hebi.quickcut.media.SaveDateMode
+import com.hebi.quickcut.media.ExportMode
+import com.hebi.quickcut.media.ExportPlanner
+import com.hebi.quickcut.media.ExportAssessment
+import com.hebi.quickcut.settings.QuickCutSettings
+import com.hebi.quickcut.settings.QuickTrimSettings
+import kotlinx.coroutines.launch
 import com.hebi.quickcut.editor.QuickCutPage
 
 @Composable
@@ -67,10 +83,79 @@ fun QuickCutApp(
     batchModel: BatchViewModel = viewModel(),
 ) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val settings = remember(context) { QuickCutSettings(context) }
+    val coroutineScope = rememberCoroutineScope()
     var showBatch by rememberSaveable { mutableStateOf(false) }
+    var showLastSettings by rememberSaveable { mutableStateOf(false) }
+    var pendingQuickDefaults by rememberSaveable { mutableStateOf(false) }
+    var exportAssessment by remember { mutableStateOf<ExportAssessment?>(null) }
+    var inspectingExport by remember { mutableStateOf(false) }
+    var showExportCancelConfirmation by rememberSaveable { mutableStateOf(false) }
     var showSaveOptions by rememberSaveable { mutableStateOf(false) }
-    var selectedSaveAction by rememberSaveable { mutableStateOf(OriginalAction.KEEP) }
-    var selectedSaveDateMode by rememberSaveable { mutableStateOf(SaveDateMode.CURRENT) }
+    var selectedSaveAction by remember { mutableStateOf(OriginalAction.KEEP) }
+    var selectedSaveDateMode by rememberSaveable {
+        mutableStateOf(settings.loadSaveDate())
+    }
+    var draftSaveDateMode by remember { mutableStateOf(selectedSaveDateMode) }
+    val openSaveOptions: () -> Unit = {
+        draftSaveDateMode = selectedSaveDateMode
+        showSaveOptions = true
+    }
+    LaunchedEffect(selectedSaveDateMode) {
+        settings.saveSaveDate(selectedSaveDateMode)
+    }
+    DisposableEffect(model, lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) model.saveSessionOnStop()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    val beginExportAfterReview: () -> Unit = {
+        if (!inspectingExport) {
+            inspectingExport = true
+            coroutineScope.launch {
+                try {
+                    val assessment = ExportPlanner.analyze(
+                        context.applicationContext, model.timeline, selectedSaveDateMode
+                    )
+                    if (assessment.fastAvailable && !model.needsReencodeConsent) {
+                        model.startExport(
+                            context,
+                            selectedSaveAction,
+                            selectedSaveDateMode,
+                            ExportMode.FAST_ONLY,
+                        )
+                        selectedSaveAction = OriginalAction.KEEP
+                    } else {
+                        exportAssessment = assessment
+                    }
+                } catch (error: Exception) {
+                    model.reportError(
+                        "저장 방식을 확인하지 못했습니다. " +
+                            (error.localizedMessage ?: "다시 시도해 주세요.")
+                    )
+                } finally {
+                    inspectingExport = false
+                }
+            }
+        }
+    }
+    LaunchedEffect(model.needsReencodeConsent, model.page) {
+        if (model.needsReencodeConsent && model.page == QuickCutPage.EDITOR) {
+            try {
+                exportAssessment = ExportPlanner.analyze(
+                    context.applicationContext, model.timeline, selectedSaveDateMode
+                )
+            } catch (_: Exception) {
+                model.reportError(
+                    "고속 저장을 완료하지 못했습니다. 정밀 저장 허용 여부를 다시 선택해 주세요."
+                )
+            }
+        }
+    }
     val originalActionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartIntentSenderForResult()
     ) { result ->
@@ -83,8 +168,37 @@ fun QuickCutApp(
             model.showOriginalDeletionConfirmation()
         }
     }
+    val quickPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            model.changeQuickMode(true)
+            pendingQuickDefaults = true
+            model.importVideos(context, listOf(uri))
+        }
+    }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
-        model.importVideos(context, uris, append = model.page == QuickCutPage.EDITOR)
+        if (uris.isNotEmpty()) {
+            model.changeQuickMode(false)
+            model.importVideos(context, uris, append = model.page == QuickCutPage.EDITOR)
+        }
+    }
+    LaunchedEffect(model.page, model.timeline) {
+        if (pendingQuickDefaults && model.page == QuickCutPage.EDITOR &&
+            model.timeline.clips.size == 1
+        ) {
+            pendingQuickDefaults = false
+            val clip = model.timeline.clips.single()
+            val previous = settings.loadQuick()
+            if (previous.leadingMs + previous.trailingMs < clip.sourceDurationMs - 100L) {
+                model.trimClip(
+                    clip.id,
+                    previous.leadingMs,
+                    clip.sourceDurationMs - previous.trailingMs,
+                )
+            }
+            if (previous.muteAudio && !clip.muted) model.toggleMute()
+        }
     }
     val batchPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments()
@@ -103,7 +217,8 @@ fun QuickCutApp(
     BackHandler(enabled = !showBatch && model.page != QuickCutPage.PICKER) {
         when (model.page) {
             QuickCutPage.EDITOR -> model.requestExit()
-            QuickCutPage.EXPORTING -> if (!model.isFinalizing) model.cancelExport()
+            QuickCutPage.EXPORTING -> if (!model.isFinalizing)
+                showExportCancelConfirmation = true
             QuickCutPage.COMPLETED -> model.startNew()
             else -> Unit
         }
@@ -119,7 +234,11 @@ fun QuickCutApp(
             BatchScreen(
                 model = batchModel,
                 onSelectVideos = { batchPicker.launch(arrayOf("video/*")) },
-                onBack = { showBatch = false },
+                onBack = {
+                    settings.saveSaveDate(batchModel.saveDateMode)
+                    selectedSaveDateMode = batchModel.saveDateMode
+                    showBatch = false
+                },
                 onApproveOriginals = { sources, outputUri, action ->
                     try {
                         val request = OriginalMediaActions.prepareRequest(
@@ -140,23 +259,51 @@ fun QuickCutApp(
             )
         } else when (model.page) {
             QuickCutPage.PICKER -> StartScreen(
+                onQuick = { quickPicker.launch(arrayOf("video/*")) },
                 onSelect = { picker.launch(arrayOf("video/*")) },
-                onBatch = { showBatch = true },
-                canRestore = model.canUndo,
-                onRestore = model::undo,
+                onBatch = {
+                    batchModel.saveDateMode = selectedSaveDateMode
+                    showBatch = true
+                },
+                canRestore = model.hasRestorableSession,
+                onRestore = { model.restoreSavedSession(context) },
+                quickSettings = settings.loadQuick(),
+                dateMode = selectedSaveDateMode,
+                onPreferences = { showLastSettings = true },
             )
             QuickCutPage.IMPORTING -> CenterStatus("영상 불러오는 중", "선택한 파일을 확인하고 있습니다.", null)
-            QuickCutPage.EDITOR -> EditorScreen(
-                model = model,
-                addVideos = { picker.launch(arrayOf("video/*")) },
-                save = { showSaveOptions = true },
-            )
+            QuickCutPage.EDITOR -> {
+                if (model.quickMode && model.timeline.clips.size == 1) {
+                    QuickTrimScreen(
+                        model = model,
+                        settings = settings,
+                        onBack = model::requestExit,
+                        onDetailedEdit = { model.changeQuickMode(false) },
+                        onSave = { beginExportAfterReview() },
+                        onSaveOptions = openSaveOptions,
+                    )
+                } else {
+                    EditorScreen(
+                        model = model,
+                        addVideos = { picker.launch(arrayOf("video/*")) },
+                        save = openSaveOptions,
+                    )
+                }
+            }
             QuickCutPage.EXPORTING -> CenterStatus(
-                title = if (model.isFinalizing) "갤러리 등록 중" else "영상 저장 중",
+                title = when {
+                    model.isFinalizing -> "갤러리 등록 중"
+                    model.requestedExportMode == ExportMode.FAST_ONLY -> "고속 저장 중"
+                    else -> "정밀 저장 중"
+                },
                 subtitle = if (model.isFinalizing)
-                    "결과물을 확인하고 있습니다." else "영상을 처리하고 있습니다.",
+                    "결과물을 확인하고 있습니다."
+                else if (model.requestedExportMode == ExportMode.FAST_ONLY)
+                    "압축된 영상 데이터를 복사하고 있습니다."
+                else "재인코딩이 발생할 수 있습니다. 저장이 끝날 때까지 진행됩니다.",
                 progress = if (model.isFinalizing) null else model.progressPercent,
-                onCancel = if (model.isFinalizing) null else model::cancelExport,
+                onCancel = if (model.isFinalizing) null
+                    else { { showExportCancelConfirmation = true } },
             )
             QuickCutPage.COMPLETED -> CompletedScreen(
                 videoUri = model.completedUri?.toString(),
@@ -190,11 +337,14 @@ fun QuickCutApp(
             onDismissRequest = {
                 showSaveOptions = false
                 selectedSaveAction = OriginalAction.KEEP
-                selectedSaveDateMode = SaveDateMode.CURRENT
             },
             title = { Text("저장 설정") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(
+                    modifier = Modifier.heightIn(max = 400.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
                     Text("저장 완료 후 원본 동영상 처리", color = CutColors.primaryText)
                     listOf(
                         OriginalAction.KEEP to "원본 유지 (기본값)",
@@ -221,11 +371,11 @@ fun QuickCutApp(
                     ).forEach { (mode, label) ->
                         Row(
                             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
-                                .clickable { selectedSaveDateMode = mode },
+                                .clickable { draftSaveDateMode = mode },
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             RadioButton(
-                                selected = selectedSaveDateMode == mode,
+                                selected = draftSaveDateMode == mode,
                                 onClick = null,
                             )
                             Text(label, color = CutColors.primaryText)
@@ -248,10 +398,9 @@ fun QuickCutApp(
             confirmButton = {
                 Button(
                     onClick = {
+                        selectedSaveDateMode = draftSaveDateMode
                         showSaveOptions = false
-                        model.startExport(context, selectedSaveAction, selectedSaveDateMode)
-                        selectedSaveAction = OriginalAction.KEEP
-                        selectedSaveDateMode = SaveDateMode.CURRENT
+                        beginExportAfterReview()
                     },
                     shape = RoundedCornerShape(4.dp),
                 ) { Text("저장 시작") }
@@ -260,11 +409,134 @@ fun QuickCutApp(
                 TextButton(onClick = {
                     showSaveOptions = false
                     selectedSaveAction = OriginalAction.KEEP
-                    selectedSaveDateMode = SaveDateMode.CURRENT
                 }) { Text("취소") }
             },
             containerColor = CutColors.panel,
             shape = RoundedCornerShape(4.dp),
+        )
+    }
+
+    if (showExportCancelConfirmation && model.page == QuickCutPage.EXPORTING) {
+        AlertDialog(
+            onDismissRequest = { showExportCancelConfirmation = false },
+            title = { Text("영상 저장을 취소할까요?") },
+            text = { Text("완료되지 않은 출력 파일은 정리하고 원본 영상은 유지합니다.") },
+            confirmButton = {
+                Button(onClick = {
+                    showExportCancelConfirmation = false
+                    model.cancelExport()
+                }) { Text("저장 취소") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showExportCancelConfirmation = false }) {
+                    Text("계속 저장")
+                }
+            },
+            containerColor = CutColors.panel,
+        )
+    }
+
+    if (showLastSettings) {
+        LastSettingsDialog(
+            settings = settings,
+            dateMode = selectedSaveDateMode,
+            onDateChange = { selectedSaveDateMode = it },
+            onDismiss = { showLastSettings = false },
+        )
+    }
+
+    if (inspectingExport) {
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text("저장 방식 분석 중") },
+            text = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(modifier = Modifier.size(32.dp))
+                    Text("코덱과 자르기 위치를 확인하고 있습니다.",
+                        modifier = Modifier.padding(start = 12.dp))
+                }
+            },
+            confirmButton = {},
+            containerColor = CutColors.panel,
+        )
+    }
+    exportAssessment?.let { assessment ->
+        val clip = model.timeline.clips.singleOrNull()
+        AlertDialog(
+            onDismissRequest = {
+                exportAssessment = null
+                selectedSaveAction = OriginalAction.KEEP
+            },
+            title = { Text("저장 방식 선택") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        if (model.needsReencodeConsent)
+                            "고속 저장 중 호환성 문제가 발생했습니다. 재인코딩을 허용할지 선택해 주세요."
+                        else assessment.explanation,
+                    )
+                    Text(
+                        "정밀 저장은 영상 전체 또는 일부 구간을 다시 인코딩할 수 있어 " +
+                            "긴 영상에서는 저장 시간이 늘어날 수 있습니다.",
+                        color = CutColors.secondaryText,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    if (assessment.suggestedStartMs != null && clip != null &&
+                        assessment.suggestedStartMs > clip.startMs
+                    ) {
+                        Text(
+                            "대안: 앞부분을 " +
+                                (assessment.suggestedStartMs / 1_000.0) +
+                                "초까지 삭제하면 빠른 저장이 가능할 수 있습니다. " +
+                                "이 경우 원래보다 더 많은 영상이 삭제됩니다.",
+                            color = CutColors.secondaryText,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = {
+                            exportAssessment = null
+                            model.startExport(
+                                context, selectedSaveAction, selectedSaveDateMode,
+                                ExportMode.ALLOW_REENCODE
+                            )
+                            selectedSaveAction = OriginalAction.KEEP
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("정밀 저장 (재인코딩 허용)") }
+                    if (assessment.suggestedStartMs != null && clip != null) {
+                        OutlinedButton(
+                            onClick = {
+                                val start = assessment.suggestedStartMs
+                                model.trimClip(clip.id, start, clip.endMs)
+                                if (model.quickMode) {
+                                    settings.saveQuick(
+                                        QuickTrimSettings(
+                                            leadingMs = start,
+                                            trailingMs = clip.sourceDurationMs - clip.endMs,
+                                            muteAudio = clip.muted,
+                                        )
+                                    )
+                                }
+                                exportAssessment = null
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text("빠른 저장 위치로 변경 후 확인") }
+                    }
+                    TextButton(
+                        onClick = {
+                            exportAssessment = null
+                            selectedSaveAction = OriginalAction.KEEP
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("취소") }
+                }
+            },
+            containerColor = CutColors.panel,
         )
     }
 
@@ -359,61 +631,179 @@ fun QuickCutApp(
 
 @Composable
 private fun StartScreen(
+    onQuick: () -> Unit,
     onSelect: () -> Unit,
     onBatch: () -> Unit,
     canRestore: Boolean,
     onRestore: () -> Unit,
+    quickSettings: QuickTrimSettings,
+    dateMode: SaveDateMode,
+    onPreferences: () -> Unit,
 ) {
-    Box(Modifier.fillMaxSize()) {
-        Text(
-            text = "QuickCut",
-            color = CutColors.primaryText,
-            fontSize = 24.sp,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.align(Alignment.TopStart).padding(20.dp),
-        )
+    Column(
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+            .padding(20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
         Column(
-            modifier = Modifier.align(Alignment.Center).padding(horizontal = 24.dp).widthIn(max = 420.dp).fillMaxWidth(),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(20.dp),
+            modifier = Modifier.widthIn(max = 480.dp).fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Icon(
-                imageVector = Icons.Outlined.VideoLibrary,
-                contentDescription = null,
-                tint = CutColors.secondaryText,
-                modifier = Modifier.size(84.dp),
+            Text(
+                "QuickCut",
+                color = CutColors.primaryText,
+                fontSize = 26.sp,
+                fontWeight = FontWeight.SemiBold,
             )
-            Spacer(Modifier.height(4.dp))
+            Text("필요한 구간만 빠르게 잘라 저장하세요.",
+                color = CutColors.secondaryText)
+            Column(
+                modifier = Modifier.fillMaxWidth()
+                    .background(CutColors.surface).padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("마지막 사용 설정", color = CutColors.primaryText,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.weight(1f))
+                    TextButton(onClick = onPreferences) { Text("설정 변경") }
+                }
+                Text(
+                    "앞 " + (quickSettings.leadingMs / 1_000.0) +
+                        "초 삭제 · 뒤 " + (quickSettings.trailingMs / 1_000.0) + "초 삭제",
+                    color = CutColors.primaryText,
+                )
+                Text(
+                    (if (quickSettings.muteAudio) "음소거" else "소리 유지") +
+                        " · " + (if (dateMode == SaveDateMode.CURRENT)
+                            "현재 날짜 저장" else "원본 날짜 유지"),
+                    color = CutColors.secondaryText,
+                    fontSize = 13.sp,
+                )
+            }
             Button(
-                onClick = onSelect,
+                onClick = onQuick,
                 modifier = Modifier.fillMaxWidth().height(56.dp),
                 shape = RoundedCornerShape(4.dp),
             ) {
-                Text("영상 선택", fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                Text("빠른 자르기 · 영상 1개", fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold)
             }
             OutlinedButton(
                 onClick = onBatch,
-                modifier = Modifier.fillMaxWidth().height(56.dp),
+                modifier = Modifier.fillMaxWidth().height(54.dp),
                 shape = RoundedCornerShape(4.dp),
-            ) {
-                Text("템플릿 · 일괄 편집", fontSize = 16.sp)
-            }
-            Text(
-                text = "영상을 선택해 편집하세요",
-                color = CutColors.secondaryText,
-                style = MaterialTheme.typography.bodyMedium,
-            )
+            ) { Text("일괄 편집 · 여러 영상") }
+            TextButton(
+                onClick = onSelect,
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+            ) { Text("상세 편집 (분할·연결·순서 변경)") }
             if (canRestore) {
                 OutlinedButton(
                     onClick = onRestore,
                     modifier = Modifier.fillMaxWidth().height(52.dp),
                     shape = RoundedCornerShape(4.dp),
-                ) {
-                    Text("이전 편집 복원")
-                }
+                ) { Text("이전 편집 이어서 진행") }
             }
         }
     }
+}
+
+@Composable
+private fun LastSettingsDialog(
+    settings: QuickCutSettings,
+    dateMode: SaveDateMode,
+    onDateChange: (SaveDateMode) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val initial = remember(settings) { settings.loadQuick() }
+    var headText by remember(initial) {
+        mutableStateOf((initial.leadingMs / 1_000.0).toString().removeSuffix(".0"))
+    }
+    var tailText by remember(initial) {
+        mutableStateOf((initial.trailingMs / 1_000.0).toString().removeSuffix(".0"))
+    }
+    var mute by remember(initial) { mutableStateOf(initial.muteAudio) }
+    var chosenDate by remember(dateMode) { mutableStateOf(dateMode) }
+    fun timeValue(input: String): Long? {
+        val seconds = input.trim().replace(',', '.').toDoubleOrNull() ?: return null
+        if (!seconds.isFinite() || seconds !in 0.0..86_400.0) return null
+        return (seconds * 1000.0).roundToLong()
+    }
+    val head = timeValue(headText)
+    val tail = timeValue(tailText)
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("마지막 사용 설정") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text("새 영상 선택 시 자동 적용됩니다.", color = CutColors.secondaryText,
+                    style = MaterialTheme.typography.bodySmall)
+                OutlinedTextField(
+                    value = headText,
+                    onValueChange = { headText = it.take(12) },
+                    label = { Text("앞부분 삭제 (초)") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = tailText,
+                    onValueChange = { tailText = it.take(12) },
+                    label = { Text("뒷부분 삭제 (초)") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Row(
+                    Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                        .clickable { mute = !mute },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Checkbox(checked = mute, onCheckedChange = { mute = it })
+                    Text("영상 음소거")
+                }
+                Text("저장 날짜", fontWeight = FontWeight.SemiBold)
+                listOf(
+                    SaveDateMode.CURRENT to "현재 날짜 저장",
+                    SaveDateMode.ORIGINAL to "원본 날짜 유지",
+                ).forEach { (mode, label) ->
+                    Row(
+                        Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                            .clickable { chosenDate = mode },
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = chosenDate == mode, onClick = null)
+                        Text(label)
+                    }
+                }
+                Text("원본 휴지통 이동·영구 삭제는 자동 저장하지 않습니다.",
+                    color = CutColors.secondaryText,
+                    style = MaterialTheme.typography.bodySmall)
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    settings.saveQuick(QuickTrimSettings(head!!, tail!!, mute))
+                    onDateChange(chosenDate)
+                    onDismiss()
+                },
+                enabled = head != null && tail != null,
+                shape = RoundedCornerShape(4.dp),
+            ) { Text("설정 저장") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("취소") }
+        },
+        containerColor = CutColors.panel,
+    )
 }
 
 @Composable

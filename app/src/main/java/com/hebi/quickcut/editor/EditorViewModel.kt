@@ -1,5 +1,6 @@
 package com.hebi.quickcut.editor
 
+import android.app.Application
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -7,13 +8,16 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.lifecycle.ViewModel
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.hebi.quickcut.media.MediaReader
 import com.hebi.quickcut.media.VideoExporter
 import com.hebi.quickcut.media.SaveDateMode
+import com.hebi.quickcut.media.ExportMode
+import com.hebi.quickcut.media.ReencodeRequiredException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -22,7 +26,89 @@ enum class QuickCutPage {
     PICKER, IMPORTING, EDITOR, EXPORTING, COMPLETED,
 }
 
-class EditorViewModel : ViewModel() {
+class EditorViewModel(application: Application) : AndroidViewModel(application) {
+    private val sessionStore = EditorSessionStore(application)
+    private var sessionSaveJob: Job? = null
+    var quickMode by mutableStateOf(false)
+        private set
+    var hasRestorableSession by mutableStateOf(sessionStore.load() != null)
+        private set
+    var needsReencodeConsent by mutableStateOf(false)
+        private set
+
+    private fun snapshotSession() = EditorSessionSnapshot(
+        timeline = timeline,
+        selectedId = selectedId,
+        playPositionMs = playPositionMs,
+        quickMode = quickMode,
+    )
+
+    private fun saveSessionSoon() {
+        sessionSaveJob?.cancel()
+        if (timeline.isEmpty) {
+            sessionStore.clear()
+            hasRestorableSession = false
+            return
+        }
+        val snapshot = snapshotSession()
+        sessionSaveJob = viewModelScope.launch {
+            delay(300L)
+            sessionStore.save(snapshot)
+            hasRestorableSession = true
+        }
+    }
+
+    fun saveSessionOnStop() {
+        if (page != QuickCutPage.EDITOR || timeline.isEmpty) return
+        sessionSaveJob?.cancel()
+        sessionStore.save(snapshotSession())
+        hasRestorableSession = true
+    }
+
+    fun changeQuickMode(enabled: Boolean) {
+        quickMode = enabled
+        if (page == QuickCutPage.EDITOR) saveSessionSoon()
+    }
+
+    fun restoreSavedSession(context: Context) {
+        if (page != QuickCutPage.PICKER) return
+        val old = sessionStore.load() ?: run {
+            hasRestorableSession = false
+            reportError("복원 가능한 편집 내용이 없습니다.")
+            return
+        }
+        page = QuickCutPage.IMPORTING
+        viewModelScope.launch {
+            val valid = withContext(Dispatchers.IO) {
+                runCatching {
+                    old.timeline.clips.map { it.uri }.distinct().all { raw ->
+                        val expected = old.timeline.clips.first { it.uri == raw }
+                        val current = MediaReader.metadata(context.applicationContext, Uri.parse(raw))
+                        kotlin.math.abs(current.durationMs - expected.sourceDurationMs) <= 1_500L &&
+                            (!expected.hasAudio || current.hasAudio)
+                    }
+                }.getOrDefault(false)
+            }
+            if (!valid) {
+                sessionStore.clear()
+                hasRestorableSession = false
+                page = QuickCutPage.PICKER
+                reportError("이전 영상에 접근할 수 없어 편집을 복원하지 못했습니다. 영상을 다시 선택해 주세요.")
+                return@launch
+            }
+            timeline = old.timeline
+            selectedId = old.selectedId?.takeIf { timeline.clipAt(it) != null }
+                ?: timeline.clips.first().id
+            playPositionMs = old.playPositionMs.coerceIn(0L, timeline.totalDurationMs)
+            quickMode = old.quickMode && timeline.clips.size == 1
+            nextId = timeline.clips.maxOf { it.id } + 1L
+            history.clear()
+            activeTrim = null
+            updateHistoryButtons()
+            page = QuickCutPage.EDITOR
+            saveSessionSoon()
+        }
+    }
     var page by mutableStateOf(QuickCutPage.PICKER)
         private set
     var timeline by mutableStateOf(EditTimeline())
@@ -34,6 +120,8 @@ class EditorViewModel : ViewModel() {
     var progressPercent by mutableStateOf<Int?>(null)
         private set
     var isFinalizing by mutableStateOf(false)
+        private set
+    var requestedExportMode by mutableStateOf(ExportMode.FAST_ONLY)
         private set
     var completedUri by mutableStateOf<Uri?>(null)
         private set
@@ -80,7 +168,10 @@ class EditorViewModel : ViewModel() {
         if (activeTrim == null && page == QuickCutPage.EDITOR) activeTrim = checkpoint()
     }
 
-    fun finishTrim() = finishActiveTrim()
+    fun finishTrim() {
+        finishActiveTrim()
+        saveSessionSoon()
+    }
 
     private fun recordChange() {
         finishActiveTrim()
@@ -108,6 +199,7 @@ class EditorViewModel : ViewModel() {
             ?: timeline.clips.firstOrNull()?.id
         playPositionMs = restored.playPositionMs.coerceIn(0L, timeline.totalDurationMs)
         page = if (timeline.isEmpty) QuickCutPage.PICKER else QuickCutPage.EDITOR
+        saveSessionSoon()
     }
 
     val selectedClip: VideoClip?
@@ -182,6 +274,7 @@ class EditorViewModel : ViewModel() {
                     null
                 }
                 page = QuickCutPage.EDITOR
+                saveSessionSoon()
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
@@ -197,6 +290,7 @@ class EditorViewModel : ViewModel() {
         if (index < 0) return
         selectedId = id
         playPositionMs = timeline.startOf(index)
+        saveSessionSoon()
     }
 
     fun seek(positionMs: Long) {
@@ -211,9 +305,11 @@ class EditorViewModel : ViewModel() {
         if (timeline.clipAt(id) == null) return
         val edited = runCatching { timeline.updateRange(id, startMs, endMs) }.getOrNull() ?: return
         if (edited == timeline) return
+        needsReencodeConsent = false
         if (activeTrim == null) recordChange()
         timeline = edited
         playPositionMs = playPositionMs.coerceIn(0L, timeline.totalDurationMs)
+        saveSessionSoon()
     }
 
     fun splitSelected() {
@@ -223,6 +319,7 @@ class EditorViewModel : ViewModel() {
         val offset = playPositionMs - timeline.startOf(index)
         recordChange()
         timeline = timeline.split(clip.id, offset, nextId++)
+        saveSessionSoon()
     }
 
     fun deleteSelected() {
@@ -240,6 +337,7 @@ class EditorViewModel : ViewModel() {
                 timeline.clips.indexOfFirst { it.id == selectedId },
             )
         }
+        saveSessionSoon()
     }
 
     fun moveClip(id: Long, direction: Int) {
@@ -253,6 +351,7 @@ class EditorViewModel : ViewModel() {
             selectedId = id
             playPositionMs = timeline.startOf(index)
         }
+        saveSessionSoon()
     }
 
     fun moveSelected(direction: Int) {
@@ -263,18 +362,22 @@ class EditorViewModel : ViewModel() {
         val id = selectedId ?: return
         recordChange()
         timeline = timeline.toggleMute(id)
+        saveSessionSoon()
     }
 
     fun startExport(
         context: Context,
         selectedOriginalAction: OriginalAction = OriginalAction.KEEP,
         selectedDateMode: SaveDateMode = SaveDateMode.CURRENT,
+        exportMode: ExportMode = ExportMode.ALLOW_REENCODE,
     ) {
         if (timeline.isEmpty || page != QuickCutPage.EDITOR) return
         val snapshot = timeline
         val sourceSnapshot = uniqueExportSources(snapshot)
         originalAction = selectedOriginalAction
         savedDateMode = selectedDateMode
+        needsReencodeConsent = false
+        requestedExportMode = exportMode
         originalActionStatus = OriginalActionStatus.NONE
         originalsFromSavedTimeline = emptyList()
         page = QuickCutPage.EXPORTING
@@ -290,6 +393,7 @@ class EditorViewModel : ViewModel() {
                         progressPercent = null
                     },
                     saveDateMode = selectedDateMode,
+                    exportMode = exportMode,
                 )
                 completedUri = uri
                 originalsFromSavedTimeline = if (originalAction == OriginalAction.KEEP) {
@@ -303,7 +407,13 @@ class EditorViewModel : ViewModel() {
                     OriginalActionStatus.READY
                 }
                 page = QuickCutPage.COMPLETED
+                sessionSaveJob?.cancel()
+                sessionStore.clear()
+                hasRestorableSession = false
             } catch (_: CancellationException) {
+                page = QuickCutPage.EDITOR
+            } catch (required: ReencodeRequiredException) {
+                needsReencodeConsent = true
                 page = QuickCutPage.EDITOR
             } catch (error: Exception) {
                 reportError("저장에 실패했습니다. " +
@@ -371,7 +481,12 @@ class EditorViewModel : ViewModel() {
 
     fun discardEditing() {
         showExitConfirmation = false
+        sessionSaveJob?.cancel()
+        sessionStore.clear()
+        hasRestorableSession = false
         timeline = EditTimeline()
+        quickMode = false
+        needsReencodeConsent = false
         history.clear()
         activeTrim = null
         updateHistoryButtons()

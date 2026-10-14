@@ -1,13 +1,15 @@
 package com.hebi.quickcut.batch
 
+import android.app.Application
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
-import androidx.lifecycle.ViewModel
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.hebi.quickcut.editor.OriginalAction
 import com.hebi.quickcut.editor.OriginalActionStatus
@@ -16,12 +18,19 @@ import com.hebi.quickcut.media.OriginalMediaDates
 import com.hebi.quickcut.media.OriginalTimestamp
 import com.hebi.quickcut.media.SaveDateMode
 import com.hebi.quickcut.media.VideoExporter
+import com.hebi.quickcut.media.ExportPlanner
+import com.hebi.quickcut.media.ExportMode
+import com.hebi.quickcut.media.ReencodeRequiredException
+import com.hebi.quickcut.settings.QuickCutSettings
+import com.hebi.quickcut.settings.BatchDraftSettings
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.collect
 
 enum class BatchRunState { SETUP, RUNNING, FINISHED }
 enum class BatchFileStatus { WAITING, RUNNING, SAVED, FAILED, SKIPPED }
@@ -38,7 +47,68 @@ data class BatchFile(
     val savedOutputUri: String? = null,
 )
 
-class BatchViewModel : ViewModel() {
+data class BatchExportOverview(
+    val ready: Int,
+    val fast: Int,
+    val needsEncoding: Int,
+    val skipped: Int,
+    val encodingFiles: List<String>,
+    val skippedFiles: List<String>,
+)
+
+class BatchViewModel(application: Application) : AndroidViewModel(application) {
+    private val settings = QuickCutSettings(application)
+    private val lastDraft = settings.loadBatch()
+
+    suspend fun inspectExport(
+        context: Context,
+        retryOnly: Boolean,
+        onProgress: (Int, Int) -> Unit = { _, _ -> },
+    ): BatchExportOverview {
+        val template = previewTemplate()
+            ?: throw IllegalArgumentException("편집 설정을 확인해 주세요.")
+        val dateMode = saveDateMode
+        val targets = files.filter { it.durationMs >= 100L &&
+            it.status != BatchFileStatus.SAVED &&
+            (!retryOnly || it.status == BatchFileStatus.FAILED ||
+                it.status == BatchFileStatus.SKIPPED)
+        }
+        var fast = 0
+        var encoded = 0
+        var skipped = 0
+        val encodingFiles = mutableListOf<String>()
+        val skippedFiles = mutableListOf<String>()
+        for ((index, file) in targets.withIndex()) {
+            onProgress(index + 1, targets.size)
+            if (dateMode == SaveDateMode.ORIGINAL && file.originalDate == null) {
+                skipped++
+                skippedFiles += file.displayName + " · 원본 날짜 없음"
+                continue
+            }
+            when (val plan = template.plan(file.uri, file.durationMs, file.hasAudio)) {
+                is BatchPlan.Skip -> {
+                    skipped++
+                    skippedFiles += file.displayName + " · " + plan.reason
+                }
+                is BatchPlan.Ready -> {
+                    val assessment = ExportPlanner.analyze(context, plan.timeline, dateMode)
+                    if (assessment.fastAvailable) fast++ else {
+                        encoded++
+                        encodingFiles += file.displayName + " · " + assessment.explanation
+                    }
+                }
+            }
+        }
+        return BatchExportOverview(
+            ready = fast + encoded,
+            fast = fast,
+            needsEncoding = encoded,
+            skipped = skipped,
+            encodingFiles = encodingFiles,
+            skippedFiles = skippedFiles,
+        )
+    }
+
     var templates by mutableStateOf<List<BatchTemplate>>(emptyList())
         private set
     var files by mutableStateOf<List<BatchFile>>(emptyList())
@@ -51,15 +121,15 @@ class BatchViewModel : ViewModel() {
         private set
     var completedCount by mutableStateOf(0)
         private set
-    var selectedTemplateId by mutableStateOf<String?>(null)
+    var selectedTemplateId by mutableStateOf<String?>(lastDraft.selectedTemplateId)
         private set
 
-    var draftName by mutableStateOf("앞뒤 3초 삭제")
-    var draftMode by mutableStateOf(BatchClipMode.REMOVE_EDGES)
-    var draftLeadingSeconds by mutableStateOf("3")
-    var draftTrailingSeconds by mutableStateOf("3")
-    var draftMute by mutableStateOf(false)
-    var saveDateMode by mutableStateOf(SaveDateMode.CURRENT)
+    var draftName by mutableStateOf(lastDraft.name)
+    var draftMode by mutableStateOf(lastDraft.mode)
+    var draftLeadingSeconds by mutableStateOf(formatSeconds(lastDraft.leadingMs))
+    var draftTrailingSeconds by mutableStateOf(formatSeconds(lastDraft.trailingMs))
+    var draftMute by mutableStateOf(lastDraft.muteAudio)
+    var saveDateMode by mutableStateOf(settings.loadSaveDate())
     var originalAction by mutableStateOf(OriginalAction.KEEP)
     var performedOriginalAction by mutableStateOf(OriginalAction.KEEP)
         private set
@@ -71,6 +141,26 @@ class BatchViewModel : ViewModel() {
     // Only files exported successfully in the current run are eligible
     // for an original-media operation. Prior runs are never included.
     private var sourceUrisSavedThisRun by mutableStateOf<List<String>>(emptyList())
+
+    init {
+        viewModelScope.launch {
+            snapshotFlow {
+                BatchDraftSettings(
+                    name = draftName,
+                    mode = draftMode,
+                    leadingMs = parseMillis(draftLeadingSeconds) ?: lastDraft.leadingMs,
+                    trailingMs = parseMillis(draftTrailingSeconds) ?: lastDraft.trailingMs,
+                    muteAudio = draftMute,
+                    selectedTemplateId = selectedTemplateId,
+                )
+            }.distinctUntilChanged().collect { settings.saveBatch(it) }
+        }
+        viewModelScope.launch {
+            snapshotFlow { saveDateMode }.distinctUntilChanged().collect {
+                settings.saveSaveDate(it)
+            }
+        }
+    }
 
     val isRunning: Boolean get() = runState == BatchRunState.RUNNING
     val successes: Int get() = files.count { it.status == BatchFileStatus.SAVED }
@@ -89,6 +179,9 @@ class BatchViewModel : ViewModel() {
         if (stored) return
         stored = true
         templates = TemplateStore(context).load()
+        if (selectedTemplateId != null && templates.none { it.id == selectedTemplateId }) {
+            selectedTemplateId = null
+        }
     }
 
     fun chooseTemplate(templateId: String?) {
@@ -158,6 +251,7 @@ class BatchViewModel : ViewModel() {
     }
 
     fun clearNotification() { notification = null }
+    fun notifyUser(message: String) { notification = message }
 
     fun addVideos(context: Context, selected: List<Uri>) {
         if (isRunning || isImporting || selected.isEmpty()) return
@@ -219,7 +313,11 @@ class BatchViewModel : ViewModel() {
         runState = BatchRunState.SETUP
     }
 
-    fun start(context: Context, retryOnly: Boolean = false) {
+    fun start(
+        context: Context,
+        retryOnly: Boolean = false,
+        exportMode: ExportMode = ExportMode.ALLOW_REENCODE,
+    ) {
         if (isRunning || isImporting) return
         val template = previewTemplate()
         if (template == null) {
@@ -288,6 +386,7 @@ class BatchViewModel : ViewModel() {
                                     },
                                     saveDateMode = selectedDateMode,
                                     outputBaseName = row.displayName,
+                                    exportMode = exportMode,
                                 )
                                 update(row.uri) {
                                     it.copy(status=BatchFileStatus.SAVED,progress=100,
@@ -296,6 +395,11 @@ class BatchViewModel : ViewModel() {
                                 if (selectedOriginalAction != OriginalAction.KEEP) {
                                     sourceUrisSavedThisRun =
                                         sourceUrisSavedThisRun + row.uri
+                                }
+                            } catch (required: ReencodeRequiredException) {
+                                update(row.uri) {
+                                    it.copy(status=BatchFileStatus.SKIPPED,progress=null,
+                                        reason="고속 저장을 지원하지 않아 건너뛰었습니다.")
                                 }
                             } catch (cancelled: CancellationException) {
                                 update(row.uri) {
@@ -378,7 +482,6 @@ class BatchViewModel : ViewModel() {
         originalAction = OriginalAction.KEEP
         performedOriginalAction = OriginalAction.KEEP
         originalStatus = OriginalActionStatus.NONE
-        saveDateMode = SaveDateMode.CURRENT
         notification = null
     }
 

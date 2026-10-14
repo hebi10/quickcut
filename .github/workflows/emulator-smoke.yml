@@ -12,6 +12,10 @@ on:
       - "app/src/main/java/com/hebi/quickcut/ui/**"
       - "app/src/main/java/com/hebi/quickcut/batch/**"
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 

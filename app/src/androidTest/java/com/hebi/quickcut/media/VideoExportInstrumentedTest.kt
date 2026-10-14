@@ -162,6 +162,36 @@ class VideoExportInstrumentedTest {
     }
 
     @Test
+    fun preflightDoesNotAllowSilentReencodeForNonSyncTrim() = runBlocking {
+        withFixture { context, uri, metadata ->
+            val clip = VideoClip(
+                id = 1,
+                uri = uri.toString(),
+                sourceDurationMs = metadata.durationMs,
+                startMs = 500L,
+                endMs = 2_500L,
+                hasAudio = metadata.hasAudio,
+            )
+            val timeline = EditTimeline(listOf(clip))
+            val preflight = ExportPlanner.analyze(context, timeline, SaveDateMode.CURRENT)
+            assertFalse("A non-sync 500ms start must not use fast remux",
+                preflight.fastAvailable)
+            val failure = runCatching {
+                VideoExporter(context).export(
+                    timeline = timeline,
+                    onProgress = {},
+                    onFinalizing = {},
+                    exportMode = ExportMode.FAST_ONLY,
+                )
+            }.exceptionOrNull()
+            assertTrue(
+                "Fast-only export must not start Media3 full encoding",
+                failure is ReencodeRequiredException,
+            )
+        }
+    }
+
+    @Test
     fun trimmedVideoIsSavedAndPlayable() = runBlocking {
         withFixture { context, uri, metadata ->
             val clip = VideoClip(

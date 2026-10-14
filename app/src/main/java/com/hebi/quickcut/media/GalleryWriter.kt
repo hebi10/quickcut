@@ -7,6 +7,7 @@ import android.os.Environment
 import android.system.Os
 import android.provider.MediaStore
 import java.io.File
+import java.io.FileDescriptor
 import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -16,6 +17,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import kotlin.math.abs
 
 class GalleryWriter(private val context: Context) {
     suspend fun save(
@@ -25,23 +27,7 @@ class GalleryWriter(private val context: Context) {
     ): Uri = withContext(Dispatchers.IO) {
         require(file.isFile && file.length() > 0L) { "저장할 영상 파일이 없습니다." }
         val resolver = context.contentResolver
-        val dateString = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())
-        val basename = outputBaseName
-            ?.substringBeforeLast('.')
-            ?.replace(Regex("""[^\p{L}\p{N}._-]+"""), "_")
-            ?.take(56)
-            ?.trim('_', '.', ' ')
-            ?.takeIf { it.isNotBlank() }
-        val name = (basename?.let { it + "_QuickCut_" } ?: "QuickCut_") +
-            dateString + "_" + UUID.randomUUID().toString().take(6) + ".mp4"
-        val values = ContentValues().apply {
-            put(MediaStore.Video.Media.DISPLAY_NAME, name)
-            put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
-            put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/QuickCut")
-            put(MediaStore.Video.Media.IS_PENDING, 1)
-        }
-        val uri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
-            ?: throw IOException("갤러리에 저장할 수 없습니다.")
+        val uri = createPendingUri(outputBaseName)
         try {
             val stream = resolver.openOutputStream(uri)
                 ?: throw IOException("갤러리 파일을 열 수 없습니다.")
@@ -81,5 +67,62 @@ class GalleryWriter(private val context: Context) {
             resolver.delete(uri, null, null)
             throw error
         }
+    }
+
+    /**
+     * Native remuxing writes straight to a pending MediaStore file. No extra
+     * full-size cache file or second copy is needed on this path.
+     */
+    suspend fun saveDirect(
+        outputBaseName: String?,
+        expectedDurationMs: Long,
+        expectAudio: Boolean,
+        writer: suspend (FileDescriptor) -> Unit,
+        onFinalizing: () -> Unit,
+    ): Uri = withContext(Dispatchers.IO) {
+        val resolver = context.contentResolver
+        val uri = createPendingUri(outputBaseName)
+        try {
+            val descriptor = resolver.openFileDescriptor(uri, "rw")
+                ?: throw IOException("갤러리 파일을 열 수 없습니다.")
+            descriptor.use { writer(it.fileDescriptor) }
+            currentCoroutineContext().ensureActive()
+
+            val metadata = MediaReader.metadata(context, uri)
+            if (abs(metadata.durationMs - expectedDurationMs) > 250L ||
+                metadata.hasAudio != expectAudio
+            ) {
+                throw FastTrimUnavailableException("Fast trim output duration or audio mismatch")
+            }
+            withContext(Dispatchers.Main.immediate) { onFinalizing() }
+            val changes = ContentValues().apply { put(MediaStore.Video.Media.IS_PENDING, 0) }
+            if (resolver.update(uri, changes, null, null) < 1) {
+                throw IOException("저장된 파일을 갤러리에 등록할 수 없습니다.")
+            }
+            uri
+        } catch (error: Throwable) {
+            runCatching { resolver.delete(uri, null, null) }
+            throw error
+        }
+    }
+
+    private fun createPendingUri(outputBaseName: String?): Uri {
+        val dateString = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())
+        val basename = outputBaseName
+            ?.substringBeforeLast('.')
+            ?.replace(Regex("""[^\p{L}\p{N}._-]+"""), "_")
+            ?.take(56)
+            ?.trim('_', '.', ' ')
+            ?.takeIf { it.isNotBlank() }
+        val name = (basename?.let { it + "_QuickCut_" } ?: "QuickCut_") +
+            dateString + "_" + UUID.randomUUID().toString().take(6) + ".mp4"
+        val values = ContentValues().apply {
+            put(MediaStore.Video.Media.DISPLAY_NAME, name)
+            put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+            put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/QuickCut")
+            put(MediaStore.Video.Media.IS_PENDING, 1)
+        }
+        return context.contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
+            ?: throw IOException("갤러리에 저장할 수 없습니다.")
     }
 }

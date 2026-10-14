@@ -171,7 +171,7 @@ fun BatchScreen(
                 item { BatchProgress(model) }
             }
             Column(Modifier.background(panel).padding(12.dp)) {
-                BatchActions(model, requestExport, inspecting)
+                BatchActions(model, requestExport, inspecting) { showStopConfirmation = true }
             }
             }
         }

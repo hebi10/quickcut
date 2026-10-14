@@ -46,6 +46,12 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -60,6 +66,8 @@ import com.hebi.quickcut.editor.OriginalAction
 import com.hebi.quickcut.editor.OriginalActionStatus
 import com.hebi.quickcut.editor.formatTime
 import com.hebi.quickcut.media.SaveDateMode
+import com.hebi.quickcut.media.ExportMode
+import kotlinx.coroutines.launch
 
 private val onSurface = Color(0xFFF4F4F5)
 private val secondary = Color(0xFFB7BAC0)
@@ -75,6 +83,33 @@ fun BatchScreen(
 ) {
     val context = LocalContext.current
     val activity = context as? Activity
+    val scope = rememberCoroutineScope()
+    var pendingOverview by remember { mutableStateOf<BatchExportOverview?>(null) }
+    var pendingRetry by remember { mutableStateOf(false) }
+    var inspecting by remember { mutableStateOf(false) }
+    val requestExport: (Boolean) -> Unit = { retry ->
+        if (!inspecting && !model.isRunning) {
+            inspecting = true
+            scope.launch {
+                try {
+                    val checked = model.inspectExport(context.applicationContext, retry)
+                    if (checked.ready == 0) {
+                        model.notifyUser("저장할 수 있는 영상이 없습니다. 설정과 파일을 확인해 주세요.")
+                    } else {
+                        pendingOverview = checked
+                        pendingRetry = retry
+                    }
+                } catch (error: Exception) {
+                    model.notifyUser(
+                        "영상 분석에 실패했습니다. " +
+                            (error.localizedMessage ?: "다시 시도해 주세요.")
+                    )
+                } finally {
+                    inspecting = false
+                }
+            }
+        }
+    }
     DisposableEffect(model.isRunning, activity) {
         if (model.isRunning) activity?.window?.addFlags(
             WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
@@ -99,7 +134,6 @@ fun BatchScreen(
                 ) {
                     BatchHeader(guardedBack)
                     TemplateEditor(model, onSelectVideos)
-                    BatchActions(model)
                 }
                 Column(Modifier.weight(1f).padding(16.dp)) {
                     BatchFileHeader(model)
@@ -115,16 +149,17 @@ fun BatchScreen(
                         }
                     }
                     BatchProgress(model)
+                    BatchActions(model, requestExport, inspecting)
                 }
             }
         } else {
+            Column(Modifier.fillMaxSize()) {
             LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
+                modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 item { BatchHeader(guardedBack) }
                 item { TemplateEditor(model, onSelectVideos) }
-                item { BatchActions(model) }
                 item { BatchFileHeader(model) }
                 items(model.files, key = { it.uri }) { file ->
                     BatchFileRow(
@@ -134,7 +169,63 @@ fun BatchScreen(
                 }
                 item { BatchProgress(model) }
             }
+            Column(Modifier.background(panel).padding(12.dp)) {
+                BatchActions(model, requestExport, inspecting)
+            }
+            }
         }
+    }
+
+    pendingOverview?.let { overview ->
+        AlertDialog(
+            onDismissRequest = { pendingOverview = null },
+            title = { Text("저장 방식 선택") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("고속 저장 가능 " + overview.fast + "개 · " +
+                        "재인코딩 가능성 " + overview.needsEncoding + "개 · " +
+                        "건너뜀 " + overview.skipped + "개")
+                    Text(
+                        "긴 영상은 다시 인코딩할 때 시간이 오래 걸릴 수 있습니다. " +
+                            "정밀 저장을 선택한 경우에만 재인코딩을 허용합니다.",
+                        color = secondary, style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            },
+            confirmButton = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = {
+                            model.start(context, pendingRetry, ExportMode.ALLOW_REENCODE)
+                            pendingOverview = null
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("모든 영상 정밀 저장 허용") }
+                    OutlinedButton(
+                        onClick = {
+                            model.start(context, pendingRetry, ExportMode.FAST_ONLY)
+                            pendingOverview = null
+                        },
+                        enabled = overview.fast > 0,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("고속 저장 가능한 영상만") }
+                    TextButton(
+                        onClick = { pendingOverview = null },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("취소") }
+                }
+            },
+            containerColor = Color(0xFF202126),
+        )
+    }
+    if (inspecting) {
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text("저장 방식 분석 중") },
+            text = { Text("영상별 코덱과 자르기 위치를 확인하고 있습니다.") },
+            confirmButton = {},
+            containerColor = Color(0xFF202126),
+        )
     }
 
     model.notification?.let { notice ->
@@ -357,14 +448,18 @@ private fun ChoiceOption(
 }
 
 @Composable
-private fun BatchActions(model: BatchViewModel) {
+private fun BatchActions(
+    model: BatchViewModel,
+    requestExport: (Boolean) -> Unit,
+    inspecting: Boolean,
+) {
     val context = LocalContext.current
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         when (model.runState) {
             BatchRunState.SETUP -> {
                 Button(
-                    onClick = { model.start(context) },
-                    enabled = model.files.isNotEmpty() && !model.isImporting,
+                    onClick = { requestExport(false) },
+                    enabled = model.files.isNotEmpty() && !model.isImporting && !inspecting,
                 ) { Text("일괄 편집 및 저장 시작") }
             }
             BatchRunState.RUNNING -> {
@@ -387,7 +482,7 @@ private fun BatchActions(model: BatchViewModel) {
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(
-                        onClick = { model.start(context, retryOnly = true) },
+                        onClick = { requestExport(true) },
                         enabled = model.failures > 0 || model.skips > 0,
                     ) { Text("실패 작업 재시도") }
                     TextButton(onClick = model::resetBatch) { Text("새 작업") }

@@ -87,6 +87,10 @@ fun QuickTrimScreen(
     var trailingText by rememberSaveable(clip.id) {
         mutableStateOf(secondsText(clip.sourceDurationMs - clip.endMs))
     }
+    LaunchedEffect(clip.startMs, clip.endMs) {
+        leadingText = secondsText(clip.startMs)
+        trailingText = secondsText(clip.sourceDurationMs - clip.endMs)
+    }
 
     fun updateTrim(leading: String, trailing: String) {
         val head = millisValue(leading) ?: return

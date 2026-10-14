@@ -213,7 +213,11 @@ fun QuickCutApp(
             BatchScreen(
                 model = batchModel,
                 onSelectVideos = { batchPicker.launch(arrayOf("video/*")) },
-                onBack = { showBatch = false },
+                onBack = {
+                    settings.saveSaveDate(batchModel.saveDateMode)
+                    selectedSaveDateMode = batchModel.saveDateMode
+                    showBatch = false
+                },
                 onApproveOriginals = { sources, outputUri, action ->
                     try {
                         val request = OriginalMediaActions.prepareRequest(
@@ -236,7 +240,10 @@ fun QuickCutApp(
             QuickCutPage.PICKER -> StartScreen(
                 onQuick = { quickPicker.launch(arrayOf("video/*")) },
                 onSelect = { picker.launch(arrayOf("video/*")) },
-                onBatch = { showBatch = true },
+                onBatch = {
+                    batchModel.saveDateMode = selectedSaveDateMode
+                    showBatch = true
+                },
                 canRestore = model.hasRestorableSession,
                 onRestore = { model.restoreSavedSession(context) },
                 quickSettings = settings.loadQuick(),

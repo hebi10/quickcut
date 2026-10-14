@@ -52,6 +52,8 @@ data class BatchExportOverview(
     val fast: Int,
     val needsEncoding: Int,
     val skipped: Int,
+    val encodingFiles: List<String>,
+    val skippedFiles: List<String>,
 )
 
 class BatchViewModel(application: Application) : AndroidViewModel(application) {
@@ -90,16 +92,25 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
         var fast = 0
         var encoded = 0
         var skipped = 0
+        val encodingFiles = mutableListOf<String>()
+        val skippedFiles = mutableListOf<String>()
         for (file in targets) {
             if (dateMode == SaveDateMode.ORIGINAL && file.originalDate == null) {
                 skipped++
+                skippedFiles += file.displayName + " · 원본 날짜 없음"
                 continue
             }
             when (val plan = template.plan(file.uri, file.durationMs, file.hasAudio)) {
-                is BatchPlan.Skip -> skipped++
+                is BatchPlan.Skip -> {
+                    skipped++
+                    skippedFiles += file.displayName + " · " + plan.reason
+                }
                 is BatchPlan.Ready -> {
                     val assessment = ExportPlanner.analyze(context, plan.timeline, dateMode)
-                    if (assessment.fastAvailable) fast++ else encoded++
+                    if (assessment.fastAvailable) fast++ else {
+                        encoded++
+                        encodingFiles += file.displayName + " · " + assessment.explanation
+                    }
                 }
             }
         }
@@ -108,6 +119,8 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
             fast = fast,
             needsEncoding = encoded,
             skipped = skipped,
+            encodingFiles = encodingFiles,
+            skippedFiles = skippedFiles,
         )
     }
 

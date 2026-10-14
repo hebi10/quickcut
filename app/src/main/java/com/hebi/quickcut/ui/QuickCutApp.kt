@@ -39,6 +39,8 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -52,6 +54,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.hebi.quickcut.batch.BatchScreen
 import com.hebi.quickcut.batch.BatchViewModel
 import com.hebi.quickcut.editor.EditorViewModel
@@ -59,6 +64,12 @@ import com.hebi.quickcut.editor.OriginalAction
 import com.hebi.quickcut.editor.OriginalActionStatus
 import com.hebi.quickcut.media.OriginalMediaActions
 import com.hebi.quickcut.media.SaveDateMode
+import com.hebi.quickcut.media.ExportMode
+import com.hebi.quickcut.media.ExportPlanner
+import com.hebi.quickcut.media.ExportAssessment
+import com.hebi.quickcut.settings.QuickCutSettings
+import com.hebi.quickcut.settings.QuickTrimSettings
+import kotlinx.coroutines.launch
 import com.hebi.quickcut.editor.QuickCutPage
 
 @Composable
@@ -67,10 +78,59 @@ fun QuickCutApp(
     batchModel: BatchViewModel = viewModel(),
 ) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val settings = remember(context) { QuickCutSettings(context) }
+    val coroutineScope = rememberCoroutineScope()
     var showBatch by rememberSaveable { mutableStateOf(false) }
+    var showLastSettings by rememberSaveable { mutableStateOf(false) }
+    var pendingQuickDefaults by rememberSaveable { mutableStateOf(false) }
+    var exportAssessment by remember { mutableStateOf<ExportAssessment?>(null) }
+    var inspectingExport by remember { mutableStateOf(false) }
     var showSaveOptions by rememberSaveable { mutableStateOf(false) }
     var selectedSaveAction by rememberSaveable { mutableStateOf(OriginalAction.KEEP) }
-    var selectedSaveDateMode by rememberSaveable { mutableStateOf(SaveDateMode.CURRENT) }
+    var selectedSaveDateMode by rememberSaveable {
+        mutableStateOf(settings.loadSaveDate())
+    }
+    LaunchedEffect(selectedSaveDateMode) {
+        settings.saveSaveDate(selectedSaveDateMode)
+    }
+    DisposableEffect(model, lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) model.saveSessionOnStop()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    val beginExportAfterReview: () -> Unit = {
+        if (!inspectingExport) {
+            inspectingExport = true
+            coroutineScope.launch {
+                try {
+                    val assessment = ExportPlanner.analyze(
+                        context.applicationContext, model.timeline, selectedSaveDateMode
+                    )
+                    if (assessment.fastAvailable && !model.needsReencodeConsent) {
+                        model.startExport(
+                            context,
+                            selectedSaveAction,
+                            selectedSaveDateMode,
+                            ExportMode.FAST_ONLY,
+                        )
+                    } else {
+                        exportAssessment = assessment
+                    }
+                } catch (error: Exception) {
+                    model.reportError(
+                        "저장 방식을 확인하지 못했습니다. " +
+                            (error.localizedMessage ?: "다시 시도해 주세요.")
+                    )
+                } finally {
+                    inspectingExport = false
+                }
+            }
+        }
+    }
     val originalActionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartIntentSenderForResult()
     ) { result ->
@@ -83,8 +143,37 @@ fun QuickCutApp(
             model.showOriginalDeletionConfirmation()
         }
     }
+    val quickPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            model.setQuickMode(true)
+            pendingQuickDefaults = true
+            model.importVideos(context, listOf(uri))
+        }
+    }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
-        model.importVideos(context, uris, append = model.page == QuickCutPage.EDITOR)
+        if (uris.isNotEmpty()) {
+            model.setQuickMode(false)
+            model.importVideos(context, uris, append = model.page == QuickCutPage.EDITOR)
+        }
+    }
+    LaunchedEffect(model.page, model.timeline) {
+        if (pendingQuickDefaults && model.page == QuickCutPage.EDITOR &&
+            model.timeline.clips.size == 1
+        ) {
+            pendingQuickDefaults = false
+            val clip = model.timeline.clips.single()
+            val previous = settings.loadQuick()
+            if (previous.leadingMs + previous.trailingMs < clip.sourceDurationMs - 100L) {
+                model.trimClip(
+                    clip.id,
+                    previous.leadingMs,
+                    clip.sourceDurationMs - previous.trailingMs,
+                )
+            }
+            if (previous.muteAudio && !clip.muted) model.toggleMute()
+        }
     }
     val batchPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments()
@@ -140,17 +229,33 @@ fun QuickCutApp(
             )
         } else when (model.page) {
             QuickCutPage.PICKER -> StartScreen(
+                onQuick = { quickPicker.launch(arrayOf("video/*")) },
                 onSelect = { picker.launch(arrayOf("video/*")) },
                 onBatch = { showBatch = true },
-                canRestore = model.canUndo,
-                onRestore = model::undo,
+                canRestore = model.hasRestorableSession,
+                onRestore = { model.restoreSavedSession(context) },
+                quickSettings = settings.loadQuick(),
+                dateMode = selectedSaveDateMode,
+                onPreferences = { showLastSettings = true },
             )
             QuickCutPage.IMPORTING -> CenterStatus("영상 불러오는 중", "선택한 파일을 확인하고 있습니다.", null)
-            QuickCutPage.EDITOR -> EditorScreen(
-                model = model,
-                addVideos = { picker.launch(arrayOf("video/*")) },
-                save = { showSaveOptions = true },
-            )
+            QuickCutPage.EDITOR -> {
+                if (model.quickMode && model.timeline.clips.size == 1) {
+                    QuickTrimScreen(
+                        model = model,
+                        settings = settings,
+                        onBack = model::requestExit,
+                        onDetailedEdit = { model.setQuickMode(false) },
+                        onSave = { showSaveOptions = true },
+                    )
+                } else {
+                    EditorScreen(
+                        model = model,
+                        addVideos = { picker.launch(arrayOf("video/*")) },
+                        save = { showSaveOptions = true },
+                    )
+                }
+            }
             QuickCutPage.EXPORTING -> CenterStatus(
                 title = if (model.isFinalizing) "갤러리 등록 중" else "영상 저장 중",
                 subtitle = if (model.isFinalizing)

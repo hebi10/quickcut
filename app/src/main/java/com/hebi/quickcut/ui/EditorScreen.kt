@@ -43,6 +43,9 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.material3.RangeSlider
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
@@ -599,6 +602,29 @@ private fun TrimEditor(
     onEndTrim: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var startText by rememberSaveable(clip.id) {
+        mutableStateOf((clip.startMs / 1000.0).toString().removeSuffix(".0"))
+    }
+    var endText by rememberSaveable(clip.id) {
+        mutableStateOf((clip.endMs / 1000.0).toString().removeSuffix(".0"))
+    }
+    LaunchedEffect(clip.startMs, clip.endMs) {
+        startText = (clip.startMs / 1000.0).toString().removeSuffix(".0")
+        endText = (clip.endMs / 1000.0).toString().removeSuffix(".0")
+    }
+    fun millis(text: String): Long? {
+        val seconds = text.replace(',', '.').toDoubleOrNull() ?: return null
+        if (!seconds.isFinite() || seconds < 0) return null
+        return (seconds * 1000.0).roundToLong()
+    }
+    fun inputRange(start: String, end: String) {
+        val startMs = millis(start) ?: return
+        val endMs = millis(end) ?: return
+        if (startMs < 0 || endMs > clip.sourceDurationMs || endMs - startMs < 100L) return
+        onBeginTrim()
+        onTrim(startMs, endMs)
+        onEndTrim()
+    }
     Column(modifier.padding(vertical = 8.dp)) {
         Text("자르기 범위", color = CutColors.primaryText, fontSize = 13.sp, fontWeight = FontWeight.Medium)
         RangeSlider(
@@ -618,6 +644,33 @@ private fun TrimEditor(
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text("시작 " + formatTime(clip.startMs), color = CutColors.secondaryText, fontSize = 12.sp)
             Text("끝 " + formatTime(clip.endMs), color = CutColors.secondaryText, fontSize = 12.sp)
+        }
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            OutlinedTextField(
+                value = startText,
+                onValueChange = {
+                    startText = it.take(12)
+                    inputRange(startText, endText)
+                },
+                label = { Text("시작 시간 (초)") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                singleLine = true,
+                modifier = Modifier.weight(1f),
+            )
+            OutlinedTextField(
+                value = endText,
+                onValueChange = {
+                    endText = it.take(12)
+                    inputRange(startText, endText)
+                },
+                label = { Text("종료 시간 (초)") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                singleLine = true,
+                modifier = Modifier.weight(1f),
+            )
         }
     }
 }

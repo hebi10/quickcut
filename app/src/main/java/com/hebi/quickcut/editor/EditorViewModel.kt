@@ -65,7 +65,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         hasRestorableSession = true
     }
 
-    fun setQuickMode(enabled: Boolean) {
+    fun changeQuickMode(enabled: Boolean) {
         quickMode = enabled
         if (page == QuickCutPage.EDITOR) saveSessionSoon()
     }

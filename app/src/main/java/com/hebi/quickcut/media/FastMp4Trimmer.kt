@@ -91,6 +91,16 @@ internal object FastMp4Trimmer {
                 !isAcceptableStart(requestedUs, syncUs, endUs)
             ) return null
 
+            // Reject streams with presentation-order reversals before writing a large file.
+            var previousTimeUs = syncUs
+            repeat(12) {
+                if (extractor.advance()) {
+                    val timeUs = extractor.sampleTime
+                    if (timeUs < previousTimeUs) return null
+                    previousTimeUs = timeUs
+                }
+            }
+
             return Plan(
                 source = Uri.parse(clip.uri),
                 videoTrack = videoTrack,
@@ -142,6 +152,8 @@ internal object FastMp4Trimmer {
             var sampleNumber = 0
             var lastProgressAt = 0L
             var lastProgress = -1
+            var lastVideoTimeUs = -1L
+            var lastAudioTimeUs = -1L
             val spanUs = plan.endUs - plan.startUs
 
             while (true) {
@@ -149,6 +161,18 @@ internal object FastMp4Trimmer {
                 val index = extractor.sampleTrackIndex
                 if (index < 0) break
                 val timeUs = extractor.sampleTime
+                // Remuxing assumes timestamp order. A reordered stream needs Media3.
+                if (index == plan.videoTrack) {
+                    if (timeUs < lastVideoTimeUs) {
+                        throw FastTrimUnavailableException("Reordered video timestamps")
+                    }
+                    lastVideoTimeUs = timeUs
+                } else {
+                    if (timeUs < lastAudioTimeUs) {
+                        throw FastTrimUnavailableException("Reordered audio timestamps")
+                    }
+                    lastAudioTimeUs = timeUs
+                }
                 if (timeUs < plan.startUs) {
                     extractor.advance()
                     continue
@@ -168,8 +192,11 @@ internal object FastMp4Trimmer {
                 if (isVideo && videoSamples == 0 &&
                     (extractor.sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC) == 0
                 ) throw FastTrimUnavailableException("First video sample is not a keyframe")
-                if ((extractor.sampleFlags and MediaExtractor.SAMPLE_FLAG_ENCRYPTED) != 0) {
-                    throw FastTrimUnavailableException("Encrypted samples are unsupported")
+                if ((extractor.sampleFlags and
+                    (MediaExtractor.SAMPLE_FLAG_ENCRYPTED or
+                        MediaExtractor.SAMPLE_FLAG_PARTIAL_FRAME)) != 0
+                ) {
+                    throw FastTrimUnavailableException("Encrypted or partial samples are unsupported")
                 }
                 val sampleSize = extractor.sampleSize
                 if (sampleSize <= 0L || sampleSize > MAX_SAMPLE_BYTES) {

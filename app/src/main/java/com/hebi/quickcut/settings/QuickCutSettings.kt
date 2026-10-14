@@ -7,6 +7,7 @@ import com.hebi.quickcut.media.SaveDateMode
 data class QuickTrimSettings(
     val leadingMs: Long = 4_000L,
     val trailingMs: Long = 0L,
+    val muteAudio: Boolean = false,
 )
 
 data class BatchDraftSettings(
@@ -30,12 +31,14 @@ class QuickCutSettings(context: Context) {
     fun loadQuick(): QuickTrimSettings = QuickTrimSettings(
         leadingMs = preferences.getLong("quick_leading", 4_000L).coerceIn(0L, 86_400_000L),
         trailingMs = preferences.getLong("quick_trailing", 0L).coerceIn(0L, 86_400_000L),
+        muteAudio = preferences.getBoolean("quick_mute", false),
     )
 
     fun saveQuick(value: QuickTrimSettings) {
         preferences.edit()
             .putLong("quick_leading", value.leadingMs.coerceIn(0L, 86_400_000L))
             .putLong("quick_trailing", value.trailingMs.coerceIn(0L, 86_400_000L))
+            .putBoolean("quick_mute", value.muteAudio)
             .apply()
     }
 

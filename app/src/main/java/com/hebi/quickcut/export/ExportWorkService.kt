@@ -79,14 +79,14 @@ class ExportWorkService : Service() {
     }
 
     override fun onTimeout(startId: Int, fgsType: Int) {
-        ExportWorkMonitor.cancel(workId)
+        ExportWorkMonitor.terminate(workId)
         releaseWakeLock()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
 
     override fun onDestroy() {
-        ExportWorkMonitor.cancel(workId)
+        ExportWorkMonitor.terminate(workId)
         releaseWakeLock()
         scope.cancel()
         super.onDestroy()

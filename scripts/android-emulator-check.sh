@@ -12,6 +12,7 @@ trap on_failure EXIT
 
 gradle --no-daemon :app:assembleDebug
 adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb shell am force-stop com.google.android.apps.nexuslauncher
 adb shell am start -W -n com.hebi.quickcut/.MainActivity
 sleep 3
 adb exec-out screencap -p > quickcut-start.png
@@ -58,3 +59,4 @@ ffmpeg -hide_banner -loglevel error -y \
 
 gradle --no-daemon :app:connectedDebugAndroidTest
 echo "QuickCut Android export instrumentation tests passed"
+

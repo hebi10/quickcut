@@ -388,7 +388,11 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             return
         }
         val workId = try {
-            ExportWorkMonitor.begin(context, "QuickCut 영상 저장", ::cancelExport)
+            ExportWorkMonitor.begin(context, "QuickCut 영상 저장", ::cancelExport) {
+                exportJob?.cancel()
+                if (page == QuickCutPage.EXPORTING)
+                    reportError("백그라운드 저장이 시스템에 의해 중단됐습니다. 앱을 열고 다시 시도해 주세요.")
+            }
         } catch (error: Exception) {
             reportError(error.localizedMessage ?: "저장 서비스를 시작하지 못했습니다.")
             return

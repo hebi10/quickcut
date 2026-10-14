@@ -9,6 +9,8 @@ import androidx.annotation.OptIn
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
@@ -18,12 +20,11 @@ import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.onNodeWithTag
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.requiredSize
-import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.unit.Density
+import androidx.compose.ui.test.DeviceConfigurationOverride
+import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.ForcedSize
+import androidx.compose.ui.test.FontScale
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.media3.ui.PlayerView
 import androidx.media3.common.util.UnstableApi
@@ -32,6 +33,8 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.hebi.quickcut.batch.BatchViewModel
 import com.hebi.quickcut.editor.EditorSessionSnapshot
 import com.hebi.quickcut.editor.EditorSessionStore
+import androidx.lifecycle.ViewModelStore
+import com.hebi.quickcut.editor.formatTime
 import com.hebi.quickcut.editor.EditorViewModel
 import com.hebi.quickcut.editor.OriginalAction
 import com.hebi.quickcut.editor.QuickCutPage
@@ -99,7 +102,10 @@ class TrimInputInstrumentedTest {
                     .contentResolver.delete(it, null, null)
             }
             // Cancel the editor's delayed session write before restoring shared preferences.
-            composeRule.runOnUiThread { model.discardEditing() }
+            composeRule.runOnUiThread {
+                model.discardEditing()
+                ViewModelStore().apply { put("editor", model); put("batch", batchModel) }.clear()
+            }
         }
         if (::store.isInitialized) {
             previousSession?.let(store::save) ?: store.clear()
@@ -161,6 +167,31 @@ class TrimInputInstrumentedTest {
         composeRule.onAllNodes(hasSetTextAction())[0].performTextReplacement("-")
 
         composeRule.onNodeWithText("저장", substring = false).assertIsNotEnabled()
+    }
+
+    @Test
+    fun reselectingTheSameClipDoesNotClearAnInvalidTimeDraft() {
+        composeRule.runOnUiThread { model.changeQuickMode(false) }
+        showApp()
+        composeRule.onNodeWithText("자르기").performClick()
+        composeRule.onAllNodes(hasSetTextAction())[0].performTextReplacement("-")
+        composeRule.onNode(hasClickAction() and hasText(formatTime(model.timeline.totalDurationMs))).performClick()
+        composeRule.onNodeWithText("저장", substring = false).assertIsNotEnabled()
+    }
+
+    @kotlin.OptIn(ExperimentalTestApi::class)
+    @Test
+    fun exportCancelRemainsAccessibleInALowWindowWithLargeFont() {
+        var cancelled = false
+        composeRule.setContent {
+            DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(640.dp, 320.dp))) {
+                DeviceConfigurationOverride(DeviceConfigurationOverride.FontScale(2f)) {
+                    QuickCutTheme { CenterStatus("영상 저장 중", "다른 앱으로 이동해도 저장됩니다.", 50) { cancelled = true } }
+                }
+            }
+        }
+        composeRule.onNodeWithText("취소", substring = false).performScrollTo().assertIsDisplayed().performClick()
+        assertTrue(cancelled)
     }
 
     @Test
@@ -260,12 +291,14 @@ class TrimInputInstrumentedTest {
         composeRule.onAllNodes(hasSetTextAction())[0].performScrollTo().assertIsDisplayed()
     }
 
+    @kotlin.OptIn(ExperimentalTestApi::class)
     private fun showConstrainedQuick(width: Int, height: Int) {
         composeRule.setContent {
-            val density = LocalDensity.current
-            CompositionLocalProvider(LocalDensity provides Density(density.density, 2f)) {
-                QuickCutTheme {
-                    Box(Modifier.requiredSize(width.dp, height.dp)) {
+            DeviceConfigurationOverride(
+                DeviceConfigurationOverride.ForcedSize(DpSize(width.dp, height.dp)),
+            ) {
+                DeviceConfigurationOverride(DeviceConfigurationOverride.FontScale(2f)) {
+                    QuickCutTheme {
                         QuickTrimScreen(model, settings, {}, {}, {}, {})
                     }
                 }

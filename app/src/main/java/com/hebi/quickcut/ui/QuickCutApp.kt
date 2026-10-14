@@ -726,14 +726,14 @@ private fun LastSettingsDialog(
 }
 
 @Composable
-private fun CenterStatus(
+internal fun CenterStatus(
     title: String,
     subtitle: String,
     progress: Int?,
     onCancel: (() -> Unit)? = null,
 ) {
     Column(
-        modifier = Modifier.fillMaxSize().padding(24.dp),
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {

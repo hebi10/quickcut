@@ -16,11 +16,17 @@ import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
+import androidx.lifecycle.ViewModelStore
+import org.junit.Rule
+import androidx.test.ext.junit.rules.ActivityScenarioRule
+import com.hebi.quickcut.MainActivity
 import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class BatchQueueInstrumentedTest {
+    @get:Rule val activityRule = ActivityScenarioRule(MainActivity::class.java)
+
     /**
      * This exercises the actual queue and MediaStore saving, not only the edit
      * planning algorithm. Each input must result in its own playable output.
@@ -33,6 +39,9 @@ class BatchQueueInstrumentedTest {
             File(context.cacheDir, "quickcut_batch_queue_02.mp4"),
             File(context.cacheDir, "quickcut_batch_queue_03.mp4"),
         )
+        val settings = com.hebi.quickcut.settings.QuickCutSettings(context)
+        val oldDraft = settings.loadBatch()
+        val oldDate = settings.loadSaveDate()
         BatchSessionStore(context).clear()
         val vm = withContext(Dispatchers.Main) { BatchViewModel(context.applicationContext as android.app.Application) }
         try {
@@ -48,6 +57,9 @@ class BatchQueueInstrumentedTest {
 
             withContext(Dispatchers.Main) {
                 vm.draftName = "앞뒤 반초 삭제"
+                vm.draftMode = BatchClipMode.REMOVE_EDGES
+                vm.draftMute = false
+                vm.saveDateMode = com.hebi.quickcut.media.SaveDateMode.CURRENT
                 vm.draftLeadingSeconds = "0.5"
                 vm.draftTrailingSeconds = "0.5"
                 vm.addVideos(context, inputs.take(2).map(Uri::fromFile))
@@ -109,7 +121,9 @@ class BatchQueueInstrumentedTest {
             vm.files.mapNotNull(BatchFile::savedOutputUri).forEach { output ->
                 runCatching { context.contentResolver.delete(Uri.parse(output), null, null) }
             }
-            withContext(Dispatchers.Main) { vm.resetBatch() }
+            withContext(Dispatchers.Main) { vm.resetBatch(); ViewModelStore().apply { put("test", vm) }.clear() }
+            settings.saveBatch(oldDraft)
+            settings.saveSaveDate(oldDate)
             inputs.forEach(File::delete)
         }
     }

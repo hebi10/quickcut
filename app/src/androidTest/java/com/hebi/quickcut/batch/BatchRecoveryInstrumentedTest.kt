@@ -19,18 +19,43 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
+import androidx.lifecycle.ViewModelStore
+import com.hebi.quickcut.settings.QuickCutSettings
+import com.hebi.quickcut.settings.BatchDraftSettings
+import org.junit.After
+import org.junit.Before
+import org.junit.Rule
+import androidx.test.ext.junit.rules.ActivityScenarioRule
+import com.hebi.quickcut.MainActivity
 import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class BatchRecoveryInstrumentedTest {
+    @get:Rule val activityRule = ActivityScenarioRule(MainActivity::class.java)
+    private val models = mutableListOf<BatchViewModel>()
+    private lateinit var oldDraft: BatchDraftSettings
+    private lateinit var oldDate: SaveDateMode
+    @Before fun captureSettings() {
+        QuickCutSettings(InstrumentationRegistry.getInstrumentation().targetContext).let {
+            oldDraft = it.loadBatch(); oldDate = it.loadSaveDate()
+        }
+    }
+    @After fun restoreSettings() = runBlocking {
+        withContext(Dispatchers.Main) { models.forEach { ViewModelStore().apply { put("test", it) }.clear() } }
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        BatchSessionStore(context).clear()
+        QuickCutSettings(context).apply { saveBatch(oldDraft); saveSaveDate(oldDate) }
+        Unit
+    }
+
     @Test
     fun recreatingBatchRestoresSavedOutputAndDoesNotRestoreDeletionConsent() = runBlocking {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val application = context.applicationContext as Application
         val input = File(context.cacheDir, "quickcut_recovery_fixture.mp4")
         BatchSessionStore(context).clear()
-        val first = withContext(Dispatchers.Main) { BatchViewModel(application) }
+        val first = withContext(Dispatchers.Main) { BatchViewModel(application) }.also(models::add)
         withContext(Dispatchers.Main) { first.resetBatch() }
         InstrumentationRegistry.getInstrumentation().context.assets.open("quickcut_keyframes.mp4")
             .use { source -> input.outputStream().use { target -> source.copyTo(target) } }
@@ -51,7 +76,7 @@ class BatchRecoveryInstrumentedTest {
             assertEquals(1, first.successes)
             val saved = first.files.single().savedOutputUri
             assertNotNull(saved)
-            val recreated = withContext(Dispatchers.Main) { BatchViewModel(application) }
+            val recreated = withContext(Dispatchers.Main) { BatchViewModel(application) }.also(models::add)
             assertEquals("저장 완료 파일을 재실행 시 복구해야 합니다", 1, recreated.files.size)
             assertEquals(BatchFileStatus.SAVED, recreated.files.single().status)
             assertEquals(saved, recreated.files.single().savedOutputUri)

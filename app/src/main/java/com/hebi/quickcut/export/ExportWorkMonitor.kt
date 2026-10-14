@@ -14,6 +14,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withTimeout
+import com.hebi.quickcut.media.ExportStagingFiles
 
 data class ExportWorkStatus(
     val id: String,
@@ -29,12 +30,20 @@ object ExportWorkMonitor {
     var isRunning by mutableStateOf(false)
         private set
     private var cancellation: (() -> Unit)? = null
+    private var termination: (() -> Unit)? = null
+    private var terminationRequested = false
     private var ready: CompletableDeferred<Unit>? = null
 
-    fun begin(context: Context, title: String, onCancel: () -> Unit): String {
+    fun begin(context: Context, title: String, onCancel: () -> Unit): String =
+        begin(context, title, onCancel, onCancel)
+
+    fun begin(context: Context, title: String, onCancel: () -> Unit, onTerminate: () -> Unit): String {
         check(!isRunning) { "다른 영상 저장이 진행 중입니다. 완료 후 다시 시작해 주세요." }
+        ExportStagingFiles.cleanup(context.applicationContext.cacheDir)
         val id = UUID.randomUUID().toString()
         cancellation = onCancel
+        termination = onTerminate
+        terminationRequested = false
         ready = CompletableDeferred()
         current.value = ExportWorkStatus(id, title)
         isRunning = true
@@ -72,11 +81,19 @@ object ExportWorkMonitor {
         if (id != null && current.value?.id == id && current.value?.canCancel == true) cancellation?.invoke()
     }
 
+    fun terminate(id: String?) {
+        if (id != null && current.value?.id == id && !terminationRequested) {
+            terminationRequested = true
+            termination?.invoke()
+        }
+    }
+
     fun finish(id: String) {
         if (current.value?.id != id) return
         ready?.cancel()
         ready = null
         cancellation = null
+        termination = null
         current.value = null
         isRunning = false
     }

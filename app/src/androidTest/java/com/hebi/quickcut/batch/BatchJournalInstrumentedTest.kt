@@ -22,11 +22,33 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.After
+import org.junit.Before
+import com.hebi.quickcut.settings.QuickCutSettings
+import com.hebi.quickcut.settings.BatchDraftSettings
+import androidx.lifecycle.ViewModelStore
 import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class BatchJournalInstrumentedTest {
+    private var model: BatchViewModel? = null
+    private lateinit var oldDraft: BatchDraftSettings
+    private lateinit var oldDate: SaveDateMode
+    @Before fun captureSettings() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val settings = QuickCutSettings(context)
+        oldDraft = settings.loadBatch()
+        oldDate = settings.loadSaveDate()
+    }
+    @After fun restoreSettings() = runBlocking {
+        withContext(Dispatchers.Main) { model?.let { ViewModelStore().apply { put("test", it) }.clear() } }
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        BatchSessionStore(context).clear()
+        QuickCutSettings(context).apply { saveBatch(oldDraft); saveSaveDate(oldDate) }
+        Unit
+    }
+
     @Test fun publishedOutputIsAdoptedAfterProcessExitBeforeSuccessWasRecorded() = runBlocking {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val input = fixture(context)
@@ -87,8 +109,15 @@ class BatchJournalInstrumentedTest {
             assertEquals(BatchFileStatus.SKIPPED, restored.files.single().status)
             assertFalse(restored.isRunning)
             assertEquals(OriginalAction.KEEP, restored.originalAction)
+            InstrumentationRegistry.getInstrumentation().context.assets.open("quickcut_fixture.mp4")
+                .use { source -> input.outputStream().use { target -> source.copyTo(target) } }
+            withContext(Dispatchers.Main) { restored.addVideos(context, listOf(Uri.fromFile(input))) }
+            withTimeout(30_000L) { while (restored.isImporting) delay(50L) }
+            assertEquals(1, restored.files.size)
+            assertTrue(restored.files.single().durationMs >= 3_000L)
+            assertEquals(BatchFileStatus.WAITING, restored.files.single().status)
             withContext(Dispatchers.Main) { restored.resetBatch() }
-        } finally { BatchSessionStore(context).clear() }
+        } finally { BatchSessionStore(context).clear(); input.delete() }
     }
 
     private fun seed(context: Context, input: File, output: Uri?, duration: Long, audio: Boolean) {
@@ -102,7 +131,7 @@ class BatchJournalInstrumentedTest {
     }
 
     private suspend fun restore(context: Context): BatchViewModel {
-        val model = withContext(Dispatchers.Main) { BatchViewModel(context.applicationContext as Application) }
+        val model = withContext(Dispatchers.Main) { BatchViewModel(context.applicationContext as Application) }.also { this.model = it }
         withTimeout(30_000L) { while (model.isRecovering) delay(50L) }
         return model
     }

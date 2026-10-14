@@ -13,11 +13,16 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Rule
+import androidx.test.ext.junit.rules.ActivityScenarioRule
+import com.hebi.quickcut.MainActivity
 import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class ExportServiceInstrumentedTest {
+    @get:Rule val activityRule = ActivityScenarioRule(MainActivity::class.java)
+
     @Test fun foregroundWorkSupportsCancellationAndStopsAfterCompletion() = runBlocking {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         var cancelled = false
@@ -42,6 +47,26 @@ class ExportServiceInstrumentedTest {
         }
         withTimeout(10_000L) { while (serviceRunning(context)) delay(50L) }
         assertFalse(ExportWorkMonitor.isRunning)
+    }
+
+    @Test fun systemTerminationStopsTheJobEvenWhenUserCancellationIsBlocked() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        var userCancelled = false
+        var terminated = false
+        val id = withContext(Dispatchers.Main) {
+            ExportWorkMonitor.begin(context, "시스템 중단 검사", { userCancelled = true }, { terminated = true })
+        }
+        try {
+            withContext(Dispatchers.Main) {
+                ExportWorkMonitor.awaitReady(id)
+                ExportWorkMonitor.update(id, "파일 등록 중", canCancel = false)
+                ExportWorkMonitor.cancel(id)
+                ExportWorkMonitor.terminate(id)
+            }
+            assertFalse(userCancelled)
+            assertTrue(terminated)
+        } finally { withContext(Dispatchers.Main) { ExportWorkMonitor.finish(id) } }
+        withTimeout(10_000L) { while (serviceRunning(context)) delay(50L) }
     }
 
     @Test fun finishingAStaleLeaseDoesNotCancelTheFollowingWork() = runBlocking {

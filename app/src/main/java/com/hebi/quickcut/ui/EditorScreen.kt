@@ -176,7 +176,8 @@ fun EditorScreen(
         player.seekTo(model.playPositionMs)
     }
     val onSelect: (Long) -> Unit = { id ->
-        model.setTrimInputValidity(true)
+        if (id != model.selectedId && model.timeline.clipAt(id) != null)
+            model.setTrimInputValidity(true)
         model.selectClip(id)
         player.seekTo(model.playPositionMs)
     }
@@ -184,7 +185,6 @@ fun EditorScreen(
         model.moveClip(id, direction)
     }
     val onClipTrimmed: (Long, Long, Long) -> Unit = { id, start, end ->
-        model.setTrimInputValidity(true)
         model.trimClip(id, start, end)
     }
     val onAction: (String) -> Unit = { key ->

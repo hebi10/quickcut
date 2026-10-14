@@ -28,6 +28,8 @@ import com.hebi.quickcut.settings.QuickCutSettings
 import com.hebi.quickcut.settings.BatchDraftSettings
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -298,17 +300,18 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
 
     fun addVideos(context: Context, selected: List<Uri>) {
         if (isRunning || isRecovering || isImporting || selected.isEmpty()) return
-        if (files.size + selected.size > 250) {
+        if (files.size + selected.distinctBy { it.toString() }.count { uri -> files.none { it.uri == uri.toString() } } > 250) {
             notification = "한 번에 최대 250개의 영상을 선택할 수 있습니다."
             return
         }
         isImporting = true
         viewModelScope.launch {
             try {
-                val existing = files.map { it.uri }.toSet()
+                val existing = files.associateBy { it.uri }
+                val refreshable = existing.filterValues { it.status != BatchFileStatus.SAVED && it.durationMs < 100L }
                 val newRows = withContext(Dispatchers.IO) {
                     selected.distinctBy { it.toString() }
-                        .filterNot { it.toString() in existing }
+                        .filter { it.toString() !in existing || it.toString() in refreshable }
                         .map { uri ->
                             val name = runCatching {
                                 context.contentResolver.query(
@@ -337,7 +340,13 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
                             }
                         }
                 }
-                files = files + newRows
+                val refreshed = newRows.associateBy { it.uri }.toMutableMap()
+                files = files.map { previous ->
+                    refreshed.remove(previous.uri)?.copy(savedOutputUri = previous.savedOutputUri,
+                        outputExpectedDurationMs = previous.outputExpectedDurationMs,
+                        outputExpectedAudio = previous.outputExpectedAudio,
+                        outputExpectedDateMs = previous.outputExpectedDateMs) ?: previous
+                } + refreshed.values
                 persistSession()
                 if (runState == BatchRunState.FINISHED) runState = BatchRunState.SETUP
                 if (newRows.isEmpty()) notification = "이미 선택된 영상입니다."
@@ -352,10 +361,27 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun removeVideo(uri: String) {
-        if (isRunning || isRecovering) return
-        files = files.filterNot { it.uri == uri }
-        runState = BatchRunState.SETUP
-        persistSession()
+        if (isRunning || isRecovering || isImporting) return
+        val row = files.firstOrNull { it.uri == uri } ?: return
+        isImporting = true
+        viewModelScope.launch {
+            try {
+                if (row.status != BatchFileStatus.SAVED && row.savedOutputUri != null) {
+                    val checked = withContext(Dispatchers.IO) { recoverFile(getApplication(), row) }
+                    check(checked.savedOutputUri == null || checked.status == BatchFileStatus.SAVED) {
+                        "미완성 출력 파일을 정리하지 못했습니다. 다시 시도해 주세요."
+                    }
+                }
+                val remaining = files.filterNot { it.uri == uri }
+                sessionStore.save(BatchSessionSnapshot(remaining, previewTemplate() ?: activeTemplate,
+                    saveDateMode, BatchRunState.SETUP))
+                files = remaining
+                runState = BatchRunState.SETUP
+                completedCount = files.count { it.status != BatchFileStatus.WAITING && it.status != BatchFileStatus.RUNNING }
+            } catch (error: Exception) {
+                notification = "선택 영상을 제거하지 못했습니다. " + (error.localizedMessage ?: "저장 공간을 확인해 주세요.")
+            } finally { isImporting = false }
+        }
     }
 
     fun start(
@@ -378,7 +404,10 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         val workId = try {
-            ExportWorkMonitor.begin(context, "QuickCut 일괄 저장", ::cancel)
+            ExportWorkMonitor.begin(context, "QuickCut 일괄 저장", ::cancel) {
+                job?.cancel()
+                notification = "백그라운드 저장이 시스템에 의해 중단됐습니다. 완료 파일은 유지하며 남은 작업은 다시 시작할 수 있습니다."
+            }
         } catch (error: Exception) {
             notification = error.localizedMessage ?: "저장 서비스를 시작하지 못했습니다."
             return
@@ -402,7 +431,7 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
                         "영상 정보를 읽을 수 없습니다."
                     } else null,
                     progress = null,
-                    savedOutputUri = null,
+                    savedOutputUri = file.savedOutputUri,
                 )
             }
         }
@@ -413,7 +442,14 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
                 persistSession()
                 ExportWorkMonitor.awaitReady(workId)
                 val sourceRows = files.toList()
-                for (row in sourceRows) {
+                for (sourceRow in sourceRows) {
+                    currentCoroutineContext().ensureActive()
+                    var row = sourceRow
+                    if (row.status != BatchFileStatus.SAVED && row.savedOutputUri != null) {
+                        val recovered = withContext(Dispatchers.IO) { recoverFile(context.applicationContext, sourceRow) }
+                        update(row.uri) { recovered }
+                        row = recovered
+                    }
                     // Previously completed files are never exported twice.
                     if (row.status == BatchFileStatus.SAVED) continue
                     if (retryOnly && row.status != BatchFileStatus.FAILED && row.status != BatchFileStatus.SKIPPED) continue
@@ -465,6 +501,7 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
                                     saveDateMode = selectedDateMode,
                                     outputBaseName = row.displayName,
                                     exportMode = exportMode,
+                                    resolvedOriginalDate = row.originalDate,
                                 )
                                 if (files.first { it.uri == row.uri }.status != BatchFileStatus.SAVED) {
                                     update(row.uri) { it.copy(status=BatchFileStatus.SAVED,progress=100,
@@ -473,18 +510,18 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
                             } catch (required: ReencodeRequiredException) {
                                 update(row.uri) {
                                     it.copy(status=BatchFileStatus.SKIPPED,progress=null,
-                                        savedOutputUri=null, reason="고속 저장을 지원하지 않아 건너뛰었습니다.")
+                                        reason="고속 저장을 지원하지 않아 건너뛰었습니다.")
                                 }
                             } catch (cancelled: CancellationException) {
                                 if (files.first { it.uri == row.uri }.status != BatchFileStatus.SAVED) update(row.uri) {
-                                    it.copy(status=BatchFileStatus.SKIPPED,progress=null, savedOutputUri=null,
+                                    it.copy(status=BatchFileStatus.SKIPPED,progress=null,
                                         reason="작업이 중지됐습니다. 설정 확인 후 다시 시작해 주세요.")
                                 }
                                 throw cancelled
                             } catch (failure: Exception) {
                                 update(row.uri) {
                                     it.copy(status=BatchFileStatus.FAILED,progress=null,
-                                        savedOutputUri=null, reason=failure.localizedMessage ?: "영상 저장 실패")
+                                        reason=failure.localizedMessage ?: "영상 저장 실패")
                                 }
                             } finally {
                                 isFinalizing = false
@@ -501,12 +538,18 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
                 }
             } catch (error: Exception) {
                 notification = "일괄 작업을 완료하지 못했습니다. " + (error.localizedMessage ?: "다시 시도해 주세요.")
+                files = files.map {
+                    if (it.status == BatchFileStatus.WAITING || it.status == BatchFileStatus.RUNNING)
+                        it.copy(status=BatchFileStatus.FAILED, progress=null, reason=notification)
+                    else it
+                }
             } finally {
                 isFinalizing = false
                 // Keep the selected action visible during rendering. The next
                 // batch always resets to KEEP even if the prior run selected trash.
                 originalAction = OriginalAction.KEEP
                 runState = BatchRunState.FINISHED
+                completedCount = files.count { it.status != BatchFileStatus.WAITING && it.status != BatchFileStatus.RUNNING }
                 originalStatus = if (performedOriginalAction != OriginalAction.KEEP &&
                     originalCandidates.isNotEmpty()) OriginalActionStatus.READY
                 else OriginalActionStatus.NONE
@@ -559,7 +602,27 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun resetBatch() {
-        if (isRunning || isRecovering) return
+        if (isRunning || isRecovering || isImporting) return
+        val tracked = files.filter { it.status != BatchFileStatus.SAVED && it.savedOutputUri != null }
+        if (tracked.isEmpty()) {
+            clearBatch()
+            return
+        }
+        isImporting = true
+        viewModelScope.launch {
+            try {
+                val checked = withContext(Dispatchers.IO) { tracked.map { recoverFile(getApplication(), it) } }
+                check(checked.none { it.savedOutputUri != null && it.status != BatchFileStatus.SAVED }) {
+                    "미완성 출력 파일을 정리하지 못했습니다. 파일 접근을 확인하고 다시 시도해 주세요."
+                }
+                clearBatch()
+            } catch (error: Exception) {
+                notification = error.localizedMessage ?: "이전 작업을 정리하지 못했습니다."
+            } finally { isImporting = false }
+        }
+    }
+
+    private fun clearBatch() {
         files = emptyList()
         sourceUrisSavedThisRun = emptyList()
         completedCount = 0
@@ -581,14 +644,16 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
         val output = row.savedOutputUri?.let(Uri::parse)
         var state = BatchOutputState.ABSENT
         if (output != null) {
+            var queryConfirmed = false
             state = runCatching {
                 context.contentResolver.query(output, arrayOf(MediaStore.Video.Media.IS_PENDING,
                     MediaStore.Video.Media.OWNER_PACKAGE_NAME, MediaStore.Video.Media.RELATIVE_PATH),
                     null, null, null)?.use { cursor ->
-                    if (!cursor.moveToFirst()) return@use BatchOutputState.ABSENT
+                    if (!cursor.moveToFirst()) { queryConfirmed = true; return@use BatchOutputState.ABSENT }
                     val owned = cursor.getString(1) == context.packageName &&
-                        cursor.getString(2).trimEnd('/') == Environment.DIRECTORY_MOVIES + "/QuickCut"
+                        cursor.getString(2)?.trimEnd('/') == Environment.DIRECTORY_MOVIES + "/QuickCut"
                     if (!owned) return@use BatchOutputState.INVALID
+                    queryConfirmed = true
                     if (cursor.getInt(0) == 1) return@use BatchOutputState.PENDING
                     MediaReader.validateExport(context, output, row.outputExpectedDurationMs, row.outputExpectedAudio)
                     row.outputExpectedDateMs?.let { expected ->
@@ -596,8 +661,10 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
                         check(actual != null && kotlin.math.abs(actual - expected) <= 3_000L)
                     }
                     BatchOutputState.VERIFIED
-                } ?: BatchOutputState.ABSENT
+                } ?: BatchOutputState.ABSENT.also { queryConfirmed = true }
             }.getOrDefault(BatchOutputState.INVALID)
+            if (!queryConfirmed) return row.copy(status=BatchFileStatus.SKIPPED, durationMs=0L,
+                reason="이전 출력에 접근할 수 없습니다. 파일 접근을 확인한 뒤 다시 시도해 주세요.", progress=null)
         }
         val action = BatchRecoveryPolicy.decide(row.status == BatchFileStatus.SAVED, state)
         if (action == BatchRecoveryAction.KEEP_SAVED || action == BatchRecoveryAction.ADOPT_SAVED)

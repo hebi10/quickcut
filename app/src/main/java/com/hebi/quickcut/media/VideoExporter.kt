@@ -39,6 +39,7 @@ class VideoExporter(private val context: Context) {
         exportMode: ExportMode = ExportMode.ALLOW_REENCODE,
         onOutputCreated: (Uri) -> Unit = {},
         onCommitted: (Uri) -> Unit = {},
+        resolvedOriginalDate: OriginalTimestamp? = null,
     ): android.net.Uri {
         require(!timeline.isEmpty) { "편집할 영상이 없습니다." }
         require(timeline.clips.all { it.durationMs >= 100L }) { "저장할 영상 구간은 0.1초 이상이어야 합니다." }
@@ -46,7 +47,7 @@ class VideoExporter(private val context: Context) {
         val expectAudio = timeline.clips.any { !it.muted && it.hasAudio }
         val originalDate = if (saveDateMode == SaveDateMode.ORIGINAL) {
             withContext(Dispatchers.IO) {
-                OriginalMediaDates.resolve(context, Uri.parse(timeline.clips.first().uri))
+                resolvedOriginalDate ?: OriginalMediaDates.resolve(context, Uri.parse(timeline.clips.first().uri))
                     ?: throw IOException(
                         "원본에 확인 가능한 촬영/수정 날짜가 없어 원본 날짜로 저장할 수 없습니다."
                     )

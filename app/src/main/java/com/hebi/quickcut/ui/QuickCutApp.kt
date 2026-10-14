@@ -123,6 +123,7 @@ fun QuickCutApp(
                             selectedSaveDateMode,
                             ExportMode.FAST_ONLY,
                         )
+                        selectedSaveAction = OriginalAction.KEEP
                     } else {
                         exportAssessment = assessment
                     }

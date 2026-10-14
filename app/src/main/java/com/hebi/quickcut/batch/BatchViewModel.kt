@@ -60,26 +60,6 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
     private val settings = QuickCutSettings(application)
     private val lastDraft = settings.loadBatch()
 
-    init {
-        viewModelScope.launch {
-            snapshotFlow {
-                BatchDraftSettings(
-                    name = draftName,
-                    mode = draftMode,
-                    leadingMs = parseMillis(draftLeadingSeconds) ?: lastDraft.leadingMs,
-                    trailingMs = parseMillis(draftTrailingSeconds) ?: lastDraft.trailingMs,
-                    muteAudio = draftMute,
-                    selectedTemplateId = selectedTemplateId,
-                )
-            }.distinctUntilChanged().collect { settings.saveBatch(it) }
-        }
-        viewModelScope.launch {
-            snapshotFlow { saveDateMode }.distinctUntilChanged().collect {
-                settings.saveSaveDate(it)
-            }
-        }
-    }
-
     suspend fun inspectExport(context: Context, retryOnly: Boolean): BatchExportOverview {
         val template = previewTemplate()
             ?: throw IllegalArgumentException("편집 설정을 확인해 주세요.")
@@ -156,6 +136,26 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
     // Only files exported successfully in the current run are eligible
     // for an original-media operation. Prior runs are never included.
     private var sourceUrisSavedThisRun by mutableStateOf<List<String>>(emptyList())
+
+    init {
+        viewModelScope.launch {
+            snapshotFlow {
+                BatchDraftSettings(
+                    name = draftName,
+                    mode = draftMode,
+                    leadingMs = parseMillis(draftLeadingSeconds) ?: lastDraft.leadingMs,
+                    trailingMs = parseMillis(draftTrailingSeconds) ?: lastDraft.trailingMs,
+                    muteAudio = draftMute,
+                    selectedTemplateId = selectedTemplateId,
+                )
+            }.distinctUntilChanged().collect { settings.saveBatch(it) }
+        }
+        viewModelScope.launch {
+            snapshotFlow { saveDateMode }.distinctUntilChanged().collect {
+                settings.saveSaveDate(it)
+            }
+        }
+    }
 
     val isRunning: Boolean get() = runState == BatchRunState.RUNNING
     val successes: Int get() = files.count { it.status == BatchFileStatus.SAVED }

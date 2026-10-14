@@ -152,14 +152,14 @@ fun QuickCutApp(
         ActivityResultContracts.OpenDocument()
     ) { uri ->
         if (uri != null) {
-            model.setQuickMode(true)
+            model.changeQuickMode(true)
             pendingQuickDefaults = true
             model.importVideos(context, listOf(uri))
         }
     }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) {
-            model.setQuickMode(false)
+            model.changeQuickMode(false)
             model.importVideos(context, uris, append = model.page == QuickCutPage.EDITOR)
         }
     }
@@ -250,7 +250,7 @@ fun QuickCutApp(
                         model = model,
                         settings = settings,
                         onBack = model::requestExit,
-                        onDetailedEdit = { model.setQuickMode(false) },
+                        onDetailedEdit = { model.changeQuickMode(false) },
                         onSave = { showSaveOptions = true },
                     )
                 } else {

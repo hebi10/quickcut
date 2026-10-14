@@ -49,6 +49,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -87,13 +88,20 @@ fun BatchScreen(
     var pendingOverview by remember { mutableStateOf<BatchExportOverview?>(null) }
     var pendingRetry by remember { mutableStateOf(false) }
     var inspecting by remember { mutableStateOf(false) }
+    var inspectedCount by remember { mutableIntStateOf(0) }
+    var inspectedTotal by remember { mutableIntStateOf(0) }
     var showStopConfirmation by rememberSaveable { mutableStateOf(false) }
     val requestExport: (Boolean) -> Unit = { retry ->
         if (!inspecting && !model.isRunning) {
             inspecting = true
+            inspectedCount = 0
+            inspectedTotal = 0
             scope.launch {
                 try {
-                    val checked = model.inspectExport(context.applicationContext, retry)
+                    val checked = model.inspectExport(context.applicationContext, retry) { done, total ->
+                        inspectedCount = done
+                        inspectedTotal = total
+                    }
                     if (checked.ready == 0) {
                         model.notifyUser("저장할 수 있는 영상이 없습니다. 설정과 파일을 확인해 주세요.")
                     } else {
@@ -267,7 +275,12 @@ fun BatchScreen(
         AlertDialog(
             onDismissRequest = {},
             title = { Text("저장 방식 분석 중") },
-            text = { Text("영상별 코덱과 자르기 위치를 확인하고 있습니다.") },
+            text = {
+                Text(
+                    "영상별 코덱과 자르기 위치를 확인하고 있습니다." +
+                        if (inspectedTotal > 0) " ($inspectedCount / $inspectedTotal)" else ""
+                )
+            },
             confirmButton = {},
             containerColor = Color(0xFF202126),
         )

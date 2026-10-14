@@ -69,6 +69,7 @@ fun QuickTrimScreen(
     onBack: () -> Unit,
     onDetailedEdit: () -> Unit,
     onSave: () -> Unit,
+    onSaveOptions: () -> Unit,
 ) {
     val clip = model.timeline.clips.singleOrNull() ?: return
     val context = LocalContext.current
@@ -222,6 +223,10 @@ fun QuickTrimScreen(
                     "마지막 자르기 값은 자동 저장됩니다. 고속 저장 여부는 저장 전에 확인합니다.",
                     color = CutColors.secondaryText, fontSize = 12.sp,
                 )
+                OutlinedButton(
+                    onClick = onSaveOptions,
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                ) { Text("저장 옵션 · 날짜 및 원본 처리") }
             }
             Button(
                 onClick = onSave,

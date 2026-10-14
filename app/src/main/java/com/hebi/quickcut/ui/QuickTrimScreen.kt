@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
@@ -142,7 +143,10 @@ fun QuickTrimScreen(
                 Text("빠른 자르기", color = CutColors.primaryText,
                     fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.weight(1f))
-                OutlinedButton(onClick = onDetailedEdit) {
+                OutlinedButton(
+                    onClick = onDetailedEdit,
+                    shape = RoundedCornerShape(4.dp),
+                ) {
                     Icon(Icons.Outlined.Settings, contentDescription = null,
                         modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(6.dp))
@@ -222,7 +226,9 @@ fun QuickTrimScreen(
                 ) {
                     Text(if (clip.muted) "원본 소리: 음소거" else "원본 소리: 유지",
                         color = CutColors.secondaryText, fontSize = 13.sp)
-                    OutlinedButton(onClick = {
+                    OutlinedButton(
+                        shape = RoundedCornerShape(4.dp),
+                        onClick = {
                         model.toggleMute()
                         val current = settings.loadQuick()
                         settings.saveQuick(current.copy(muteAudio = !clip.muted))
@@ -237,6 +243,7 @@ fun QuickTrimScreen(
                 OutlinedButton(
                     onClick = onSaveOptions,
                     modifier = Modifier.fillMaxWidth().height(48.dp),
+                    shape = RoundedCornerShape(4.dp),
                 ) { Text("저장 옵션 · 날짜 및 원본 처리") }
             }
             Button(
@@ -247,6 +254,7 @@ fun QuickTrimScreen(
                 enabled = valid,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
                     .height(52.dp),
+                shape = RoundedCornerShape(4.dp),
             ) {
                 Text("영상 저장", fontWeight = FontWeight.SemiBold)
             }
@@ -275,6 +283,7 @@ private fun TrimSecondsRow(
             modifier = Modifier.height(48.dp).semantics {
                 contentDescription = "$label 1초 감소"
             },
+            shape = RoundedCornerShape(4.dp),
         ) {
             Text("−")
         }
@@ -292,6 +301,7 @@ private fun TrimSecondsRow(
             modifier = Modifier.height(48.dp).semantics {
                 contentDescription = "$label 1초 증가"
             },
+            shape = RoundedCornerShape(4.dp),
         ) {
             Text("+")
         }

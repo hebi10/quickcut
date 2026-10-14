@@ -450,16 +450,6 @@ private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
             "원본 삭제는 자동 실행하지 않으며 완료 후 앱 확인과 Android 승인이 필요합니다.",
             style = MaterialTheme.typography.bodySmall, color = secondary,
         )
-        OutlinedButton(
-            onClick = onSelectVideos,
-            enabled = !disabled && !model.isImporting,
-            modifier = Modifier.fillMaxWidth().height(52.dp),
-            shape = RoundedCornerShape(4.dp),
-        ) {
-            Icon(Icons.Outlined.Add, contentDescription = null)
-            Spacer(Modifier.width(8.dp))
-            Text(if (model.isImporting) "영상 불러오는 중" else "영상 여러 개 선택 / 추가")
-        }
 
         }
     }

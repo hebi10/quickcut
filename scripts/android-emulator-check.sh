@@ -47,5 +47,14 @@ ffmpeg -hide_banner -loglevel error -y \
   -metadata creation_time=2021-01-01T00:00:00Z \
   app/src/androidTest/assets/quickcut_fixture.mp4
 
+# Deterministic 2-second sync boundaries: reproduce a 4-second head trim.
+ffmpeg -hide_banner -loglevel error -y \
+  -f lavfi -i testsrc2=size=320x240:rate=30 \
+  -f lavfi -i sine=frequency=880:sample_rate=44100 \
+  -t 8 -c:v libx264 -preset ultrafast -pix_fmt yuv420p \
+  -g 60 -keyint_min 60 -sc_threshold 0 \
+  -c:a aac -b:a 64k -shortest \
+  app/src/androidTest/assets/quickcut_keyframes.mp4
+
 gradle --no-daemon :app:connectedDebugAndroidTest
 echo "QuickCut Android export instrumentation tests passed"

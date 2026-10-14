@@ -73,11 +73,11 @@ fun TimelineStrip(
             )
             Row(verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = { zoom = (zoom / 2f).coerceAtLeast(1f) },
-                    enabled = zoom > 1f) { Text("−") }
+                    enabled = zoom > 1f, shape = CutShape) { Text("−") }
                 Text(zoom.toInt().toString() + "배", fontSize = 11.sp,
                     color = CutColors.primaryText)
                 TextButton(onClick = { zoom = (zoom * 2f).coerceAtMost(16f) },
-                    enabled = zoom < 16f) { Text("+") }
+                    enabled = zoom < 16f, shape = CutShape) { Text("+") }
             }
         }
         Spacer(Modifier.height(8.dp))
@@ -237,3 +237,4 @@ private fun TrimHandle(
         )
     }
 }
+

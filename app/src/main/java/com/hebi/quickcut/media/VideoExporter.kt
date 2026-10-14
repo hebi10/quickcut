@@ -19,9 +19,10 @@ import androidx.media3.transformer.Transformer
 import com.hebi.quickcut.editor.EditTimeline
 import java.io.File
 import java.io.IOException
-import kotlin.math.abs
+import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.resume
@@ -36,8 +37,13 @@ class VideoExporter(private val context: Context) {
         saveDateMode: SaveDateMode = SaveDateMode.CURRENT,
         outputBaseName: String? = null,
         exportMode: ExportMode = ExportMode.ALLOW_REENCODE,
+        onOutputCreated: (Uri) -> Unit = {},
+        onCommitted: (Uri) -> Unit = {},
     ): android.net.Uri {
         require(!timeline.isEmpty) { "편집할 영상이 없습니다." }
+        require(timeline.clips.all { it.durationMs >= 100L }) { "저장할 영상 구간은 0.1초 이상이어야 합니다." }
+        val expectedDurationMs = timeline.totalDurationMs
+        val expectAudio = timeline.clips.any { !it.muted && it.hasAudio }
         val originalDate = if (saveDateMode == SaveDateMode.ORIGINAL) {
             withContext(Dispatchers.IO) {
                 OriginalMediaDates.resolve(context, Uri.parse(timeline.clips.first().uri))
@@ -66,6 +72,11 @@ class VideoExporter(private val context: Context) {
                             FastMp4Trimmer.write(context, plan, destination, onProgress)
                         },
                         onFinalizing = onFinalizing,
+                        estimatedOutputBytes = withContext(Dispatchers.IO) {
+                            ExportStorage.estimateOutputBytes(context, timeline, directWrite = true)
+                        },
+                        onOutputCreated = onOutputCreated,
+                        onCommitted = onCommitted,
                     )
                     Log.i(
                         "QuickCutExport",
@@ -81,16 +92,6 @@ class VideoExporter(private val context: Context) {
                         throw ReencodeRequiredException("고속 저장을 완료할 수 없습니다. 정밀 저장을 선택해 주세요.", unsupported)
                     }
                     Log.w("QuickCutExport", "Fast remux unsupported; using Media3", unsupported)
-                } catch (unsupported: IllegalStateException) {
-                    if (exportMode == ExportMode.FAST_ONLY) {
-                        throw ReencodeRequiredException("고속 저장을 완료할 수 없습니다. 정밀 저장을 선택해 주세요.", unsupported)
-                    }
-                    Log.w("QuickCutExport", "Native remux unavailable; using Media3", unsupported)
-                } catch (unsupported: IllegalArgumentException) {
-                    if (exportMode == ExportMode.FAST_ONLY) {
-                        throw ReencodeRequiredException("고속 저장을 완료할 수 없습니다. 정밀 저장을 선택해 주세요.", unsupported)
-                    }
-                    Log.w("QuickCutExport", "Native remux rejected input; using Media3", unsupported)
                 }
             }
         }
@@ -100,44 +101,34 @@ class VideoExporter(private val context: Context) {
                 "현재 자르기 위치 또는 저장 옵션에서는 고속 복사를 사용할 수 없습니다. 정밀 저장을 선택해 주세요."
             )
         }
-        val temporary = File.createTempFile("quickcut_", ".mp4", context.cacheDir)
+        withContext(Dispatchers.IO) {
+            val estimate = ExportStorage.estimateOutputBytes(context, timeline, directWrite = false)
+            ExportStorage.requireSpace(context, estimate, directWrite = false)
+        }
+        // Merely choose a unique path here. Creating a temp file in a cancellable
+        // withContext can lose the cleanup handle while dispatching back to Main.
+        val temporary = File(context.cacheDir, "quickcut_" + UUID.randomUUID().toString() + ".mp4")
         try {
-            check(temporary.delete()) { "임시 출력 파일을 준비하지 못했습니다." }
             withContext(Dispatchers.Main.immediate) {
                 transform(timeline, temporary, onProgress, outputTimestampMs)
             }
             withContext(Dispatchers.IO) {
-                MediaReader.validateExport(temporary)
+                MediaReader.validateExport(temporary, expectedDurationMs, expectAudio, originalDate?.epochMs)
             }
-            onFinalizing()
-            val exportedUri = GalleryWriter(context).save(
+            return GalleryWriter(context).save(
                 temporary,
                 originalTimestampMs = originalDate?.epochMs,
                 outputBaseName = outputBaseName,
+                expectedDurationMs = expectedDurationMs,
+                expectAudio = expectAudio,
+                onFinalizing = onFinalizing,
+                onOutputCreated = onOutputCreated,
+                onCommitted = onCommitted,
             )
-            try {
-                // A registered URI must be readable and contain a playable video before
-                // optional original deletion can even be offered in the success screen.
-                withContext(Dispatchers.IO) {
-                    MediaReader.metadata(context, exportedUri)
-                    if (originalDate != null) {
-                        val verifiedDate = OriginalMediaDates.resolve(context, exportedUri)?.epochMs
-                        if (verifiedDate == null || abs(verifiedDate - originalDate.epochMs) > 3_000L) {
-                            throw IOException(
-                                "기기 갤러리에 원본 날짜를 적용하지 못했습니다. 저장을 취소했습니다."
-                            )
-                        }
-                    }
-                }
-            } catch (error: Exception) {
-                withContext(Dispatchers.IO) {
-                    runCatching { context.contentResolver.delete(exportedUri, null, null) }
-                }
-                throw error
-            }
-            return exportedUri
         } finally {
-            temporary.delete()
+            withContext(NonCancellable) {
+                withContext(Dispatchers.IO) { temporary.delete() }
+            }
         }
     }
 
@@ -226,3 +217,4 @@ class VideoExporter(private val context: Context) {
 }
 
 class ReencodeRequiredException(message: String, cause: Throwable? = null) : IOException(message, cause)
+

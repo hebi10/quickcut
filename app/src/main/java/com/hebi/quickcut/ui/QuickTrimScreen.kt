@@ -7,9 +7,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -32,6 +34,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -41,6 +44,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -53,17 +57,21 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import com.hebi.quickcut.editor.EditorViewModel
+import com.hebi.quickcut.editor.TrimInput
+import com.hebi.quickcut.editor.TrimInput.millisValue
+import com.hebi.quickcut.editor.TrimInput.secondsText
 import com.hebi.quickcut.editor.VideoClip
 import com.hebi.quickcut.editor.formatTime
 import com.hebi.quickcut.media.CompositionFactory
 import com.hebi.quickcut.settings.QuickCutSettings
 import com.hebi.quickcut.settings.QuickTrimSettings
 import kotlinx.coroutines.delay
-import kotlin.math.roundToLong
 
 @OptIn(UnstableApi::class)
 @Composable
@@ -78,8 +86,19 @@ fun QuickTrimScreen(
     val clip = model.timeline.clips.singleOrNull() ?: return
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-    val player = remember(context) { ExoPlayer.Builder(context).build() }
-    DisposableEffect(player) { onDispose { player.release() } }
+    val player = remember(context) { ExoPlayer.Builder(context.applicationContext).build() }
+    DisposableEffect(player, model) {
+        val listener = object : Player.Listener {
+            override fun onPlayerError(error: PlaybackException) {
+                model.reportError("미리보기 재생에 실패했습니다. 다른 영상을 선택하거나 다시 시도해 주세요.")
+            }
+        }
+        player.addListener(listener)
+        onDispose {
+            player.removeListener(listener)
+            player.release()
+        }
+    }
     DisposableEffect(player, lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_STOP) player.pause()
@@ -91,102 +110,171 @@ fun QuickTrimScreen(
         delay(200L)
         val position = player.currentPosition.coerceIn(0L, clip.durationMs)
         player.pause()
-        player.setMediaItem(CompositionFactory.mediaItem(clip))
-        player.prepare()
-        player.seekTo(position)
+        try {
+            player.setMediaItem(CompositionFactory.mediaItem(clip))
+            player.prepare()
+            player.seekTo(position)
+        } catch (_: Exception) {
+            model.reportError("현재 영상을 미리 볼 수 없습니다. 다른 영상을 선택하거나 다시 시도해 주세요.")
+        }
     }
+    SideEffect { player.volume = if (clip.muted) 0f else 1f }
 
-    var leadingText by rememberSaveable(clip.id) {
+    var leadingText by rememberSaveable(clip.id, clip.uri, clip.startMs, clip.endMs) {
         mutableStateOf(secondsText(clip.startMs))
     }
-    var trailingText by rememberSaveable(clip.id) {
+    var trailingText by rememberSaveable(clip.id, clip.uri, clip.startMs, clip.endMs) {
         mutableStateOf(secondsText(clip.sourceDurationMs - clip.endMs))
-    }
-    LaunchedEffect(clip.startMs, clip.endMs) {
-        leadingText = secondsText(clip.startMs)
-        trailingText = secondsText(clip.sourceDurationMs - clip.endMs)
     }
 
     fun updateTrim(leading: String, trailing: String) {
-        val head = millisValue(leading) ?: return
-        val tail = millisValue(trailing) ?: return
-        if (head + tail >= clip.sourceDurationMs - 100L) return
-        model.trimClip(clip.id, head, clip.sourceDurationMs - tail)
-        settings.saveQuick(QuickTrimSettings(head, tail, clip.muted))
+        val range = TrimInput.removedRange(leading, trailing, clip.sourceDurationMs)
+        model.setTrimInputValidity(range != null)
+        if (range == null) return
+        model.trimClip(clip.id, range.startMs, range.endMs)
+        settings.saveQuick(QuickTrimSettings(
+            range.startMs, clip.sourceDurationMs - range.endMs, clip.muted,
+        ))
     }
 
     fun changeLeading(text: String) {
-        leadingText = text.take(12)
+        leadingText = text
         updateTrim(leadingText, trailingText)
     }
 
     fun changeTrailing(text: String) {
-        trailingText = text.take(12)
+        trailingText = text
         updateTrim(leadingText, trailingText)
     }
 
-    val head = millisValue(leadingText)
-    val tail = millisValue(trailingText)
-    val valid = head != null && tail != null &&
-        head + tail <= clip.sourceDurationMs - 100L
+    val valid = TrimInput.removedRange(leadingText, trailingText, clip.sourceDurationMs) != null
+    SideEffect { model.setTrimInputValidity(valid) }
+    val canSave = valid && model.canStartExport
+    val saveValidated: (() -> Unit) -> Unit = { action ->
+        updateTrim(leadingText, trailingText)
+        if (model.canStartExport) {
+            player.pause()
+            action()
+        }
+    }
+    val openDetailed = {
+        // A malformed raw draft never changes the timeline. Detailed editing starts from
+        // the last applied range and validates its own fields when opened.
+        leadingText = secondsText(clip.startMs)
+        trailingText = secondsText(clip.sourceDurationMs - clip.endMs)
+        model.setTrimInputValidity(true)
+        player.pause()
+        onDetailedEdit()
+    }
 
     BoxWithConstraints(Modifier.fillMaxSize().background(CutColors.background)) {
-        val controlsMaxHeight = (maxHeight - 228.dp).coerceIn(150.dp, 370.dp)
+        val fontScale = LocalDensity.current.fontScale
+        val compactHeader = maxWidth < 400.dp || (fontScale >= 1.5f && maxWidth < 600.dp)
+        val sideBySide = maxWidth >= 480.dp && maxWidth > maxHeight
         Column(Modifier.fillMaxSize()) {
-            Row(
-                Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
-                    Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "뒤로가기")
-                }
-                Text("빠른 자르기", color = CutColors.primaryText,
-                    fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
-                Spacer(Modifier.weight(1f))
-                OutlinedButton(
-                    onClick = onDetailedEdit,
-                    shape = RoundedCornerShape(4.dp),
+            Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
+                Row(
+                    Modifier.fillMaxWidth().heightIn(min = 56.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Icon(Icons.Outlined.Settings, contentDescription = null,
-                        modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("상세 편집")
+                    IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
+                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "뒤로가기")
+                    }
+                    Text("빠른 자르기", color = CutColors.primaryText,
+                        fontSize = 20.sp, fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.weight(1f))
+                    if (!compactHeader) DetailedEditButton(openDetailed)
+                }
+                if (compactHeader) {
+                    DetailedEditButton(openDetailed,
+                        Modifier.fillMaxWidth().padding(bottom = 8.dp))
                 }
             }
-
-            Box(
-                Modifier.fillMaxWidth().weight(1f)
-                    .heightIn(min = 100.dp).background(Color.Black),
-                contentAlignment = Alignment.Center,
-            ) {
-                AndroidView(
-                    factory = { ctx ->
-                        PlayerView(ctx).apply {
-                            useController = true
-                            resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-                            this.player = player
-                            layoutParams = ViewGroup.LayoutParams(
-                                ViewGroup.LayoutParams.MATCH_PARENT,
-                                ViewGroup.LayoutParams.MATCH_PARENT,
-                            )
-                        }
+            if (sideBySide) {
+                Row(Modifier.fillMaxWidth().weight(1f)) {
+                    QuickPreview(player, Modifier.weight(1f).fillMaxHeight())
+                    QuickTrimControls(
+                        clip, leadingText, trailingText, valid, canSave,
+                        ::changeLeading, ::changeTrailing,
+                        onToggleMute = {
+                            model.toggleMute()
+                            settings.saveQuick(settings.loadQuick().copy(muteAudio = !clip.muted))
+                        },
+                        onSave = { saveValidated(onSave) },
+                        onSaveOptions = { saveValidated(onSaveOptions) },
+                        modifier = Modifier.weight(1f).fillMaxHeight(),
+                    )
+                }
+            } else {
+                QuickPreview(player, Modifier.fillMaxWidth().weight(1f))
+                QuickTrimControls(
+                    clip, leadingText, trailingText, valid, canSave,
+                    ::changeLeading, ::changeTrailing,
+                    onToggleMute = {
+                        model.toggleMute()
+                        settings.saveQuick(settings.loadQuick().copy(muteAudio = !clip.muted))
                     },
-                    update = { it.player = player },
-                    modifier = Modifier.fillMaxSize(),
+                    onSave = { saveValidated(onSave) },
+                    onSaveOptions = { saveValidated(onSaveOptions) },
+                    modifier = Modifier.fillMaxWidth().weight(1.4f),
                 )
             }
+        }
+    }
+}
 
-            Column(
-                modifier = Modifier.fillMaxWidth()
-                    .heightIn(max = controlsMaxHeight)
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
+@Composable
+private fun DetailedEditButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    OutlinedButton(onClick = onClick, modifier = modifier.heightIn(min = 48.dp), shape = CutShape) {
+        Icon(Icons.Outlined.Settings, contentDescription = null, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(6.dp))
+        Text("상세 편집")
+    }
+}
+
+@OptIn(UnstableApi::class)
+@Composable
+private fun QuickPreview(player: ExoPlayer, modifier: Modifier) {
+    Box(modifier.background(Color.Black), contentAlignment = Alignment.Center) {
+        AndroidView(
+            factory = { ctx ->
+                PlayerView(ctx).apply {
+                    useController = true
+                    resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                    this.player = player
+                    layoutParams = ViewGroup.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT,
+                    )
+                }
+            },
+            update = { it.player = player },
+            modifier = Modifier.fillMaxSize(),
+        )
+    }
+}
+
+@Composable
+private fun QuickTrimControls(
+    clip: VideoClip,
+    leadingText: String,
+    trailingText: String,
+    valid: Boolean,
+    canSave: Boolean,
+    onLeadingChange: (String) -> Unit,
+    onTrailingChange: (String) -> Unit,
+    onToggleMute: () -> Unit,
+    onSave: () -> Unit,
+    onSaveOptions: () -> Unit,
+    modifier: Modifier,
+) {
+    Column(modifier) {
+        Column(
+            modifier = Modifier.fillMaxWidth().weight(1f)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text("원본 " + formatTime(clip.sourceDurationMs),
                         color = CutColors.secondaryText, fontSize = 13.sp)
                     Text("결과 " + formatTime(clip.durationMs),
@@ -196,22 +284,22 @@ fun QuickTrimScreen(
                 TrimSecondsRow(
                     label = "앞부분 삭제",
                     value = leadingText,
-                    enabled = true,
-                    onValueChange = ::changeLeading,
+                    onValueChange = onLeadingChange,
                     onStep = { delta ->
-                        changeLeading(secondsText(
-                            ((millisValue(leadingText) ?: 0L) + delta).coerceAtLeast(0L)
+                        onLeadingChange(secondsText(
+                            ((millisValue(leadingText) ?: clip.startMs) + delta)
+                                .coerceIn(0L, clip.sourceDurationMs)
                         ))
                     },
                 )
                 TrimSecondsRow(
                     label = "뒷부분 삭제",
                     value = trailingText,
-                    enabled = true,
-                    onValueChange = ::changeTrailing,
+                    onValueChange = onTrailingChange,
                     onStep = { delta ->
-                        changeTrailing(secondsText(
-                            ((millisValue(trailingText) ?: 0L) + delta).coerceAtLeast(0L)
+                        onTrailingChange(secondsText(
+                            ((millisValue(trailingText) ?: (clip.sourceDurationMs - clip.endMs)) + delta)
+                                .coerceIn(0L, clip.sourceDurationMs)
                         ))
                     },
                 )
@@ -219,20 +307,16 @@ fun QuickTrimScreen(
                     Text("시간을 확인해 주세요. 결과 영상은 최소 0.1초 이상이어야 합니다.",
                         color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
                 }
-                Row(
-                    Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                Column(
+                    Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Text(if (clip.muted) "원본 소리: 음소거" else "원본 소리: 유지",
                         color = CutColors.secondaryText, fontSize = 13.sp)
                     OutlinedButton(
-                        shape = RoundedCornerShape(4.dp),
-                        onClick = {
-                        model.toggleMute()
-                        val current = settings.loadQuick()
-                        settings.saveQuick(current.copy(muteAudio = !clip.muted))
-                    }) {
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                        onClick = onToggleMute,
+                        shape = CutShape,
+                    ) {
                         Text(if (clip.muted) "소리 켜기" else "음소거")
                     }
                 }
@@ -242,45 +326,42 @@ fun QuickTrimScreen(
                 )
                 OutlinedButton(
                     onClick = onSaveOptions,
-                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    enabled = canSave,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
                     shape = RoundedCornerShape(4.dp),
                 ) { Text("저장 옵션 · 날짜 및 원본 처리") }
-            }
-            Button(
-                onClick = {
-                    player.pause()
-                    onSave()
-                },
-                enabled = valid,
+        }
+        Button(
+                onClick = onSave,
+                enabled = canSave,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
-                    .height(52.dp),
+                    .heightIn(min = 52.dp),
                 shape = RoundedCornerShape(4.dp),
             ) {
                 Text("영상 저장", fontWeight = FontWeight.SemiBold)
-            }
         }
-    }
+        }
 }
 
 @Composable
 private fun TrimSecondsRow(
     label: String,
     value: String,
-    enabled: Boolean,
     onValueChange: (String) -> Unit,
     onStep: (Long) -> Unit,
 ) {
-    Row(
-        Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(label, color = CutColors.primaryText, fontSize = 14.sp,
-            modifier = Modifier.weight(1f))
+            modifier = Modifier.fillMaxWidth())
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
         OutlinedButton(
             onClick = { onStep(-1_000L) },
-            enabled = enabled,
-            modifier = Modifier.height(48.dp).semantics {
+            contentPadding = PaddingValues(0.dp),
+            modifier = Modifier.size(48.dp).semantics {
                 contentDescription = "$label 1초 감소"
             },
             shape = RoundedCornerShape(4.dp),
@@ -293,27 +374,19 @@ private fun TrimSecondsRow(
             label = { Text("초") },
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-            modifier = Modifier.width(105.dp),
+            modifier = Modifier.weight(1f),
         )
         OutlinedButton(
             onClick = { onStep(1_000L) },
-            enabled = enabled,
-            modifier = Modifier.height(48.dp).semantics {
+            contentPadding = PaddingValues(0.dp),
+            modifier = Modifier.size(48.dp).semantics {
                 contentDescription = "$label 1초 증가"
             },
             shape = RoundedCornerShape(4.dp),
         ) {
             Text("+")
         }
+        }
     }
 }
 
-private fun secondsText(valueMs: Long): String =
-    (valueMs / 1_000.0).toString().removeSuffix(".0")
-
-private fun millisValue(text: String): Long? {
-    val number = text.trim().replace(',', '.').toDoubleOrNull()
-        ?: return null
-    if (!number.isFinite() || number !in 0.0..86_400.0) return null
-    return (number * 1_000.0).roundToLong()
-}

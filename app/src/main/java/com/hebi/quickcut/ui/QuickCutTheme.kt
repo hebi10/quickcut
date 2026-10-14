@@ -2,10 +2,13 @@ package com.hebi.quickcut.ui
 
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Shapes
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
 
 object CutColors {
     val background = Color(0xFF0B0C0E)
@@ -30,11 +33,22 @@ private val colorScheme = darkColorScheme(
     outline = CutColors.border,
 )
 
+val CutShape = RoundedCornerShape(4.dp)
+
+private val cutShapes = Shapes(
+    extraSmall = CutShape,
+    small = CutShape,
+    medium = CutShape,
+    large = CutShape,
+    extraLarge = CutShape,
+)
+
 @Composable
 fun QuickCutTheme(content: @Composable () -> Unit) {
-    MaterialTheme(colorScheme = colorScheme) {
+    MaterialTheme(colorScheme = colorScheme, shapes = cutShapes) {
         CompositionLocalProvider(LocalContentColor provides CutColors.primaryText) {
             content()
         }
     }
 }
+

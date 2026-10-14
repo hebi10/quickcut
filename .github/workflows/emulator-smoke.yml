@@ -7,6 +7,10 @@ on:
       - ".github/workflows/emulator-smoke.yml"
       - "scripts/android-emulator-check.sh"
       - "app/src/androidTest/**"
+      - "app/src/main/AndroidManifest.xml"
+      - "app/src/main/java/com/hebi/quickcut/QuickCutApplication.kt"
+      - "app/src/main/java/com/hebi/quickcut/export/**"
+      - "app/build.gradle.kts"
       - "app/src/main/java/com/hebi/quickcut/media/**"
       - "app/src/main/java/com/hebi/quickcut/editor/**"
       - "app/src/main/java/com/hebi/quickcut/ui/**"
@@ -83,3 +87,4 @@ jobs:
           name: quickcut-instrumentation-results
           path: app/build/outputs/androidTest-results/connected/
           if-no-files-found: ignore
+

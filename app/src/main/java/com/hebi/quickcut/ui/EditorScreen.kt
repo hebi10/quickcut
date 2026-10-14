@@ -54,6 +54,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -64,6 +65,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -81,6 +84,8 @@ import androidx.media3.transformer.CompositionPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import com.hebi.quickcut.editor.EditorViewModel
+import com.hebi.quickcut.editor.TrimInput
+import com.hebi.quickcut.editor.TrimInput.secondsText
 import com.hebi.quickcut.editor.VideoClip
 import com.hebi.quickcut.editor.formatTime
 import com.hebi.quickcut.media.CompositionFactory
@@ -171,6 +176,7 @@ fun EditorScreen(
         player.seekTo(model.playPositionMs)
     }
     val onSelect: (Long) -> Unit = { id ->
+        model.setTrimInputValidity(true)
         model.selectClip(id)
         player.seekTo(model.playPositionMs)
     }
@@ -178,11 +184,15 @@ fun EditorScreen(
         model.moveClip(id, direction)
     }
     val onClipTrimmed: (Long, Long, Long) -> Unit = { id, start, end ->
+        model.setTrimInputValidity(true)
         model.trimClip(id, start, end)
     }
     val onAction: (String) -> Unit = { key ->
         when (key) {
-            "trim" -> showTrim = !showTrim
+            "trim" -> {
+                model.setTrimInputValidity(true)
+                showTrim = !showTrim
+            }
             "split" -> model.splitSelected()
             "delete" -> showDelete = true
             "move" -> showMove = true
@@ -198,11 +208,12 @@ fun EditorScreen(
         EditorHeader(
             onBack = model::requestExit,
             onAdd = addVideos,
-            onSave = save,
+            onSave = { if (model.canStartExport) save() },
             onUndo = model::undo,
             onRedo = model::redo,
             canUndo = model.canUndo,
             canRedo = model.canRedo,
+            canSave = model.canStartExport,
         )
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val availableWidth = maxWidth
@@ -237,7 +248,8 @@ fun EditorScreen(
                                     showTrim = showTrim,
                                 )
                                 if (showTrim && selected != null) {
-                                    TrimEditor(selected, model::trimSelected, model::beginTrim, model::finishTrim)
+                                    TrimEditor(selected, model::trimSelected, model::beginTrim,
+                                        model::finishTrim, model::setTrimInputValidity)
                                 }
                             }
                         }
@@ -292,7 +304,8 @@ fun EditorScreen(
                                 )
                                 if (showTrim && selected != null) {
                                     Spacer(Modifier.height(8.dp))
-                                    TrimEditor(selected, model::trimSelected, model::beginTrim, model::finishTrim)
+                                    TrimEditor(selected, model::trimSelected, model::beginTrim,
+                                        model::finishTrim, model::setTrimInputValidity)
                                 }
                             }
                         }
@@ -338,6 +351,7 @@ fun EditorScreen(
                                 model::trimSelected,
                                 model::beginTrim,
                                 model::finishTrim,
+                                model::setTrimInputValidity,
                                 modifier = Modifier.fillMaxWidth()
                                     .background(CutColors.surface)
                                     .padding(horizontal = 14.dp),
@@ -371,7 +385,7 @@ fun EditorScreen(
                 ) { Text("삭제") }
             },
             dismissButton = {
-                TextButton(onClick = { showDelete = false }) { Text("취소") }
+                TextButton(onClick = { showDelete = false }, shape = CutShape) { Text("취소") }
             },
             containerColor = CutColors.panel,
             shape = RoundedCornerShape(4.dp),
@@ -399,7 +413,7 @@ fun EditorScreen(
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showMove = false }) { Text("닫기") }
+                TextButton(onClick = { showMove = false }, shape = CutShape) { Text("닫기") }
             },
             containerColor = CutColors.panel,
             shape = RoundedCornerShape(4.dp),
@@ -416,6 +430,7 @@ private fun EditorHeader(
     onRedo: () -> Unit,
     canUndo: Boolean,
     canRedo: Boolean,
+    canSave: Boolean,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 8.dp),
@@ -435,8 +450,10 @@ private fun EditorHeader(
         IconButton(onClick = onAdd, modifier = Modifier.size(48.dp)) {
             Icon(Icons.Outlined.Add, contentDescription = "영상 추가")
         }
-        TextButton(onClick = onSave, modifier = Modifier.height(48.dp)) {
-            Text("저장", color = CutColors.accent, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+        TextButton(onClick = onSave, enabled = canSave,
+            modifier = Modifier.heightIn(min = 48.dp), shape = CutShape) {
+            Text("저장", color = if (canSave) CutColors.accent else CutColors.mutedText,
+                fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
         }
     }
 }
@@ -600,31 +617,25 @@ private fun TrimEditor(
     onTrim: (Long, Long) -> Unit,
     onBeginTrim: () -> Unit,
     onEndTrim: () -> Unit,
+    onValidityChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var startText by rememberSaveable(clip.id) {
-        mutableStateOf((clip.startMs / 1000.0).toString().removeSuffix(".0"))
+    var startText by rememberSaveable(clip.id, clip.uri, clip.startMs, clip.endMs) {
+        mutableStateOf(secondsText(clip.startMs))
     }
-    var endText by rememberSaveable(clip.id) {
-        mutableStateOf((clip.endMs / 1000.0).toString().removeSuffix(".0"))
-    }
-    LaunchedEffect(clip.startMs, clip.endMs) {
-        startText = (clip.startMs / 1000.0).toString().removeSuffix(".0")
-        endText = (clip.endMs / 1000.0).toString().removeSuffix(".0")
-    }
-    fun millis(text: String): Long? {
-        val seconds = text.replace(',', '.').toDoubleOrNull() ?: return null
-        if (!seconds.isFinite() || seconds < 0) return null
-        return (seconds * 1000.0).roundToLong()
+    var endText by rememberSaveable(clip.id, clip.uri, clip.startMs, clip.endMs) {
+        mutableStateOf(secondsText(clip.endMs))
     }
     fun inputRange(start: String, end: String) {
-        val startMs = millis(start) ?: return
-        val endMs = millis(end) ?: return
-        if (startMs < 0 || endMs > clip.sourceDurationMs || endMs - startMs < 100L) return
+        val range = TrimInput.selectedRange(start, end, clip.sourceDurationMs)
+        onValidityChange(range != null)
+        if (range == null) return
         onBeginTrim()
-        onTrim(startMs, endMs)
+        onTrim(range.startMs, range.endMs)
         onEndTrim()
     }
+    val valid = TrimInput.selectedRange(startText, endText, clip.sourceDurationMs) != null
+    SideEffect { onValidityChange(valid) }
     Column(modifier.padding(vertical = 8.dp)) {
         Text("자르기 범위", color = CutColors.primaryText, fontSize = 13.sp, fontWeight = FontWeight.Medium)
         RangeSlider(
@@ -632,45 +643,71 @@ private fun TrimEditor(
             onValueChange = { range ->
                 val start = range.start.roundToLong().coerceIn(0L, clip.sourceDurationMs)
                 val end = range.endInclusive.roundToLong().coerceIn(0L, clip.sourceDurationMs)
-                if (end - start >= 100L) {
+                if (TrimInput.range(start, end, clip.sourceDurationMs) != null) {
+                    startText = secondsText(start)
+                    endText = secondsText(end)
+                    onValidityChange(true)
                     onBeginTrim()
                     onTrim(start, end)
                 }
             },
             valueRange = 0f..clip.sourceDurationMs.toFloat(),
             onValueChangeFinished = onEndTrim,
-            modifier = Modifier.fillMaxWidth(),
+            enabled = clip.sourceDurationMs >= TrimInput.MIN_DURATION_MS,
+            modifier = Modifier.fillMaxWidth().testTag("detailed-trim-range"),
         )
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text("시작 " + formatTime(clip.startMs), color = CutColors.secondaryText, fontSize = 12.sp)
             Text("끝 " + formatTime(clip.endMs), color = CutColors.secondaryText, fontSize = 12.sp)
         }
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            OutlinedTextField(
-                value = startText,
-                onValueChange = {
-                    startText = it.take(12)
-                    inputRange(startText, endText)
-                },
-                label = { Text("시작 시간 (초)") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                singleLine = true,
-                modifier = Modifier.weight(1f),
-            )
-            OutlinedTextField(
-                value = endText,
-                onValueChange = {
-                    endText = it.take(12)
-                    inputRange(startText, endText)
-                },
-                label = { Text("종료 시간 (초)") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                singleLine = true,
-                modifier = Modifier.weight(1f),
-            )
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val changeStart: (String) -> Unit = {
+                startText = it
+                inputRange(startText, endText)
+            }
+            val changeEnd: (String) -> Unit = {
+                endText = it
+                inputRange(startText, endText)
+            }
+            if (maxWidth < 320.dp || LocalDensity.current.fontScale >= 1.5f) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TrimTimeField(startText, changeStart, "시작 시간 (초)", !valid,
+                        Modifier.fillMaxWidth())
+                    TrimTimeField(endText, changeEnd, "종료 시간 (초)", !valid,
+                        Modifier.fillMaxWidth())
+                }
+            } else {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TrimTimeField(startText, changeStart, "시작 시간 (초)", !valid,
+                        Modifier.weight(1f))
+                    TrimTimeField(endText, changeEnd, "종료 시간 (초)", !valid,
+                        Modifier.weight(1f))
+                }
+            }
+        }
+        if (!valid) {
+            Text("시간을 확인해 주세요. 결과 영상은 최소 0.1초 이상이어야 합니다.",
+                color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
         }
     }
 }
+
+@Composable
+private fun TrimTimeField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    isError: Boolean,
+    modifier: Modifier,
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        label = { Text(label) },
+        isError = isError,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+        singleLine = true,
+        modifier = modifier,
+    )
+}
+

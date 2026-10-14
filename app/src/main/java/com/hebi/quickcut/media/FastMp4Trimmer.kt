@@ -13,6 +13,7 @@ import android.util.Log
 import com.hebi.quickcut.editor.VideoClip
 import java.io.FileDescriptor
 import java.nio.ByteBuffer
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 
@@ -237,6 +238,12 @@ internal object FastMp4Trimmer {
             writer.stop()
             started = false
             main.post { onProgress(100) }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (unsupported: IllegalStateException) {
+            throw FastTrimUnavailableException("Native remux is unavailable", unsupported)
+        } catch (unsupported: IllegalArgumentException) {
+            throw FastTrimUnavailableException("Native remux rejected input", unsupported)
         } finally {
             if (started) runCatching { muxer?.stop() }
             runCatching { muxer?.release() }
@@ -245,4 +252,5 @@ internal object FastMp4Trimmer {
     }
 }
 
-internal class FastTrimUnavailableException(message: String) : Exception(message)
+internal class FastTrimUnavailableException(message: String, cause: Throwable? = null) : Exception(message, cause)
+

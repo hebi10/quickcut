@@ -29,7 +29,8 @@ class BatchRecoveryInstrumentedTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val application = context.applicationContext as Application
         val input = File(context.cacheDir, "quickcut_recovery_fixture.mp4")
-        val first = BatchViewModel(application)
+        BatchSessionStore(context).clear()
+        val first = withContext(Dispatchers.Main) { BatchViewModel(application) }
         withContext(Dispatchers.Main) { first.resetBatch() }
         InstrumentationRegistry.getInstrumentation().context.assets.open("quickcut_keyframes.mp4")
             .use { source -> input.outputStream().use { target -> source.copyTo(target) } }
@@ -56,6 +57,7 @@ class BatchRecoveryInstrumentedTest {
             assertEquals(saved, recreated.files.single().savedOutputUri)
             assertEquals(OriginalAction.KEEP, recreated.originalAction)
             assertEquals(OriginalAction.KEEP, recreated.performedOriginalAction)
+            withTimeout(30_000L) { while (recreated.isRecovering) delay(50L) }
             withContext(Dispatchers.Main) { recreated.start(context, exportMode = ExportMode.FAST_ONLY) }
             withTimeout(60_000L) {
                 while (recreated.runState != BatchRunState.FINISHED) delay(50L)

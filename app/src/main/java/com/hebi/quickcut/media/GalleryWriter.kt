@@ -13,60 +13,56 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.UUID
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
-import kotlin.math.abs
 
 class GalleryWriter(private val context: Context) {
     suspend fun save(
         file: File,
         originalTimestampMs: Long? = null,
         outputBaseName: String? = null,
-    ): Uri = withContext(Dispatchers.IO) {
-        require(file.isFile && file.length() > 0L) { "저장할 영상 파일이 없습니다." }
-        val resolver = context.contentResolver
-        val uri = createPendingUri(outputBaseName)
-        try {
-            val stream = resolver.openOutputStream(uri)
-                ?: throw IOException("갤러리 파일을 열 수 없습니다.")
-            stream.use { sink ->
-                file.inputStream().use { source ->
-                    val buffer = ByteArray(64 * 1024)
-                    while (true) {
-                        currentCoroutineContext().ensureActive()
-                        val count = source.read(buffer)
-                        if (count < 0) break
-                        sink.write(buffer, 0, count)
-                    }
-                }
-            }
-            currentCoroutineContext().ensureActive()
-            // MediaStore DATE_MODIFIED and DATE_TAKEN are read-only derived columns.
-            // Preserve the underlying file's mtime instead of trying to write them.
-            if (originalTimestampMs != null) {
-                // DATE_TAKEN is indexed from the embedded MP4 timestamp. When
-                // possible, also update filesystem modification time for gallery
-                // apps that sort by file mtime. Not all devices permit this.
-                runCatching {
-                    resolver.openFileDescriptor(uri, "rw")?.use { descriptor ->
-                        val localPath = Os.readlink("/proc/self/fd/" + descriptor.fd)
-                        File(localPath).setLastModified(originalTimestampMs)
-                    }
-                }
-            }
-            val changes = ContentValues().apply {
-                put(MediaStore.Video.Media.IS_PENDING, 0)
-            }
-            if (resolver.update(uri, changes, null, null) < 1) {
-                throw IOException("저장된 파일을 갤러리에 등록할 수 없습니다.")
-            }
-            uri
-        } catch (error: Throwable) {
-            resolver.delete(uri, null, null)
-            throw error
+        expectedDurationMs: Long? = null,
+        expectAudio: Boolean? = null,
+        onFinalizing: () -> Unit = {},
+        onOutputCreated: (Uri) -> Unit = {},
+        onCommitted: (Uri) -> Unit = {},
+    ): Uri {
+        withContext(Dispatchers.IO) {
+            require(file.isFile && file.length() > 0L) { "저장할 영상 파일이 없습니다." }
+            MediaReader.validateExport(file, expectedDurationMs, expectAudio, originalTimestampMs)
+            // The cache file already occupies its space: only the additional copy
+            // is needed here. The export preflight accounted for both allocations.
+            ExportStorage.requireSpace(context, file.length(), directWrite = true)
         }
+        return savePending(
+            outputBaseName = outputBaseName,
+            originalTimestampMs = originalTimestampMs,
+            expectedDurationMs = expectedDurationMs,
+            expectAudio = expectAudio,
+            fastValidation = false,
+            writer = { uri ->
+                val stream = context.contentResolver.openOutputStream(uri)
+                    ?: throw IOException("갤러리 파일을 열 수 없습니다.")
+                stream.use { sink ->
+                    file.inputStream().use { source ->
+                        val buffer = ByteArray(64 * 1024)
+                        while (true) {
+                            currentCoroutineContext().ensureActive()
+                            val count = source.read(buffer)
+                            if (count < 0) break
+                            sink.write(buffer, 0, count)
+                        }
+                    }
+                }
+            },
+            onFinalizing = onFinalizing,
+            onOutputCreated = onOutputCreated,
+            onCommitted = onCommitted,
+        )
     }
 
     /**
@@ -79,30 +75,116 @@ class GalleryWriter(private val context: Context) {
         expectAudio: Boolean,
         writer: suspend (FileDescriptor) -> Unit,
         onFinalizing: () -> Unit,
-    ): Uri = withContext(Dispatchers.IO) {
-        val resolver = context.contentResolver
-        val uri = createPendingUri(outputBaseName)
-        try {
-            val descriptor = resolver.openFileDescriptor(uri, "rw")
-                ?: throw IOException("갤러리 파일을 열 수 없습니다.")
-            descriptor.use { writer(it.fileDescriptor) }
-            currentCoroutineContext().ensureActive()
+        estimatedOutputBytes: Long? = null,
+        onOutputCreated: (Uri) -> Unit = {},
+        onCommitted: (Uri) -> Unit = {},
+    ): Uri {
+        withContext(Dispatchers.IO) {
+            val estimate = estimatedOutputBytes ?: ExportStoragePolicy.estimateOutputBytes(
+                listOf(ExportSourceSize(null, expectedDurationMs, expectedDurationMs)),
+                directWrite = true,
+            )
+            ExportStorage.requireSpace(context, estimate, directWrite = true)
+        }
+        return savePending(
+            outputBaseName = outputBaseName,
+            originalTimestampMs = null,
+            expectedDurationMs = expectedDurationMs,
+            expectAudio = expectAudio,
+            fastValidation = true,
+            writer = { uri ->
+                val descriptor = context.contentResolver.openFileDescriptor(uri, "rw")
+                    ?: throw IOException("갤러리 파일을 열 수 없습니다.")
+                descriptor.use { writer(it.fileDescriptor) }
+            },
+            onFinalizing = onFinalizing,
+            onOutputCreated = onOutputCreated,
+            onCommitted = onCommitted,
+        )
+    }
 
-            val metadata = MediaReader.metadata(context, uri)
-            if (abs(metadata.durationMs - expectedDurationMs) > 250L ||
-                metadata.hasAudio != expectAudio
-            ) {
-                throw FastTrimUnavailableException("Fast trim output duration or audio mismatch")
+    private suspend fun savePending(
+        outputBaseName: String?,
+        originalTimestampMs: Long?,
+        expectedDurationMs: Long?,
+        expectAudio: Boolean?,
+        fastValidation: Boolean,
+        writer: suspend (Uri) -> Unit,
+        onFinalizing: () -> Unit,
+        onOutputCreated: (Uri) -> Unit,
+        onCommitted: (Uri) -> Unit,
+    ): Uri {
+        val resolver = context.contentResolver
+        var pendingUri: Uri? = null
+        var committed = false
+        try {
+            val uri = withContext(Dispatchers.IO) {
+                // Assign before a dispatcher switch so cancellation cannot lose the
+                // cleanup handle. The journal must succeed while this URI is pending.
+                val created = createPendingUri(outputBaseName)
+                pendingUri = created
+                runCallback { onOutputCreated(created) }
+                currentCoroutineContext().ensureActive()
+                writer(created)
+                currentCoroutineContext().ensureActive()
+                if (originalTimestampMs != null) {
+                    // DATE_TAKEN is indexed from the embedded timestamp. Preserve
+                    // mtime as well where the provider permits it.
+                    runCatching {
+                        resolver.openFileDescriptor(created, "rw")?.use { descriptor ->
+                            val localPath = Os.readlink("/proc/self/fd/" + descriptor.fd)
+                            File(localPath).setLastModified(originalTimestampMs)
+                        }
+                    }
+                }
+                try {
+                    MediaReader.validateExport(context, created, expectedDurationMs, expectAudio, originalTimestampMs)
+                } catch (error: IOException) {
+                    if (fastValidation) throw FastTrimUnavailableException("Fast output validation failed", error)
+                    throw error
+                }
+                created
             }
-            withContext(Dispatchers.Main.immediate) { onFinalizing() }
-            val changes = ContentValues().apply { put(MediaStore.Video.Media.IS_PENDING, 0) }
-            if (resolver.update(uri, changes, null, null) < 1) {
-                throw IOException("저장된 파일을 갤러리에 등록할 수 없습니다.")
+
+            // Keep the full copy and decode checks cancellable. This signal only
+            // disables cancellation for the short publication/completion phase.
+            runCallback(onFinalizing)
+            currentCoroutineContext().ensureActive()
+            // Do not combine NonCancellable with a dispatcher here: returning from
+            // IO into a cancelled caller can discard the successfully committed URI.
+            return withContext(NonCancellable) {
+                withContext(Dispatchers.IO) {
+                    val changes = ContentValues().apply { put(MediaStore.Video.Media.IS_PENDING, 0) }
+                    if (resolver.update(uri, changes, null, null) < 1) {
+                        throw IOException("저장된 파일을 갤러리에 등록할 수 없습니다.")
+                    }
+                }
+                runCallback { onCommitted(uri) }
+                committed = true
+                uri
             }
-            uri
         } catch (error: Throwable) {
-            runCatching { resolver.delete(uri, null, null) }
+            if (!committed) {
+                withContext(NonCancellable) {
+                    withContext(Dispatchers.IO) {
+                        pendingUri?.let { runCatching { resolver.delete(it, null, null) } }
+                    }
+                }
+            }
             throw error
+        }
+    }
+
+    private suspend fun runCallback(callback: () -> Unit) {
+        withContext(Dispatchers.Main.immediate) {
+            try {
+                callback()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                // Native remux fallback must never retry a failed persistence/UI callback.
+                throw IOException("저장 상태를 기록하지 못했습니다. 저장을 취소했습니다.", error)
+            }
         }
     }
 
@@ -126,3 +208,4 @@ class GalleryWriter(private val context: Context) {
             ?: throw IOException("갤러리에 저장할 수 없습니다.")
     }
 }
+

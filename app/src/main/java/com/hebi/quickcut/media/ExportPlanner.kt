@@ -27,7 +27,7 @@ object ExportPlanner {
         timeline: EditTimeline,
         dateMode: SaveDateMode,
     ): ExportAssessment = withContext(Dispatchers.IO) {
-        when {
+        val assessment = when {
             timeline.isEmpty -> ExportAssessment(false, "편집할 영상이 없습니다.")
             timeline.clips.size > 1 -> ExportAssessment(
                 false, "여러 클립 연결 및 분할 결과에는 전체 영상 처리가 필요할 수 있습니다."
@@ -48,6 +48,12 @@ object ExportPlanner {
                 }
             }
         }
+        if (timeline.isEmpty) return@withContext assessment
+        val estimatedBytes = ExportStorage.estimateOutputBytes(context, timeline, assessment.fastAvailable)
+        assessment.copy(
+            explanation = assessment.explanation + "\n" +
+                ExportStorage.explanation(context, estimatedBytes, assessment.fastAvailable),
+        )
     }
 
     private fun nearbyKeyframe(context: Context, clip: VideoClip): Long? {
@@ -78,3 +84,4 @@ object ExportPlanner {
         }
     }
 }
+

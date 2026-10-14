@@ -33,7 +33,8 @@ class BatchQueueInstrumentedTest {
             File(context.cacheDir, "quickcut_batch_queue_02.mp4"),
             File(context.cacheDir, "quickcut_batch_queue_03.mp4"),
         )
-        val vm = BatchViewModel(context.applicationContext as android.app.Application)
+        BatchSessionStore(context).clear()
+        val vm = withContext(Dispatchers.Main) { BatchViewModel(context.applicationContext as android.app.Application) }
         try {
             inputs.forEach { file ->
                 InstrumentationRegistry.getInstrumentation().context.assets
@@ -108,7 +109,9 @@ class BatchQueueInstrumentedTest {
             vm.files.mapNotNull(BatchFile::savedOutputUri).forEach { output ->
                 runCatching { context.contentResolver.delete(Uri.parse(output), null, null) }
             }
+            withContext(Dispatchers.Main) { vm.resetBatch() }
             inputs.forEach(File::delete)
         }
     }
 }
+

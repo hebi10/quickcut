@@ -1,0 +1,114 @@
+package com.hebi.quickcut.batch
+
+import android.app.Application
+import android.content.ContentValues
+import android.content.Context
+import android.net.Uri
+import android.os.Environment
+import android.provider.MediaStore
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import com.hebi.quickcut.editor.OriginalAction
+import com.hebi.quickcut.media.GalleryWriter
+import com.hebi.quickcut.media.MediaReader
+import com.hebi.quickcut.media.SaveDateMode
+import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import org.junit.runner.RunWith
+
+@RunWith(AndroidJUnit4::class)
+class BatchJournalInstrumentedTest {
+    @Test fun publishedOutputIsAdoptedAfterProcessExitBeforeSuccessWasRecorded() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val input = fixture(context)
+        var output: Uri? = null
+        try {
+            output = GalleryWriter(context).save(input)
+            val metadata = MediaReader.metadata(context, output)
+            seed(context, input, output, metadata.durationMs, metadata.hasAudio)
+            val restored = restore(context)
+            assertEquals(BatchFileStatus.SAVED, restored.files.single().status)
+            assertEquals(output.toString(), restored.files.single().savedOutputUri)
+            assertEquals(OriginalAction.KEEP, restored.performedOriginalAction)
+            assertTrue(restored.originalCandidates.isEmpty())
+            withContext(Dispatchers.Main) { restored.resetBatch() }
+        } finally {
+            output?.let { context.contentResolver.delete(it, null, null) }
+            BatchSessionStore(context).clear()
+            input.delete()
+        }
+    }
+
+    @Test fun incompleteOutputIsRemovedAndRemainingWorkNeedsExplicitReview() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val input = fixture(context)
+        val pending = context.contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+            ContentValues().apply {
+                put(MediaStore.Video.Media.DISPLAY_NAME, "QuickCut_interrupted_test.mp4")
+                put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/QuickCut")
+                put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+                put(MediaStore.Video.Media.IS_PENDING, 1)
+            })!!
+        try {
+            seed(context, input, pending, 2_000L, true)
+            val restored = restore(context)
+            assertEquals(BatchFileStatus.SKIPPED, restored.files.single().status)
+            assertNull(restored.files.single().savedOutputUri)
+            assertFalse(restored.isRunning)
+            assertEquals(OriginalAction.KEEP, restored.originalAction)
+            assertEquals(0, context.contentResolver.query(pending, arrayOf(MediaStore.Video.Media._ID),
+                null, null, null)?.use { it.count } ?: 0)
+            assertTrue(input.exists())
+            withContext(Dispatchers.Main) { restored.resetBatch() }
+        } finally {
+            runCatching { context.contentResolver.delete(pending, null, null) }
+            BatchSessionStore(context).clear()
+            input.delete()
+        }
+    }
+
+    @Test fun inaccessibleOriginalDoesNotRestartAnInterruptedExport() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val input = File(context.cacheDir, "quickcut_missing_recovery.mp4")
+        input.delete()
+        seed(context, input, null, 2_000L, true)
+        try {
+            val restored = restore(context)
+            assertEquals(0L, restored.files.single().durationMs)
+            assertEquals(BatchFileStatus.SKIPPED, restored.files.single().status)
+            assertFalse(restored.isRunning)
+            assertEquals(OriginalAction.KEEP, restored.originalAction)
+            withContext(Dispatchers.Main) { restored.resetBatch() }
+        } finally { BatchSessionStore(context).clear() }
+    }
+
+    private fun seed(context: Context, input: File, output: Uri?, duration: Long, audio: Boolean) {
+        BatchSessionStore(context).save(BatchSessionSnapshot(
+            files = listOf(BatchFile(Uri.fromFile(input).toString(), input.name, 3_000L, true,
+                status=BatchFileStatus.RUNNING, savedOutputUri=output?.toString(),
+                outputExpectedDurationMs=duration, outputExpectedAudio=audio)),
+            template = BatchTemplate(name="복구 계획", mode=BatchClipMode.KEEP_FIRST, leadingMs=2_000L),
+            dateMode = SaveDateMode.CURRENT, runState=BatchRunState.RUNNING,
+        ))
+    }
+
+    private suspend fun restore(context: Context): BatchViewModel {
+        val model = withContext(Dispatchers.Main) { BatchViewModel(context.applicationContext as Application) }
+        withTimeout(30_000L) { while (model.isRecovering) delay(50L) }
+        return model
+    }
+
+    private fun fixture(context: Context): File = File.createTempFile("quickcut_journal_", ".mp4", context.cacheDir).also {
+        InstrumentationRegistry.getInstrumentation().context.assets.open("quickcut_fixture.mp4")
+            .use { source -> it.outputStream().use { target -> source.copyTo(target) } }
+    }
+}

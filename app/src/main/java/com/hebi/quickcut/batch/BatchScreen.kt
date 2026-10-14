@@ -92,7 +92,7 @@ fun BatchScreen(
     var inspectedTotal by remember { mutableIntStateOf(0) }
     var showStopConfirmation by rememberSaveable { mutableStateOf(false) }
     val requestExport: (Boolean) -> Unit = { retry ->
-        if (!inspecting && !model.isRunning) {
+        if (!inspecting && !model.isRunning && !model.isRecovering) {
             inspecting = true
             inspectedCount = 0
             inspectedTotal = 0
@@ -153,7 +153,7 @@ fun BatchScreen(
                         items(model.files, key = { it.uri }) { file ->
                             BatchFileRow(
                                 file, model.previewTemplate(), model.saveDateMode,
-                                !model.isRunning, model::removeVideo
+                                !model.isRunning && !model.isRecovering, model::removeVideo
                             )
                         }
                     }
@@ -173,7 +173,7 @@ fun BatchScreen(
                 items(model.files, key = { it.uri }) { file ->
                     BatchFileRow(
                         file, model.previewTemplate(), model.saveDateMode,
-                        !model.isRunning, model::removeVideo
+                        !model.isRunning && !model.isRecovering, model::removeVideo
                     )
                 }
                 item { BatchProgress(model) }
@@ -191,7 +191,7 @@ fun BatchScreen(
             title = { Text("일괄 저장을 중단할까요?") },
             text = { Text("이미 저장된 영상은 유지하고 진행 중인 파일은 취소합니다.") },
             confirmButton = {
-                Button(onClick = {
+                Button(enabled = !model.isFinalizing, onClick = {
                     showStopConfirmation = false
                     model.cancel()
                 }) { Text("저장 중단") }
@@ -358,7 +358,7 @@ private fun BatchHeader(onBack: () -> Unit) {
 @Composable
 private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
     val context = LocalContext.current
-    val disabled = model.isRunning
+    val disabled = model.isRunning || model.isRecovering
     var showAdvanced by rememberSaveable { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         OutlinedButton(
@@ -489,7 +489,8 @@ private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
             model.saveDateMode = SaveDateMode.ORIGINAL
         }
         Text(
-            "원본 날짜는 촬영 메타데이터가 우선이며 없으면 파일 수정 날짜를 사용합니다. " +
+            "원본 날짜 유지는 직접 고속 복사를 지원하지 않아 저장 시간이 늘어날 수 있습니다. " +
+                "원본 날짜는 촬영 메타데이터가 우선이며 없으면 파일 수정 날짜를 사용합니다. " +
                 "날짜 정보가 없거나 기기가 적용을 거부하면 해당 파일은 저장하지 않습니다.",
             style = MaterialTheme.typography.bodySmall, color = secondary,
         )
@@ -545,7 +546,7 @@ private fun BatchActions(
             BatchRunState.SETUP -> {
                 Button(
                     onClick = { requestExport(false) },
-                    enabled = model.files.isNotEmpty() && !model.isImporting && !inspecting,
+                    enabled = model.files.isNotEmpty() && !model.isImporting && !model.isRecovering && !inspecting,
                     modifier = Modifier.fillMaxWidth().height(52.dp),
                     shape = RoundedCornerShape(4.dp),
                 ) { Text("일괄 편집 및 저장 시작") }
@@ -553,12 +554,13 @@ private fun BatchActions(
             BatchRunState.RUNNING -> {
                 OutlinedButton(
                     onClick = onCancel,
+                    enabled = !model.isFinalizing,
                     modifier = Modifier.fillMaxWidth().height(52.dp),
                     shape = RoundedCornerShape(4.dp),
                 ) { Text("일괄 저장 중단") }
                 Text(
-                    "앱을 열어 둔 상태에서 순서대로 저장합니다. " +
-                        "백그라운드에서 앱이 종료되면 미완료 작업은 복구되지 않습니다.",
+                    "다른 앱으로 이동하거나 화면을 꺼도 순서대로 저장합니다. " +
+                        "앱이 종료되면 완료 파일을 복구하고 남은 작업은 재검토 후 다시 시작할 수 있습니다.",
                     color = secondary, style = MaterialTheme.typography.bodySmall,
                 )
             }
@@ -571,10 +573,10 @@ private fun BatchActions(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(
                         onClick = { requestExport(true) },
-                        enabled = model.failures > 0 || model.skips > 0,
+                        enabled = !model.isRecovering && (model.failures > 0 || model.skips > 0),
                         shape = RoundedCornerShape(4.dp),
                     ) { Text("실패 작업 재시도") }
-                    TextButton(onClick = model::resetBatch) { Text("새 작업") }
+                    TextButton(enabled = !model.isRecovering, onClick = model::resetBatch) { Text("새 작업") }
                 }
             }
         }
@@ -664,6 +666,12 @@ private fun BatchProgress(model: BatchViewModel) {
         modifier = Modifier.fillMaxWidth().padding(vertical = 14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
+        if (model.isRecovering) Text("이전 작업과 완료 파일을 확인 중입니다.", color = secondary)
+        if (model.isRunning) Text(
+            if (model.isFinalizing) "파일 등록 완료 처리 중입니다. 완료 후 다음 작업을 중단할 수 있습니다."
+            else "화면을 끄거나 다른 앱으로 이동해도 저장이 계속됩니다. 알림에서 진행 상태와 중단을 확인할 수 있습니다.",
+            color = secondary, fontSize = 12.sp,
+        )
         if (model.files.isNotEmpty()) {
             Text(
                 "진행 " + model.completedCount + " / " + model.files.size,
@@ -707,3 +715,4 @@ private fun BatchProgress(model: BatchViewModel) {
         }
     }
 }
+

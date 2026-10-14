@@ -10,6 +10,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.hebi.quickcut.export.ExportWorkMonitor
 import com.hebi.quickcut.media.MediaReader
 import com.hebi.quickcut.media.VideoExporter
 import com.hebi.quickcut.media.SaveDateMode
@@ -29,6 +30,13 @@ enum class QuickCutPage {
 class EditorViewModel(application: Application) : AndroidViewModel(application) {
     private val sessionStore = EditorSessionStore(application)
     private var sessionSaveJob: Job? = null
+    var isTrimInputValid by mutableStateOf(true)
+        private set
+    val canStartExport: Boolean
+        get() = isTrimInputValid && !timeline.isEmpty && page == QuickCutPage.EDITOR && !ExportWorkMonitor.isRunning
+
+    fun setTrimInputValidity(valid: Boolean) { isTrimInputValid = valid }
+
     var quickMode by mutableStateOf(false)
         private set
     var hasRestorableSession by mutableStateOf(sessionStore.load() != null)
@@ -67,6 +75,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     fun changeQuickMode(enabled: Boolean) {
         quickMode = enabled
+        isTrimInputValid = true
         if (page == QuickCutPage.EDITOR) saveSessionSoon()
     }
 
@@ -96,6 +105,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 reportError("이전 영상에 접근할 수 없어 편집을 복원하지 못했습니다. 영상을 다시 선택해 주세요.")
                 return@launch
             }
+            isTrimInputValid = true
             timeline = old.timeline
             selectedId = old.selectedId?.takeIf { timeline.clipAt(it) != null }
                 ?: timeline.clips.first().id
@@ -251,6 +261,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                         hasAudio = meta.hasAudio,
                     )
                 }
+                isTrimInputValid = true
                 val wasAppending = append && !timeline.isEmpty
                 if (wasAppending) {
                     recordChange()
@@ -371,7 +382,17 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         selectedDateMode: SaveDateMode = SaveDateMode.CURRENT,
         exportMode: ExportMode = ExportMode.ALLOW_REENCODE,
     ) {
-        if (timeline.isEmpty || page != QuickCutPage.EDITOR) return
+        if (!canStartExport) {
+            reportError(if (!isTrimInputValid) "시간 입력을 확인해 주세요. 최소 0.1초 이상 남겨야 합니다."
+                else "다른 영상 저장이 진행 중이거나 저장할 영상이 없습니다.")
+            return
+        }
+        val workId = try {
+            ExportWorkMonitor.begin(context, "QuickCut 영상 저장", ::cancelExport)
+        } catch (error: Exception) {
+            reportError(error.localizedMessage ?: "저장 서비스를 시작하지 못했습니다.")
+            return
+        }
         val snapshot = timeline
         val sourceSnapshot = uniqueExportSources(snapshot)
         originalAction = selectedOriginalAction
@@ -385,33 +406,25 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         progressPercent = null
         exportJob = viewModelScope.launch {
             try {
+                ExportWorkMonitor.awaitReady(workId)
                 val uri = VideoExporter(context.applicationContext).export(
                     timeline = snapshot,
-                    onProgress = { progressPercent = it },
+                    onProgress = {
+                        progressPercent = it
+                        ExportWorkMonitor.update(workId, "영상 처리 중", it)
+                    },
                     onFinalizing = {
                         isFinalizing = true
                         progressPercent = null
+                        ExportWorkMonitor.update(workId, "갤러리 저장 완료 처리 중", canCancel = false)
                     },
+                    onCommitted = { finishExport(it, sourceSnapshot) },
                     saveDateMode = selectedDateMode,
                     exportMode = exportMode,
                 )
-                completedUri = uri
-                originalsFromSavedTimeline = if (originalAction == OriginalAction.KEEP) {
-                    emptyList()
-                } else {
-                    sourceSnapshot
-                }
-                originalActionStatus = if (originalAction == OriginalAction.KEEP) {
-                    OriginalActionStatus.NONE
-                } else {
-                    OriginalActionStatus.READY
-                }
-                page = QuickCutPage.COMPLETED
-                sessionSaveJob?.cancel()
-                sessionStore.clear()
-                hasRestorableSession = false
+                if (page != QuickCutPage.COMPLETED) finishExport(uri, sourceSnapshot)
             } catch (_: CancellationException) {
-                page = QuickCutPage.EDITOR
+                if (page != QuickCutPage.COMPLETED) page = QuickCutPage.EDITOR
             } catch (required: ReencodeRequiredException) {
                 needsReencodeConsent = true
                 page = QuickCutPage.EDITOR
@@ -423,8 +436,20 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 isFinalizing = false
                 progressPercent = null
                 exportJob = null
+                ExportWorkMonitor.finish(workId)
             }
         }
+    }
+
+    private fun finishExport(uri: Uri, sources: List<String>) {
+        completedUri = uri
+        originalsFromSavedTimeline = if (originalAction == OriginalAction.KEEP) emptyList() else sources
+        originalActionStatus = if (originalAction == OriginalAction.KEEP) OriginalActionStatus.NONE
+            else OriginalActionStatus.READY
+        page = QuickCutPage.COMPLETED
+        sessionSaveJob?.cancel()
+        sessionStore.clear()
+        hasRestorableSession = false
     }
 
     fun cancelExport() {
@@ -486,6 +511,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         hasRestorableSession = false
         timeline = EditTimeline()
         quickMode = false
+        isTrimInputValid = true
         needsReencodeConsent = false
         history.clear()
         activeTrim = null
@@ -511,3 +537,4 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         errorMessage = null
     }
 }
+

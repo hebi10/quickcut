@@ -5,12 +5,15 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.OpenableColumns
+import android.provider.MediaStore
+import android.os.Environment
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.hebi.quickcut.export.ExportWorkMonitor
 import com.hebi.quickcut.editor.OriginalAction
 import com.hebi.quickcut.editor.OriginalActionStatus
 import com.hebi.quickcut.media.MediaReader
@@ -45,6 +48,9 @@ data class BatchFile(
     val reason: String? = null,
     val progress: Int? = null,
     val savedOutputUri: String? = null,
+    val outputExpectedDurationMs: Long? = null,
+    val outputExpectedAudio: Boolean? = null,
+    val outputExpectedDateMs: Long? = null,
 )
 
 data class BatchExportOverview(
@@ -59,12 +65,17 @@ data class BatchExportOverview(
 class BatchViewModel(application: Application) : AndroidViewModel(application) {
     private val settings = QuickCutSettings(application)
     private val lastDraft = settings.loadBatch()
+    private val sessionStore = BatchSessionStore(application)
+    private val restored = sessionStore.load()
+    private var activeTemplate: BatchTemplate? = restored?.template
+    private var activeDateMode = restored?.dateMode ?: settings.loadSaveDate()
 
     suspend fun inspectExport(
         context: Context,
         retryOnly: Boolean,
         onProgress: (Int, Int) -> Unit = { _, _ -> },
     ): BatchExportOverview {
+        check(!isRecovering) { "이전 작업의 파일을 확인 중입니다. 잠시 후 다시 시도해 주세요." }
         val template = previewTemplate()
             ?: throw IllegalArgumentException("편집 설정을 확인해 주세요.")
         val dateMode = saveDateMode
@@ -111,9 +122,13 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
 
     var templates by mutableStateOf<List<BatchTemplate>>(emptyList())
         private set
-    var files by mutableStateOf<List<BatchFile>>(emptyList())
+    var files by mutableStateOf<List<BatchFile>>(restored?.files ?: emptyList())
         private set
-    var runState by mutableStateOf(BatchRunState.SETUP)
+    var runState by mutableStateOf(if (restored == null) BatchRunState.SETUP else BatchRunState.FINISHED)
+        private set
+    var isRecovering by mutableStateOf(restored != null)
+        private set
+    var isFinalizing by mutableStateOf(false)
         private set
     var isImporting by mutableStateOf(false)
         private set
@@ -143,6 +158,29 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
     private var sourceUrisSavedThisRun by mutableStateOf<List<String>>(emptyList())
 
     init {
+        restored?.let { snapshot ->
+            snapshot.template?.let {
+                draftName = it.name
+                draftMode = it.mode
+                draftLeadingSeconds = formatSeconds(it.leadingMs)
+                draftTrailingSeconds = formatSeconds(it.trailingMs)
+                draftMute = it.muteAudio
+                selectedTemplateId = it.id
+            }
+            saveDateMode = snapshot.dateMode
+        }
+        if (restored != null) viewModelScope.launch {
+            try {
+                files = withContext(Dispatchers.IO) { restored.files.map { recoverFile(application, it) } }
+                completedCount = files.count { it.status != BatchFileStatus.WAITING && it.status != BatchFileStatus.RUNNING }
+                persistSession()
+                notification = "이전 일괄 작업을 복구했습니다. 완료 파일은 유지되며 남은 작업은 설정을 확인한 뒤 다시 시작해 주세요. 원본 처리 선택은 초기화됐습니다."
+            } catch (error: Exception) {
+                notification = "이전 작업 확인에 실패했습니다. " + (error.localizedMessage ?: "파일을 다시 선택해 주세요.")
+            } finally {
+                isRecovering = false
+            }
+        }
         viewModelScope.launch {
             snapshotFlow {
                 BatchDraftSettings(
@@ -153,11 +191,16 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
                     muteAudio = draftMute,
                     selectedTemplateId = selectedTemplateId,
                 )
-            }.distinctUntilChanged().collect { settings.saveBatch(it) }
+            }.distinctUntilChanged().collect {
+                settings.saveBatch(it)
+                if (!isRunning && !isRecovering) runCatching { persistSession() }
+                    .onFailure { notification = "작업 목록을 기록하지 못했습니다. 저장 공간을 확인해 주세요." }
+            }
         }
         viewModelScope.launch {
             snapshotFlow { saveDateMode }.distinctUntilChanged().collect {
                 settings.saveSaveDate(it)
+                if (!isRunning && !isRecovering) runCatching { persistSession() }
             }
         }
     }
@@ -185,7 +228,7 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun chooseTemplate(templateId: String?) {
-        if (isRunning) return
+        if (isRunning || isRecovering) return
         selectedTemplateId = templateId
         val selected = templates.firstOrNull { it.id == templateId } ?: return
         draftName = selected.name
@@ -223,7 +266,7 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
     fun previewTemplate(): BatchTemplate? = currentDraft()?.takeIf { it.checkValidity() == null }
 
     fun saveTemplate(context: Context) {
-        if (isRunning) return
+        if (isRunning || isRecovering) return
         val proposed = currentDraft()
         if (proposed == null) {
             notification = "시간은 0~7,200초 사이의 숫자로 입력해 주세요."
@@ -243,7 +286,7 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun removeTemplate(context: Context) {
-        if (isRunning) return
+        if (isRunning || isRecovering) return
         val id = selectedTemplateId ?: return
         templates = TemplateStore(context).remove(id)
         selectedTemplateId = null
@@ -254,7 +297,7 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
     fun notifyUser(message: String) { notification = message }
 
     fun addVideos(context: Context, selected: List<Uri>) {
-        if (isRunning || isImporting || selected.isEmpty()) return
+        if (isRunning || isRecovering || isImporting || selected.isEmpty()) return
         if (files.size + selected.size > 250) {
             notification = "한 번에 최대 250개의 영상을 선택할 수 있습니다."
             return
@@ -295,6 +338,7 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
                         }
                 }
                 files = files + newRows
+                persistSession()
                 if (runState == BatchRunState.FINISHED) runState = BatchRunState.SETUP
                 if (newRows.isEmpty()) notification = "이미 선택된 영상입니다."
             } catch (_: CancellationException) {
@@ -308,9 +352,10 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun removeVideo(uri: String) {
-        if (isRunning) return
+        if (isRunning || isRecovering) return
         files = files.filterNot { it.uri == uri }
         runState = BatchRunState.SETUP
+        persistSession()
     }
 
     fun start(
@@ -318,7 +363,11 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
         retryOnly: Boolean = false,
         exportMode: ExportMode = ExportMode.ALLOW_REENCODE,
     ) {
-        if (isRunning || isImporting) return
+        if (isRunning || isRecovering || isImporting) return
+        if (ExportWorkMonitor.isRunning) {
+            notification = "다른 영상 저장이 진행 중입니다. 완료 후 다시 시작해 주세요."
+            return
+        }
         val template = previewTemplate()
         if (template == null) {
             notification = "템플릿 이름 및 구간 시간을 확인해 주세요."
@@ -328,6 +377,14 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
             notification = "일괄 편집할 영상을 선택해 주세요."
             return
         }
+        val workId = try {
+            ExportWorkMonitor.begin(context, "QuickCut 일괄 저장", ::cancel)
+        } catch (error: Exception) {
+            notification = error.localizedMessage ?: "저장 서비스를 시작하지 못했습니다."
+            return
+        }
+        activeTemplate = template
+        activeDateMode = saveDateMode
         val selectedDateMode = saveDateMode
         val selectedOriginalAction = originalAction
         performedOriginalAction = selectedOriginalAction
@@ -353,10 +410,13 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
         notification = null
         job = viewModelScope.launch {
             try {
+                persistSession()
+                ExportWorkMonitor.awaitReady(workId)
                 val sourceRows = files.toList()
                 for (row in sourceRows) {
                     // Previously completed files are never exported twice.
                     if (row.status == BatchFileStatus.SAVED) continue
+                    if (retryOnly && row.status != BatchFileStatus.FAILED && row.status != BatchFileStatus.SKIPPED) continue
                     if (row.durationMs < 100L) continue
                     if (selectedDateMode == SaveDateMode.ORIGINAL && row.originalDate == null) {
                         update(row.uri) {
@@ -375,43 +435,60 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
                             update(row.uri) {
                                 it.copy(status=BatchFileStatus.RUNNING,reason=null,progress=null)
                             }
+                            isFinalizing = false
+                            ExportWorkMonitor.update(workId, "${completedCount + 1}/${files.size} · ${row.displayName}")
                             try {
+                                val expectedAudio = plan.timeline.clips.any { it.hasAudio && !it.muted }
                                 val result = VideoExporter(context.applicationContext).export(
                                     timeline = plan.timeline,
                                     onProgress = { percent ->
-                                        update(row.uri) { it.copy(progress=percent) }
+                                        update(row.uri, persist = false) { it.copy(progress=percent) }
+                                        ExportWorkMonitor.update(workId, "${completedCount + 1}/${files.size} · ${row.displayName}", percent)
                                     },
                                     onFinalizing = {
-                                        update(row.uri) { it.copy(progress=null) }
+                                        isFinalizing = true
+                                        update(row.uri, persist = false) { it.copy(progress=null) }
+                                        ExportWorkMonitor.update(workId, "${row.displayName} · 갤러리 저장 완료 처리 중", canCancel = false)
+                                    },
+                                    onOutputCreated = { output ->
+                                        update(row.uri) { it.copy(savedOutputUri = output.toString(),
+                                            outputExpectedDurationMs = plan.timeline.totalDurationMs,
+                                            outputExpectedAudio = expectedAudio,
+                                            outputExpectedDateMs = if (selectedDateMode == SaveDateMode.ORIGINAL) row.originalDate?.epochMs else null) }
+                                    },
+                                    onCommitted = { output ->
+                                        update(row.uri) { it.copy(status=BatchFileStatus.SAVED, progress=100,
+                                            savedOutputUri=output.toString(), reason=null) }
+                                        if (selectedOriginalAction != OriginalAction.KEEP)
+                                            sourceUrisSavedThisRun = sourceUrisSavedThisRun + row.uri
                                     },
                                     saveDateMode = selectedDateMode,
                                     outputBaseName = row.displayName,
                                     exportMode = exportMode,
                                 )
-                                update(row.uri) {
-                                    it.copy(status=BatchFileStatus.SAVED,progress=100,
-                                        savedOutputUri=result.toString(),reason=null)
-                                }
-                                if (selectedOriginalAction != OriginalAction.KEEP) {
-                                    sourceUrisSavedThisRun =
-                                        sourceUrisSavedThisRun + row.uri
+                                if (files.first { it.uri == row.uri }.status != BatchFileStatus.SAVED) {
+                                    update(row.uri) { it.copy(status=BatchFileStatus.SAVED,progress=100,
+                                        savedOutputUri=result.toString(),reason=null) }
                                 }
                             } catch (required: ReencodeRequiredException) {
                                 update(row.uri) {
                                     it.copy(status=BatchFileStatus.SKIPPED,progress=null,
-                                        reason="고속 저장을 지원하지 않아 건너뛰었습니다.")
+                                        savedOutputUri=null, reason="고속 저장을 지원하지 않아 건너뛰었습니다.")
                                 }
                             } catch (cancelled: CancellationException) {
-                                update(row.uri) {
-                                    it.copy(status=BatchFileStatus.SKIPPED,progress=null,
-                                        reason="사용자가 작업을 중지했습니다.")
+                                if (files.first { it.uri == row.uri }.status != BatchFileStatus.SAVED) update(row.uri) {
+                                    it.copy(status=BatchFileStatus.SKIPPED,progress=null, savedOutputUri=null,
+                                        reason="작업이 중지됐습니다. 설정 확인 후 다시 시작해 주세요.")
                                 }
                                 throw cancelled
                             } catch (failure: Exception) {
                                 update(row.uri) {
                                     it.copy(status=BatchFileStatus.FAILED,progress=null,
-                                        reason=failure.localizedMessage ?: "영상 저장 실패")
+                                        savedOutputUri=null, reason=failure.localizedMessage ?: "영상 저장 실패")
                                 }
+                            } finally {
+                                isFinalizing = false
+                                ExportWorkMonitor.update(workId, "다음 영상 준비 중")
                             }
                         }
                     }
@@ -422,7 +499,10 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
                         it.copy(status=BatchFileStatus.SKIPPED,reason="작업이 중지됐습니다.")
                     } else it
                 }
+            } catch (error: Exception) {
+                notification = "일괄 작업을 완료하지 못했습니다. " + (error.localizedMessage ?: "다시 시도해 주세요.")
             } finally {
+                isFinalizing = false
                 // Keep the selected action visible during rendering. The next
                 // batch always resets to KEEP even if the prior run selected trash.
                 originalAction = OriginalAction.KEEP
@@ -431,20 +511,25 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
                     originalCandidates.isNotEmpty()) OriginalActionStatus.READY
                 else OriginalActionStatus.NONE
                 job = null
+                runCatching { persistSession() }.onFailure {
+                    notification = "작업 결과를 기록하지 못했습니다. 저장 공간을 확인해 주세요."
+                }
+                ExportWorkMonitor.finish(workId)
             }
         }
     }
 
-    private fun update(uri: String, block: (BatchFile) -> BatchFile) {
+    private fun update(uri: String, persist: Boolean = true, block: (BatchFile) -> BatchFile) {
         files = files.map { if (it.uri == uri) block(it) else it }
         completedCount = files.count {
             it.status == BatchFileStatus.SAVED ||
                 it.status == BatchFileStatus.SKIPPED ||
                 it.status == BatchFileStatus.FAILED
         }
+        if (persist) persistSession()
     }
 
-    fun cancel() { job?.cancel() }
+    fun cancel() { if (!isFinalizing) job?.cancel() }
 
     fun promptOriginalApproval() {
         if (runState == BatchRunState.FINISHED &&
@@ -474,7 +559,7 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun resetBatch() {
-        if (isRunning) return
+        if (isRunning || isRecovering) return
         files = emptyList()
         sourceUrisSavedThisRun = emptyList()
         completedCount = 0
@@ -483,9 +568,55 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
         performedOriginalAction = OriginalAction.KEEP
         originalStatus = OriginalActionStatus.NONE
         notification = null
+        sessionStore.clear()
+    }
+
+    private fun persistSession() {
+        sessionStore.save(BatchSessionSnapshot(files,
+            if (isRunning) activeTemplate else previewTemplate() ?: activeTemplate,
+            if (isRunning) activeDateMode else saveDateMode, runState))
+    }
+
+    private fun recoverFile(context: Context, row: BatchFile): BatchFile {
+        val output = row.savedOutputUri?.let(Uri::parse)
+        var state = BatchOutputState.ABSENT
+        if (output != null) {
+            state = runCatching {
+                context.contentResolver.query(output, arrayOf(MediaStore.Video.Media.IS_PENDING,
+                    MediaStore.Video.Media.OWNER_PACKAGE_NAME, MediaStore.Video.Media.RELATIVE_PATH),
+                    null, null, null)?.use { cursor ->
+                    if (!cursor.moveToFirst()) return@use BatchOutputState.ABSENT
+                    val owned = cursor.getString(1) == context.packageName &&
+                        cursor.getString(2).trimEnd('/') == Environment.DIRECTORY_MOVIES + "/QuickCut"
+                    if (!owned) return@use BatchOutputState.INVALID
+                    if (cursor.getInt(0) == 1) return@use BatchOutputState.PENDING
+                    MediaReader.validateExport(context, output, row.outputExpectedDurationMs, row.outputExpectedAudio)
+                    row.outputExpectedDateMs?.let { expected ->
+                        val actual = OriginalMediaDates.resolve(context, output)?.epochMs
+                        check(actual != null && kotlin.math.abs(actual - expected) <= 3_000L)
+                    }
+                    BatchOutputState.VERIFIED
+                } ?: BatchOutputState.ABSENT
+            }.getOrDefault(BatchOutputState.INVALID)
+        }
+        val action = BatchRecoveryPolicy.decide(row.status == BatchFileStatus.SAVED, state)
+        if (action == BatchRecoveryAction.KEEP_SAVED || action == BatchRecoveryAction.ADOPT_SAVED)
+            return row.copy(status=BatchFileStatus.SAVED, progress=100, reason=null)
+        if (action == BatchRecoveryAction.REMOVE_PENDING) {
+            val deleted = runCatching { context.contentResolver.delete(output!!, null, null) > 0 }.getOrDefault(false)
+            if (!deleted) return row.copy(status=BatchFileStatus.SKIPPED,
+                durationMs=0L, reason="미완성 파일을 정리하지 못했습니다. 파일 권한을 확인하고 다시 선택해 주세요.", progress=null)
+        }
+        val metadata = runCatching { MediaReader.metadata(context, Uri.parse(row.uri)) }.getOrNull()
+        if (metadata == null) return row.copy(status=BatchFileStatus.SKIPPED, durationMs=0L,
+            reason="원본에 접근할 수 없습니다. 영상을 다시 선택해 주세요.", savedOutputUri=null, progress=null)
+        return row.copy(status=BatchFileStatus.SKIPPED, durationMs=metadata.durationMs, hasAudio=metadata.hasAudio,
+            originalDate=OriginalMediaDates.resolve(context, Uri.parse(row.uri)), savedOutputUri=null, progress=null,
+            reason="이전 작업이 중단됐거나 완료 파일을 확인할 수 없습니다. 설정 확인 후 다시 시작해 주세요.")
     }
 
     private fun formatSeconds(ms: Long): String =
         if (ms % 1_000L == 0L) (ms / 1_000L).toString()
         else (ms / 1_000.0).toString()
 }
+

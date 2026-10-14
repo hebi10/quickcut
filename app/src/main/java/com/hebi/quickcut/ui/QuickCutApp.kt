@@ -138,6 +138,19 @@ fun QuickCutApp(
             }
         }
     }
+    LaunchedEffect(model.needsReencodeConsent, model.page) {
+        if (model.needsReencodeConsent && model.page == QuickCutPage.EDITOR) {
+            try {
+                exportAssessment = ExportPlanner.analyze(
+                    context.applicationContext, model.timeline, selectedSaveDateMode
+                )
+            } catch (_: Exception) {
+                model.reportError(
+                    "고속 저장을 완료하지 못했습니다. 정밀 저장 허용 여부를 다시 선택해 주세요."
+                )
+            }
+        }
+    }
     val originalActionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartIntentSenderForResult()
     ) { result ->

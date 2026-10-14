@@ -91,6 +91,7 @@ fun QuickCutApp(
     var pendingQuickDefaults by rememberSaveable { mutableStateOf(false) }
     var exportAssessment by remember { mutableStateOf<ExportAssessment?>(null) }
     var inspectingExport by remember { mutableStateOf(false) }
+    var showExportCancelConfirmation by rememberSaveable { mutableStateOf(false) }
     var showSaveOptions by rememberSaveable { mutableStateOf(false) }
     var selectedSaveAction by rememberSaveable { mutableStateOf(OriginalAction.KEEP) }
     var selectedSaveDateMode by rememberSaveable {
@@ -197,7 +198,8 @@ fun QuickCutApp(
     BackHandler(enabled = !showBatch && model.page != QuickCutPage.PICKER) {
         when (model.page) {
             QuickCutPage.EDITOR -> model.requestExit()
-            QuickCutPage.EXPORTING -> if (!model.isFinalizing) model.cancelExport()
+            QuickCutPage.EXPORTING -> if (!model.isFinalizing)
+                showExportCancelConfirmation = true
             QuickCutPage.COMPLETED -> model.startNew()
             else -> Unit
         }
@@ -269,11 +271,19 @@ fun QuickCutApp(
                 }
             }
             QuickCutPage.EXPORTING -> CenterStatus(
-                title = if (model.isFinalizing) "갤러리 등록 중" else "영상 저장 중",
+                title = when {
+                    model.isFinalizing -> "갤러리 등록 중"
+                    model.requestedExportMode == ExportMode.FAST_ONLY -> "고속 저장 중"
+                    else -> "정밀 저장 중"
+                },
                 subtitle = if (model.isFinalizing)
-                    "결과물을 확인하고 있습니다." else "영상을 처리하고 있습니다.",
+                    "결과물을 확인하고 있습니다."
+                else if (model.requestedExportMode == ExportMode.FAST_ONLY)
+                    "압축된 영상 데이터를 복사하고 있습니다."
+                else "재인코딩이 발생할 수 있습니다. 저장이 끝날 때까지 진행됩니다.",
                 progress = if (model.isFinalizing) null else model.progressPercent,
-                onCancel = if (model.isFinalizing) null else model::cancelExport,
+                onCancel = if (model.isFinalizing) null
+                    else { { showExportCancelConfirmation = true } },
             )
             QuickCutPage.COMPLETED -> CompletedScreen(
                 videoUri = model.completedUri?.toString(),
@@ -378,6 +388,26 @@ fun QuickCutApp(
             },
             containerColor = CutColors.panel,
             shape = RoundedCornerShape(4.dp),
+        )
+    }
+
+    if (showExportCancelConfirmation && model.page == QuickCutPage.EXPORTING) {
+        AlertDialog(
+            onDismissRequest = { showExportCancelConfirmation = false },
+            title = { Text("영상 저장을 취소할까요?") },
+            text = { Text("완료되지 않은 출력 파일은 정리하고 원본 영상은 유지합니다.") },
+            confirmButton = {
+                Button(onClick = {
+                    showExportCancelConfirmation = false
+                    model.cancelExport()
+                }) { Text("저장 취소") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showExportCancelConfirmation = false }) {
+                    Text("계속 저장")
+                }
+            },
+            containerColor = CutColors.panel,
         )
     }
 

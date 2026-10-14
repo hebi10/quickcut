@@ -233,6 +233,7 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun clearNotification() { notification = null }
+    fun notifyUser(message: String) { notification = message }
 
     fun addVideos(context: Context, selected: List<Uri>) {
         if (isRunning || isImporting || selected.isEmpty()) return

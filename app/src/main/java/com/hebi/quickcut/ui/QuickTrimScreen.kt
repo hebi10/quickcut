@@ -93,7 +93,7 @@ fun QuickTrimScreen(
         val tail = millisValue(trailing) ?: return
         if (head + tail >= clip.sourceDurationMs - 100L) return
         model.trimClip(clip.id, head, clip.sourceDurationMs - tail)
-        settings.saveQuick(QuickTrimSettings(head, tail))
+        settings.saveQuick(QuickTrimSettings(head, tail, clip.muted))
     }
 
     fun changeLeading(text: String) {
@@ -204,7 +204,11 @@ fun QuickTrimScreen(
                 ) {
                     Text(if (clip.muted) "원본 소리: 음소거" else "원본 소리: 유지",
                         color = CutColors.secondaryText, fontSize = 13.sp)
-                    OutlinedButton(onClick = model::toggleMute) {
+                    OutlinedButton(onClick = {
+                        model.toggleMute()
+                        val current = settings.loadQuick()
+                        settings.saveQuick(current.copy(muteAudio = !clip.muted))
+                    }) {
                         Text(if (clip.muted) "소리 켜기" else "음소거")
                     }
                 }

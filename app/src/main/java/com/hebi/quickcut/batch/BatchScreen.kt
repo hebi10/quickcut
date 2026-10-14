@@ -253,6 +253,7 @@ fun BatchScreen(
                             pendingOverview = null
                         },
                         modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(4.dp),
                     ) { Text("모든 영상 정밀 저장 허용") }
                     OutlinedButton(
                         onClick = {
@@ -261,6 +262,7 @@ fun BatchScreen(
                         },
                         enabled = overview.fast > 0,
                         modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(4.dp),
                     ) { Text("고속 저장 가능한 영상만") }
                     TextButton(
                         onClick = { pendingOverview = null },
@@ -544,6 +546,8 @@ private fun BatchActions(
                 Button(
                     onClick = { requestExport(false) },
                     enabled = model.files.isNotEmpty() && !model.isImporting && !inspecting,
+                    modifier = Modifier.fillMaxWidth().height(52.dp),
+                    shape = RoundedCornerShape(4.dp),
                 ) { Text("일괄 편집 및 저장 시작") }
             }
             BatchRunState.RUNNING -> {
@@ -568,6 +572,7 @@ private fun BatchActions(
                     OutlinedButton(
                         onClick = { requestExport(true) },
                         enabled = model.failures > 0 || model.skips > 0,
+                        shape = RoundedCornerShape(4.dp),
                     ) { Text("실패 작업 재시도") }
                     TextButton(onClick = model::resetBatch) { Text("새 작업") }
                 }

@@ -121,6 +121,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         private set
     var isFinalizing by mutableStateOf(false)
         private set
+    var requestedExportMode by mutableStateOf(ExportMode.FAST_ONLY)
+        private set
     var completedUri by mutableStateOf<Uri?>(null)
         private set
     var errorMessage by mutableStateOf<String?>(null)
@@ -374,6 +376,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         originalAction = selectedOriginalAction
         savedDateMode = selectedDateMode
         needsReencodeConsent = false
+        requestedExportMode = exportMode
         originalActionStatus = OriginalActionStatus.NONE
         originalsFromSavedTimeline = emptyList()
         page = QuickCutPage.EXPORTING

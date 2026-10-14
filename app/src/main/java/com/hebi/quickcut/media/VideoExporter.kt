@@ -4,6 +4,8 @@ import android.content.Context
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
+import android.util.Log
 import androidx.annotation.OptIn
 import androidx.media3.common.util.ExperimentalApi
 import androidx.media3.common.util.UnstableApi
@@ -44,6 +46,46 @@ class VideoExporter(private val context: Context) {
             }
         } else null
         val outputTimestampMs = originalDate?.epochMs ?: System.currentTimeMillis()
+
+        // Fast path: a single unmodified MP4 clip with a safe sync-sample boundary.
+        // Keep the original-date export on Transformer to preserve embedded MP4 dates.
+        if (saveDateMode == SaveDateMode.CURRENT && timeline.clips.size == 1) {
+            val clip = timeline.clips.first()
+            val plan = withContext(Dispatchers.IO) {
+                FastMp4Trimmer.prepare(context, clip)
+            }
+            if (plan != null) {
+                val startedAt = SystemClock.elapsedRealtime()
+                try {
+                    val output = GalleryWriter(context).saveDirect(
+                        outputBaseName = outputBaseName,
+                        expectedDurationMs = clip.durationMs,
+                        expectAudio = !clip.muted && clip.hasAudio,
+                        writer = { destination ->
+                            FastMp4Trimmer.write(context, plan, destination, onProgress)
+                        },
+                        onFinalizing = onFinalizing,
+                    )
+                    Log.i(
+                        "QuickCutExport",
+                        "method=fast_remux elapsedMs=" +
+                            (SystemClock.elapsedRealtime() - startedAt) +
+                            " startShiftUs=" + (plan.startUs - clip.startMs * 1_000L),
+                    )
+                    return output
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (unsupported: FastTrimUnavailableException) {
+                    // GalleryWriter removes the failed pending output before retrying.
+                    Log.w("QuickCutExport", "Fast remux unsupported; using Media3", unsupported)
+                } catch (unsupported: IllegalStateException) {
+                    Log.w("QuickCutExport", "Native remux unavailable; using Media3", unsupported)
+                } catch (unsupported: IllegalArgumentException) {
+                    Log.w("QuickCutExport", "Native remux rejected input; using Media3", unsupported)
+                }
+            }
+        }
+
         val temporary = File.createTempFile("quickcut_", ".mp4", context.cacheDir)
         try {
             check(temporary.delete()) { "임시 출력 파일을 준비하지 못했습니다." }
@@ -126,6 +168,12 @@ class VideoExporter(private val context: Context) {
             .addListener(object : Transformer.Listener {
                 override fun onCompleted(composition: Composition, exportResult: ExportResult) {
                     main.removeCallbacks(poller)
+                    Log.i(
+                        "QuickCutExport",
+                        "method=media3 optimization=" + exportResult.optimizationResult +
+                            " videoProcess=" + exportResult.videoConversionProcess +
+                            " audioProcess=" + exportResult.audioConversionProcess,
+                    )
                     if (continuation.isActive) continuation.resume(Unit)
                 }
 

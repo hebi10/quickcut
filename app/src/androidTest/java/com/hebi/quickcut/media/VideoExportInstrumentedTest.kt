@@ -13,6 +13,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlin.math.abs
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -20,13 +21,14 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class VideoExportInstrumentedTest {
     private suspend fun withFixture(
+        fixtureName: String = "quickcut_fixture.mp4",
         block: suspend (Context, Uri, VideoMetadata) -> Unit,
     ) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val source = File(context.cacheDir, "quickcut_fixture.mp4")
+        val source = File(context.cacheDir, fixtureName)
         try {
             InstrumentationRegistry.getInstrumentation().context.assets
-                .open("quickcut_fixture.mp4").use { input ->
+                .open(fixtureName).use { input ->
                     source.outputStream().use { output -> input.copyTo(output) }
                 }
             assertTrue("The emulator fixture is missing", source.length() > 0L)
@@ -75,6 +77,87 @@ class VideoExportInstrumentedTest {
             }
         } finally {
             context.contentResolver.delete(outputUri, null, null)
+        }
+    }
+
+    @Test
+    fun nativeStreamCopySavesAPlayReadyClipWithoutReencoding() = runBlocking {
+        withFixture { context, uri, metadata ->
+            val clip = VideoClip(
+                id = 1,
+                uri = uri.toString(),
+                sourceDurationMs = metadata.durationMs,
+                startMs = 0L,
+                endMs = 2_000L,
+                hasAudio = metadata.hasAudio,
+            )
+            assertNotNull(
+                "A standard SDR H264/AAC fixture should use fast stream copy",
+                FastMp4Trimmer.prepare(context, clip),
+            )
+            assertExport(context, EditTimeline(listOf(clip)), true)
+        }
+    }
+
+    @Test
+    fun nativeRemuxWritesDirectlyToGalleryAndPreservesAudio() = runBlocking {
+        withFixture { context, uri, metadata ->
+            val clip = VideoClip(
+                id = 1,
+                uri = uri.toString(),
+                sourceDurationMs = metadata.durationMs,
+                startMs = 0L,
+                endMs = 2_000L,
+                hasAudio = metadata.hasAudio,
+            )
+            val plan = FastMp4Trimmer.prepare(context, clip)
+                ?: throw AssertionError("Expected a native fast trim for H264/AAC")
+            val resultUri = GalleryWriter(context).saveDirect(
+                outputBaseName = "test_fast_trim",
+                expectedDurationMs = clip.durationMs,
+                expectAudio = true,
+                writer = { fileDescriptor ->
+                    FastMp4Trimmer.write(context, plan, fileDescriptor) {}
+                },
+                onFinalizing = {},
+            )
+            try {
+                val exported = MediaReader.metadata(context, resultUri)
+                assertTrue(abs(exported.durationMs - clip.durationMs) <= 250L)
+                assertTrue(exported.hasAudio)
+            } finally {
+                context.contentResolver.delete(resultUri, null, null)
+            }
+        }
+    }
+
+    @Test
+    fun trimmingFourSecondsAtAKeyframeUsesDirectCopy() = runBlocking {
+        withFixture("quickcut_keyframes.mp4") { context, uri, metadata ->
+            val clip = VideoClip(
+                id = 1,
+                uri = uri.toString(),
+                sourceDurationMs = metadata.durationMs,
+                startMs = 4_000L,
+                endMs = metadata.durationMs,
+                hasAudio = metadata.hasAudio,
+            )
+            val plan = FastMp4Trimmer.prepare(context, clip)
+                ?: throw AssertionError("Four-second keyframe trim should be eligible")
+            val output = GalleryWriter(context).saveDirect(
+                outputBaseName = "test_trim_head_4s",
+                expectedDurationMs = clip.durationMs,
+                expectAudio = true,
+                writer = { fd -> FastMp4Trimmer.write(context, plan, fd) {} },
+                onFinalizing = {},
+            )
+            try {
+                val exported = MediaReader.metadata(context, output)
+                assertTrue(abs(exported.durationMs - clip.durationMs) <= 250L)
+                assertTrue(exported.hasAudio)
+            } finally {
+                context.contentResolver.delete(output, null, null)
+            }
         }
     }
 

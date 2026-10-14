@@ -414,7 +414,6 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 page = QuickCutPage.EDITOR
             } catch (required: ReencodeRequiredException) {
                 needsReencodeConsent = true
-                reportError(required.localizedMessage ?: "정밀 저장을 선택해 주세요.")
                 page = QuickCutPage.EDITOR
             } catch (error: Exception) {
                 reportError("저장에 실패했습니다. " +

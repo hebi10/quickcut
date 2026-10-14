@@ -75,9 +75,13 @@ class VideoExporter(private val context: Context) {
                     return output
                 } catch (cancelled: CancellationException) {
                     throw cancelled
-                } catch (error: Exception) {
-                    // A failed fast export is deleted by GalleryWriter before retrying.
-                    Log.w("QuickCutExport", "Fast remux unavailable; using Media3", error)
+                } catch (unsupported: FastTrimUnavailableException) {
+                    // GalleryWriter removes the failed pending output before retrying.
+                    Log.w("QuickCutExport", "Fast remux unsupported; using Media3", unsupported)
+                } catch (unsupported: IllegalStateException) {
+                    Log.w("QuickCutExport", "Native remux unavailable; using Media3", unsupported)
+                } catch (unsupported: IllegalArgumentException) {
+                    Log.w("QuickCutExport", "Native remux rejected input; using Media3", unsupported)
                 }
             }
         }

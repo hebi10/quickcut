@@ -116,7 +116,7 @@ fun QuickTrimScreen(
         head + tail <= clip.sourceDurationMs - 100L
 
     BoxWithConstraints(Modifier.fillMaxSize().background(CutColors.background)) {
-        val compact = maxHeight < 640.dp
+        val controlsMaxHeight = (maxHeight - 228.dp).coerceIn(150.dp, 370.dp)
         Column(Modifier.fillMaxSize()) {
             Row(
                 Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 8.dp),
@@ -138,7 +138,7 @@ fun QuickTrimScreen(
 
             Box(
                 Modifier.fillMaxWidth().weight(1f)
-                    .heightIn(min = 120.dp).background(Color.Black),
+                    .heightIn(min = 100.dp).background(Color.Black),
                 contentAlignment = Alignment.Center,
             ) {
                 AndroidView(
@@ -160,7 +160,7 @@ fun QuickTrimScreen(
 
             Column(
                 modifier = Modifier.fillMaxWidth()
-                    .heightIn(max = if (compact) 310.dp else 370.dp)
+                    .heightIn(max = controlsMaxHeight)
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 16.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -220,13 +220,14 @@ fun QuickTrimScreen(
                     "마지막 자르기 값은 자동 저장됩니다. 고속 저장 여부는 저장 전에 확인합니다.",
                     color = CutColors.secondaryText, fontSize = 12.sp,
                 )
-                Button(
-                    onClick = onSave,
-                    enabled = valid,
-                    modifier = Modifier.fillMaxWidth().height(52.dp),
-                ) {
-                    Text("영상 저장", fontWeight = FontWeight.SemiBold)
-                }
+            }
+            Button(
+                onClick = onSave,
+                enabled = valid,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
+                    .height(52.dp),
+            ) {
+                Text("영상 저장", fontWeight = FontWeight.SemiBold)
             }
         }
     }
@@ -247,7 +248,11 @@ private fun TrimSecondsRow(
     ) {
         Text(label, color = CutColors.primaryText, fontSize = 14.sp,
             modifier = Modifier.weight(1f))
-        OutlinedButton(onClick = { onStep(-1_000L) }, enabled = enabled) {
+        OutlinedButton(
+            onClick = { onStep(-1_000L) },
+            enabled = enabled,
+            modifier = Modifier.height(48.dp),
+        ) {
             Text("−")
         }
         OutlinedTextField(
@@ -258,7 +263,11 @@ private fun TrimSecondsRow(
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
             modifier = Modifier.width(105.dp),
         )
-        OutlinedButton(onClick = { onStep(1_000L) }, enabled = enabled) {
+        OutlinedButton(
+            onClick = { onStep(1_000L) },
+            enabled = enabled,
+            modifier = Modifier.height(48.dp),
+        ) {
             Text("+")
         }
     }

@@ -20,9 +20,10 @@ class BatchScreenInstrumentedTest {
 
     @Test
     fun launchBatchEditorAndShowTimestampChoices() {
-        composeRule.onNodeWithText("템플릿 · 일괄 편집").performClick()
+        composeRule.onNodeWithText("일괄 편집 · 여러 영상").performClick()
         composeRule.onNodeWithText("일괄 편집").assertExists()
         composeRule.onNodeWithText("앞뒤 구간 삭제").assertExists()
+        composeRule.onNodeWithText("템플릿·저장 옵션 펼치기").performScrollTo().performClick()
         composeRule.onNodeWithText("현재 날짜로 저장 (최신 파일)").assertExists()
         composeRule.onNodeWithText("원본 날짜 유지").assertExists()
     }
@@ -30,7 +31,8 @@ class BatchScreenInstrumentedTest {
 
     @Test
     fun disabledDurationInputsFollowSelectedClipMode() {
-        composeRule.onNodeWithText("템플릿 · 일괄 편집").performClick()
+        composeRule.onNodeWithText("일괄 편집 · 여러 영상").performClick()
+        composeRule.onNodeWithText("앞뒤 구간 삭제").performScrollTo().performClick()
         val leading = composeRule.onNodeWithTag("batch-leading-seconds")
         val trailing = composeRule.onNodeWithTag("batch-trailing-seconds")
 
@@ -56,7 +58,8 @@ class BatchScreenInstrumentedTest {
 
     @Test
     fun templateCanBeSavedFromEditor() {
-        composeRule.onNodeWithText("템플릿 · 일괄 편집").performClick()
+        composeRule.onNodeWithText("일괄 편집 · 여러 영상").performClick()
+        composeRule.onNodeWithText("템플릿·저장 옵션 펼치기").performScrollTo().performClick()
         composeRule.onNodeWithText("템플릿 저장").performScrollTo().performClick()
         composeRule.onNodeWithText("템플릿을 저장했습니다.").assertExists()
     }

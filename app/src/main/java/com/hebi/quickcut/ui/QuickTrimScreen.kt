@@ -40,6 +40,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.text.KeyboardOptions
@@ -251,7 +253,9 @@ private fun TrimSecondsRow(
         OutlinedButton(
             onClick = { onStep(-1_000L) },
             enabled = enabled,
-            modifier = Modifier.height(48.dp),
+            modifier = Modifier.height(48.dp).semantics {
+                contentDescription = "$label 1초 감소"
+            },
         ) {
             Text("−")
         }
@@ -266,7 +270,9 @@ private fun TrimSecondsRow(
         OutlinedButton(
             onClick = { onStep(1_000L) },
             enabled = enabled,
-            modifier = Modifier.height(48.dp),
+            modifier = Modifier.height(48.dp).semantics {
+                contentDescription = "$label 1초 증가"
+            },
         ) {
             Text("+")
         }

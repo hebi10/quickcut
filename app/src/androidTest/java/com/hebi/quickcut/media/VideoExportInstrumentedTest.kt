@@ -13,6 +13,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlin.math.abs
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -75,6 +76,25 @@ class VideoExportInstrumentedTest {
             }
         } finally {
             context.contentResolver.delete(outputUri, null, null)
+        }
+    }
+
+    @Test
+    fun nativeStreamCopySavesAPlayReadyClipWithoutReencoding() = runBlocking {
+        withFixture { context, uri, metadata ->
+            val clip = VideoClip(
+                id = 1,
+                uri = uri.toString(),
+                sourceDurationMs = metadata.durationMs,
+                startMs = 0L,
+                endMs = 2_000L,
+                hasAudio = metadata.hasAudio,
+            )
+            assertNotNull(
+                "A standard SDR H264/AAC fixture should use fast stream copy",
+                FastMp4Trimmer.prepare(context, clip),
+            )
+            assertExport(context, EditTimeline(listOf(clip)), true)
         }
     }
 

@@ -60,6 +60,7 @@ class BatchScreenInstrumentedTest {
     fun templateCanBeSavedFromEditor() {
         composeRule.onNodeWithText("일괄 편집 · 여러 영상").performClick()
         composeRule.onNodeWithText("템플릿·저장 옵션 펼치기").performScrollTo().performClick()
+        composeRule.onNodeWithText("직접 설정").performScrollTo().performClick()
         composeRule.onNodeWithText("템플릿 저장").performScrollTo().performClick()
         composeRule.onNodeWithText("템플릿을 저장했습니다.").assertExists()
     }

@@ -295,7 +295,6 @@ fun QuickCutApp(
             onDismissRequest = {
                 showSaveOptions = false
                 selectedSaveAction = OriginalAction.KEEP
-                selectedSaveDateMode = SaveDateMode.CURRENT
             },
             title = { Text("저장 설정") },
             text = {
@@ -354,9 +353,7 @@ fun QuickCutApp(
                 Button(
                     onClick = {
                         showSaveOptions = false
-                        model.startExport(context, selectedSaveAction, selectedSaveDateMode)
-                        selectedSaveAction = OriginalAction.KEEP
-                        selectedSaveDateMode = SaveDateMode.CURRENT
+                        beginExportAfterReview()
                     },
                     shape = RoundedCornerShape(4.dp),
                 ) { Text("저장 시작") }
@@ -365,11 +362,114 @@ fun QuickCutApp(
                 TextButton(onClick = {
                     showSaveOptions = false
                     selectedSaveAction = OriginalAction.KEEP
-                    selectedSaveDateMode = SaveDateMode.CURRENT
                 }) { Text("취소") }
             },
             containerColor = CutColors.panel,
             shape = RoundedCornerShape(4.dp),
+        )
+    }
+
+    if (showLastSettings) {
+        LastSettingsDialog(
+            settings = settings,
+            dateMode = selectedSaveDateMode,
+            onDateChange = { selectedSaveDateMode = it },
+            onDismiss = { showLastSettings = false },
+        )
+    }
+
+    if (inspectingExport) {
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text("저장 방식 분석 중") },
+            text = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(modifier = Modifier.size(32.dp))
+                    Text("코덱과 자르기 위치를 확인하고 있습니다.",
+                        modifier = Modifier.padding(start = 12.dp))
+                }
+            },
+            confirmButton = {},
+            containerColor = CutColors.panel,
+        )
+    }
+    exportAssessment?.let { assessment ->
+        val clip = model.timeline.clips.singleOrNull()
+        AlertDialog(
+            onDismissRequest = {
+                exportAssessment = null
+                selectedSaveAction = OriginalAction.KEEP
+            },
+            title = { Text("저장 방식 선택") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        if (model.needsReencodeConsent)
+                            "고속 저장 중 호환성 문제가 발생했습니다. 재인코딩을 허용할지 선택해 주세요."
+                        else assessment.explanation,
+                    )
+                    Text(
+                        "정밀 저장은 영상 전체 또는 일부 구간을 다시 인코딩할 수 있어 " +
+                            "긴 영상에서는 저장 시간이 늘어날 수 있습니다.",
+                        color = CutColors.secondaryText,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    if (assessment.suggestedStartMs != null && clip != null &&
+                        assessment.suggestedStartMs > clip.startMs
+                    ) {
+                        Text(
+                            "대안: 앞부분을 " +
+                                (assessment.suggestedStartMs / 1_000.0) +
+                                "초까지 삭제하면 빠른 저장이 가능할 수 있습니다. " +
+                                "이 경우 원래보다 더 많은 영상이 삭제됩니다.",
+                            color = CutColors.secondaryText,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = {
+                            exportAssessment = null
+                            model.startExport(
+                                context, selectedSaveAction, selectedSaveDateMode,
+                                ExportMode.ALLOW_REENCODE
+                            )
+                            selectedSaveAction = OriginalAction.KEEP
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("정밀 저장 (재인코딩 허용)") }
+                    if (assessment.suggestedStartMs != null && clip != null) {
+                        OutlinedButton(
+                            onClick = {
+                                val start = assessment.suggestedStartMs
+                                model.trimClip(clip.id, start, clip.endMs)
+                                if (model.quickMode) {
+                                    settings.saveQuick(
+                                        QuickTrimSettings(
+                                            leadingMs = start,
+                                            trailingMs = clip.sourceDurationMs - clip.endMs,
+                                            muteAudio = clip.muted,
+                                        )
+                                    )
+                                }
+                                exportAssessment = null
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text("빠른 저장 위치로 변경 후 확인") }
+                    }
+                    TextButton(
+                        onClick = {
+                            exportAssessment = null
+                            selectedSaveAction = OriginalAction.KEEP
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("취소") }
+                }
+            },
+            containerColor = CutColors.panel,
         )
     }
 

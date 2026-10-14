@@ -40,6 +40,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.font.FontWeight
@@ -73,8 +76,16 @@ fun QuickTrimScreen(
 ) {
     val clip = model.timeline.clips.singleOrNull() ?: return
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val player = remember(context) { ExoPlayer.Builder(context).build() }
     DisposableEffect(player) { onDispose { player.release() } }
+    DisposableEffect(player, lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) player.pause()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     LaunchedEffect(clip.uri, clip.startMs, clip.endMs) {
         delay(200L)
         val position = player.currentPosition.coerceIn(0L, clip.durationMs)
@@ -229,7 +240,10 @@ fun QuickTrimScreen(
                 ) { Text("저장 옵션 · 날짜 및 원본 처리") }
             }
             Button(
-                onClick = onSave,
+                onClick = {
+                    player.pause()
+                    onSave()
+                },
                 enabled = valid,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
                     .height(52.dp),

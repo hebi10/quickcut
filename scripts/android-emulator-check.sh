@@ -96,6 +96,16 @@ ffmpeg -hide_banner -loglevel error -y \
   -c:a aac -b:a 64k -shortest \
   app/src/androidTest/assets/quickcut_open_gop.mp4
 
+# Color changes exactly at the 2s keyframe; a 1.95s trim must retain a red frame.
+ffmpeg -hide_banner -loglevel error -y \
+  -f lavfi -i color=c=red:size=320x240:rate=30 \
+  -f lavfi -i sine=frequency=440:sample_rate=44100 \
+  -vf "drawbox=x=0:y=0:w=iw:h=ih:color=blue:t=fill:enable='gte(t,2)'" \
+  -t 6 -c:v libx264 -preset ultrafast -pix_fmt yuv420p \
+  -bf 0 -g 60 -keyint_min 60 -sc_threshold 0 \
+  -c:a aac -b:a 64k -shortest \
+  app/src/androidTest/assets/quickcut_exact_boundary.mp4
+
 # Safe monotonic retained prefix, reordered discarded video tail, short audio.
 # This catches unnecessary tail extraction without device-speed assertions.
 fixture_work=$(mktemp -d)

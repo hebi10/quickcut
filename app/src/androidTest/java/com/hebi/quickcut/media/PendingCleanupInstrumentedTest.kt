@@ -44,6 +44,7 @@ class PendingCleanupInstrumentedTest {
         val wrapped = ResolverContext(real, ContentResolver.wrap(provider))
         val recorded = mutableListOf<Uri>()
         var committed = false
+        val removed = mutableSetOf<Uri>()
         try {
             val metadata = MediaReader.metadata(real, Uri.fromFile(input))
             val clip = VideoClip(id = 1L, uri = Uri.fromFile(input).toString(),
@@ -70,9 +71,10 @@ class PendingCleanupInstrumentedTest {
             }
             // The same tracked handle can be removed once the provider recovers.
             assertEquals(1, real.contentResolver.delete(recorded.single(), null, null))
+            removed.add(recorded.single())
             assertTrue("Cleanup must never remove the source", input.exists())
         } finally {
-            provider.outputs.forEach { real.contentResolver.delete(it, null, null) }
+            provider.outputs.filterNot { it in removed }.forEach { real.contentResolver.delete(it, null, null) }
             input.delete()
         }
     }
@@ -104,18 +106,20 @@ class PendingCleanupInstrumentedTest {
         provider.attachInfo(real, ProviderInfo().apply { authority = "media"; exported = true })
         val wrapped = ResolverContext(real, ContentResolver.wrap(provider))
         val original = FastTrimUnavailableException("Injected remux failure")
+        val removed = mutableSetOf<Uri>()
         try {
             val failure = runCatching {
                 GalleryWriter(wrapped).saveDirect(null, 2_000, false,
                     writer = {
                         assertEquals(1, real.contentResolver.delete(provider.outputs.single(), null, null))
+                        removed.add(provider.outputs.single())
                         throw original
                     }, onFinalizing = {})
             }.exceptionOrNull()
             assertSame("Confirmed absence permits normal fallback", original, failure)
             assertEquals(1, provider.deleteAttempts)
         } finally {
-            provider.outputs.forEach { real.contentResolver.delete(it, null, null) }
+            provider.outputs.filterNot { it in removed }.forEach { real.contentResolver.delete(it, null, null) }
         }
     }
 

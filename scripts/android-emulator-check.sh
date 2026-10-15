@@ -117,7 +117,11 @@ ffmpeg -hide_banner -loglevel error -y \
 rm -rf "$fixture_work"
 
 gradle --no-daemon :app:connectedDebugAndroidTest
-adb pull /sdcard/Android/data/com.hebi.quickcut/files/quickcut-fast-review.png quickcut-fast-review.png
+# UiAutomation may return no bitmap. This optional review image must not turn
+# a successful instrumentation run into a test failure.
+if ! adb pull /sdcard/Android/data/com.hebi.quickcut/files/quickcut-fast-review.png quickcut-fast-review.png; then
+  echo "::warning::Optional fast-review screenshot was unavailable; instrumentation results are unchanged."
+fi
 echo "QuickCut Android export instrumentation tests passed"
 
 

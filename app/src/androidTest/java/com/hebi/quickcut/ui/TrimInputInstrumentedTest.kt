@@ -167,21 +167,29 @@ class TrimInputInstrumentedTest {
             }
         }
         composeRule.waitUntil(15_000L) {
-            findPlayerView(composeRule.activity.window.decorView)?.player?.playbackState ==
-                androidx.media3.common.Player.STATE_READY
+            composeRule.runOnIdle {
+                findPlayerView(composeRule.activity.window.decorView)?.player?.playbackState ==
+                    androidx.media3.common.Player.STATE_READY
+            }
         }
         composeRule.runOnUiThread { requirePlayerView().player!!.seekTo(1_500L) }
-        composeRule.waitUntil(5_000L) { requirePlayerView().player!!.currentPosition >= 1_400L }
+        composeRule.waitUntil(5_000L) {
+            composeRule.runOnIdle { requirePlayerView().player!!.currentPosition >= 1_400L }
+        }
         composeRule.runOnUiThread { visible.value = false }
         composeRule.waitForIdle()
         composeRule.runOnIdle { assertTrue(model.playPositionMs >= 1_400L) }
         composeRule.runOnUiThread { visible.value = true }
         composeRule.waitUntil(15_000L) {
-            findPlayerView(composeRule.activity.window.decorView)?.player?.currentPosition?.let { it >= 1_400L } == true
+            composeRule.runOnIdle {
+                findPlayerView(composeRule.activity.window.decorView)?.player?.currentPosition?.let { it >= 1_400L } == true
+            }
         }
         composeRule.runOnUiThread { model.changeQuickMode(false) }
         composeRule.waitUntil(15_000L) {
-            findPlayerView(composeRule.activity.window.decorView)?.player?.currentPosition?.let { it >= 1_400L } == true
+            composeRule.runOnIdle {
+                findPlayerView(composeRule.activity.window.decorView)?.player?.currentPosition?.let { it >= 1_400L } == true
+            }
         }
         composeRule.runOnIdle { assertTrue(model.playPositionMs >= 1_400L) }
     }

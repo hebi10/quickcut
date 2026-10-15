@@ -135,11 +135,16 @@ class BatchJournalInstrumentedTest {
     @Test fun foreignOwnerPendingOutputIsProtectedFromRecoveryAndReset() = runBlocking {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val input = fixture(context)
+        val displayName = "QuickCut_foreign_pending_${System.nanoTime()}.mp4"
         val inserted = shell("content insert --uri content://media/external/video/media " +
-            "--bind _display_name:s:QuickCut_foreign_pending_test.mp4 " +
+            "--bind _display_name:s:$displayName " +
             "--bind relative_path:s:Movies/QuickCut --bind mime_type:s:video/mp4 --bind is_pending:i:1")
-        val pending = Uri.parse(Regex("content://[^\\s]+").find(inserted)?.value
-            ?: error("Could not create foreign-owned MediaStore fixture: $inserted"))
+        // `content insert` does not print its inserted URI on every Android release.
+        val queried = shell("content query --uri content://media/external/video/media " +
+            "--projection _id --where \"_display_name='$displayName'\"")
+        val id = Regex("_id=(\\d+)").find(queried)?.groupValues?.get(1)
+            ?: error("Could not resolve foreign-owned MediaStore fixture: insert=$inserted; query=$queried")
+        val pending = Uri.parse("content://media/external/video/media/$id")
         try {
             val before = shell("content query --uri $pending --projection owner_package_name:is_pending")
             assertTrue("Shell fixture must be pending", before.contains("is_pending=1"))
@@ -167,7 +172,7 @@ class BatchJournalInstrumentedTest {
 
     private fun shell(command: String): String =
         android.os.ParcelFileDescriptor.AutoCloseInputStream(
-            InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand(command),
+            InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand("$command 2>&1"),
         ).bufferedReader().use { it.readText() }
 
     @Test fun incompleteOutputIsRemovedAndRemainingWorkNeedsExplicitReview() = runBlocking {

@@ -15,7 +15,7 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class FastTailInstrumentedTest {
-    @Test fun shortAudioDoesNotMakeRemuxInspectReorderedVideoBeyondTrimEnd() = runBlocking {
+    @Test fun shortAudioDoesNotMakeRemuxInspectReorderedVideoBeyondTrimEnd(): Unit = runBlocking {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val input = File.createTempFile("unequal_tail", ".mp4", context.cacheDir)
         val output = File.createTempFile("unequal_output", ".mp4", context.cacheDir)
@@ -54,6 +54,7 @@ class FastTailInstrumentedTest {
             assertNotNull("Retained prefix is suitable for remux", plan)
             FileOutputStream(output).use { FastMp4Trimmer.write(context, plan!!, it.fd, {}) }
             MediaReader.validateExport(output, 2_000, true)
+            Unit
         } finally { input.delete(); output.delete() }
     }
 }

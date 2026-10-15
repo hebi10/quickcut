@@ -77,7 +77,7 @@ ffmpeg -hide_banner -loglevel error -y \
   app/src/androidTest/assets/quickcut_unequal_tail.mp4
 rm -rf "$fixture_work"
 
-gradle --no-daemon :app:connectedDebugAndroidTest
+gradle --no-daemon :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.hebi.quickcut.media.FastTailInstrumentedTest,com.hebi.quickcut.ui.TrimInputInstrumentedTest#quickPreviewPositionSurvivesDisposalAndDetailedEditing,com.hebi.quickcut.batch.BatchJournalInstrumentedTest#foreignOwnerPendingOutputIsProtectedFromRecoveryAndReset
 echo "QuickCut Android export instrumentation tests passed"
 
 

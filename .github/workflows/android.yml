@@ -31,15 +31,22 @@ jobs:
         with:
           gradle-version: "9.4.1"
       - name: Validate emulator test script
-        run: bash -n scripts/android-emulator-check.sh
-      - name: Unit tests and debug build
-        run: gradle --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest
+        run: bash -n scripts/android-emulator-check.sh scripts/verify-release-apk.sh
+      - name: Unit tests, lint, and builds
+        run: gradle --no-daemon :app:testDebugUnitTest :app:lintDebug :app:lintRelease :app:assembleDebug :app:assembleDebugAndroidTest :app:assembleRelease
       - name: Upload debug APK
         if: success()
         uses: actions/upload-artifact@v4
         with:
           name: quickcut-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+      - name: Upload unsigned release for external signing
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quickcut-release-unsigned
+          path: app/build/outputs/apk/release/app-release-unsigned.apk
           if-no-files-found: error
       - name: Upload unit test results
         if: always()
@@ -55,3 +62,4 @@ jobs:
           name: quickcut-lint-report
           path: app/build/reports/lint-results-debug.html
           if-no-files-found: ignore
+

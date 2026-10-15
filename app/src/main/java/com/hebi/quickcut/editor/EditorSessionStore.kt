@@ -22,7 +22,7 @@ class EditorSessionStore(context: Context) {
         return runCatching {
             val data = JSONObject(raw)
             val savedClips = data.getJSONArray("clips")
-            require(savedClips.length() in 1..250)
+            require(savedClips.length() > 0)
             val clips = (0 until savedClips.length()).map { index ->
                 val clip = savedClips.getJSONObject(index)
                 VideoClip(
@@ -77,3 +77,4 @@ class EditorSessionStore(context: Context) {
         preferences.edit().remove("session").apply()
     }
 }
+

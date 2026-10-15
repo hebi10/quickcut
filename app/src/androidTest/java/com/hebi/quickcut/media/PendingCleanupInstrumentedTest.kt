@@ -58,6 +58,8 @@ class PendingCleanupInstrumentedTest {
             assertTrue("Pending deletion must be attempted", provider.deleteAttempts > 0)
             assertNotNull("Unconfirmed cleanup must fail export instead of falling back", failure)
             assertFalse("Unconfirmed cleanup is not a remux eligibility error", failure is FastTrimUnavailableException)
+            assertTrue(failure is OutputCleanupException)
+            assertEquals(recorded.single(), (failure as OutputCleanupException).outputUri)
             assertFalse(committed)
             assertEquals("Fallback must not overwrite the journal's retained handle", 1, recorded.size)
             assertEquals(1, provider.outputs.size)
@@ -87,8 +89,31 @@ class PendingCleanupInstrumentedTest {
                     writer = { throw cancellation }, onFinalizing = {})
             }.exceptionOrNull()
             assertSame(cancellation, failure)
+            val cleanup = failure!!.suppressed.filterIsInstance<OutputCleanupException>().single()
+            assertEquals(provider.outputs.single(), cleanup.outputUri)
             assertEquals(1, provider.outputs.size)
             assertTrue(provider.deleteAttempts > 0)
+        } finally {
+            provider.outputs.forEach { real.contentResolver.delete(it, null, null) }
+        }
+    }
+
+    @Test fun zeroDeleteAfterConfirmedRemovalPreservesOriginalFastFailure(): Unit = runBlocking {
+        val real = InstrumentationRegistry.getInstrumentation().targetContext
+        val provider = FailingOutputProvider(real.contentResolver, false)
+        provider.attachInfo(real, ProviderInfo().apply { authority = "media"; exported = true })
+        val wrapped = ResolverContext(real, ContentResolver.wrap(provider))
+        val original = FastTrimUnavailableException("Injected remux failure")
+        try {
+            val failure = runCatching {
+                GalleryWriter(wrapped).saveDirect(null, 2_000, false,
+                    writer = {
+                        assertEquals(1, real.contentResolver.delete(provider.outputs.single(), null, null))
+                        throw original
+                    }, onFinalizing = {})
+            }.exceptionOrNull()
+            assertSame("Confirmed absence permits normal fallback", original, failure)
+            assertEquals(1, provider.deleteAttempts)
         } finally {
             provider.outputs.forEach { real.contentResolver.delete(it, null, null) }
         }

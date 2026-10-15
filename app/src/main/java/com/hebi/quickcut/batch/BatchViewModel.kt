@@ -650,11 +650,16 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
                     MediaStore.Video.Media.OWNER_PACKAGE_NAME, MediaStore.Video.Media.RELATIVE_PATH),
                     null, null, null)?.use { cursor ->
                     if (!cursor.moveToFirst()) { queryConfirmed = true; return@use BatchOutputState.ABSENT }
-                    val owned = cursor.getString(1) == context.packageName &&
-                        cursor.getString(2)?.trimEnd('/') == Environment.DIRECTORY_MOVIES + "/QuickCut"
-                    if (!owned) return@use BatchOutputState.INVALID
+                    if (cursor.getInt(0) == 1) {
+                        // Only unfinished outputs in our own output folder may be deleted.
+                        val safeToDelete = cursor.getString(1) == context.packageName &&
+                            cursor.getString(2)?.trimEnd('/') == Environment.DIRECTORY_MOVIES + "/QuickCut"
+                        if (!safeToDelete) return@use BatchOutputState.INVALID
+                        queryConfirmed = true
+                        return@use BatchOutputState.PENDING
+                    }
+                    // Published outputs retain their URI when moved to another folder.
                     queryConfirmed = true
-                    if (cursor.getInt(0) == 1) return@use BatchOutputState.PENDING
                     MediaReader.validateExport(context, output, row.outputExpectedDurationMs, row.outputExpectedAudio)
                     row.outputExpectedDateMs?.let { expected ->
                         val actual = OriginalMediaDates.resolve(context, output)?.epochMs
@@ -686,4 +691,5 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
         if (ms % 1_000L == 0L) (ms / 1_000L).toString()
         else (ms / 1_000.0).toString()
 }
+
 

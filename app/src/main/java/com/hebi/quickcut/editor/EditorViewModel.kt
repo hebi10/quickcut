@@ -11,6 +11,7 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.hebi.quickcut.export.ExportWorkMonitor
+import com.hebi.quickcut.settings.QuickTrimSettings
 import com.hebi.quickcut.media.MediaReader
 import com.hebi.quickcut.media.VideoExporter
 import com.hebi.quickcut.media.SaveDateMode
@@ -208,7 +209,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         selectedId = restored.selectedId?.takeIf { timeline.clipAt(it) != null }
             ?: timeline.clips.firstOrNull()?.id
         playPositionMs = restored.playPositionMs.coerceIn(0L, timeline.totalDurationMs)
-        page = if (timeline.isEmpty) QuickCutPage.PICKER else QuickCutPage.EDITOR
+        page = QuickCutPage.EDITOR
         saveSessionSoon()
     }
 
@@ -224,9 +225,14 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             return offset >= 100L && clip.durationMs - offset >= 100L
         }
 
-    fun importVideos(context: Context, uris: List<Uri>, append: Boolean = false) {
+    fun importVideos(
+        context: Context,
+        uris: List<Uri>,
+        append: Boolean = false,
+        quickDefaults: QuickTrimSettings? = null,
+    ) {
         if (uris.isEmpty() || page == QuickCutPage.EXPORTING || page == QuickCutPage.IMPORTING) return
-        val previousPage = if (timeline.isEmpty) QuickCutPage.PICKER else QuickCutPage.EDITOR
+        val previousPage = if (page == QuickCutPage.EDITOR) QuickCutPage.EDITOR else QuickCutPage.PICKER
         val previousPosition = playPositionMs
         page = QuickCutPage.IMPORTING
         viewModelScope.launch {
@@ -260,9 +266,23 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                         sourceDurationMs = meta.durationMs,
                         hasAudio = meta.hasAudio,
                     )
+                }.let { imported ->
+                    if (quickDefaults == null || append || imported.size != 1) imported
+                    else imported.map { clip ->
+                        val leading = quickDefaults.leadingMs
+                        val trailing = quickDefaults.trailingMs
+                        val validRange = leading >= 0L && trailing >= 0L &&
+                            leading <= clip.sourceDurationMs - 100L &&
+                            trailing <= clip.sourceDurationMs - leading - 100L
+                        clip.copy(
+                            startMs = if (validRange) leading else clip.startMs,
+                            endMs = if (validRange) clip.sourceDurationMs - trailing else clip.endMs,
+                            muted = quickDefaults.muteAudio,
+                        )
+                    }
                 }
                 isTrimInputValid = true
-                val wasAppending = append && !timeline.isEmpty
+                val wasAppending = append
                 if (wasAppending) {
                     recordChange()
                 } else {
@@ -341,7 +361,6 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         if (timeline.isEmpty) {
             selectedId = null
             playPositionMs = 0L
-            page = QuickCutPage.PICKER
         } else {
             selectedId = timeline.clips[oldIndex.coerceIn(0, timeline.clips.lastIndex)].id
             playPositionMs = timeline.startOf(
@@ -541,4 +560,5 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         errorMessage = null
     }
 }
+
 

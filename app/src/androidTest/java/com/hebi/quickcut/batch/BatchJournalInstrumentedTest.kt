@@ -1,8 +1,13 @@
 package com.hebi.quickcut.batch
 
 import android.app.Application
+import android.content.ContentProvider
+import android.content.ContentResolver
 import android.content.ContentValues
 import android.content.Context
+import android.content.pm.ProviderInfo
+import android.database.Cursor
+import android.database.CursorWrapper
 import android.net.Uri
 import android.os.Environment
 import android.provider.MediaStore
@@ -132,34 +137,70 @@ class BatchJournalInstrumentedTest {
         }
     }
 
-    @Test fun foreignOwnerPendingOutputIsProtectedFromRecoveryAndReset() = runBlocking {
+    @Test fun ownerMismatchPendingOutputIsProtectedFromRecoveryAndReset() = runBlocking {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val input = fixture(context)
-        val displayName = "QuickCut_foreign_pending_${System.nanoTime()}.mp4"
-        val inserted = shell("content insert --uri content://media/external/video/media " +
-            "--bind _display_name:s:$displayName " +
-            "--bind relative_path:s:Movies/QuickCut --bind mime_type:s:video/mp4 --bind is_pending:i:1")
-        // `content insert` does not print its inserted URI on every Android release.
-        val queried = shell("content query --uri content://media/external/video/media " +
-            "--projection _id --where \"_display_name='$displayName'\"")
-        val id = Regex("_id=(\\d+)").find(queried)?.groupValues?.get(1)
-            ?: error("Could not resolve foreign-owned MediaStore fixture: insert=$inserted; query=$queried")
-        val pending = Uri.parse("content://media/external/video/media/$id")
+        val pending = context.contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+            ContentValues().apply {
+                put(MediaStore.Video.Media.DISPLAY_NAME, "QuickCut_owner_guard_test.mp4")
+                put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/QuickCut")
+                put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+                put(MediaStore.Video.Media.IS_PENDING, 1)
+            })!!
+        val provider = OwnerMismatchProvider(context.contentResolver, pending)
+        provider.attachInfo(context, ProviderInfo().apply { authority = "media"; exported = true })
+        val application = ResolverApplication(context, ContentResolver.wrap(provider))
         try {
-            val before = shell("content query --uri $pending --projection owner_package_name:is_pending")
-            assertTrue("Shell fixture must be pending", before.contains("is_pending=1"))
-            assertFalse("Fixture must not belong to QuickCut", before.contains("owner_package_name=${context.packageName}"))
             seed(context, input, pending, 2_000L, true)
-            assertProtectedTrackedOutput(context, pending)
-            assertTrue("Foreign-owned row must remain", shell("content query --uri $pending --projection _id").contains("_id="))
+            assertProtectedTrackedOutput(context, pending, application)
+            assertTrue("Owner mismatch must be observed during recovery", provider.ownerReads > 0)
+            assertEquals("Owner mismatch must never delegate deletion", 0, provider.deleteAttempts)
+            assertEquals(1, context.contentResolver.query(pending, arrayOf(MediaStore.Video.Media._ID),
+                null, null, null)?.use { it.count })
+            assertTrue(input.exists())
         } finally {
-            shell("content delete --uri $pending")
+            context.contentResolver.delete(pending, null, null)
             input.delete()
         }
     }
 
-    private suspend fun assertProtectedTrackedOutput(context: Context, output: Uri) {
-        val restored = restore(context)
+    private class ResolverApplication(base: Context, private val resolver: ContentResolver) : Application() {
+        init { attachBaseContext(base) }
+        override fun getContentResolver(): ContentResolver = resolver
+    }
+
+    /** Keep real MediaStore rows visible, changing only the ownership reported for the pending output. */
+    private class OwnerMismatchProvider(private val real: ContentResolver, private val output: Uri) : ContentProvider() {
+        var deleteAttempts = 0
+        var ownerReads = 0
+        override fun onCreate() = true
+        override fun getType(uri: Uri): String? = real.getType(uri)
+        override fun insert(uri: Uri, values: ContentValues?): Uri? = real.insert(uri, values)
+        override fun update(uri: Uri, values: ContentValues?, selection: String?, selectionArgs: Array<out String>?): Int =
+            real.update(uri, values, selection, selectionArgs)
+        override fun delete(uri: Uri, selection: String?, selectionArgs: Array<out String>?): Int {
+            if (uri == output) deleteAttempts++
+            return real.delete(uri, selection, selectionArgs)
+        }
+        override fun query(uri: Uri, projection: Array<out String>?, selection: String?,
+            selectionArgs: Array<out String>?, sortOrder: String?): Cursor? {
+            val cursor = real.query(uri, projection, selection, selectionArgs, sortOrder) ?: return null
+            if (uri != output) return cursor
+            return object : CursorWrapper(cursor) {
+                override fun getString(columnIndex: Int): String? {
+                    if (getColumnName(columnIndex) == MediaStore.Video.Media.OWNER_PACKAGE_NAME) {
+                        ownerReads++
+                        return "com.example.otherowner"
+                    }
+                    return super.getString(columnIndex)
+                }
+            }
+        }
+    }
+
+    private suspend fun assertProtectedTrackedOutput(context: Context, output: Uri,
+        application: Application = context.applicationContext as Application) {
+        val restored = restore(context, application)
         assertEquals(BatchFileStatus.SKIPPED, restored.files.single().status)
         assertEquals(output.toString(), restored.files.single().savedOutputUri)
         withContext(Dispatchers.Main) { restored.removeVideo(restored.files.single().uri) }
@@ -169,11 +210,6 @@ class BatchJournalInstrumentedTest {
         withTimeout(30_000L) { while (restored.isImporting) delay(50L) }
         assertEquals("Unsafe output must remain tracked after reset attempt", 1, restored.files.size)
     }
-
-    private fun shell(command: String): String =
-        android.os.ParcelFileDescriptor.AutoCloseInputStream(
-            InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand("$command 2>&1"),
-        ).bufferedReader().use { it.readText() }
 
     @Test fun incompleteOutputIsRemovedAndRemainingWorkNeedsExplicitReview() = runBlocking {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
@@ -236,8 +272,9 @@ class BatchJournalInstrumentedTest {
         ))
     }
 
-    private suspend fun restore(context: Context): BatchViewModel {
-        val model = withContext(Dispatchers.Main) { BatchViewModel(context.applicationContext as Application) }.also { this.model = it }
+    private suspend fun restore(context: Context,
+        application: Application = context.applicationContext as Application): BatchViewModel {
+        val model = withContext(Dispatchers.Main) { BatchViewModel(application) }.also { this.model = it }
         withTimeout(30_000L) { while (model.isRecovering) delay(50L) }
         return model
     }

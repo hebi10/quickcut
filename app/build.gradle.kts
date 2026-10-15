@@ -3,6 +3,15 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+val releaseStore = providers.environmentVariable("QUICKCUT_KEYSTORE_PATH").orNull
+val releaseStorePassword = providers.environmentVariable("QUICKCUT_KEYSTORE_PASSWORD").orNull
+val releaseAlias = providers.environmentVariable("QUICKCUT_KEY_ALIAS").orNull
+val releaseKeyPassword = providers.environmentVariable("QUICKCUT_KEY_PASSWORD").orNull
+val releaseCredentials = listOf(releaseStore, releaseStorePassword, releaseAlias, releaseKeyPassword)
+check(releaseCredentials.all { it.isNullOrBlank() } || releaseCredentials.all { !it.isNullOrBlank() }) {
+    "Release signing requires all four QUICKCUT signing environment variables."
+}
+
 android {
     namespace = "com.hebi.quickcut"
     compileSdk = 36
@@ -11,9 +20,29 @@ android {
         applicationId = "com.hebi.quickcut"
         minSdk = 29
         targetSdk = 36
-        versionCode = 5
-        versionName = "0.4.0"
+        // The override is only for the emulator's older-version installation fixture.
+        versionCode = providers.gradleProperty("quickcutTestVersionCode").orNull?.toInt() ?: 6
+        versionName = "0.4.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    signingConfigs {
+        if (!releaseStore.isNullOrBlank()) {
+            create("stableRelease") {
+                storeFile = file(releaseStore)
+                storePassword = releaseStorePassword
+                keyAlias = releaseAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+    buildTypes {
+        release {
+            // Without credentials this is deliberately unsigned, never debug-signed.
+            if (!releaseStore.isNullOrBlank()) {
+                signingConfig = signingConfigs.getByName("stableRelease")
+            }
+        }
     }
 
     buildFeatures {
@@ -50,4 +79,5 @@ dependencies {
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
+
 

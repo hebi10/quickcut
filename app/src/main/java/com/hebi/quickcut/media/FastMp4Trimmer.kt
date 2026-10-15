@@ -144,8 +144,6 @@ internal object FastMp4Trimmer {
             writer.start()
             started = true
 
-            val trackCount = if (audioOutput == null) 1 else 2
-            val finished = HashSet<Int>(trackCount)
             var buffer = ByteBuffer.allocateDirect(1024 * 1024)
             val info = MediaCodec.BufferInfo()
             var videoSamples = 0
@@ -179,13 +177,11 @@ internal object FastMp4Trimmer {
                     continue
                 }
                 if (timeUs >= plan.endUs) {
-                    finished.add(index)
-                    if (finished.size >= trackCount) break
-                    extractor.advance()
-                    continue
-                }
-                if (index in finished) {
-                    extractor.advance()
+                    // A shorter track may already be at EOS, so waiting for every
+                    // track to cross endUs would scan the other track's entire tail.
+                    // Unselect changes the current sample to a remaining track;
+                    // do not advance here or that track's next sample is skipped.
+                    extractor.unselectTrack(index)
                     continue
                 }
 
@@ -253,4 +249,5 @@ internal object FastMp4Trimmer {
 }
 
 internal class FastTrimUnavailableException(message: String, cause: Throwable? = null) : Exception(message, cause)
+
 

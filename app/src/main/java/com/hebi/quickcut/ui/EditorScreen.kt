@@ -147,7 +147,9 @@ fun EditorScreen(
     }
 
     LaunchedEffect(model.timeline) {
-        if (!model.timeline.isEmpty) {
+        if (model.timeline.isEmpty) {
+            player.stop()
+        } else {
             delay(160)
             try {
                 player.pause()
@@ -215,6 +217,17 @@ fun EditorScreen(
             canRedo = model.canRedo,
             canSave = model.canStartExport,
         )
+        if (model.timeline.isEmpty) {
+            Column(
+                Modifier.fillMaxSize().padding(24.dp),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text("영상이 없습니다. 실행 취소하거나 영상을 추가하세요.", color = CutColors.secondaryText)
+                TextButton(onClick = addVideos, shape = CutShape) { Text("영상 추가") }
+            }
+            return@Column
+        }
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val availableWidth = maxWidth
             val compactHeight = maxHeight < 480.dp
@@ -710,4 +723,5 @@ private fun TrimTimeField(
         modifier = modifier,
     )
 }
+
 

@@ -100,7 +100,6 @@ fun QuickCutApp(
     val coroutineScope = rememberCoroutineScope()
     var showBatch by rememberSaveable { mutableStateOf(false) }
     var showLastSettings by rememberSaveable { mutableStateOf(false) }
-    var pendingQuickDefaults by rememberSaveable { mutableStateOf(false) }
     var exportReview by remember { mutableStateOf<ExportReview?>(null) }
     var inspectingExport by remember { mutableStateOf(false) }
     var showExportCancelConfirmation by rememberSaveable { mutableStateOf(false) }
@@ -212,32 +211,13 @@ fun QuickCutApp(
     ) { uri ->
         if (uri != null) {
             model.changeQuickMode(true)
-            pendingQuickDefaults = true
-            model.importVideos(context, listOf(uri))
+            model.importVideos(context, listOf(uri), quickDefaults = settings.loadQuick())
         }
     }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) {
             model.changeQuickMode(false)
             model.importVideos(context, uris, append = model.page == QuickCutPage.EDITOR)
-        }
-    }
-    LaunchedEffect(model.page, model.timeline) {
-        if (pendingQuickDefaults && model.page == QuickCutPage.EDITOR &&
-            model.timeline.clips.size == 1
-        ) {
-            pendingQuickDefaults = false
-            val clip = model.timeline.clips.single()
-            val previous = settings.loadQuick()
-            if (TrimInput.range(previous.leadingMs,
-                    clip.sourceDurationMs - previous.trailingMs, clip.sourceDurationMs) != null) {
-                model.trimClip(
-                    clip.id,
-                    previous.leadingMs,
-                    clip.sourceDurationMs - previous.trailingMs,
-                )
-            }
-            if (previous.muteAudio && !clip.muted) model.toggleMute()
         }
     }
     val batchPicker = rememberLauncherForActivityResult(
@@ -851,4 +831,5 @@ private fun CompletedScreen(
         }
     }
 }
+
 

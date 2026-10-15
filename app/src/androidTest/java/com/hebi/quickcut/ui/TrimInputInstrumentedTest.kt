@@ -146,13 +146,41 @@ class TrimInputInstrumentedTest {
         composeRule.runOnUiThread { model.changeQuickMode(false) }
         showApp()
         val original = model.timeline
-        composeRule.runOnUiThread { model.deleteSelected() }
+        composeRule.runOnUiThread {
+            model.deleteSelected()
+            val context = InstrumentationRegistry.getInstrumentation().targetContext
+            model.importVideos(context,
+                listOf(Uri.fromFile(File(context.cacheDir, "missing_added_video.mp4"))), append = true)
+        }
+        composeRule.waitUntil(25_000L) { model.errorMessage != null }
+        composeRule.onNodeWithText("확인", substring = false).performClick()
         composeRule.onNodeWithContentDescription("실행 취소").assertIsEnabled().performClick()
         composeRule.runOnIdle { assertEquals(original, model.timeline) }
         composeRule.onNodeWithContentDescription("다시 실행").assertIsEnabled().performClick()
         composeRule.runOnIdle { assertTrue(model.timeline.isEmpty) }
         composeRule.onNodeWithContentDescription("실행 취소").assertIsEnabled().performClick()
         composeRule.runOnIdle { assertEquals(original, model.timeline) }
+    }
+
+    @Test
+    fun addingAfterLastDeletionKeepsBothUndoSteps() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        composeRule.runOnUiThread { model.changeQuickMode(false) }
+        showApp()
+        val original = model.timeline
+        composeRule.runOnUiThread {
+            model.deleteSelected()
+            model.importVideos(context, listOf(Uri.fromFile(source)), append = true)
+        }
+        composeRule.waitUntil(25_000L) { model.page == QuickCutPage.EDITOR && !model.timeline.isEmpty }
+        composeRule.onNodeWithContentDescription("실행 취소").assertIsEnabled().performClick()
+        composeRule.runOnIdle { assertTrue(model.timeline.isEmpty) }
+        composeRule.onNodeWithContentDescription("실행 취소").assertIsEnabled().performClick()
+        composeRule.runOnIdle { assertEquals(original, model.timeline) }
+        composeRule.onNodeWithContentDescription("다시 실행").assertIsEnabled().performClick()
+        composeRule.runOnIdle { assertTrue(model.timeline.isEmpty) }
+        composeRule.onNodeWithContentDescription("다시 실행").assertIsEnabled().performClick()
+        composeRule.runOnIdle { assertEquals(1, model.timeline.clips.size) }
     }
 
     @Test

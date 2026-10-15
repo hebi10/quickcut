@@ -232,9 +232,13 @@ class BatchFastAdjustmentInstrumentedTest {
             }
             Uri.fromFile(file)
         }
+        // The concatenated fixture can report a container duration a few frames
+        // below six seconds. Anchor its retained start to its exact 1s keyframe.
+        val trailingSeconds = ((MediaReader.metadata(context, extraUris.first()).durationMs -
+            1_000L) / 1_000.0).toString()
         composeRule.runOnUiThread {
             model.draftMode = BatchClipMode.KEEP_LAST
-            model.draftTrailingSeconds = "5"
+            model.draftTrailingSeconds = trailingSeconds
             model.draftMute = true
             model.addVideos(context, extraUris)
         }
@@ -252,7 +256,7 @@ class BatchFastAdjustmentInstrumentedTest {
         assertEquals(1, model.skips)
         assertEquals(0, model.failures)
         assertTrue(model.files.last().reason!!.contains("짧"))
-        assertEquals("5", model.draftTrailingSeconds)
+        assertEquals(trailingSeconds, model.draftTrailingSeconds)
     }
 
     private fun inspect(retryOnly: Boolean = false): BatchExportOverview = runBlocking {

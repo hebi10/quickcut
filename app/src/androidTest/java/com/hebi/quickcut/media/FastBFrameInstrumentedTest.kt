@@ -128,7 +128,8 @@ class FastBFrameInstrumentedTest {
             extractor.selectTrack(track)
             if (seekUs != null) extractor.seekTo(seekUs, MediaExtractor.SEEK_TO_NEXT_SYNC)
             buildList {
-                while (extractor.sampleTime >= 0L) {
+                // AAC priming may have a negative PTS; track exhaustion identifies EOS.
+                while (extractor.sampleTrackIndex >= 0) {
                     val buffer = ByteBuffer.allocate(extractor.sampleSize.toInt())
                     val size = extractor.readSampleData(buffer, 0)
                     assertEquals(buffer.capacity(), size)

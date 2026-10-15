@@ -1,7 +1,10 @@
 package com.hebi.quickcut.batch
 
+import android.Manifest
 import android.app.Application
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -47,6 +50,16 @@ class BatchFastAdjustmentInstrumentedTest {
     @Before
     fun importNonKeyframeTrim() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
+        if (Build.VERSION.SDK_INT >= 33) {
+            // UI exports use an Activity context and may request notifications.
+            // Grant this fixture permission before composing so the system dialog
+            // cannot hide the result hierarchy that this test must inspect.
+            InstrumentationRegistry.getInstrumentation().uiAutomation.grantRuntimePermission(
+                context.packageName, Manifest.permission.POST_NOTIFICATIONS,
+            )
+            assertEquals(PackageManager.PERMISSION_GRANTED,
+                context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS))
+        }
         settings = QuickCutSettings(context)
         previousDraft = settings.loadBatch()
         previousDate = settings.loadSaveDate()

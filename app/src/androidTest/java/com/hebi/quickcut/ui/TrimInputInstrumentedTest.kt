@@ -1,5 +1,15 @@
 package com.hebi.quickcut.ui
 
+import android.app.Activity
+import android.content.Intent
+import androidx.activity.result.ActivityResultRegistry
+import androidx.activity.result.ActivityResultRegistryOwner
+import androidx.activity.result.contract.ActivityResultContract
+import androidx.activity.compose.LocalActivityResultRegistryOwner
+import androidx.core.app.ActivityOptionsCompat
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.test.onNodeWithContentDescription
 import android.app.Application
 import android.net.Uri
 import android.view.View
@@ -128,6 +138,101 @@ class TrimInputInstrumentedTest {
     private fun showApp() {
         composeRule.setContent {
             QuickCutTheme { QuickCutApp(model, batchModel) }
+        }
+    }
+
+    @Test
+    fun deletingLastClipKeepsUndoAndRedoAccessible() {
+        composeRule.runOnUiThread { model.changeQuickMode(false) }
+        showApp()
+        val original = model.timeline
+        composeRule.runOnUiThread { model.deleteSelected() }
+        composeRule.onNodeWithContentDescription("실행 취소").assertIsEnabled().performClick()
+        composeRule.runOnIdle { assertEquals(original, model.timeline) }
+        composeRule.onNodeWithContentDescription("다시 실행").assertIsEnabled().performClick()
+        composeRule.runOnIdle { assertTrue(model.timeline.isEmpty) }
+        composeRule.onNodeWithContentDescription("실행 취소").assertIsEnabled().performClick()
+        composeRule.runOnIdle { assertEquals(original, model.timeline) }
+    }
+
+    @Test
+    fun quickPreviewPositionSurvivesDisposalAndDetailedEditing() {
+        val visible = mutableStateOf(true)
+        composeRule.setContent {
+            QuickCutTheme {
+                if (visible.value) {
+                    if (model.quickMode) QuickTrimScreen(model, settings, {}, {}, {}, {})
+                    else EditorScreen(model, {}, {})
+                }
+            }
+        }
+        composeRule.waitUntil(15_000L) {
+            findPlayerView(composeRule.activity.window.decorView)?.player?.playbackState ==
+                androidx.media3.common.Player.STATE_READY
+        }
+        composeRule.runOnUiThread { requirePlayerView().player!!.seekTo(1_500L) }
+        composeRule.waitUntil(5_000L) { requirePlayerView().player!!.currentPosition >= 1_400L }
+        composeRule.runOnUiThread { visible.value = false }
+        composeRule.waitForIdle()
+        composeRule.runOnIdle { assertTrue(model.playPositionMs >= 1_400L) }
+        composeRule.runOnUiThread { visible.value = true }
+        composeRule.waitUntil(15_000L) {
+            findPlayerView(composeRule.activity.window.decorView)?.player?.currentPosition?.let { it >= 1_400L } == true
+        }
+        composeRule.runOnUiThread { model.changeQuickMode(false) }
+        composeRule.waitUntil(15_000L) {
+            findPlayerView(composeRule.activity.window.decorView)?.player?.currentPosition?.let { it >= 1_400L } == true
+        }
+        composeRule.runOnIdle { assertTrue(model.playPositionMs >= 1_400L) }
+    }
+
+    @Test
+    fun failedQuickPickerDoesNotApplyDefaultsToDetailedImport() = checkFailedQuickPicker(false)
+
+    @Test
+    fun failedQuickPickerDoesNotApplyDefaultsToRestoredSession() = checkFailedQuickPicker(true)
+
+    private fun checkFailedQuickPicker(restore: Boolean) {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val original = model.timeline.clips.single()
+        val snapshot = EditorSessionSnapshot(model.timeline, original.id, 0L, false)
+        settings.saveQuick(QuickTrimSettings(500L, 500L, true))
+        composeRule.runOnUiThread { model.discardEditing() }
+        if (restore) store.save(snapshot)
+        // The registry delivers real OpenDocument contract results without launching a system picker.
+        var nextUri = Uri.fromFile(File(context.cacheDir, "missing_quick_video.mp4"))
+        val registry = object : ActivityResultRegistry() {
+            override fun <I, O> onLaunch(requestCode: Int, contract: ActivityResultContract<I, O>,
+                input: I, options: ActivityOptionsCompat?) {
+                dispatchResult(requestCode, Activity.RESULT_OK, Intent().setData(nextUri))
+            }
+        }
+        val owner = object : ActivityResultRegistryOwner {
+            override val activityResultRegistry = registry
+        }
+        composeRule.setContent {
+            CompositionLocalProvider(LocalActivityResultRegistryOwner provides owner) {
+                QuickCutTheme { QuickCutApp(model, batchModel) }
+            }
+        }
+        composeRule.onNodeWithText("빠른 자르기 · 영상 1개").performClick()
+        composeRule.waitUntil(25_000L) { model.errorMessage != null }
+        composeRule.onNodeWithText("확인", substring = false).performClick()
+        if (restore) {
+            // The failed import may schedule a session write, so restore the saved input explicitly.
+            store.save(snapshot)
+            composeRule.runOnUiThread { model.restoreSavedSession(context) }
+        } else {
+            nextUri = Uri.fromFile(source)
+            composeRule.onNodeWithText("상세 편집 (분할·연결·순서 변경)").performClick()
+        }
+        composeRule.waitUntil(25_000L) { model.page == QuickCutPage.EDITOR }
+        composeRule.waitForIdle()
+        composeRule.runOnIdle {
+            val clip = model.timeline.clips.single()
+            assertEquals(0L, clip.startMs)
+            assertEquals(clip.sourceDurationMs, clip.endMs)
+            assertEquals(false, clip.muted)
         }
     }
 
@@ -320,3 +425,4 @@ class TrimInputInstrumentedTest {
         return null
     }
 }
+

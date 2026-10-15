@@ -18,6 +18,23 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class EditorSessionInstrumentedTest {
     @Test
+    fun sessionRoundTripPreservesMoreThan250SupportedClips() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val store = EditorSessionStore(context)
+        val previous = store.load()
+        try {
+            val clips = (1L..251L).map { id ->
+                VideoClip(id, "content://fixture/$id", 2_000L, 100L, 1_800L, muted = id % 2L == 0L)
+            }
+            val snapshot = EditorSessionSnapshot(EditTimeline(clips), 251L, 123_456L, false)
+            store.save(snapshot)
+            assertEquals(snapshot, store.load())
+        } finally {
+            previous?.let(store::save) ?: store.clear()
+        }
+    }
+
+    @Test
     fun reopeningEditorRestoresTrimAndQuickModeForReadableVideo() = runBlocking {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val app = context.applicationContext as Application
@@ -62,3 +79,4 @@ class EditorSessionInstrumentedTest {
         }
     }
 }
+

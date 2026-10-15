@@ -57,6 +57,27 @@ ffmpeg -hide_banner -loglevel error -y \
   -c:a aac -b:a 64k -shortest \
   app/src/androidTest/assets/quickcut_keyframes.mp4
 
+# Safe monotonic retained prefix, reordered discarded video tail, short audio.
+# This catches unnecessary tail extraction without device-speed assertions.
+fixture_work=$(mktemp -d)
+for segment in prefix tail; do
+  bframes=0
+  if [ "$segment" = tail ]; then bframes=2; fi
+  ffmpeg -hide_banner -loglevel error -y \
+    -f lavfi -i testsrc2=size=320x240:rate=30 -t 3 \
+    -c:v libx264 -preset medium -pix_fmt yuv420p -bf "$bframes" \
+    -g 30 -keyint_min 30 -sc_threshold 0 -an "$fixture_work/$segment.mp4"
+done
+printf "file '%s/prefix.mp4'\nfile '%s/tail.mp4'\n" "$fixture_work" "$fixture_work" > "$fixture_work/concat.txt"
+ffmpeg -hide_banner -loglevel error -y \
+  -f concat -safe 0 -i "$fixture_work/concat.txt" -c copy "$fixture_work/video.mp4"
+ffmpeg -hide_banner -loglevel error -y \
+  -i "$fixture_work/video.mp4" -f lavfi -t 0.5 -i sine=frequency=440:sample_rate=44100 \
+  -map 0:v -map 1:a -c:v copy -c:a aac -b:a 64k \
+  app/src/androidTest/assets/quickcut_unequal_tail.mp4
+rm -rf "$fixture_work"
+
 gradle --no-daemon :app:connectedDebugAndroidTest
 echo "QuickCut Android export instrumentation tests passed"
+
 

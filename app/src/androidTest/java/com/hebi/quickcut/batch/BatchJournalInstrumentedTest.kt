@@ -70,6 +70,106 @@ class BatchJournalInstrumentedTest {
         }
     }
 
+    @Test fun movedPublishedOutputRemainsSavedAndCanBeRemovedFromQueue() = runBlocking {
+        verifyMovedPublishedOutput(reset = false)
+    }
+
+    @Test fun movedPublishedOutputRemainsSavedAndCanResetForNewWork() = runBlocking {
+        verifyMovedPublishedOutput(reset = true)
+    }
+
+    private suspend fun verifyMovedPublishedOutput(reset: Boolean) {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val input = fixture(context)
+        var output: Uri? = null
+        try {
+            val saved = GalleryWriter(context).save(input)
+            output = saved
+            val metadata = MediaReader.metadata(context, saved)
+            seed(context, input, saved, metadata.durationMs, metadata.hasAudio,
+                status = BatchFileStatus.SAVED)
+            assertEquals(1, context.contentResolver.update(saved, ContentValues().apply {
+                put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/QuickCutMoved")
+            }, null, null))
+            val restored = restore(context)
+            assertEquals("Moving a published output must preserve SAVED", BatchFileStatus.SAVED,
+                restored.files.single().status)
+            assertEquals(saved.toString(), restored.files.single().savedOutputUri)
+            assertTrue(restored.files.single().durationMs > 0L)
+            withContext(Dispatchers.Main) {
+                if (reset) restored.resetBatch() else restored.removeVideo(restored.files.single().uri)
+            }
+            withTimeout(30_000L) { while (restored.isImporting) delay(50L) }
+            assertTrue("Completed entries must be removable after a move", restored.files.isEmpty())
+            assertEquals(BatchRunState.SETUP, restored.runState)
+            MediaReader.validateExport(context, saved, metadata.durationMs, metadata.hasAudio)
+            assertTrue("Queue changes must preserve the original", input.exists())
+        } finally {
+            output?.let { context.contentResolver.delete(it, null, null) }
+            BatchSessionStore(context).clear()
+            input.delete()
+        }
+    }
+
+    @Test fun pendingOutputOutsideQuickCutFolderIsProtectedFromRecoveryAndReset() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val input = fixture(context)
+        val pending = context.contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+            ContentValues().apply {
+                put(MediaStore.Video.Media.DISPLAY_NAME, "QuickCut_protected_test.mp4")
+                put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/QuickCutMoved")
+                put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+                put(MediaStore.Video.Media.IS_PENDING, 1)
+            })!!
+        try {
+            seed(context, input, pending, 2_000L, true)
+            assertProtectedTrackedOutput(context, pending)
+            assertEquals(1, context.contentResolver.query(pending, arrayOf(MediaStore.Video.Media._ID),
+                null, null, null)?.use { it.count })
+        } finally {
+            context.contentResolver.delete(pending, null, null)
+            input.delete()
+        }
+    }
+
+    @Test fun foreignOwnerPendingOutputIsProtectedFromRecoveryAndReset() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val input = fixture(context)
+        val inserted = shell("content insert --uri content://media/external/video/media " +
+            "--bind _display_name:s:QuickCut_foreign_pending_test.mp4 " +
+            "--bind relative_path:s:Movies/QuickCut --bind mime_type:s:video/mp4 --bind is_pending:i:1")
+        val pending = Uri.parse(Regex("content://[^\\s]+").find(inserted)?.value
+            ?: error("Could not create foreign-owned MediaStore fixture: $inserted"))
+        try {
+            val before = shell("content query --uri $pending --projection owner_package_name:is_pending")
+            assertTrue("Shell fixture must be pending", before.contains("is_pending=1"))
+            assertFalse("Fixture must not belong to QuickCut", before.contains("owner_package_name=${context.packageName}"))
+            seed(context, input, pending, 2_000L, true)
+            assertProtectedTrackedOutput(context, pending)
+            assertTrue("Foreign-owned row must remain", shell("content query --uri $pending --projection _id").contains("_id="))
+        } finally {
+            shell("content delete --uri $pending")
+            input.delete()
+        }
+    }
+
+    private suspend fun assertProtectedTrackedOutput(context: Context, output: Uri) {
+        val restored = restore(context)
+        assertEquals(BatchFileStatus.SKIPPED, restored.files.single().status)
+        assertEquals(output.toString(), restored.files.single().savedOutputUri)
+        withContext(Dispatchers.Main) { restored.removeVideo(restored.files.single().uri) }
+        withTimeout(30_000L) { while (restored.isImporting) delay(50L) }
+        assertEquals("Unsafe output must remain tracked after removal attempt", 1, restored.files.size)
+        withContext(Dispatchers.Main) { restored.resetBatch() }
+        withTimeout(30_000L) { while (restored.isImporting) delay(50L) }
+        assertEquals("Unsafe output must remain tracked after reset attempt", 1, restored.files.size)
+    }
+
+    private fun shell(command: String): String =
+        android.os.ParcelFileDescriptor.AutoCloseInputStream(
+            InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand(command),
+        ).bufferedReader().use { it.readText() }
+
     @Test fun incompleteOutputIsRemovedAndRemainingWorkNeedsExplicitReview() = runBlocking {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val input = fixture(context)
@@ -120,10 +220,11 @@ class BatchJournalInstrumentedTest {
         } finally { BatchSessionStore(context).clear(); input.delete() }
     }
 
-    private fun seed(context: Context, input: File, output: Uri?, duration: Long, audio: Boolean) {
+    private fun seed(context: Context, input: File, output: Uri?, duration: Long, audio: Boolean,
+        status: BatchFileStatus = BatchFileStatus.RUNNING) {
         BatchSessionStore(context).save(BatchSessionSnapshot(
             files = listOf(BatchFile(Uri.fromFile(input).toString(), input.name, 3_000L, true,
-                status=BatchFileStatus.RUNNING, savedOutputUri=output?.toString(),
+                status=status, savedOutputUri=output?.toString(),
                 outputExpectedDurationMs=duration, outputExpectedAudio=audio)),
             template = BatchTemplate(name="복구 계획", mode=BatchClipMode.KEEP_FIRST, leadingMs=2_000L),
             dateMode = SaveDateMode.CURRENT, runState=BatchRunState.RUNNING,
@@ -141,3 +242,4 @@ class BatchJournalInstrumentedTest {
             .use { source -> it.outputStream().use { target -> source.copyTo(target) } }
     }
 }
+

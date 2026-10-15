@@ -77,6 +77,15 @@ ffmpeg -hide_banner -loglevel error -y \
   -c:a aac -b:a 64k -shortest \
   app/src/androidTest/assets/quickcut_keyframes.mp4
 
+# Closed GOP B-frames reproduce downloaded videos with reordered timestamps.
+ffmpeg -hide_banner -loglevel error -y \
+  -f lavfi -i testsrc2=size=320x240:rate=30 \
+  -f lavfi -i sine=frequency=660:sample_rate=44100 \
+  -t 8 -c:v libx264 -preset medium -pix_fmt yuv420p \
+  -bf 2 -g 60 -keyint_min 60 -sc_threshold 0 -flags +cgop \
+  -c:a aac -b:a 64k -shortest \
+  app/src/androidTest/assets/quickcut_bframes.mp4
+
 # Safe monotonic retained prefix, reordered discarded video tail, short audio.
 # This catches unnecessary tail extraction without device-speed assertions.
 fixture_work=$(mktemp -d)

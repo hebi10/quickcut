@@ -68,6 +68,7 @@ import com.hebi.quickcut.editor.OriginalActionStatus
 import com.hebi.quickcut.editor.formatTime
 import com.hebi.quickcut.media.SaveDateMode
 import com.hebi.quickcut.media.ExportMode
+import com.hebi.quickcut.ui.exportReportText
 import kotlinx.coroutines.launch
 
 private val onSurface = Color(0xFFF4F4F5)
@@ -228,8 +229,9 @@ fun BatchScreen(
                             color = secondary, style = MaterialTheme.typography.bodySmall)
                     }
                     Text(
-                        "긴 영상은 다시 인코딩할 때 시간이 오래 걸릴 수 있습니다. " +
-                            "정밀 저장을 선택한 경우에만 재인코딩을 허용합니다.",
+                        "정확한 위치로 자동 저장은 요청한 구간을 유지합니다. 원본 데이터 복사와 " +
+                            "일부 구간 최적화를 우선 시도하고, 필요하면 전체 재인코딩을 허용합니다. " +
+                            "처리 시간은 영상과 기기에 따라 달라지며 완료 후 실제 처리 방식을 표시합니다.",
                         color = secondary, style = MaterialTheme.typography.bodySmall,
                     )
                     if (overview.encodingFiles.isNotEmpty()) {
@@ -263,7 +265,7 @@ fun BatchScreen(
                         },
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(4.dp),
-                    ) { Text("모든 영상 정밀 저장 허용") }
+                    ) { Text("정확한 위치로 자동 저장") }
                     if (overview.adjustments.isNotEmpty()) {
                         Button(
                             onClick = { showAdjustmentConfirmation = true },
@@ -722,6 +724,9 @@ private fun BatchFileRow(
                 else secondary,
             fontSize = 12.sp,
         )
+        if (file.status == BatchFileStatus.SAVED) {
+            Text(exportReportText(file.exportReport), color = secondary, fontSize = 12.sp)
+        }
     }
 }
 

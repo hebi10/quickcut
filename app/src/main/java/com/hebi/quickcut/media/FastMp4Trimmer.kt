@@ -19,11 +19,10 @@ import kotlinx.coroutines.ensureActive
 
 /**
  * Copies compressed MP4 samples without decoding or re-encoding. Only use when the
- * first retained video sample is a nearby sync sample. Never retain hidden pre-roll.
+ * first retained video sample is exactly the requested sync sample. Never retain hidden pre-roll.
  */
 internal object FastMp4Trimmer {
     private const val TAG = "QuickCutExport"
-    private const val MAX_START_SHIFT_US = 50_000L
     private const val MAX_SAMPLE_BYTES = 64 * 1024 * 1024
 
     data class Plan(
@@ -42,18 +41,17 @@ internal object FastMp4Trimmer {
         VIDEO_CODEC("현재 고속 저장은 H.264 또는 H.265 영상만 지원합니다."),
         COLOR_FORMAT("HDR 등 현재 고속 저장에서 지원하지 않는 색상 형식입니다."),
         ROTATION("영상 회전 정보가 고속 저장의 지원 범위와 다릅니다."),
-        AUDIO_CODEC("현재 고속 저장은 AAC 소리를 지원합니다. 다른 소리 형식은 정밀 저장이 필요합니다."),
+        AUDIO_CODEC("현재 고속 복사는 AAC 소리를 지원합니다. 다른 소리 형식은 정확한 위치로 자동 저장을 선택해 주세요."),
         KEYFRAME("자르기 시작 위치가 키프레임(재생 기준 프레임)과 맞지 않습니다."),
         UNSAFE_START("시작 지점 앞의 프레임이 재생 순서에 섞여 있어 해당 위치에서 고속 저장을 사용할 수 없습니다."),
-        REORDERED_END("B프레임처럼 재생 순서가 다른 영상은 끝부분을 자를 때 정밀 저장이 필요합니다. 끝부분을 유지하면 고속 저장이 가능할 수 있습니다."),
+        REORDERED_END("B프레임처럼 재생 순서가 다른 영상의 끝부분을 자르려면 정확한 위치로 자동 저장을 선택해 주세요. 끝부분을 유지하면 고속 복사가 가능할 수 있습니다."),
         SOURCE_UNREADABLE("영상 정보를 읽지 못해 고속 저장 가능 여부를 확인할 수 없습니다."),
     }
 
     data class Inspection(val plan: Plan?, val reason: UnavailableReason?)
 
     fun isAcceptableStart(requestedUs: Long, syncUs: Long, endUs: Long): Boolean =
-        requestedUs >= 0L && syncUs >= requestedUs &&
-            syncUs - requestedUs <= MAX_START_SHIFT_US && endUs - syncUs >= 100_000L
+        requestedUs >= 0L && syncUs == requestedUs && endUs - syncUs >= 100_000L
 
     fun prepare(context: Context, clip: VideoClip): Plan? = inspect(context, clip).plan
 

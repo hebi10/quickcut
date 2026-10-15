@@ -16,6 +16,7 @@ import com.hebi.quickcut.media.MediaReader
 import com.hebi.quickcut.media.VideoExporter
 import com.hebi.quickcut.media.SaveDateMode
 import com.hebi.quickcut.media.ExportMode
+import com.hebi.quickcut.media.ExportReport
 import com.hebi.quickcut.media.ReencodeRequiredException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -135,6 +136,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     var requestedExportMode by mutableStateOf(ExportMode.FAST_ONLY)
         private set
     var completedUri by mutableStateOf<Uri?>(null)
+        private set
+    var completedExportReport by mutableStateOf<ExportReport?>(null)
         private set
     var errorMessage by mutableStateOf<String?>(null)
         private set
@@ -422,6 +425,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         savedDateMode = selectedDateMode
         needsReencodeConsent = false
         requestedExportMode = exportMode
+        completedUri = null
+        completedExportReport = null
         originalActionStatus = OriginalActionStatus.NONE
         originalsFromSavedTimeline = emptyList()
         page = QuickCutPage.EXPORTING
@@ -430,6 +435,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         exportJob = viewModelScope.launch {
             try {
                 ExportWorkMonitor.awaitReady(workId)
+                var committedOutput: Uri? = null
                 val uri = VideoExporter(context.applicationContext).export(
                     timeline = snapshot,
                     onProgress = {
@@ -441,9 +447,16 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                         progressPercent = null
                         ExportWorkMonitor.update(workId, "갤러리 저장 완료 처리 중", canCancel = false)
                     },
-                    onCommitted = { finishExport(it, sourceSnapshot) },
+                    onCommitted = {
+                        committedOutput = it
+                        finishExport(it, sourceSnapshot)
+                    },
                     saveDateMode = selectedDateMode,
                     exportMode = exportMode,
+                    onReport = { report ->
+                        if (committedOutput != null && page == QuickCutPage.COMPLETED &&
+                            completedUri == committedOutput) completedExportReport = report
+                    },
                 )
                 if (page != QuickCutPage.COMPLETED) finishExport(uri, sourceSnapshot)
             } catch (_: CancellationException) {
@@ -542,6 +555,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         selectedId = null
         playPositionMs = 0L
         completedUri = null
+        completedExportReport = null
         originalAction = OriginalAction.KEEP
         savedDateMode = SaveDateMode.CURRENT
         originalActionStatus = OriginalActionStatus.NONE

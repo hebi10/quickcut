@@ -40,9 +40,11 @@ class VideoExporter(private val context: Context) {
         onOutputCreated: (Uri) -> Unit = {},
         onCommitted: (Uri) -> Unit = {},
         resolvedOriginalDate: OriginalTimestamp? = null,
+        onReport: (ExportReport) -> Unit = {},
     ): android.net.Uri {
         require(!timeline.isEmpty) { "편집할 영상이 없습니다." }
         require(timeline.clips.all { it.durationMs >= 100L }) { "저장할 영상 구간은 0.1초 이상이어야 합니다." }
+        val startedAt = SystemClock.elapsedRealtime()
         val expectedDurationMs = timeline.totalDurationMs
         val expectAudio = timeline.clips.any { !it.muted && it.hasAudio }
         val originalDate = if (saveDateMode == SaveDateMode.ORIGINAL) {
@@ -63,9 +65,8 @@ class VideoExporter(private val context: Context) {
                 FastMp4Trimmer.prepare(context, clip)
             }
             if (plan != null) {
-                val startedAt = SystemClock.elapsedRealtime()
-                try {
-                    val output = GalleryWriter(context).saveDirect(
+                val output = try {
+                    GalleryWriter(context).saveDirect(
                         outputBaseName = outputBaseName,
                         expectedDurationMs = clip.durationMs,
                         expectAudio = !clip.muted && clip.hasAudio,
@@ -79,44 +80,56 @@ class VideoExporter(private val context: Context) {
                         onOutputCreated = onOutputCreated,
                         onCommitted = onCommitted,
                     )
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (unsupported: FastTrimUnavailableException) {
+                    if (exportMode == ExportMode.FAST_ONLY) {
+                        throw ReencodeRequiredException("고속 복사를 완료할 수 없습니다. 정확한 위치로 자동 저장을 선택해 주세요.", unsupported)
+                    }
+                    Log.w("QuickCutExport", "Fast remux unsupported; using Media3", unsupported)
+                    null
+                }
+                if (output != null) {
                     Log.i(
                         "QuickCutExport",
                         "method=fast_remux elapsedMs=" +
                             (SystemClock.elapsedRealtime() - startedAt) +
                             " startShiftUs=" + (plan.startUs - clip.startMs * 1_000L),
                     )
+                    // Publication already succeeded. Reporting must never enter the
+                    // remux-fallback catch and start another export of the same clip.
+                    reportPublished(
+                        ExportReport(ExportMethod.ORIGINAL_COPY, SystemClock.elapsedRealtime() - startedAt),
+                        onReport,
+                    )
                     return output
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (unsupported: FastTrimUnavailableException) {
-                    if (exportMode == ExportMode.FAST_ONLY) {
-                        throw ReencodeRequiredException("고속 저장을 완료할 수 없습니다. 정밀 저장을 선택해 주세요.", unsupported)
-                    }
-                    Log.w("QuickCutExport", "Fast remux unsupported; using Media3", unsupported)
                 }
             }
         }
 
         if (exportMode == ExportMode.FAST_ONLY) {
             throw ReencodeRequiredException(
-                "현재 자르기 위치 또는 저장 옵션에서는 고속 복사를 사용할 수 없습니다. 정밀 저장을 선택해 주세요."
+                "현재 자르기 위치 또는 저장 옵션에서는 고속 복사를 사용할 수 없습니다. 정확한 위치로 자동 저장을 선택해 주세요."
             )
         }
         withContext(Dispatchers.IO) {
             val estimate = ExportStorage.estimateOutputBytes(context, timeline, directWrite = false)
             ExportStorage.requireSpace(context, estimate, directWrite = false)
         }
+        val optimizeTrim = timeline.clips.singleOrNull()?.let { clip ->
+            withContext(Dispatchers.IO) { ExactTrimOptimization.canOptimize(context, clip) }
+        } ?: false
         // Merely choose a unique path here. Creating a temp file in a cancellable
         // withContext can lose the cleanup handle while dispatching back to Main.
         val temporary = File(context.cacheDir, "quickcut_" + UUID.randomUUID().toString() + ".mp4")
         try {
-            withContext(Dispatchers.Main.immediate) {
-                transform(timeline, temporary, onProgress, outputTimestampMs)
+            val result = withContext(Dispatchers.Main.immediate) {
+                transform(timeline, temporary, onProgress, outputTimestampMs, optimizeTrim)
             }
             withContext(Dispatchers.IO) {
                 MediaReader.validateExport(temporary, expectedDurationMs, expectAudio, originalDate?.epochMs)
             }
-            return GalleryWriter(context).save(
+            val output = GalleryWriter(context).save(
                 temporary,
                 originalTimestampMs = originalDate?.epochMs,
                 outputBaseName = outputBaseName,
@@ -126,6 +139,15 @@ class VideoExporter(private val context: Context) {
                 onOutputCreated = onOutputCreated,
                 onCommitted = onCommitted,
             )
+            reportPublished(
+                ExportReport(
+                    ExportReportMapper.method(result.videoConversionProcess, result.audioConversionProcess),
+                    SystemClock.elapsedRealtime() - startedAt,
+                    result.optimizationResult,
+                ),
+                onReport,
+            )
+            return output
         } finally {
             withContext(NonCancellable) {
                 withContext(Dispatchers.IO) { temporary.delete() }
@@ -138,7 +160,8 @@ class VideoExporter(private val context: Context) {
         file: File,
         onProgress: (Int?) -> Unit,
         outputTimestampMs: Long,
-    ): Unit = suspendCancellableCoroutine { continuation ->
+        optimizeTrim: Boolean,
+    ): ExportResult = suspendCancellableCoroutine { continuation ->
         val main = Handler(Looper.getMainLooper())
         val progress = ProgressHolder()
         lateinit var transformer: Transformer
@@ -170,7 +193,7 @@ class VideoExporter(private val context: Context) {
                     )
                 )
             }
-            .experimentalSetTrimOptimizationEnabled(timeline.clips.size == 1)
+            .experimentalSetTrimOptimizationEnabled(optimizeTrim)
             .addListener(object : Transformer.Listener {
                 override fun onCompleted(composition: Composition, exportResult: ExportResult) {
                     main.removeCallbacks(poller)
@@ -180,7 +203,7 @@ class VideoExporter(private val context: Context) {
                             " videoProcess=" + exportResult.videoConversionProcess +
                             " audioProcess=" + exportResult.audioConversionProcess,
                     )
-                    if (continuation.isActive) continuation.resume(Unit)
+                    if (continuation.isActive) continuation.resume(exportResult)
                 }
 
                 override fun onError(
@@ -215,7 +238,23 @@ class VideoExporter(private val context: Context) {
             if (continuation.isActive) continuation.resumeWithException(error)
         }
     }
+
+    private suspend fun reportPublished(report: ExportReport, consumer: (ExportReport) -> Unit) {
+        // Keep the outer context's dispatcher so cancellation while returning from
+        // Main cannot discard a URI which GalleryWriter has already committed.
+        withContext(NonCancellable) {
+            withContext(Dispatchers.Main.immediate) {
+                try {
+                    consumer(report)
+                } catch (error: Throwable) {
+                    if (error is VirtualMachineError || error is ThreadDeath || error is LinkageError) throw error
+                    Log.w("QuickCutExport", "Published export report consumer failed", error)
+                }
+            }
+        }
+    }
 }
 
 class ReencodeRequiredException(message: String, cause: Throwable? = null) : IOException(message, cause)
+
 

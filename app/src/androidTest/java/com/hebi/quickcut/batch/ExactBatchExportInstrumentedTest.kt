@@ -18,13 +18,19 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.hebi.quickcut.editor.formatTime
 import com.hebi.quickcut.media.MediaReader
 import com.hebi.quickcut.media.SaveDateMode
+import com.hebi.quickcut.media.ExportMethod
+import com.hebi.quickcut.media.GalleryWriter
 import com.hebi.quickcut.settings.BatchDraftSettings
 import com.hebi.quickcut.settings.QuickCutSettings
 import com.hebi.quickcut.ui.QuickCutTheme
 import java.io.File
 import kotlin.math.abs
+import kotlinx.coroutines.runBlocking
+import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -42,6 +48,7 @@ class ExactBatchExportInstrumentedTest {
     private lateinit var previousDate: SaveDateMode
     private lateinit var sessionStore: BatchSessionStore
     private var previousSession: BatchSessionSnapshot? = null
+    private val generatedOutputs = mutableListOf<Uri>()
 
     @Before
     fun importThreeSecondCutBetweenKeyframes() {
@@ -77,9 +84,6 @@ class ExactBatchExportInstrumentedTest {
         composeRule.waitUntil(30_000L) { !model.isImporting && model.files.size == 1 }
         assertTrue("The fixture must retain more than the next keyframe interval",
             model.files.single().durationMs >= 7_900L)
-        composeRule.setContent {
-            QuickCutTheme { BatchScreen(model, {}, {}, { _, _, _ -> }) }
-        }
     }
 
     @After
@@ -90,6 +94,9 @@ class ExactBatchExportInstrumentedTest {
             val context = InstrumentationRegistry.getInstrumentation().targetContext
             model.files.mapNotNull(BatchFile::savedOutputUri).forEach { output ->
                 runCatching { context.contentResolver.delete(Uri.parse(output), null, null) }
+            }
+            generatedOutputs.forEach { output ->
+                runCatching { context.contentResolver.delete(output, null, null) }
             }
             composeRule.runOnUiThread {
                 ViewModelStore().apply { put("batch-exact", model) }.clear()
@@ -107,6 +114,7 @@ class ExactBatchExportInstrumentedTest {
 
     @Test
     fun exactAutomaticSaveKeepsThreeSecondCutAndReportsCompletedMethod() {
+        showScreen()
         composeRule.onNodeWithText("일괄 편집 및 저장 시작").performClick()
         composeRule.waitUntil(30_000L) {
             composeRule.onAllNodes(hasText("저장 방식 선택")).fetchSemanticsNodes().isNotEmpty()
@@ -133,5 +141,75 @@ class ExactBatchExportInstrumentedTest {
             formatTime(requestedDuration)).performScrollTo().assertExists()
         composeRule.onNodeWithText("처리 방식:", substring = true)
             .performScrollTo().assertExists()
+        assertNotNull("A successful export must report its actual method", row.exportReport)
+        assertEquals(row.exportReport, sessionStore.load()!!.files.single().exportReport)
+        composeRule.runOnUiThread {
+            ViewModelStore().apply { put("batch-exact", model) }.clear()
+            model = BatchViewModel(context.applicationContext as Application)
+        }
+        composeRule.waitUntil(30_000L) { !model.isRecovering }
+        assertEquals(BatchFileStatus.SAVED, model.files.single().status)
+        assertEquals(row.savedOutputUri, model.files.single().savedOutputUri)
+        assertEquals(row.exportReport, model.files.single().exportReport)
+        assertEquals("3", model.draftLeadingSeconds)
+    }
+
+    @Test
+    fun savedVersionOneJournalWithoutReportRemainsSavedAndDisplaysUnknown() {
+        restorePublishedJournal { it.remove("exportReport") }
+        assertNull(model.files.single().exportReport)
+        showScreen()
+        composeRule.onNodeWithText("처리 방식: 확인할 수 없음").performScrollTo().assertExists()
+    }
+
+    @Test
+    fun futureReportMethodDoesNotDiscardAValidSavedJournalOrClaimFastCopy() {
+        restorePublishedJournal {
+            it.put("exportReport", JSONObject().apply {
+                put("method", "FUTURE_UNRECOGNIZED_METHOD")
+                put("elapsedMs", 123L)
+            })
+        }
+        assertEquals(ExportMethod.UNKNOWN, model.files.single().exportReport?.method)
+        assertEquals(123L, model.files.single().exportReport?.elapsedMs)
+        showScreen()
+        composeRule.onNodeWithText("처리 방식: 확인할 수 없음", substring = true)
+            .performScrollTo().assertExists()
+    }
+
+    private fun restorePublishedJournal(changeReport: (JSONObject) -> Unit) {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val output = runBlocking { GalleryWriter(context).save(source) }
+        generatedOutputs += output
+        val saved = model.files.single().copy(
+            status = BatchFileStatus.SAVED,
+            savedOutputUri = output.toString(),
+            outputExpectedDurationMs = model.files.single().durationMs,
+            outputExpectedAudio = true,
+        )
+        val template = model.previewTemplate()
+        composeRule.runOnUiThread {
+            ViewModelStore().apply { put("batch-exact", model) }.clear()
+        }
+        sessionStore.save(BatchSessionSnapshot(listOf(saved), template,
+            SaveDateMode.CURRENT, BatchRunState.FINISHED))
+        // Exercise the actual schema-1 file that older installations leave behind.
+        val journal = File(context.filesDir, "quickcut_batch_session_v1.json")
+        val legacy = JSONObject(journal.readText())
+        changeReport(legacy.getJSONArray("files").getJSONObject(0))
+        journal.writeText(legacy.toString())
+        composeRule.runOnUiThread {
+            model = BatchViewModel(context.applicationContext as Application)
+        }
+        composeRule.waitUntil(30_000L) { !model.isRecovering }
+        assertEquals(BatchFileStatus.SAVED, model.files.single().status)
+        assertEquals(output.toString(), model.files.single().savedOutputUri)
+        assertEquals(saved.outputExpectedDurationMs, model.files.single().outputExpectedDurationMs)
+    }
+
+    private fun showScreen() {
+        composeRule.setContent {
+            QuickCutTheme { BatchScreen(model, {}, {}, { _, _, _ -> }) }
+        }
     }
 }

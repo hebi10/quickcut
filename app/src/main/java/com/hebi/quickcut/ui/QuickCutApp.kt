@@ -73,6 +73,7 @@ import com.hebi.quickcut.media.SaveDateMode
 import com.hebi.quickcut.media.ExportMode
 import com.hebi.quickcut.media.ExportPlanner
 import com.hebi.quickcut.media.ExportAssessment
+import com.hebi.quickcut.media.ExportReport
 import com.hebi.quickcut.settings.QuickCutSettings
 import com.hebi.quickcut.settings.QuickTrimSettings
 import kotlinx.coroutines.launch
@@ -182,7 +183,7 @@ fun QuickCutApp(
                 throw cancelled
             } catch (_: Exception) {
                 model.reportError(
-                    "고속 저장을 완료하지 못했습니다. 정밀 저장 허용 여부를 다시 선택해 주세요."
+                    "고속 저장을 완료하지 못했습니다. 정확한 위치로 자동 저장을 다시 선택해 주세요."
                 )
             }
         }
@@ -314,13 +315,13 @@ fun QuickCutApp(
                 title = when {
                     model.isFinalizing -> "갤러리 등록 중"
                     model.requestedExportMode == ExportMode.FAST_ONLY -> "고속 저장 중"
-                    else -> "정밀 저장 중"
+                    else -> "정확한 위치로 자동 저장 중"
                 },
                 subtitle = if (model.isFinalizing)
                     "결과물을 확인하고 갤러리에 등록하고 있습니다. 완료 단계에서는 취소할 수 없습니다."
                 else if (model.requestedExportMode == ExportMode.FAST_ONLY)
                     "압축된 영상 데이터를 복사하고 있습니다. 다른 앱을 사용하거나 화면을 꺼도 저장은 계속됩니다."
-                else "재인코딩이 발생할 수 있습니다. 다른 앱을 사용하거나 화면을 꺼도 저장은 계속됩니다.",
+                else "요청한 구간을 유지하며 저장합니다. 복사·최적화가 안 되면 재인코딩하며, 처리 시간은 영상과 기기에 따라 달라집니다.",
                 progress = if (model.isFinalizing) null else model.progressPercent,
                 onCancel = if (model.isFinalizing) null
                     else { { showExportCancelConfirmation = true } },
@@ -344,6 +345,7 @@ fun QuickCutApp(
                 onNew = model::startNew,
                 originalAction = model.originalAction,
                 savedDateMode = model.savedDateMode,
+                exportReport = model.completedExportReport,
                 originalStatus = model.originalActionStatus,
                 originalCount = model.originalsFromSavedTimeline.size,
                 onRetryOriginalAction = model::showOriginalDeletionConfirmation,
@@ -757,6 +759,7 @@ private fun CompletedScreen(
     onNew: () -> Unit,
     originalAction: OriginalAction,
     savedDateMode: SaveDateMode,
+    exportReport: ExportReport?,
     originalStatus: OriginalActionStatus,
     originalCount: Int,
     onRetryOriginalAction: () -> Unit,
@@ -776,6 +779,7 @@ private fun CompletedScreen(
         Text("저장 완료", color = CutColors.primaryText, fontSize = 28.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(10.dp))
         Text("영상이 갤러리에 저장되었습니다.", color = CutColors.secondaryText)
+        Text(exportReportText(exportReport), color = CutColors.secondaryText)
         if (savedDateMode == SaveDateMode.ORIGINAL) {
             Text("원본 날짜 기준으로 저장했습니다.", color = CutColors.secondaryText)
         }

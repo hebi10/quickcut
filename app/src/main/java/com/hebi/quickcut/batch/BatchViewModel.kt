@@ -23,6 +23,7 @@ import com.hebi.quickcut.media.SaveDateMode
 import com.hebi.quickcut.media.VideoExporter
 import com.hebi.quickcut.media.ExportPlanner
 import com.hebi.quickcut.media.ExportMode
+import com.hebi.quickcut.media.ExportReport
 import com.hebi.quickcut.media.ReencodeRequiredException
 import com.hebi.quickcut.settings.QuickCutSettings
 import com.hebi.quickcut.settings.BatchDraftSettings
@@ -53,6 +54,7 @@ data class BatchFile(
     val outputExpectedDurationMs: Long? = null,
     val outputExpectedAudio: Boolean? = null,
     val outputExpectedDateMs: Long? = null,
+    val exportReport: ExportReport? = null,
 )
 
 data class BatchExportOverview(
@@ -540,6 +542,7 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
                     } else null,
                     progress = null,
                     savedOutputUri = file.savedOutputUri,
+                    exportReport = null,
                 )
             }
         }
@@ -597,12 +600,14 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
                                 continue
                             }
                             update(row.uri) {
-                                it.copy(status=BatchFileStatus.RUNNING,reason=null,progress=null)
+                                it.copy(status=BatchFileStatus.RUNNING,reason=null,progress=null,
+                                    exportReport=null)
                             }
                             isFinalizing = false
                             ExportWorkMonitor.update(workId, "${completedCount + 1}/${files.size} · ${row.displayName}")
                             try {
                                 val expectedAudio = timeline.clips.any { it.hasAudio && !it.muted }
+                                var committedOutput: Uri? = null
                                 val result = VideoExporter(context.applicationContext).export(
                                     timeline = timeline,
                                     onProgress = { percent ->
@@ -618,9 +623,11 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
                                         update(row.uri) { it.copy(savedOutputUri = output.toString(),
                                             outputExpectedDurationMs = timeline.totalDurationMs,
                                             outputExpectedAudio = expectedAudio,
-                                            outputExpectedDateMs = if (selectedDateMode == SaveDateMode.ORIGINAL) row.originalDate?.epochMs else null) }
+                                            outputExpectedDateMs = if (selectedDateMode == SaveDateMode.ORIGINAL) row.originalDate?.epochMs else null,
+                                            exportReport = null) }
                                     },
                                     onCommitted = { output ->
+                                        committedOutput = output
                                         update(row.uri) { it.copy(status=BatchFileStatus.SAVED, progress=100,
                                             savedOutputUri=output.toString(), reason=null) }
                                         if (selectedOriginalAction != OriginalAction.KEEP)
@@ -630,6 +637,20 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
                                     outputBaseName = row.displayName,
                                     exportMode = exportMode,
                                     resolvedOriginalDate = row.originalDate,
+                                    onReport = { report ->
+                                        // Reporting follows publication. A journal failure here
+                                        // must not turn a saved video into a failed export.
+                                        runCatching {
+                                            update(row.uri) {
+                                                if (committedOutput != null &&
+                                                    it.status == BatchFileStatus.SAVED &&
+                                                    it.savedOutputUri == committedOutput.toString())
+                                                    it.copy(exportReport = report) else it
+                                            }
+                                        }.onFailure {
+                                            notification = "영상은 저장했지만 처리 방식 기록을 보관하지 못했습니다."
+                                        }
+                                    },
                                 )
                                 if (files.first { it.uri == row.uri }.status != BatchFileStatus.SAVED) {
                                     update(row.uri) { it.copy(status=BatchFileStatus.SAVED,progress=100,
@@ -798,7 +819,8 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
                 } ?: BatchOutputState.ABSENT.also { queryConfirmed = true }
             }.getOrDefault(BatchOutputState.INVALID)
             if (!queryConfirmed) return row.copy(status=BatchFileStatus.SKIPPED, durationMs=0L,
-                reason="이전 출력에 접근할 수 없습니다. 파일 접근을 확인한 뒤 다시 시도해 주세요.", progress=null)
+                reason="이전 출력에 접근할 수 없습니다. 파일 접근을 확인한 뒤 다시 시도해 주세요.", progress=null,
+                exportReport=null)
         }
         val action = BatchRecoveryPolicy.decide(row.status == BatchFileStatus.SAVED, state)
         if (action == BatchRecoveryAction.KEEP_SAVED || action == BatchRecoveryAction.ADOPT_SAVED)
@@ -806,14 +828,17 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
         if (action == BatchRecoveryAction.REMOVE_PENDING) {
             val deleted = runCatching { context.contentResolver.delete(output!!, null, null) > 0 }.getOrDefault(false)
             if (!deleted) return row.copy(status=BatchFileStatus.SKIPPED,
-                durationMs=0L, reason="미완성 파일을 정리하지 못했습니다. 파일 권한을 확인하고 다시 선택해 주세요.", progress=null)
+                durationMs=0L, reason="미완성 파일을 정리하지 못했습니다. 파일 권한을 확인하고 다시 선택해 주세요.", progress=null,
+                exportReport=null)
         }
         val metadata = runCatching { MediaReader.metadata(context, Uri.parse(row.uri)) }.getOrNull()
         if (metadata == null) return row.copy(status=BatchFileStatus.SKIPPED, durationMs=0L,
-            reason="원본에 접근할 수 없습니다. 영상을 다시 선택해 주세요.", savedOutputUri=null, progress=null)
+            reason="원본에 접근할 수 없습니다. 영상을 다시 선택해 주세요.", savedOutputUri=null, progress=null,
+            exportReport=null)
         return row.copy(status=BatchFileStatus.SKIPPED, durationMs=metadata.durationMs, hasAudio=metadata.hasAudio,
             originalDate=OriginalMediaDates.resolve(context, Uri.parse(row.uri)), savedOutputUri=null, progress=null,
-            reason="이전 작업이 중단됐거나 완료 파일을 확인할 수 없습니다. 설정 확인 후 다시 시작해 주세요.")
+            reason="이전 작업이 중단됐거나 완료 파일을 확인할 수 없습니다. 설정 확인 후 다시 시작해 주세요.",
+            exportReport=null)
     }
 
     private fun formatSeconds(ms: Long): String =

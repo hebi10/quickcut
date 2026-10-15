@@ -26,6 +26,8 @@ import com.hebi.quickcut.editor.OriginalAction
 import com.hebi.quickcut.editor.TrimInput
 import com.hebi.quickcut.editor.VideoClip
 import com.hebi.quickcut.media.ExportAssessment
+import com.hebi.quickcut.media.ExportMethod
+import com.hebi.quickcut.media.ExportReport
 import com.hebi.quickcut.media.SaveDateMode
 
 @Composable
@@ -64,7 +66,7 @@ internal fun SaveOptionsDialog(
                 if (dateMode == SaveDateMode.ORIGINAL) {
                     Text(
                         "원본 날짜 유지에서는 직접 고속 복사를 지원하지 않습니다. " +
-                            "정밀 저장으로 날짜를 기록합니다.",
+                            "정확한 위치로 자동 저장하면서 날짜를 기록합니다.",
                         color = CutColors.secondaryText,
                         style = MaterialTheme.typography.bodySmall,
                     )
@@ -124,12 +126,13 @@ internal fun ExportModeDialog(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 if (retryingFastExport) {
-                    Text("고속 저장 중 호환성 문제가 발생했습니다. 재인코딩을 허용할지 선택해 주세요.")
+                    Text("고속 복사를 완료하지 못했습니다. 요청한 위치를 유지하며 다른 처리 방식으로 저장할 수 있습니다.")
                 }
                 Text(assessment.explanation)
                 Text(
-                    "정밀 저장은 영상 전체 또는 일부 구간을 다시 인코딩할 수 있어 " +
-                        "긴 영상에서는 저장 시간이 늘어날 수 있습니다.",
+                    "정확한 위치로 자동 저장은 요청한 구간을 유지합니다. 원본 데이터 복사와 " +
+                        "일부 구간 최적화를 우선 시도하고, 필요하면 전체 재인코딩을 허용합니다. " +
+                        "처리 시간은 영상과 기기에 따라 달라지며 완료 후 실제 처리 방식을 표시합니다.",
                     color = CutColors.secondaryText,
                     style = MaterialTheme.typography.bodySmall,
                 )
@@ -150,7 +153,7 @@ internal fun ExportModeDialog(
                 Button(
                     onClick = onAllowReencode, enabled = canSave,
                     modifier = Modifier.fillMaxWidth(), shape = CutShape,
-                ) { Text("정밀 저장 (재인코딩 허용)") }
+                ) { Text("정확한 위치로 자동 저장") }
                 if (onSuggestedStart != null) {
                     OutlinedButton(
                         onClick = onSuggestedStart, enabled = canSave,
@@ -165,6 +168,20 @@ internal fun ExportModeDialog(
         containerColor = CutColors.panel,
         shape = CutShape,
     )
+}
+
+internal fun exportReportText(report: ExportReport?): String {
+    val method = when (report?.method ?: ExportMethod.UNKNOWN) {
+        ExportMethod.ORIGINAL_COPY -> "원본 데이터 복사"
+        ExportMethod.PARTIAL_REENCODE -> "일부 구간 재인코딩"
+        ExportMethod.VIDEO_REENCODE -> "전체 영상 재인코딩"
+        ExportMethod.AUDIO_REENCODE -> "소리 재인코딩"
+        ExportMethod.UNKNOWN -> "확인할 수 없음"
+    }
+    val elapsed = report?.let {
+        " · " + String.format(java.util.Locale.getDefault(), "%.1f", it.elapsedMs / 1_000.0) + "초"
+    }.orEmpty()
+    return "처리 방식: " + method + elapsed
 }
 
 @Composable
@@ -204,3 +221,4 @@ internal fun ExportCancelDialog(canCancel: Boolean, onCancel: () -> Unit, onDism
         shape = CutShape,
     )
 }
+

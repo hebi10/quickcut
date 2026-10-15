@@ -86,6 +86,7 @@ fun BatchScreen(
     val activity = context as? Activity
     val scope = rememberCoroutineScope()
     var pendingOverview by remember { mutableStateOf<BatchExportOverview?>(null) }
+    var showAdjustmentConfirmation by remember { mutableStateOf(false) }
     var pendingRetry by remember { mutableStateOf(false) }
     var inspecting by remember { mutableStateOf(false) }
     var inspectedCount by remember { mutableIntStateOf(0) }
@@ -107,6 +108,7 @@ fun BatchScreen(
                     } else {
                         pendingOverview = checked
                         pendingRetry = retry
+                        showAdjustmentConfirmation = false
                     }
                 } catch (error: Exception) {
                     model.notifyUser(
@@ -205,7 +207,7 @@ fun BatchScreen(
         )
     }
 
-    pendingOverview?.let { overview ->
+    pendingOverview?.takeUnless { showAdjustmentConfirmation }?.let { overview ->
         AlertDialog(
             onDismissRequest = { pendingOverview = null },
             title = { Text("저장 방식 선택") },
@@ -215,9 +217,16 @@ fun BatchScreen(
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    Text("고속 저장 가능 " + overview.fast + "개 · " +
+                    Text("요청한 위치 그대로: 고속 저장 " + overview.fast + "개 · " +
                         "재인코딩 가능성 " + overview.needsEncoding + "개 · " +
                         "건너뜀 " + overview.skipped + "개")
+                    if (overview.adjustments.isNotEmpty()) {
+                        Text("위치 조정 후 고속 저장 가능 " + overview.adjustedFast + "개 · " +
+                            "건너뜀 " + overview.adjustedSkips + "개", fontWeight = FontWeight.SemiBold)
+                        Text("시작 위치를 뒤로 옮길 수 있는 영상 " + overview.adjustments.size +
+                            "개가 있습니다. 파일별 추가 삭제 시간을 확인한 뒤 선택할 수 있습니다.",
+                            color = secondary, style = MaterialTheme.typography.bodySmall)
+                    }
                     Text(
                         "긴 영상은 다시 인코딩할 때 시간이 오래 걸릴 수 있습니다. " +
                             "정밀 저장을 선택한 경우에만 재인코딩을 허용합니다.",
@@ -249,15 +258,22 @@ fun BatchScreen(
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
                         onClick = {
-                            model.start(context, pendingRetry, ExportMode.ALLOW_REENCODE)
+                            model.startReviewed(context, overview, pendingRetry, ExportMode.ALLOW_REENCODE)
                             pendingOverview = null
                         },
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(4.dp),
                     ) { Text("모든 영상 정밀 저장 허용") }
+                    if (overview.adjustments.isNotEmpty()) {
+                        Button(
+                            onClick = { showAdjustmentConfirmation = true },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(4.dp),
+                        ) { Text("위치 조정 후 고속 저장") }
+                    }
                     OutlinedButton(
                         onClick = {
-                            model.start(context, pendingRetry, ExportMode.FAST_ONLY)
+                            model.startReviewed(context, overview, pendingRetry, ExportMode.FAST_ONLY)
                             pendingOverview = null
                         },
                         enabled = overview.fast > 0,
@@ -269,6 +285,53 @@ fun BatchScreen(
                         modifier = Modifier.fillMaxWidth(),
                     ) { Text("취소") }
                 }
+            },
+            containerColor = Color(0xFF202126),
+        )
+    }
+    pendingOverview?.takeIf { showAdjustmentConfirmation }?.let { overview ->
+        AlertDialog(
+            onDismissRequest = { showAdjustmentConfirmation = false },
+            title = { Text("자르기 위치 조정 확인") },
+            text = {
+                Column(
+                    modifier = Modifier.heightIn(max = 360.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Text("고속 저장 총 " + overview.adjustedFast + "개 = 기존 고속 " +
+                        overview.fast + "개 + 위치 조정 " + overview.adjustments.size + "개")
+                    Text("건너뜀 " + overview.adjustedSkips + "개")
+                    Text("아래 영상은 시작 위치를 다음 키프레임으로 옮겨 앞부분을 더 삭제합니다. " +
+                        "끝 위치와 템플릿은 유지하며 재인코딩은 허용하지 않습니다.",
+                        color = secondary, style = MaterialTheme.typography.bodySmall)
+                    overview.adjustments.forEach { adjustment ->
+                        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Text(adjustment.displayName, fontWeight = FontWeight.SemiBold)
+                            Text(adjustmentSeconds(adjustment.requestedStartMs) + "초 → " +
+                                adjustmentSeconds(adjustment.suggestedStartMs) + "초 · 추가 " +
+                                adjustmentSeconds(adjustment.extraRemovedMs) + "초 삭제",
+                                color = secondary, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                    val excluded = overview.skippedFiles + overview.unadjustableFiles
+                    if (excluded.isNotEmpty()) {
+                        Text("고속 저장에서 건너뛸 파일", fontWeight = FontWeight.SemiBold)
+                        excluded.forEach { Text(it, color = secondary,
+                            style = MaterialTheme.typography.bodySmall) }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    model.startReviewed(context, overview, pendingRetry, ExportMode.FAST_ONLY,
+                        adjustStarts = true)
+                    pendingOverview = null
+                    showAdjustmentConfirmation = false
+                }) { Text("조정에 동의하고 고속 저장") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAdjustmentConfirmation = false }) { Text("돌아가기") }
             },
             containerColor = Color(0xFF202126),
         )
@@ -602,6 +665,8 @@ private fun BatchFileRow(
 ) {
     val expected = template?.plan(file.uri, file.durationMs, file.hasAudio)
     val subtitle = when {
+        file.status == BatchFileStatus.SAVED && file.outputExpectedDurationMs != null ->
+            formatTime(file.durationMs) + " → " + formatTime(file.outputExpectedDurationMs)
         file.durationMs < 100 -> file.reason ?: "읽을 수 없는 영상"
         expected is BatchPlan.Skip -> expected.reason
         dateMode == SaveDateMode.ORIGINAL && file.originalDate == null -> "원본 날짜를 확인할 수 없습니다."
@@ -660,6 +725,9 @@ private fun BatchFileRow(
     }
 }
 
+private fun adjustmentSeconds(ms: Long): String =
+    java.math.BigDecimal.valueOf(ms, 3).stripTrailingZeros().toPlainString()
+
 @Composable
 private fun BatchProgress(model: BatchViewModel) {
     Column(
@@ -715,4 +783,5 @@ private fun BatchProgress(model: BatchViewModel) {
         }
     }
 }
+
 

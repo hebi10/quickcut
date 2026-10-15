@@ -86,9 +86,39 @@ class FastBFrameInstrumentedTest {
         }
     }
 
+    @Test
+    fun openGopFramesBeforeTheChosenSyncRemainIneligibleForFastOnly() = runBlocking {
+        withFixture("quickcut_open_gop.mp4") { context, source, clip ->
+            val selected = samples(source, "video/", 4_000_000L)
+            assertEquals("The seek must begin at the selected keyframe", 4_000_000L, selected.first().timeUs)
+            assertTrue("The Android extractor must expose leading frames after this sync sample",
+                selected.drop(1).take(12).any { it.timeUs < 4_000_000L })
+            val retained = clip.copy(startMs = 4_000L)
+            assertNull("Do not assume leading open-GOP frames can safely be discarded",
+                FastMp4Trimmer.prepare(context, retained))
+            var output: Uri? = null
+            var outputCreated = false
+            try {
+                val failure = runCatching {
+                    output = VideoExporter(context).export(
+                        timeline = EditTimeline(listOf(retained)),
+                        onProgress = {},
+                        onFinalizing = {},
+                        exportMode = ExportMode.FAST_ONLY,
+                        onOutputCreated = { outputCreated = true },
+                    )
+                }.exceptionOrNull()
+                assertTrue("Fast-only must fail without silently reencoding", failure is ReencodeRequiredException)
+                assertFalse("Ineligible fast-only exports must not create an output", outputCreated)
+            } finally {
+                output?.let { context.contentResolver.delete(it, null, null) }
+            }
+        }
+    }
+
     private data class Sample(val timeUs: Long, val flags: Int, val digest: String)
 
-    private fun samples(file: File, mimePrefix: String): List<Sample> {
+    private fun samples(file: File, mimePrefix: String, seekUs: Long? = null): List<Sample> {
         val extractor = MediaExtractor()
         return try {
             extractor.setDataSource(file.absolutePath)
@@ -96,6 +126,7 @@ class FastBFrameInstrumentedTest {
                 extractor.getTrackFormat(it).getString(MediaFormat.KEY_MIME)?.startsWith(mimePrefix) == true
             }
             extractor.selectTrack(track)
+            if (seekUs != null) extractor.seekTo(seekUs, MediaExtractor.SEEK_TO_NEXT_SYNC)
             buildList {
                 while (extractor.sampleTime >= 0L) {
                     val buffer = ByteBuffer.allocate(extractor.sampleSize.toInt())

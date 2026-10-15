@@ -7,14 +7,24 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.lifecycle.ViewModelStore
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.hebi.quickcut.media.SaveDateMode
+import com.hebi.quickcut.media.ExportMode
+import com.hebi.quickcut.media.MediaReader
+import com.hebi.quickcut.editor.formatTime
 import com.hebi.quickcut.settings.BatchDraftSettings
 import com.hebi.quickcut.settings.QuickCutSettings
 import com.hebi.quickcut.ui.QuickCutTheme
 import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.After
 import org.junit.Before
 import org.junit.Rule
@@ -32,6 +42,7 @@ class BatchFastAdjustmentInstrumentedTest {
     private lateinit var previousDate: SaveDateMode
     private lateinit var sessionStore: BatchSessionStore
     private var previousSession: BatchSessionSnapshot? = null
+    private val extraSources = mutableListOf<File>()
 
     @Before
     fun importNonKeyframeTrim() {
@@ -84,17 +95,177 @@ class BatchFastAdjustmentInstrumentedTest {
             settings.saveSaveDate(previousDate)
         }
         if (::source.isInitialized) source.delete()
+        extraSources.forEach(File::delete)
     }
 
     @Test
     fun nonKeyframeBatchOffersAnEnabledAdjustedFastSave() {
+        openReview()
+        // The existing engine can move this 3s cut to its next 4s keyframe.
+        // Losing that suggestion in the batch planner must not strand the user.
+        composeRule.onNodeWithText("위치 조정 후 고속 저장").assertIsEnabled()
+    }
+
+    @Test
+    fun confirmationExportsTheAdjustedDurationWithoutChangingTheDraftAndRecoversIt() {
+        openReview()
+        composeRule.onNodeWithText("위치 조정 후 고속 저장").performClick()
+        composeRule.onNodeWithText("자르기 위치 조정 확인").assertExists()
+        composeRule.onNodeWithText("고속 저장 총 1개 = 기존 고속 0개 + 위치 조정 1개").assertExists()
+        composeRule.onNodeWithText("3초 → 4초 · 추가 1초 삭제").assertExists()
+        composeRule.runOnIdle {
+            assertFalse(model.isRunning)
+            assertEquals("3", model.draftLeadingSeconds)
+        }
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()?.let { bitmap ->
+            File(context.getExternalFilesDir(null), "quickcut-fast-review.png").outputStream().use {
+                bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
+            }
+            bitmap.recycle()
+        }
+        composeRule.onNodeWithText("조정에 동의하고 고속 저장").performClick()
+        composeRule.waitUntil(120_000L) { model.runState == BatchRunState.FINISHED }
+        val row = model.files.single()
+        assertEquals(BatchFileStatus.SAVED, row.status)
+        assertEquals(row.durationMs - 4_000L, row.outputExpectedDurationMs)
+        assertEquals("3", model.draftLeadingSeconds)
+        assertEquals(3_000L, model.previewTemplate()!!.leadingMs)
+        val actual = MediaReader.metadata(context, Uri.parse(row.savedOutputUri!!))
+        assertTrue(kotlin.math.abs(actual.durationMs - (row.durationMs - 4_000L)) <= 250L)
+        composeRule.onNodeWithText(formatTime(row.durationMs) + " → " +
+            formatTime(row.durationMs - 4_000L)).performScrollTo().assertExists()
+        assertEquals(row.durationMs - 4_000L,
+            sessionStore.load()!!.files.single().outputExpectedDurationMs)
+        composeRule.runOnUiThread {
+            ViewModelStore().apply { put("batch", model) }.clear()
+            model = BatchViewModel(context.applicationContext as Application)
+        }
+        composeRule.waitUntil(30_000L) { !model.isRecovering }
+        assertEquals(BatchFileStatus.SAVED, model.files.single().status)
+        assertEquals(row.savedOutputUri, model.files.single().savedOutputUri)
+        assertEquals(row.durationMs - 4_000L, model.files.single().outputExpectedDurationMs)
+        assertEquals("3", model.draftLeadingSeconds)
+    }
+
+    @Test
+    fun changedSettingsFilesAndRetryModeCannotUseAnEarlierReview() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val settingsReview = inspect()
+        composeRule.runOnUiThread {
+            model.draftMute = true
+            model.startReviewed(context, settingsReview, false, ExportMode.FAST_ONLY, true)
+        }
+        assertFalse(model.isRunning)
+        assertTrue(model.notification!!.contains("다시 분석"))
+
+        val retryReview = inspect()
+        composeRule.runOnUiThread {
+            model.startReviewed(context, retryReview, true, ExportMode.FAST_ONLY, true)
+        }
+        assertFalse(model.isRunning)
+
+        val filesReview = inspect()
+        composeRule.runOnUiThread { model.removeVideo(model.files.single().uri) }
+        composeRule.waitUntil(30_000L) { !model.isImporting }
+        composeRule.runOnUiThread {
+            model.startReviewed(context, filesReview, false, ExportMode.FAST_ONLY, true)
+        }
+        assertFalse(model.isRunning)
+        assertTrue(model.files.isEmpty())
+    }
+
+    @Test
+    fun changedInputsDuringAnalysisInvalidateThePriorAndInProgressReviews() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val prior = inspect()
+        val error = runCatching {
+            runBlocking {
+                withContext(Dispatchers.Main) {
+                    model.inspectExport(context, false) { _, _ -> model.draftLeadingSeconds = "4" }
+                }
+            }
+        }.exceptionOrNull()
+        assertTrue(error is IllegalStateException)
+        composeRule.runOnUiThread {
+            model.draftLeadingSeconds = "3"
+            model.startReviewed(context, prior, false, ExportMode.FAST_ONLY, true)
+        }
+        assertFalse(model.isRunning)
+    }
+
+    @Test
+    fun retryAndRestartRequireASeparateAdjustmentReview() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val review = inspect()
+        composeRule.runOnUiThread {
+            model.startReviewed(context, review, false, ExportMode.FAST_ONLY)
+        }
+        composeRule.waitUntil(120_000L) { model.runState == BatchRunState.FINISHED }
+        assertEquals(BatchFileStatus.SKIPPED, model.files.single().status)
+        composeRule.runOnUiThread {
+            model.startReviewed(context, review, false, ExportMode.FAST_ONLY, true)
+        }
+        assertFalse(model.isRunning)
+        val retryReview = inspect(retryOnly = true)
+        assertEquals(1, retryReview.adjustments.size)
+        composeRule.runOnUiThread {
+            ViewModelStore().apply { put("batch", model) }.clear()
+            model = BatchViewModel(context.applicationContext as Application)
+        }
+        composeRule.waitUntil(30_000L) { !model.isRecovering }
+        composeRule.runOnUiThread {
+            model.startReviewed(context, retryReview, true, ExportMode.FAST_ONLY, true)
+        }
+        assertFalse(model.isRunning)
+        assertEquals(1, inspect(retryOnly = true).adjustments.size)
+    }
+
+    @Test
+    fun adjustedBatchIncludesAlreadyFastFilesAndClearlySkipsIneligibleFiles() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val extraUris = listOf("quickcut_unequal_tail.mp4", "quickcut_fixture.mp4").map { asset ->
+            val file = File(context.cacheDir, "batch_mixed_$asset")
+            extraSources += file
+            InstrumentationRegistry.getInstrumentation().context.assets.open(asset).use { input ->
+                file.outputStream().use { output -> input.copyTo(output) }
+            }
+            Uri.fromFile(file)
+        }
+        composeRule.runOnUiThread {
+            model.draftMode = BatchClipMode.KEEP_LAST
+            model.draftTrailingSeconds = "5"
+            model.draftMute = true
+            model.addVideos(context, extraUris)
+        }
+        composeRule.waitUntil(30_000L) { !model.isImporting && model.files.size == 3 }
+        val review = inspect()
+        assertEquals(1, review.fast)
+        assertEquals(1, review.adjustments.size)
+        assertEquals(2, review.adjustedFast)
+        assertEquals(1, review.adjustedSkips)
+        composeRule.runOnUiThread {
+            model.startReviewed(context, review, false, ExportMode.FAST_ONLY, true)
+        }
+        composeRule.waitUntil(120_000L) { model.runState == BatchRunState.FINISHED }
+        assertEquals(2, model.successes)
+        assertEquals(1, model.skips)
+        assertEquals(0, model.failures)
+        assertTrue(model.files.last().reason!!.contains("짧"))
+        assertEquals("5", model.draftTrailingSeconds)
+    }
+
+    private fun inspect(retryOnly: Boolean = false): BatchExportOverview = runBlocking {
+        withContext(Dispatchers.Main) {
+            model.inspectExport(InstrumentationRegistry.getInstrumentation().targetContext, retryOnly)
+        }
+    }
+
+    private fun openReview() {
         composeRule.onNodeWithText("일괄 편집 및 저장 시작").performClick()
         composeRule.waitUntil(30_000L) {
             composeRule.onAllNodes(androidx.compose.ui.test.hasText("저장 방식 선택"))
                 .fetchSemanticsNodes().isNotEmpty()
         }
-        // The existing engine can move this 3s cut to its next 4s keyframe.
-        // Losing that suggestion in the batch planner must not strand the user.
-        composeRule.onNodeWithText("위치 조정 후 고속 저장").assertIsEnabled()
     }
 }

@@ -37,13 +37,17 @@ object ExportPlanner {
             )
             else -> {
                 val clip = timeline.clips.single()
-                if (FastMp4Trimmer.prepare(context, clip) != null) {
+                val inspection = FastMp4Trimmer.inspect(context, clip)
+                if (inspection.plan != null) {
                     ExportAssessment(true, "현재 구간은 재인코딩 없이 빠르게 저장할 수 있습니다.")
                 } else {
                     ExportAssessment(
                         fastAvailable = false,
-                        explanation = "영상 코덱 또는 자르기 시작 위치 때문에 빠른 저장을 적용하기 어렵습니다.",
-                        suggestedStartMs = nearbyKeyframe(context, clip),
+                        explanation = inspection.reason?.explanation
+                            ?: "현재 영상에서 고속 저장을 사용할 수 없습니다.",
+                        suggestedStartMs = if (inspection.reason == FastMp4Trimmer.UnavailableReason.KEYFRAME) {
+                            nearbyKeyframe(context, clip)
+                        } else null,
                     )
                 }
             }
@@ -84,4 +88,5 @@ object ExportPlanner {
         }
     }
 }
+
 

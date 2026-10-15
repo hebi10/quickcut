@@ -12,9 +12,9 @@ trap on_failure EXIT
 
 # An older version-code fixture uses this runner's same debug key. This checks
 # Android's update/data retention path, not compatibility with old distributed APKs.
-gradle --no-daemon -PquickcutTestVersionCode=5 :app:assembleDebug
+gradle --no-daemon -PquickcutTestVersionCode=6 :app:assembleDebug
 adb install -r -d app/build/outputs/apk/debug/app-debug.apk
-if [[ ! $(adb shell dumpsys package com.hebi.quickcut) =~ versionCode=5[[:space:]] ]]; then
+if [[ ! $(adb shell dumpsys package com.hebi.quickcut) =~ versionCode=6[[:space:]] ]]; then
   echo "::error::Older-version update fixture was not installed"
   exit 1
 fi
@@ -22,7 +22,7 @@ adb shell run-as com.hebi.quickcut mkdir -p files
 printf 'quickcut-update-data' | adb shell run-as com.hebi.quickcut sh -c '"cat > files/update-sentinel"'
 gradle --no-daemon :app:assembleDebug
 adb install -r app/build/outputs/apk/debug/app-debug.apk
-if [[ ! $(adb shell dumpsys package com.hebi.quickcut) =~ versionCode=6[[:space:]] ]]; then
+if [[ ! $(adb shell dumpsys package com.hebi.quickcut) =~ versionCode=7[[:space:]] ]]; then
   echo "::error::Update candidate was not installed"
   exit 1
 fi
@@ -31,7 +31,7 @@ if [ "$(adb shell run-as com.hebi.quickcut cat files/update-sentinel | tr -d '\r
   exit 1
 fi
 adb shell run-as com.hebi.quickcut rm files/update-sentinel
-echo "Same-signature version-code 5 to 6 update retained application data"
+echo "Same-signature version-code 6 to 7 update retained application data"
 adb shell am force-stop com.google.android.apps.nexuslauncher
 adb shell am start -W -n com.hebi.quickcut/.MainActivity
 sleep 3
@@ -86,6 +86,16 @@ ffmpeg -hide_banner -loglevel error -y \
   -c:a aac -b:a 64k -shortest \
   app/src/androidTest/assets/quickcut_bframes.mp4
 
+# Leading B-frames after an open-GOP sync sample must not be silently discarded.
+ffmpeg -hide_banner -loglevel error -y \
+  -f lavfi -i testsrc2=size=320x240:rate=30 \
+  -f lavfi -i sine=frequency=660:sample_rate=44100 \
+  -t 8 -c:v libx264 -preset medium -pix_fmt yuv420p \
+  -bf 2 -g 60 -keyint_min 60 -sc_threshold 0 \
+  -x264-params open-gop=1:b-adapt=0:b-pyramid=0 \
+  -c:a aac -b:a 64k -shortest \
+  app/src/androidTest/assets/quickcut_open_gop.mp4
+
 # Safe monotonic retained prefix, reordered discarded video tail, short audio.
 # This catches unnecessary tail extraction without device-speed assertions.
 fixture_work=$(mktemp -d)
@@ -107,6 +117,7 @@ ffmpeg -hide_banner -loglevel error -y \
 rm -rf "$fixture_work"
 
 gradle --no-daemon :app:connectedDebugAndroidTest
+adb pull /sdcard/Android/data/com.hebi.quickcut/files/quickcut-fast-review.png quickcut-fast-review.png
 echo "QuickCut Android export instrumentation tests passed"
 
 

@@ -1,6 +1,7 @@
 package com.hebi.quickcut.export
 
 import android.Manifest
+import android.content.ComponentName
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -129,7 +130,7 @@ class BackgroundExportInstrumentedTest {
         if (::store.isInitialized) previousSession?.let(store::save) ?: store.clear()
         if (::source.isInitialized) source.delete()
         secondSource?.delete()
-        activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
+        wakeAndBringTaskToFront()
         Unit
     }
 
@@ -159,9 +160,7 @@ class BackgroundExportInstrumentedTest {
         assertEquals("Background completion must publish the MediaStore row", 0, pending)
         assertNotNull(model.completedExportReport)
 
-        shell("input keyevent KEYCODE_WAKEUP")
-        shell("wm dismiss-keyguard")
-        activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
+        wakeAndBringTaskToFront()
         activityRule.scenario.recreate()
         activityRule.scenario.onActivity { activity ->
             val retained = (activity.application as QuickCutApplication).editorModel
@@ -248,6 +247,22 @@ class BackgroundExportInstrumentedTest {
 
     private fun seconds(millis: Long): String =
         java.math.BigDecimal.valueOf(millis, 3).stripTrailingZeros().toPlainString()
+
+    private suspend fun wakeAndBringTaskToFront() {
+        shell("input keyevent KEYCODE_WAKEUP")
+        shell("wm dismiss-keyguard")
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val component = ComponentName(context, MainActivity::class.java).flattenToShortString()
+        val flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
+            Intent.FLAG_ACTIVITY_SINGLE_TOP
+        // A lifecycle-only moveToState cannot bring our task above Settings.
+        // Relaunch the existing Activity without clearing its task or state,
+        // then observe a real foreground transition before asking for recreation.
+        shell("am start -W -n $component -f $flags")
+        withTimeout(15_000L) {
+            while (activityRule.scenario.state != Lifecycle.State.RESUMED) delay(50L)
+        }
+    }
 
     private fun shell(command: String) {
         val descriptor = InstrumentationRegistry.getInstrumentation().uiAutomation

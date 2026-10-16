@@ -210,6 +210,9 @@ pub struct CutOptions {
     /// requires libx264 and allows a later avc1 mux to retain every set in
     /// avcC without rewriting the copied pictures.
     pub h264_parameter_set_ids: Vec<u8>,
+    /// Preserve the source reference-buffer size for a fixed Android avcC.
+    /// The caller validates the resulting SPS entries before publication.
+    pub h264_reference_frames: Option<u32>,
     /// How the caller plans a range.
     ///
     /// Carried because a transition is planned *here*: the stretch it
@@ -4657,6 +4660,10 @@ fn open_encoder_as(
         // See [`refs_before`].
         if codec.name() == "libx264" {
             if let Some(refs) = signalling.refs.filter(|&r| (1..X264_REFS).contains(&r)) {
+                (*e).refs = refs as i32;
+            }
+            if let Some(refs) = opts.h264_reference_frames {
+                anyhow::ensure!((1..=16).contains(&refs), "invalid H.264 reference-buffer size");
                 (*e).refs = refs as i32;
             }
         }

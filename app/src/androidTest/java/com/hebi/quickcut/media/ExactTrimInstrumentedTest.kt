@@ -48,6 +48,7 @@ class ExactTrimInstrumentedTest {
         val context = instrumentation.targetContext
         val source = File.createTempFile("exact_boundary_source_", ".mp4", context.cacheDir)
         var output: Uri? = null
+        var requestedTimeline: EditTimeline? = null
         try {
             instrumentation.context.assets.open("quickcut_exact_boundary.mp4").use { input ->
                 source.outputStream().use { input.copyTo(it) }
@@ -68,6 +69,7 @@ class ExactTrimInstrumentedTest {
                 startMs = 1_950L,
             )
             val originalClip = clip.copy()
+            requestedTimeline = EditTimeline(listOf(clip))
             var report: ExportReport? = null
             val saved = VideoExporter(context).export(
                 timeline = EditTimeline(listOf(clip)),
@@ -93,6 +95,9 @@ class ExactTrimInstrumentedTest {
             assertEquals("Export must not move or mutate the original requested clip", originalClip, clip)
             assertEquals("Imported AVC must keep the exact start while copying its eligible middle",
                 ExportMethod.PARTIAL_REENCODE, report?.method)
+        } catch (failure: Throwable) {
+            requestedTimeline?.let { SmartCutFailureDiagnostics.capture(context, "exact-eof", it, output, failure) }
+            throw failure
         } finally {
             output?.let { context.contentResolver.delete(it, null, null) }
             source.delete()
@@ -170,6 +175,7 @@ class ExactTrimInstrumentedTest {
         withFixture { context, _, clip ->
             val encoded = File(context.cacheDir, "exact_matching_encoder_${UUID.randomUUID()}.mp4")
             var output: Uri? = null
+            var requestedTimeline: EditTimeline? = null
             try {
                 withTimeout(120_000L) {
                     encodeWithDefaultDeviceEncoder(context, clip, encoded)
@@ -181,6 +187,7 @@ class ExactTrimInstrumentedTest {
                         startMs = 500L,
                         endMs = 4_500L,
                     )
+                    requestedTimeline = EditTimeline(listOf(requested))
                     assertTrue("The same-device fixture must safely permit partial encoding",
                         ExactTrimOptimization.canOptimize(context, requested))
                     var report: ExportReport? = null
@@ -200,6 +207,9 @@ class ExactTrimInstrumentedTest {
                     assertEquals(500L, requested.startMs)
                     assertEquals(4_500L, requested.endMs)
                 }
+            } catch (failure: Throwable) {
+                requestedTimeline?.let { SmartCutFailureDiagnostics.capture(context, "same-device", it, output, failure) }
+                throw failure
             } finally {
                 output?.let { context.contentResolver.delete(it, null, null) }
                 encoded.delete()

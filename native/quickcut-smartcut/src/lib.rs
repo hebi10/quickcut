@@ -9,6 +9,7 @@ use std::{cmp::Reverse, collections::BinaryHeap};
 
 mod android;
 mod avc1;
+mod avc_sps;
 mod duration;
 
 pub trait Callbacks: Send + Sync {
@@ -221,7 +222,7 @@ pub fn cut(input: &str, output: &str, start_us: i64, end_us: i64, muted: bool,
         check_plan(&plan, start_us, end_us)?;
         let expected = inspect_packets(&source, &plan, callbacks.as_ref())?;
         let encoded_segments = plan.segments.iter().filter(|s| s.kind == SegmentKind::Reencode).count();
-        let parameter_set_ids = avc1::unused_ids(input, encoded_segments)?;
+        let (parameter_set_ids, reference_frames) = avc1::unused_ids(input, encoded_segments)?;
         ensure!(!callbacks.is_cancelled(), "cancelled");
         let intermediate_path = format!("{output}.smartcut.mp4");
         ensure!(!Path::new(&intermediate_path).exists(), "intermediate staging file already exists");
@@ -231,6 +232,7 @@ pub fn cut(input: &str, output: &str, start_us: i64, end_us: i64, muted: bool,
             &smartcut_core::cut::CutOptions {
                 strict: true,
                 h264_parameter_set_ids: parameter_set_ids,
+                h264_reference_frames: Some(reference_frames),
                 audio_mode: smartcut_core::cut::AudioMode::Reencode,
                 drop_streams: if muted { source.audios.iter().map(|a| a.stream_index).collect() } else { Vec::new() },
                 ..Default::default()

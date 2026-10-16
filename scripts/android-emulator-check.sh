@@ -6,7 +6,11 @@ on_failure() {
   if [ "$status" -ne 0 ]; then
     echo "::error::QuickCut emulator smoke test failed (exit $status)"
     adb logcat -d -s AndroidRuntime:E | tail -100 || true
+    if ! adb pull /sdcard/Android/data/com.hebi.quickcut/files/native-diagnostics quickcut-native-diagnostics; then
+      echo "::warning::Native failure diagnostics were unavailable; the original failure is unchanged."
+    fi
   fi
+  return "$status"
 }
 trap on_failure EXIT
 
@@ -126,7 +130,36 @@ ffmpeg -hide_banner -loglevel error -y \
   app/src/androidTest/assets/quickcut_unequal_tail.mp4
 rm -rf "$fixture_work"
 
+# Run the native boundary checks first to collect focused failures quickly.
+# The unfiltered suite below remains mandatory after this preflight succeeds.
+gradle --no-daemon :app:connectedDebugAndroidTest \
+  -Pandroid.testInstrumentationRunnerArguments.class=com.hebi.quickcut.media.NativeSmartCutInstrumentedTest
+# Remove preflight results so an up-to-date task or stale XML cannot satisfy the
+# full-suite gate. Only generated instrumentation output is removed.
+rm -rf app/build/outputs/androidTest-results/connected
 gradle --no-daemon :app:connectedDebugAndroidTest
+python3 - <<'PYCODE'
+from pathlib import Path
+import xml.etree.ElementTree as ET
+
+results = Path('app/build/outputs/androidTest-results/connected')
+cases = set()
+for report in sorted(results.rglob('TEST-*.xml')):
+    root = ET.parse(report).getroot()
+    for suite in root.iter('testsuite'):
+        if any(int(suite.get(field, '0')) for field in ('failures', 'errors', 'skipped')):
+            raise SystemExit(f'Full instrumentation suite has failed or skipped tests: {report}')
+    for case in root.iter('testcase'):
+        key = (case.get('classname'), case.get('name'))
+        if not all(key):
+            raise SystemExit(f'Instrumentation test has no stable identity: {report}')
+        if any(case.find(field) is not None for field in ('failure', 'error', 'skipped')):
+            raise SystemExit(f'Full instrumentation test did not pass: {key}')
+        cases.add(key)
+if len(cases) < 99:
+    raise SystemExit(f'Expected at least 99 distinct full-suite tests, found {len(cases)}')
+print(f'Full instrumentation suite verified: {len(cases)} distinct tests, no failures, errors, or skips')
+PYCODE
 # UiAutomation may return no bitmap. This optional review image must not turn
 # a successful instrumentation run into a test failure.
 if ! adb pull /sdcard/Android/data/com.hebi.quickcut/files/quickcut-fast-review.png quickcut-fast-review.png; then

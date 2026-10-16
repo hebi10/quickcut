@@ -32,6 +32,16 @@ fn constrained_baseline_boundaries_keep_the_profile_and_first_red_picture() {
     let sets = smartcut_core::bitstream::parameter_sets("h264", config);
     let profiles: Vec<u8> = sets.iter().filter(|s| s[0] & 31 == 7).map(|s| s[1]).collect();
     assert_eq!(profiles, vec![66, 66, 66], "original and both boundaries must remain Baseline, without a High/CABAC transition");
+    // Android libavc rejects differently sized reference buffers inside one
+    // static AVC configuration, even when every SPS has the same profile.
+    let headers = Command::new("ffmpeg").args(["-hide_banner", "-i"]).arg(&output)
+        .args(["-map", "0:v", "-c", "copy", "-bsf:v", "trace_headers", "-frames:v", "1", "-f", "null", "-"])
+        .output().unwrap();
+    assert!(headers.status.success());
+    let header_log = String::from_utf8_lossy(&headers.stderr);
+    let references: Vec<u32> = header_log.lines().filter(|line| line.contains("max_num_ref_frames"))
+        .map(|line| line.rsplit(" = ").next().unwrap().parse().unwrap()).collect();
+    assert_eq!(references, vec![1, 1, 1], "all static SPS must preserve the source reference-buffer size");
     let (_, first) = input.packets().find(|(s, _)| s.index() == video).unwrap();
     assert_eq!(first.pts(), Some(0));
     assert_eq!(first.dts(), Some(0));

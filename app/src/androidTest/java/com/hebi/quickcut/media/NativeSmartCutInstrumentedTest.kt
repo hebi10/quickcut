@@ -277,6 +277,9 @@ class NativeSmartCutInstrumentedTest {
             }
             assertEquals("The saved video must be published", 0, pending)
             block(saved, report ?: throw AssertionError("A committed export requires a processing report"))
+        } catch (failure: Throwable) {
+            SmartCutFailureDiagnostics.capture(context, "native", timeline, committed ?: outputs.lastOrNull(), failure)
+            throw failure
         } finally {
             outputs.distinct().forEach { context.contentResolver.delete(it, null, null) }
         }

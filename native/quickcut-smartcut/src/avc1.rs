@@ -96,7 +96,7 @@ fn supported_sps_profile(nal: &[u8]) -> bool {
     nal.len() >= 4 && matches!(nal[1], 66 | 77 | 100)
 }
 
-pub fn unused_ids(path: &str, count: usize) -> Result<Vec<u8>> {
+pub fn unused_ids(path: &str, count: usize) -> Result<(Vec<u8>, u32)> {
     let input = smartcut_core::input::open_local(path)?;
     let video = input.streams().best(ff::media::Type::Video).context("missing video")?.index();
     let (_, sets) = configuration(&input, video)?;
@@ -105,6 +105,8 @@ pub fn unused_ids(path: &str, count: usize) -> Result<Vec<u8>> {
         "multiple source AVC configurations require the exact fallback");
     ensure!(sets.iter().filter(|s| s[0] & 31 == 7).all(|s| supported_sps_profile(s)),
         "unsupported source AVC profile requires the exact fallback");
+    let source_config = crate::avc_sps::DecoderConfig::read(
+        sets.iter().find(|s| s[0] & 31 == 7).unwrap())?;
     let mut used = BTreeSet::new();
     let mut sps_count = 0;
     for set in sets {
@@ -115,7 +117,7 @@ pub fn unused_ids(path: &str, count: usize) -> Result<Vec<u8>> {
     ensure!(sps_count + count <= 31, "too many parameter sets for avcC");
     let available: Vec<u8> = (0..32).filter(|id| !used.contains(id)).take(count).map(|id| id as u8).collect();
     ensure!(available.len() == count, "no unused AVC parameter-set IDs");
-    Ok(available)
+    Ok((available, source_config.references))
 }
 
 #[derive(Default)]
@@ -139,6 +141,11 @@ impl Sets {
         // level, with only constraint flags common to every supplied SPS.
         let mut ordered: Vec<&Vec<u8>> = self.sps.values().collect();
         ensure!(ordered.iter().all(|s| supported_sps_profile(s)), "unsupported AVC profile");
+        let expected = crate::avc_sps::DecoderConfig::read(ordered[0])?;
+        for sps in &ordered[1..] {
+            ensure!(crate::avc_sps::DecoderConfig::read(sps)? == expected,
+                "AVC decoder configuration changes across the splice; exact fallback required");
+        }
         ordered.sort_by_key(|s| std::cmp::Reverse(s[1]));
         let profile = ordered[0][1];
         let compatibility = ordered.iter().fold(255, |flags, s| flags & s[2]);
@@ -251,6 +258,23 @@ pub fn remux(input_path: &str, output_path: &str, callbacks: &dyn Callbacks) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn different_reference_buffers_in_static_avcc_require_exact_fallback() {
+        // Actual green5 output: Android libavc retained only the tail when
+        // source SPS0 used one reference and encoded SPS1 used three.
+        let source = [0x67, 0x42, 0xc0, 0xd, 0xda, 0x5, 0x7, 0xec, 0x4, 0x40,
+            0, 0, 3, 0, 0x40, 0, 0, 0xf, 3, 0xc5, 0xa, 0xa8];
+        let boundary = [0x67, 0x42, 0xc0, 0xd, 0x56, 0x40, 0x50, 0x7e, 0xc0, 0x44,
+            0, 0, 3, 0, 4, 0, 0, 3, 0, 0xf0, 0x3c, 0x50, 0xa9, 0x20];
+        assert_eq!(crate::avc_sps::DecoderConfig::read(&source).unwrap().references, 1);
+        assert_eq!(crate::avc_sps::DecoderConfig::read(&boundary).unwrap().references, 3);
+        let mut sets = Sets::default();
+        for nal in [source.as_slice(), boundary.as_slice(), &[0x68, 0xce, 0xf, 0xc8],
+            &[0x68, 0x48, 0xb8, 0xcb, 0x20]] { sets.add(nal).unwrap(); }
+        assert!(sets.avcc().unwrap_err().to_string().contains("decoder configuration changes"));
+        assert!(crate::avc_sps::DecoderConfig::read(&source[..7]).is_err());
+    }
+
     #[test]
     fn extended_profile_is_declined_instead_of_changing_to_high() {
         // Ordinary baseline-compatible syntax is valid under Extended as

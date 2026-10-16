@@ -19,8 +19,19 @@ class ExportStagingFilesTest {
         assertFalse(stale.exists())
     }
 
+    @Test fun removesNativeFirstPassLeftByProcessDeath() = withDirectory { directory ->
+        val stale = File(directory, "quickcut_12345678-1234-1234-1234-123456789abc.mp4.smartcut.mp4")
+            .apply { writeText("native first pass") }
+        ExportStagingFiles.cleanup(directory)
+        assertFalse(stale.exists())
+    }
+
     @Test fun leavesSourceFixturesAndUnrelatedCacheUntouched() = withDirectory { directory ->
-        val files = listOf("quickcut_fixture.mp4", "original.mp4", "quickcut_user_video.mp4")
+        val files = listOf(
+            "quickcut_fixture.mp4", "original.mp4", "quickcut_user_video.mp4",
+            "quickcut_user_video.mp4.smartcut.mp4", "original.mp4.smartcut.mp4",
+            "quickcut_12345678-1234-1234-1234-123456789abc.mp4.smartcut.mp4.backup",
+        )
             .map { File(directory, it).apply { writeText("source") } }
         ExportStagingFiles.cleanup(directory)
         assertTrue(files.all(File::exists))
@@ -31,3 +42,4 @@ class ExportStagingFilesTest {
         try { block(directory) } finally { directory.deleteRecursively() }
     }
 }
+

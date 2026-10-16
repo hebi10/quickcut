@@ -63,7 +63,7 @@ struct CancelDuringWrite { output: std::path::PathBuf, fired: AtomicBool }
 impl Callbacks for CancelDuringWrite {
     fn is_cancelled(&self) -> bool { self.fired.load(Ordering::Relaxed) }
     fn progress(&self, value: i32) {
-        if value > 15 && value < 99 && self.output.exists() {
+        if value > 15 && value < 99 && (self.output.exists() || std::path::Path::new(&format!("{}.smartcut.mp4", self.output.display())).exists()) {
             self.fired.store(true, Ordering::Relaxed);
         }
     }
@@ -99,6 +99,14 @@ fn h264_b_frames_and_aac_real_mixed_cut() {
         let _ = std::fs::remove_file(&output);
         let observer = Arc::new(Observer::default());
         let report = cut(input.to_str().unwrap(), output.to_str().unwrap(), start, end, false, observer.clone()).unwrap();
+        let encoded = ff::format::input(&output).unwrap();
+        let video = encoded.streams().best(ff::media::Type::Video).unwrap();
+        assert_eq!(unsafe { (*video.parameters().as_ptr()).codec_tag }, u32::from_le_bytes(*b"avc1"), "Android requires an avc1 sample entry with a complete fixed configuration");
+        let parameters = video.parameters();
+        let config = unsafe { let p = parameters.as_ptr(); std::slice::from_raw_parts((*p).extradata, (*p).extradata_size as usize) };
+        let all_sets = smartcut_core::bitstream::parameter_sets("h264", config);
+        assert_eq!(all_sets.iter().filter(|n| n[0] & 31 == 7).count(), 3, "source, head and tail SPS must all be in the fixed avcC");
+        assert_eq!(all_sets.iter().filter(|n| n[0] & 31 == 8).count(), 3, "source, head and tail PPS must all be in the fixed avcC");
         assert_eq!(report.copied_video_packets, 60);
         assert_eq!(report.encoded_video_packets, expected_encoded);
         assert_eq!(observer.progress.load(Ordering::Relaxed), 100);
@@ -109,6 +117,13 @@ fn h264_b_frames_and_aac_real_mixed_cut() {
         // The test pattern is animated, making each coded picture distinct.
         let copies = output_vcl.iter().filter(|nal| source_vcl.contains(nal)).count();
         assert_eq!(copies, 60, "actual unchanged VCL payloads must match reported copies");
+        if start == 3_000_000 {
+            // Inspect a real, successfully decoded avc1 file containing the
+            // original/head/tail configurations, not a synthetic map.
+            let error = avc1::unused_ids(output.to_str().unwrap(), 2)
+                .expect_err("several source SPS/PPS pairs must use the fallback");
+            assert!(error.to_string().contains("multiple source AVC configurations"), "wrong decline reason: {error:#}");
+        }
     }
     for start in [1_980_000, 2_010_000] {
         let output = directory.join(format!("decline-{start}.mp4"));
@@ -125,6 +140,19 @@ fn h264_b_frames_and_aac_real_mixed_cut() {
     assert!(cut(input.to_str().unwrap(), cancelled_output.to_str().unwrap(), 1_950_000, 7_500_000, false, cancelled.clone()).is_err());
     assert!(cancelled.fired.load(Ordering::Relaxed), "cancellation must happen after actual writing began");
     assert!(!cancelled_output.exists(), "partial staging output must be removed");
+    assert!(!std::path::Path::new(&format!("{}.smartcut.mp4", cancelled_output.display())).exists(), "intermediate output must be removed after cancellation");
+    #[cfg(unix)]
+    {
+        use std::os::fd::AsRawFd;
+        use std::io::{Seek, SeekFrom};
+        let mut descriptor = std::fs::File::open(&input).unwrap();
+        descriptor.seek(SeekFrom::Start(123)).unwrap();
+        let fd_path = format!("/proc/self/fd/{}", descriptor.as_raw_fd());
+        let fd_output = directory.join("from-descriptor.mp4");
+        let report = cut(&fd_path, fd_output.to_str().unwrap(), 3_000_000, 7_500_000, false, Arc::new(Observer::default())).unwrap();
+        assert_eq!(report.copied_video_packets, 60);
+        assert_eq!(descriptor.stream_position().unwrap(), 123, "native reads must not change the caller's descriptor offset");
+    }
     assert_eq!(std::fs::read(&input).unwrap(), before, "original input must remain unchanged");
     std::fs::remove_dir_all(directory).unwrap();
 }
@@ -142,6 +170,7 @@ fn vcl_packets(path: &str) -> Vec<Vec<u8>> {
             let len = u32::from_be_bytes(data[at..at+4].try_into().unwrap()) as usize;
             at += 4;
             assert!(len > 0 && at + len <= data.len());
+            assert!(!matches!(data[at] & 31, 7 | 8), "avc1 samples must not carry changing parameter sets");
             if (1..=5).contains(&(data[at] & 31)) { picture.extend_from_slice(&data[at..at+len]); }
             at += len;
         }

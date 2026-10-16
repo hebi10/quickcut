@@ -146,6 +146,7 @@ if [[ "$HOST_TESTS" == true ]]; then
     unset RUSTFLAGS
     export BINDGEN_EXTRA_CLANG_ARGS="-resource-dir=$TOOLCHAIN/lib/clang/18"
     cargo +"$RUST_VERSION" test --manifest-path "$CRATE" --locked --release
+    cargo +"$RUST_VERSION" test --manifest-path "$CRATE" --locked --release -p smartcut-core --lib descriptor
   )
 fi
 build_android arm64-v8a aarch64-linux-android aarch64

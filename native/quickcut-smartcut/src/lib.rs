@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::{cmp::Reverse, collections::BinaryHeap};
 
 mod android;
+mod avc1;
 
 pub trait Callbacks: Send + Sync {
     fn is_cancelled(&self) -> bool;
@@ -47,7 +48,7 @@ fn avc_nals(data: &[u8], width: usize) -> Result<Vec<&[u8]>> {
         at += width;
         ensure!(length > 0 && length <= data.len() - at, "truncated or empty AVC NAL");
         let nal = &data[at..at + length];
-        ensure!(nal[0] & 0x80 == 0 && (1..=13).contains(&(nal[0] & 31)), "unsupported AVC NAL type");
+        ensure!(nal[0] & 0x80 == 0 && matches!(nal[0] & 31, 1 | 5..=12), "unsupported AVC NAL type");
         result.push(nal);
         at += length;
     }
@@ -213,17 +214,25 @@ pub fn cut(input: &str, output: &str, start_us: i64, end_us: i64, muted: bool,
             start_us as f64 / 1_000_000.0, end_us as f64 / 1_000_000.0, &options);
         check_plan(&plan, start_us, end_us)?;
         let expected = inspect_packets(&source, &plan, callbacks.as_ref())?;
+        let encoded_segments = plan.segments.iter().filter(|s| s.kind == SegmentKind::Reencode).count();
+        let parameter_set_ids = avc1::unused_ids(input, encoded_segments)?;
         ensure!(!callbacks.is_cancelled(), "cancelled");
+        let intermediate_path = format!("{output}.smartcut.mp4");
+        ensure!(!Path::new(&intermediate_path).exists(), "intermediate staging file already exists");
+        let _intermediate = StagingFile { path: &intermediate_path, complete: false };
         let report_callback = Arc::clone(&callbacks);
-        let stats = smartcut_core::cut::cut_with_stats(&source, &[plan], output,
+        let stats = smartcut_core::cut::cut_with_stats(&source, &[plan], &intermediate_path,
             &smartcut_core::cut::CutOptions {
                 strict: true,
+                h264_parameter_set_ids: parameter_set_ids,
                 audio_mode: smartcut_core::cut::AudioMode::Reencode,
                 drop_streams: if muted { source.audios.iter().map(|a| a.stream_index).collect() } else { Vec::new() },
                 ..Default::default()
-            }, Some(Box::new(move |_, total, _| report_callback.progress(15 + (total * 84.0).clamp(0.0, 84.0) as i32))))?;
+            }, Some(Box::new(move |_, total, _| report_callback.progress(15 + (total * 65.0).clamp(0.0, 65.0) as i32))))?;
         ensure!(stats.copied_video_packets > 0 && stats.encoded_video_packets > 0, "no actual mixed video output");
         ensure!(stats.copied_video_packets + stats.encoded_video_packets == expected, "retained picture count changed");
+        let final_video_packets = avc1::remux(&intermediate_path, output, callbacks.as_ref())?;
+        ensure!(final_video_packets == expected, "AVC1 remux changed the retained picture count");
         ensure!(!smartcut_core::input::reads_failed(), "input read failed");
         ensure!(!smartcut_core::input::reads_stopped() && !callbacks.is_cancelled(), "cancelled");
         callbacks.progress(100);

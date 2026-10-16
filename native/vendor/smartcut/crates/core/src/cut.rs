@@ -204,6 +204,12 @@ pub struct CutOptions {
     /// Refuse a partial result when a packet, picture, or timestamp needed
     /// for the cut cannot be preserved. Off for upstream compatibility.
     pub strict: bool,
+    /// A distinct H.264 SPS/PPS ID for each re-encoded segment, in order.
+    /// The caller must reserve these IDs apart from the copied stream's
+    /// parameter sets. Empty keeps the encoder's usual IDs. Supplying IDs
+    /// requires libx264 and allows a later avc1 mux to retain every set in
+    /// avcC without rewriting the copied pictures.
+    pub h264_parameter_set_ids: Vec<u8>,
     /// How the caller plans a range.
     ///
     /// Carried because a transition is planned *here*: the stretch it
@@ -706,6 +712,7 @@ struct Writer {
     current_kind: SegmentKind,
     strict: bool,
     stats: CutStats,
+    h264_encoder_count: usize,
     /// Display positions seen so far, smallest first.
     seen: std::collections::BinaryHeap<std::cmp::Reverse<i64>>,
     /// The decode time given to the last picture written. A muxer refuses a
@@ -4252,6 +4259,9 @@ struct Signalling {
     /// own `max_num_ref_frames`. Set per seam, never for the whole cut; see
     /// [`refs_before`].
     refs: Option<i64>,
+    /// A caller-reserved SPS/PPS ID for this re-encoded segment. libx264
+    /// writes both parameter sets and all slice references with this ID.
+    h264_sps_id: Option<u8>,
 }
 
 /// Does this stream declare Dolby Vision?
@@ -4797,6 +4807,20 @@ fn open_encoder_as(
             eopts.set("x265-params", &x265.join(":"));
         }
     }
+    if let Some(id) = signalling.h264_sps_id {
+        if codec.name() != "libx264" || v.codec != "h264" {
+            bail!("reserved H.264 parameter set IDs require libx264");
+        }
+        if id > 31 {
+            bail!("H.264 parameter set ID {id} is outside 0..31");
+        }
+        let mut x264 = eopts.get("x264-params").unwrap_or("").to_owned();
+        if !x264.is_empty() {
+            x264.push(':');
+        }
+        x264.push_str(&format!("sps-id={id}"));
+        eopts.set("x264-params", &x264);
+    }
     enc.open_as_with(codec, eopts)
         .map_err(|e| anyhow!("cannot open encoder: {e}"))
 }
@@ -5258,14 +5282,33 @@ fn reencode_segment(
     } else {
         (false, None)
     };
+    let mut signalling = ctx.signalling.clone();
+    if !opts.h264_parameter_set_ids.is_empty() {
+        if src.video.codec != "h264" {
+            bail!("reserved H.264 parameter set IDs require an H.264 source");
+        }
+        let index = writer.h264_encoder_count;
+        let id = *opts
+            .h264_parameter_set_ids
+            .get(index)
+            .ok_or_else(|| anyhow!("reserved H.264 parameter set IDs exhausted"))?;
+        if id > 31 {
+            bail!("H.264 parameter set ID {id} is outside 0..31");
+        }
+        if opts.h264_parameter_set_ids[..index].contains(&id) {
+            bail!("H.264 parameter set ID {id} is reused by another segment");
+        }
+        writer.h264_encoder_count += 1;
+        signalling.h264_sps_id = Some(id);
+    }
     // Frames only when the sequence type can be written back afterwards;
     // without it the segment would claim a progressive sequence.
     let mut encoder = if repeats && interlaced_sequence.is_some() && src.video.interlaced() {
         let mut frames = src.video.clone();
         frames.field_order = 1; // AV_FIELD_PROGRESSIVE
-        Pictures::open_into(&frames, default_bit_rate(src), &params, opts, ctx.signalling)?
+        Pictures::open_into(&frames, default_bit_rate(src), &params, opts, &signalling)?
     } else {
-        Pictures::open(src, &params, opts, ctx.signalling)?
+        Pictures::open(src, &params, opts, &signalling)?
     };
     // As the encoder was opened just above, and not merely where a field
     // repeats: with the sequence type unread the encoder is interlaced, and
@@ -9454,6 +9497,7 @@ fn cut_into(
         current_kind: SegmentKind::Copy,
         strict: opts.strict,
         stats: CutStats::default(),
+        h264_encoder_count: 0,
         seen: Default::default(),
         last_dts: None,
         written: 0,

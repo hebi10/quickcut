@@ -4,7 +4,7 @@ import java.io.File
 import java.io.IOException
 
 object ExportStagingFiles {
-    private val ownedName = Regex("quickcut_(?:[0-9]+|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\\.mp4")
+    private val ownedName = Regex("quickcut_(?:[0-9]+|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\\.mp4(?:\\.smartcut\\.mp4)?")
 
     fun cleanup(directory: File) {
         val files = directory.listFiles() ?: throw IOException("임시 저장소에 접근할 수 없습니다.")
@@ -13,3 +13,4 @@ object ExportStagingFiles {
         }
     }
 }
+

@@ -22,11 +22,20 @@
 ## Android 입출력과 취소
 
 Android `content://` URI를 FFmpeg 파일 경로로 넘기지 않는다. 전체 파일을
-가리키는 탐색 가능한 descriptor를 열고 `/proc/self/fd/<fd>` 경로를 사용한다.
-원본 descriptor는 네이티브 scan/cut 및 내부 재열기가 모두 끝날 때까지 유지한다.
+가리키는 탐색 가능한 descriptor를 열고 `/proc/self/fd/<fd>` 식별자를 전달한다.
+네이티브는 이 경로를 다시 열지 않고 descriptor를 복제한 custom AVIO로 읽는다.
+각 demuxer는 독립적인 `pread` 위치를 유지하며 원본 descriptor의 위치를 바꾸지 않는다.
+원본 descriptor는 네이티브 scan/cut 및 내부 읽기가 모두 끝날 때까지 유지한다.
 offset이 있는 asset, pipe, 크기/범위가 불명확한 provider는 네이티브 경로에서
 거절하고 기존 exporter에 넘긴다. 따라서 이 경로를 위해 대용량 원본 전체를
 캐시에 먼저 복사할 필요는 없다.
+
+Android 기본 MP4 extractor에서 읽을 수 있도록 최종 출력은 `avc1`이다. 경계마다
+겹치지 않는 SPS/PPS ID로 인코딩한 뒤 모든 설정을 고정 `avcC`에 넣는 추가 remux를
+수행한다. 이 과정에서 영상 압축 데이터는 다시 인코딩하지 않지만 중간 출력의
+추가 읽기·쓰기가 필요하다. 중간 출력과 최종 캐시 파일이 동시에 존재할 수 있으며,
+중간 출력은 갤러리 공개 전에 삭제한다. 프로세스가 종료되어 남은 중간 출력도 다음
+작업의 기존 캐시 정리 단계에서 제거한다.
 
 JNI는 IO 작업에서 실행한다. 취소 플래그는 native scan/cut 중 확인하며, 취소된
 coroutine이 descriptor나 출력 파일을 먼저 닫지 않도록 실제 native 종료까지

@@ -43,9 +43,9 @@ internal object NativeSmartCutTrimmer {
         jobContext.ensureActive()
         if (!available) return@withContext null
         try {
-            // Keep this handle alive until the blocking native call returns. Opening
-            // /proc/self/fd gives FFmpeg its own seek position, without copying a large
-            // source into cache or relying on a provider's private filesystem path.
+            // Keep this handle alive until the blocking native call returns. Native
+            // code recognizes the fd identifier and uses duplicated descriptors with
+            // independent pread cursors, without reopening a provider's private path.
             context.contentResolver.openAssetFileDescriptor(Uri.parse(clip.uri), "r")?.use { asset ->
                 val descriptor = asset.parcelFileDescriptor
                 val size = descriptor.statSize

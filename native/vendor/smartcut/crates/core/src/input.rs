@@ -814,11 +814,15 @@ pub(crate) const LOCAL_PROTOCOLS: &str = "file,subfile,concat";
 
 /// Open a file that is not a recording -- an image, a stream this program
 /// has just written -- under the same rule as [`open_with`].
-pub fn open_local(path: &str) -> Result<ff::format::context::Input> {
+pub fn open_local(path: &str) -> Result<Demux> {
     no_nul(path)?;
+    #[cfg(unix)]
+    if let Some(fd) = descriptor_path(path) {
+        return descriptor_input(fd, false, false, false);
+    }
     let mut opts = ff::Dictionary::new();
     opts.set("protocol_whitelist", LOCAL_PROTOCOLS);
-    Ok(ff::format::input_with_dictionary(&*as_local(path), opts)?)
+    Ok(Demux::plain(ff::format::input_with_dictionary(&*as_local(path), opts)?))
 }
 
 /// A name with a NUL in it cannot be handed to libavformat, and ffmpeg-next
@@ -903,6 +907,10 @@ fn open_with(url: &str, generate_pts: bool, all_maps: bool, deep_probe: bool) ->
         return restamped(under, table, generate_pts, all_maps, deep_probe);
     }
     no_nul(url)?;
+    #[cfg(unix)]
+    if let Some(fd) = descriptor_path(url) {
+        return descriptor_input(fd, generate_pts, all_maps, deep_probe);
+    }
     let mut opts = ff::Dictionary::new();
     // Local files and the two ways this program names a part of one, and
     // nothing else -- here and in everything the demuxer opens on its own
@@ -956,7 +964,25 @@ pub struct Demux {
     /// The reader underneath, when there is one. libavformat is told the i/o
     /// is not its own -- `AVFMT_FLAG_CUSTOM_IO` -- so closing the context
     /// leaves this alone and it is freed here.
-    io: Option<*mut ff::ffi::AVIOContext>,
+    io: Option<CustomIo>,
+}
+
+/// libavformat deliberately does not release custom AVIO. Keep its buffer and
+/// opaque reader together, including while opening a demuxer can still fail.
+struct CustomIo {
+    pb: *mut ff::ffi::AVIOContext,
+    drop_opaque: unsafe fn(*mut c_void),
+}
+
+impl Drop for CustomIo {
+    fn drop(&mut self) {
+        unsafe {
+            let opaque = (*self.pb).opaque;
+            ff::ffi::av_freep(std::ptr::addr_of_mut!((*self.pb).buffer) as *mut c_void);
+            ff::ffi::avio_context_free(&mut self.pb);
+            (self.drop_opaque)(opaque);
+        }
+    }
 }
 
 // The context is `Send` and so is everything hung off it here: the reader is
@@ -991,18 +1017,136 @@ impl Drop for Demux {
         // The context goes first: it may still read while it is being closed,
         // and what it would read through is freed below.
         unsafe { std::mem::ManuallyDrop::drop(&mut self.ictx) };
-        let Some(pb) = self.io.take() else { return };
-        unsafe {
-            // The buffer is freed as it stands rather than as it was handed
-            // over, because libavformat is free to have grown it.
-            let bridge = (*pb).opaque as *mut Bridge;
-            ff::ffi::av_freep(std::ptr::addr_of_mut!((*pb).buffer) as *mut c_void);
-            let mut pb = pb;
-            ff::ffi::avio_context_free(&mut pb);
-            if !bridge.is_null() {
-                drop(Box::from_raw(bridge));
+        drop(self.io.take());
+    }
+}
+
+/// Android's MediaProvider can grant an FD while denying a second open of its
+/// /proc path. Duplicate the granted capability, never reopen the path. Each
+/// demuxer needs its own logical cursor: dup alone shares the kernel seek offset.
+#[cfg(unix)]
+fn descriptor_path(path: &str) -> Option<c_int> {
+    let number = path.strip_prefix("/proc/self/fd/")?;
+    if number.is_empty() || !number.bytes().all(|b| b.is_ascii_digit()) { return None; }
+    number.parse::<c_int>().ok().filter(|fd| *fd >= 0)
+}
+
+#[cfg(unix)]
+struct DescriptorReader {
+    file: File,
+    position: i64,
+    length: i64,
+}
+
+#[cfg(unix)]
+impl DescriptorReader {
+    fn new(fd: c_int) -> Result<Self> {
+        use std::os::fd::BorrowedFd;
+        // The Kotlin AssetFileDescriptor remains alive for the complete JNI
+        // call. Only the independent duplicate becomes this reader's property.
+        let owned = unsafe { BorrowedFd::borrow_raw(fd) }.try_clone_to_owned()
+            .context("cannot duplicate the granted input descriptor")?;
+        let file = File::from(owned);
+        let metadata = file.metadata()?;
+        if !metadata.is_file() { bail!("input descriptor is not a regular seekable file"); }
+        let length = i64::try_from(metadata.len()).context("input descriptor is too large")?;
+        Ok(Self { file, position: 0, length })
+    }
+
+    fn read(&mut self, out: &mut [u8]) -> c_int {
+        use std::os::unix::fs::FileExt;
+        loop {
+            if descriptor_cancelled() { return ff::ffi::AVERROR_EXIT; }
+            if self.position >= self.length { return ff::ffi::AVERROR_EOF; }
+            let size = out.len().min((self.length - self.position) as usize);
+            match self.file.read_at(&mut out[..size], self.position as u64) {
+                Ok(0) => return ff::ffi::AVERROR_EOF,
+                Ok(count) => { self.position += count as i64; return count as c_int; }
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(error) => return -error.raw_os_error().unwrap_or(5).abs(),
             }
         }
+    }
+
+    fn seek(&mut self, to: i64, whence: c_int) -> i64 {
+        if descriptor_cancelled() { return i64::from(ff::ffi::AVERROR_EXIT); }
+        if whence & AVSEEK_SIZE != 0 { return self.length; }
+        let base = match whence & !AVSEEK_FORCE {
+            SEEK_SET => 0,
+            SEEK_CUR => self.position,
+            2 => self.length, // SEEK_END
+            _ => return -22, // EINVAL
+        };
+        match base.checked_add(to).filter(|position| *position >= 0) {
+            Some(position) => { self.position = position; position }
+            None => -22,
+        }
+    }
+}
+
+#[cfg(unix)]
+fn descriptor_cancelled() -> bool {
+    if asked_to_stop() {
+        READS_STOPPED.with(|s| s.set(true));
+        true
+    } else { false }
+}
+
+#[cfg(unix)]
+unsafe extern "C" fn descriptor_read(opaque: *mut c_void, out: *mut u8, size: c_int) -> c_int {
+    if opaque.is_null() || out.is_null() || size <= 0 { return -22; }
+    (*(opaque as *mut DescriptorReader)).read(std::slice::from_raw_parts_mut(out, size as usize))
+}
+
+#[cfg(unix)]
+unsafe extern "C" fn descriptor_seek(opaque: *mut c_void, to: i64, whence: c_int) -> i64 {
+    if opaque.is_null() { return -22; }
+    (*(opaque as *mut DescriptorReader)).seek(to, whence)
+}
+
+#[cfg(unix)]
+unsafe fn drop_descriptor(opaque: *mut c_void) {
+    if !opaque.is_null() { drop(Box::from_raw(opaque as *mut DescriptorReader)); }
+}
+
+#[cfg(unix)]
+fn descriptor_input(fd: c_int, generate_pts: bool, all_maps: bool, deep_probe: bool) -> Result<Demux> {
+    let reader = Box::new(DescriptorReader::new(fd)?);
+    unsafe {
+        const BUFFER_SIZE: usize = 32 * 1024;
+        let buffer = ff::ffi::av_malloc(BUFFER_SIZE) as *mut u8;
+        if buffer.is_null() { bail!("cannot allocate descriptor read buffer"); }
+        let opaque = Box::into_raw(reader) as *mut c_void;
+        let pb = ff::ffi::avio_alloc_context(buffer, BUFFER_SIZE as c_int, 0, opaque,
+            Some(descriptor_read), None, Some(descriptor_seek));
+        if pb.is_null() {
+            ff::ffi::av_free(buffer as *mut c_void);
+            drop_descriptor(opaque);
+            bail!("cannot allocate descriptor I/O context");
+        }
+        let io = CustomIo { pb, drop_opaque: drop_descriptor };
+        let mut ctx = ff::ffi::avformat_alloc_context();
+        if ctx.is_null() { bail!("cannot allocate descriptor demuxer"); }
+        (*ctx).pb = pb;
+        (*ctx).flags |= ff::ffi::AVFMT_FLAG_CUSTOM_IO as c_int;
+        let mut opts: *mut ff::ffi::AVDictionary = ptr::null_mut();
+        set(&mut opts, "protocol_whitelist", LOCAL_PROTOCOLS);
+        if all_maps { set(&mut opts, "scan_all_pmts", "1"); }
+        if deep_probe { set(&mut opts, "probesize", DEEP_PROBE); }
+        if generate_pts { set(&mut opts, "fflags", "+genpts"); }
+        let error = ff::ffi::avformat_open_input(&mut ctx, ptr::null(), ptr::null_mut(), &mut opts);
+        ff::ffi::av_dict_free(&mut opts);
+        if error < 0 {
+            // On failure avformat_open_input frees ctx, but custom AVIO is ours.
+            bail!("cannot open granted input descriptor: {}", ff::Error::from(error));
+        }
+        let demux = Demux {
+            ictx: std::mem::ManuallyDrop::new(ff::format::context::Input::wrap(ctx)),
+            io: Some(io),
+        };
+        let error = ff::ffi::avformat_find_stream_info(ctx, ptr::null_mut());
+        if error < 0 { bail!("cannot probe granted input descriptor: {}", ff::Error::from(error)); }
+        Ok(demux)
     }
 }
 
@@ -1121,6 +1265,10 @@ unsafe extern "C" fn bridge_seek(opaque: *mut c_void, to: i64, whence: c_int) ->
     (*(opaque as *mut Bridge)).seek(to, whence)
 }
 
+unsafe fn drop_bridge(opaque: *mut c_void) {
+    if !opaque.is_null() { drop(Box::from_raw(opaque as *mut Bridge)); }
+}
+
 /// Open `under` with the clocks in it corrected as it is read.
 ///
 /// The same three questions the ordinary path answers are answered here --
@@ -1194,7 +1342,7 @@ fn restamped(
         }
         let demux = Demux {
             ictx: std::mem::ManuallyDrop::new(ff::format::context::Input::wrap(ctx)),
-            io: Some(pb),
+            io: Some(CustomIo { pb, drop_opaque: drop_bridge }),
         };
         let err = ff::ffi::avformat_find_stream_info(ctx, ptr::null_mut());
         if err < 0 {
@@ -1483,6 +1631,79 @@ pub fn same_file(a: &Path, b: &Path) -> bool {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[cfg(unix)]
+    #[test]
+    fn granted_descriptors_have_independent_pread_cursors_and_keep_the_original_open() {
+        use std::os::fd::AsRawFd;
+        let path = std::env::temp_dir().join(format!("quickcut-descriptor-cursors-{}", std::process::id()));
+        let mut original = std::fs::OpenOptions::new().create(true).truncate(true)
+            .read(true).write(true).open(&path).unwrap();
+        original.write_all(b"0123456789").unwrap();
+        original.seek(SeekFrom::Start(7)).unwrap();
+        let mut first = DescriptorReader::new(original.as_raw_fd()).unwrap();
+        let mut second = DescriptorReader::new(original.as_raw_fd()).unwrap();
+        let mut bytes = [0u8; 3];
+        assert_eq!(first.read(&mut bytes), 3);
+        assert_eq!(&bytes, b"012");
+        assert_eq!(first.seek(5, SEEK_SET), 5);
+        assert_eq!(first.read(&mut bytes), 3);
+        assert_eq!(&bytes, b"567");
+        assert_eq!(second.read(&mut bytes), 3);
+        assert_eq!(&bytes, b"012");
+        assert_eq!(second.seek(0, AVSEEK_SIZE), 10);
+        assert_eq!(second.position, 3);
+        assert_eq!(second.seek(-2, 2 | AVSEEK_FORCE), 8);
+        assert_eq!(second.read(&mut bytes), 2);
+        assert_eq!(&bytes[..2], b"89");
+        assert_eq!(second.read(&mut bytes), ff::ffi::AVERROR_EOF);
+        assert_eq!(second.seek(i64::MAX, SEEK_CUR), -22);
+        assert_eq!(second.seek(-1, SEEK_SET), -22);
+        drop(first);
+        drop(second);
+        assert_eq!(original.stream_position().unwrap(), 7, "pread must not disturb the caller's cursor");
+        assert_eq!(original.read(&mut bytes).unwrap(), 3, "closing duplicates must leave the grant alive");
+        assert_eq!(&bytes, b"789");
+        let write_only = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+        let mut unreadable = DescriptorReader::new(write_only.as_raw_fd()).unwrap();
+        let error = unreadable.read(&mut bytes);
+        assert!(error < 0 && error != ff::ffi::AVERROR_EOF,
+            "a descriptor read error must remain an error rather than truncate the media silently");
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn descriptor_reads_and_seeks_honor_in_flight_cancellation() {
+        use std::os::fd::AsRawFd;
+        let path = std::env::temp_dir().join(format!("quickcut-descriptor-cancel-{}", std::process::id()));
+        std::fs::write(&path, b"readable input").unwrap();
+        let original = File::open(&path).unwrap();
+        let mut reader = DescriptorReader::new(original.as_raw_fd()).unwrap();
+        let _stop = stop_reads_when(|| true);
+        assert_eq!(reader.read(&mut [0u8; 4]), ff::ffi::AVERROR_EXIT);
+        assert_eq!(reader.seek(0, AVSEEK_SIZE), i64::from(ff::ffi::AVERROR_EXIT));
+        assert!(reads_stopped());
+        assert_eq!(reader.position, 0);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn failed_descriptor_demux_open_releases_every_duplicate() {
+        use std::os::fd::AsRawFd;
+        let path = std::env::temp_dir().join(format!("quickcut-descriptor-invalid-{}", std::process::id()));
+        std::fs::write(&path, b"not a media file").unwrap();
+        let original = File::open(&path).unwrap();
+        let url = format!("/proc/self/fd/{}", original.as_raw_fd());
+        let count = || std::fs::read_dir("/proc/self/fd").unwrap().filter_map(Result::ok)
+            .filter(|entry| std::fs::read_link(entry.path()).ok().as_ref() == Some(&path)).count();
+        assert_eq!(count(), 1);
+        for _ in 0..8 { assert!(open_local(&url).is_err()); }
+        assert_eq!(count(), 1, "failed format probing must close every duplicated descriptor");
+        assert!(original.metadata().is_ok());
+        std::fs::remove_file(path).unwrap();
+    }
 
     #[test]
     fn an_output_is_written_under_the_name_it_is_given() {

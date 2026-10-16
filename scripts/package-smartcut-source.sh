@@ -121,6 +121,9 @@ import org.gradle.language.base.artifact.SourcesArtifact
 import org.gradle.api.artifacts.result.ResolvedArtifactResult
 import org.gradle.api.artifacts.result.ComponentArtifactsResult
 import groovy.json.JsonOutput
+import java.security.MessageDigest
+import java.util.HexFormat
+import java.util.zip.ZipFile
 
 gradle.projectsEvaluated {
     def app = gradle.rootProject.project(':app')
@@ -141,6 +144,37 @@ gradle.projectsEvaluated {
                     return
                 }
                 def sources = component.getArtifacts(SourcesArtifact).findAll { it instanceof ResolvedArtifactResult }
+                // Guava deliberately publishes this exact conflict-avoidance JAR
+                // with metadata only and no sources artifact. Verify the binary;
+                // no other missing source JAR is accepted by this exception.
+                if (sources.empty && component.id.displayName ==
+                    'com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava') {
+                    def matching = binaries.findAll { it.id.componentIdentifier == component.id }
+                    if (matching.size() != 1) throw new GradleException('Unexpected empty-artifact binary count')
+                    def binary = matching.first().file
+                    def digest = HexFormat.of().formatHex(MessageDigest.getInstance('SHA-256').digest(binary.bytes))
+                    if (digest != 'b372a037d4230aa57fbeffdef30fd6123f9c0c2db85d0aced00c91b974f33f99') {
+                        throw new GradleException('The known empty Guava artifact changed')
+                    }
+                    new ZipFile(binary).withCloseable { archive ->
+                        def allowed = ['META-INF/MANIFEST.MF',
+                            'META-INF/maven/com.google.guava/listenablefuture/pom.xml',
+                            'META-INF/maven/com.google.guava/listenablefuture/pom.properties']
+                        archive.entries().each { entry ->
+                            if (!entry.isDirectory() && !allowed.contains(entry.name)) {
+                                throw new GradleException('Unexpected code/resource in empty Guava artifact: ' + entry.name)
+                            }
+                        }
+                    }
+                    def target = new File(output, 'guava-listenablefuture-empty-artifact.txt')
+                    target.text = 'This exact Maven placeholder contains only manifest/publication metadata, no code or resources.\n' +
+                        'Component: ' + component.id.displayName + '\nBinary SHA256: ' + digest + '\n' +
+                        'The publisher provides no sources JAR for this empty conflict-avoidance artifact.\n'
+                    rows.add([component: component.id.displayName, source: target.name, sourceArtifact: null,
+                        artifactKind: 'verified-empty-conflict-placeholder',
+                        binaries: [[name: binary.name, path: binary.absolutePath]]])
+                    return
+                }
                 if (sources.empty) missing.add(component.id.displayName)
                 sources.each { source ->
                     def prefix = component.id.displayName.replaceAll('[^A-Za-z0-9._-]', '_')
@@ -170,7 +204,7 @@ gradle.projectsEvaluated {
         base = repository + group.replace(".", "/") + "/" + artifact + "/" + version + "/"
         stem = artifact + "-" + version
         prefix = group + "__" + stem
-        row["sourceArtifactUrl"] = base + row["sourceArtifact"]
+        row["sourceArtifactUrl"] = base + row["sourceArtifact"] if row["sourceArtifact"] else None
         row["metadata"] = {}
         for extension in ("pom", "module"):
             url = base + stem + "." + extension
@@ -207,8 +241,13 @@ gradle.projectsEvaluated {
     for row in resolution:
         group, artifact, version = row["component"].split(":")
         directions.append("## " + row["component"] + "\n\n")
-        directions.append("Included published sources: `third_party/runtime-sources/" + row["source"] + "`.\n\n")
-        directions.append("Exact Maven sources: " + row["sourceArtifactUrl"] + "\n\n")
+        if row.get("artifactKind") == "verified-empty-conflict-placeholder":
+            directions.append("Verified empty conflict-avoidance artifact: no executable code or resources. "
+                              "The publisher supplies no sources JAR. Binary hash and ZIP-entry verification: "
+                              "`third_party/runtime-sources/" + row["source"] + "`.\n\n")
+        else:
+            directions.append("Included published sources: `third_party/runtime-sources/" + row["source"] + "`.\n\n")
+            directions.append("Exact Maven sources: " + row["sourceArtifactUrl"] + "\n\n")
         entry = source_locations["androidx"].get(row["component"]) or source_locations["androidx"].get(group + ":" + version)
         if entry:
             repository = source_locations["repository"]

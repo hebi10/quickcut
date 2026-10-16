@@ -6,6 +6,32 @@ struct Observer;
 impl Callbacks for Observer { fn is_cancelled(&self) -> bool { false } fn progress(&self, _: i32) {} }
 
 #[test]
+fn understated_level_is_declined_without_publishing_or_changing_source() {
+    let directory = std::env::temp_dir().join(format!("quickcut-low-level-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let source = directory.join("source.mp4"); let output = directory.join("output.mp4");
+    let _ = std::fs::remove_file(&output);
+    assert!(Command::new("ffmpeg").args(["-v", "error", "-y", "-f", "lavfi", "-i",
+        "color=c=red:size=320x240:rate=30:duration=6", "-c:v", "libx264", "-preset", "ultrafast",
+        "-pix_fmt", "yuv420p", "-bf", "0", "-g", "60", "-keyint_min", "60", "-sc_threshold", "0"])
+        .arg(&source).status().unwrap().success());
+    let mut bytes = std::fs::read(&source).unwrap();
+    let config = bytes.windows(4).position(|word| word == b"avcC").unwrap() + 4;
+    bytes[config + 3] = 10;
+    assert_eq!(bytes[config + 5] & 31, 1);
+    let sps = config + 8;
+    bytes[sps + 3] = 10; // 300 macroblocks cannot fit level 1.0's 99.
+    std::fs::write(&source, &bytes).unwrap();
+    let failure = cut(source.to_str().unwrap(), output.to_str().unwrap(), 1_950_000, 5_500_000,
+        false, Arc::new(Observer)).unwrap_err();
+    assert!(failure.to_string().contains("SPS level"), "{failure}");
+    assert!(!output.exists());
+    assert!(!directory.join("output.mp4.smartcut.mp4").exists());
+    assert_eq!(std::fs::read(&source).unwrap(), bytes);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 fn constrained_baseline_boundaries_keep_the_profile_and_first_red_picture() {
     let directory = std::env::temp_dir().join(format!("quickcut-baseline-{}", std::process::id()));
     std::fs::create_dir_all(&directory).unwrap();

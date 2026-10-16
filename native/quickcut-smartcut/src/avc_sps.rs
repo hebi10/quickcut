@@ -3,6 +3,29 @@
 //! may differ, but a buffer/profile/size change can invalidate the other sets.
 use anyhow::{ensure, Result};
 
+fn maximum_frame_macroblocks(profile: u32, constraints: u32, level: u32) -> Result<u32> {
+    // Android 15 ih264d_correct_level_idc upgrades underspecified levels
+    // before comparing the next SPS. Reject that case instead of allowing
+    // an otherwise identical avcC to reset and lose earlier parameter sets.
+    // Level 1b uses level_idc 11 + constraint_set3 in Baseline/Main, or
+    // level_idc 9 for High. Both permit only 99 coded macroblocks.
+    Ok(match level {
+        9 if profile == 100 => 99,
+        10 => 99,
+        11 if matches!(profile, 66 | 77) && constraints & 0x10 != 0 => 99,
+        11 | 12 | 13 | 20 => 396,
+        21 => 792,
+        22 | 30 => 1620,
+        31 => 3600,
+        32 => 5120,
+        40 | 41 => 8192,
+        42 => 8704,
+        50 => 22080,
+        51 | 52 => 36864,
+        _ => anyhow::bail!("unsupported SPS level requires exact fallback"),
+    })
+}
+
 struct Bits { bytes: Vec<u8>, at: usize }
 impl Bits {
     fn new(nal: &[u8]) -> Self {
@@ -60,7 +83,8 @@ impl DecoderConfig {
         let mut bits = Bits::new(nal);
         let profile = bits.u(8)?;
         ensure!(matches!(profile, 66 | 77 | 100), "unsupported SPS profile");
-        bits.u(8)?; let level = bits.u(8)?;
+        let constraints = bits.u(8)?; let level = bits.u(8)?;
+        let maximum_macroblocks = maximum_frame_macroblocks(profile, constraints, level)?;
         ensure!(bits.ue()? < 32, "invalid SPS ID");
         if profile == 100 {
             ensure!(bits.ue()? == 1 && bits.ue()? == 0 && bits.ue()? == 0,
@@ -95,6 +119,8 @@ impl DecoderConfig {
         ensure!(width_mbs < 1024 && height_map_units < 1024, "unsupported SPS dimensions");
         let frame_mbs_only = bits.flag()?;
         ensure!(frame_mbs_only, "interlaced SPS requires exact fallback");
+        ensure!((width_mbs + 1) * (height_map_units + 1) <= maximum_macroblocks,
+            "SPS level is too low for the coded frame size; exact fallback required");
         bits.u(1)?;
         let mut crop = [0; 4];
         if bits.flag()? { for offset in &mut crop { *offset = bits.ue()?; } }
@@ -123,5 +149,19 @@ impl DecoderConfig {
         }
         Ok(Self { profile, level, references, width_mbs, height_map_units,
             frame_mbs_only, crop, colour, reorder })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn level_1b_and_unknown_levels_have_explicit_safe_limits() {
+        assert_eq!(maximum_frame_macroblocks(66, 0xc0, 11).unwrap(), 396);
+        assert_eq!(maximum_frame_macroblocks(66, 0xd0, 11).unwrap(), 99);
+        assert_eq!(maximum_frame_macroblocks(77, 0x10, 11).unwrap(), 99);
+        assert_eq!(maximum_frame_macroblocks(100, 0, 9).unwrap(), 99);
+        assert!(maximum_frame_macroblocks(66, 0, 9).is_err());
+        assert!(maximum_frame_macroblocks(100, 0, 255).is_err());
     }
 }

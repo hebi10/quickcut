@@ -1,0 +1,1733 @@
+//! What a recording is named, and how that name is opened.
+//!
+//! Everything in this program is keyed on one string: the list holds it, the
+//! seek index and the proxy are cached against it, the output is named beside
+//! it, and the demuxer is handed it. That was true when every recording was a
+//! file, and it is worth keeping true now that one can be a clip inside a
+//! disc image.
+//!
+//! So a recording inside an image is named as though the image were a
+//! directory:
+//!
+//! ```text
+//! /rec/Anime.iso/BDAV/STREAM/00001.m2ts
+//! ```
+//!
+//! Nothing in that path is invented -- the image really does hold a `BDAV`
+//! directory with that file in it -- and the one thing that is unusual about
+//! it, that `/rec/Anime.iso` is a file rather than a directory, is exactly
+//! what this module notices. Splitting there gives three answers at once:
+//!
+//!   * the **URL** to open, which for a clip inside an image is libavformat's
+//!     `subfile` protocol pointed at the bytes the clip occupies -- the
+//!     demuxer reads them as a stream and never learns there is a filesystem
+//!     around them;
+//!   * the **file** to ask the operating system about, which is the image, so
+//!     that a cache keyed on size and modification time still has something
+//!     to weigh;
+//!   * the **range** those bytes occupy, for the passes that read the
+//!     transport stream themselves rather than through libavformat.
+//!
+//! A DVD needs one thing more. Its video is a single program stream that the
+//! format made it write in pieces of no more than a gigabyte, and a title is
+//! a run of sectors somewhere across those pieces -- so a name has to say
+//! which run, and opening it has to put the pieces back together:
+//!
+//! ```text
+//! /rec/Denshi.iso/VIDEO_TS/VTS_01_1.VOB@0-2082359
+//! ```
+//!
+//! The sectors are the ones the disc's own index counts in, from the start of
+//! the title set's stream and not from the start of any one file. Inside an
+//! image the pieces are laid down end to end, so that is still one byte range
+//! and one `subfile`. On a folder they are nine separate files, and
+//! libavformat's `concat` protocol joins them -- with `subfile` around it to
+//! take the title out of the join.
+//!
+//! A clip on a disc a recorder wrote needs the same thing for a different
+//! reason. Its arrival clock can restart part-way through the file -- the
+//! recorder wrote several sequences into one clip, and the playlist plays
+//! them as several items -- so what a row in the list offers is one of those
+//! sequences and not the file around it:
+//!
+//! ```text
+//! /rec/Recording.iso/BDAV/STREAM/00001.m2ts@8960-4605951
+//! ```
+//!
+//! Counted in source packets, which is the unit the disc's own index counts
+//! its clips in, and handed to the demuxer as those bytes alone -- so what it
+//! reads is one clock from beginning to end. See [`crate::disc`].
+//!
+//! That name is still what a playlist names when it plays part of such a
+//! clip. What it usually names is the whole of one, and a whole one is
+//! offered under the plain name it always had:
+//!
+//! ```text
+//! /rec/Recording.iso/BDAV/STREAM/00001.m2ts
+//! ```
+//!
+//! -- with the clocks inside it put back together as it is read. The name
+//! says nothing about that because the disc's own index already does: see
+//! [`crate::restamp`], and [`crate::disc::clip_restamp`] for where the
+//! correction is worked out. What the demuxer is handed then is not a path
+//! at all but a `restamp:` URL carrying the table, because a demuxer in this
+//! program is opened from a string and from nothing else.
+//!
+//! A path that is simply a file comes back unchanged, which is the case that
+//! has to cost nothing.
+
+use crate::restamp::Restamp;
+use crate::udf;
+use anyhow::{anyhow, bail, Context, Result};
+use ffmpeg_next as ff;
+use std::ffi::{c_int, c_void, CString};
+use std::fs::File;
+use std::io::{Read, Seek, SeekFrom};
+use std::ops::{Deref, DerefMut};
+use std::path::{Path, PathBuf};
+use std::ptr;
+
+/// A DVD sector, and the unit its index addresses the stream in.
+const SECTOR: u64 = 2048;
+
+/// A source packet: a transport packet behind the four bytes that say when
+/// it arrived, and the unit a Blu-ray's index counts a clip in.
+const SOURCE_PACKET: u64 = 192;
+
+/// The most pieces a title set's stream is written in. The format numbers
+/// them from one and stops at nine.
+const MAX_VOB: usize = 9;
+
+/// What a URL that needs its clocks put back together begins with, and what
+/// separates the table from the URL underneath it. Neither is a protocol
+/// libavformat knows: this module writes them and this module reads them.
+const RESTAMP: &str = "restamp:";
+const UNDER: char = '|';
+
+/// A stretch of a file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Range {
+    pub at: u64,
+    pub len: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct Input {
+    /// The name the user, the list and every cache know it by.
+    pub spec: String,
+    /// What libavformat is given.
+    pub url: String,
+    /// The file on disk that holds the bytes: the recording itself, or the
+    /// image it is inside.
+    pub file: PathBuf,
+    /// Which bytes of that file, when it is not all of them -- or of the
+    /// files in [`Input::parts`] laid end to end, when there are some.
+    pub range: Option<Range>,
+    /// The files the bytes are spread over, in order, when a recording is
+    /// written in more than one -- which on this side means a DVD read out of
+    /// a folder rather than an image. Empty for everything else, which is
+    /// every case where [`Input::file`] is the whole answer.
+    pub parts: Vec<PathBuf>,
+}
+
+impl Input {
+    /// Refuse to write `output` over any file this input reads from.
+    ///
+    /// A muxer creates its file before a packet has been read, so an output
+    /// named the same as the recording -- or reaching it through a link --
+    /// truncated the recording to nothing and then failed to read it: the
+    /// cut was lost and so was the recording it was being made from.
+    pub fn refuse_as_output(&self, output: &str) -> Result<()> {
+        let out = Path::new(output);
+        let clash = std::iter::once(&self.file)
+            .chain(self.parts.iter())
+            .any(|file| same_file(file, out));
+        if clash {
+            anyhow::bail!(
+                "{output} is the recording being read ({}); writing there would destroy it. \
+                 Choose another name or folder",
+                self.file.display()
+            );
+        }
+        Ok(())
+    }
+
+    /// Work out how to open what this names.
+    ///
+    /// A name that is neither a file nor a path into an image is handed on as
+    /// it stands: libavformat opens more than files, and a URL it understands
+    /// and this does not is not this module's business to reject.
+    pub fn parse(spec: &str) -> Result<Input> {
+        let path = Path::new(spec);
+        if path.is_file() {
+            return Ok(joined(Input::plain(spec)));
+        }
+        // `file:` and a file is that file to libavformat, and has to be the
+        // same file here: under the name as written, nothing on disk answered
+        // to it, and an output naming the recording itself passed
+        // [`Input::refuse_as_output`] and was created over it.
+        if let Some(rest) = spec.strip_prefix("file:").filter(|r| Path::new(r).is_file()) {
+            return Ok(Input {
+                file: PathBuf::from(rest),
+                ..Input::plain(spec)
+            });
+        }
+        // A name that says which sectors it plays is a DVD title, and nothing
+        // else in this program produces one. Asked after the file test, so
+        // that a real file whose name ends that way is still a file.
+        if let Some((base, first, last)) = split_at_sectors(spec) {
+            return dvd_title(spec, base, first, last);
+        }
+        // And a name that says which source packets it plays is one sequence
+        // of a clip. Whatever the clip is named -- a file, or a file inside
+        // an image -- is answered by parsing that name and taking the
+        // stretch out of whatever comes back.
+        if let Some((base, first, last)) = clip_window(spec) {
+            return clip_sequence(spec, base, first, last);
+        }
+        let Some((image, inside)) = split_at_image(path) else {
+            return Ok(Input::plain(spec));
+        };
+
+        let img = udf::Image::open(&image)?;
+        let entry = img
+            .find(&inside)
+            .ok_or_else(|| anyhow!("{inside} is not on {}", image.display()))?
+            .clone();
+        let range = entry.contiguous().ok_or_else(|| {
+            anyhow!(
+                "{inside} is written in pieces on {}, which cannot be read in place",
+                image.display()
+            )
+        })?;
+        // A file inside an image is a range of the image, and this is the
+        // protocol that says so. The inner name is given as `file:` because
+        // the option list ends at the first colon: a Windows path would
+        // otherwise be read as the protocol `c`.
+        let url = format!(
+            "subfile,,start,{},end,{},,:file:{}",
+            range.at,
+            range.at + range.len,
+            image.to_string_lossy()
+        );
+        Ok(joined(Input {
+            spec: spec.to_string(),
+            url,
+            file: image,
+            range: Some(Range {
+                at: range.at,
+                len: range.len,
+            }),
+            parts: Vec::new(),
+        }))
+    }
+
+    /// A file, whole, under the name it is written down as. What every
+    /// ordinary recording is, and what a file this program has just written
+    /// is when it comes to be read back.
+    pub fn plain(spec: &str) -> Input {
+        Input {
+            spec: spec.to_string(),
+            url: spec.to_string(),
+            file: PathBuf::from(spec),
+            range: None,
+            parts: Vec::new(),
+        }
+    }
+
+    /// Whether the bytes are inside something larger.
+    pub fn nested(&self) -> bool {
+        self.range.is_some()
+    }
+
+    /// Open the bytes for reading directly, as the passes over the transport
+    /// stream's own tables do.
+    ///
+    /// What comes back is positioned and bounded: offset zero is the start of
+    /// the recording whether or not there is an image around it, and reading
+    /// past the end of it stops, rather than running on into the next clip.
+    pub fn open(&self) -> Result<Reader> {
+        let mut parts = Vec::new();
+        let names: Vec<&PathBuf> = if self.parts.is_empty() {
+            vec![&self.file]
+        } else {
+            self.parts.iter().collect()
+        };
+        let mut whole = 0u64;
+        for name in names {
+            let file =
+                File::open(name).with_context(|| format!("cannot open {}", name.display()))?;
+            let len = file.metadata()?.len();
+            parts.push(Part {
+                file,
+                at: whole,
+                len,
+            });
+            whole += len;
+        }
+        let range = self.range.unwrap_or(Range { at: 0, len: whole });
+        Ok(Reader {
+            parts,
+            range,
+            pos: 0,
+        })
+    }
+
+    /// How long the recording is in bytes.
+    pub fn bytes(&self) -> Result<u64> {
+        Ok(match self.range {
+            Some(r) => r.len,
+            None => std::fs::metadata(&self.file)?.len(),
+        })
+    }
+}
+
+/// Put the clocks of a recorder's clip back together, where it is one of
+/// those and the disc's index says how.
+///
+/// Everything else comes back exactly as it went in, which is every
+/// recording that is not a clip on a disc a recorder wrote, and every clip
+/// on one whose stream runs on a single clock. The question costs a look at
+/// two directory names for a file, and one small index file for a clip that
+/// really is on such a disc; see [`crate::disc::clip_restamp`].
+fn joined(mut input: Input) -> Input {
+    if let Some(table) = crate::disc::clip_restamp(&input.spec) {
+        input.url = format!("{RESTAMP}{}{UNDER}{}", table.encode(), input.url);
+    }
+    input
+}
+
+/// One of the files a recording is written in, and where it falls in them.
+struct Part {
+    file: File,
+    /// Byte offset of this file's first byte within all of them laid end to
+    /// end.
+    at: u64,
+    len: u64,
+}
+
+/// A window onto a recording, counted from the start of the window.
+///
+/// The recording is usually one file, and is nine of them for a DVD title
+/// read out of a folder. Both are one run of bytes here: the window is
+/// measured across the files laid end to end, and a read that reaches the
+/// end of one carries on into the next.
+pub struct Reader {
+    parts: Vec<Part>,
+    range: Range,
+    pos: u64,
+}
+
+impl Read for Reader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let left = self.range.len.saturating_sub(self.pos);
+        if left == 0 {
+            return Ok(0);
+        }
+        let want = (buf.len() as u64).min(left) as usize;
+        let at = self.range.at + self.pos;
+        let Some(part) = self
+            .parts
+            .iter_mut()
+            .find(|p| at < p.at + p.len && at >= p.at)
+        else {
+            return Ok(0);
+        };
+        // A read stops at the end of the file it started in; the caller comes
+        // back for the rest, and the next call finds the next file.
+        let want = want.min((part.at + part.len - at) as usize);
+        part.file.seek(SeekFrom::Start(at - part.at))?;
+        let n = part.file.read(&mut buf[..want])?;
+        self.pos += n as u64;
+        Ok(n)
+    }
+}
+
+impl Seek for Reader {
+    fn seek(&mut self, to: SeekFrom) -> std::io::Result<u64> {
+        let pos = match to {
+            SeekFrom::Start(n) => n as i64,
+            SeekFrom::End(n) => self.range.len as i64 + n,
+            SeekFrom::Current(n) => self.pos as i64 + n,
+        };
+        if pos < 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "seek before the start of the recording",
+            ));
+        }
+        self.pos = pos as u64;
+        Ok(self.pos)
+    }
+}
+
+/// Split a path at the file in the middle of it, if there is one.
+///
+/// Returns the image and the path inside it, forward-slashed the way the
+/// image itself spells it.
+fn split_at_image(path: &Path) -> Option<(PathBuf, String)> {
+    let mut inside: Vec<String> = Vec::new();
+    let mut here = path;
+    while let Some(parent) = here.parent() {
+        inside.push(here.file_name()?.to_string_lossy().into_owned());
+        // An empty parent is the end of a relative path, and the root of an
+        // absolute one is never a file.
+        if parent.as_os_str().is_empty() {
+            return None;
+        }
+        if parent.is_file() {
+            inside.reverse();
+            return Some((parent.to_path_buf(), inside.join("/")));
+        }
+        here = parent;
+    }
+    None
+}
+
+/// Open a demuxer on a URL this module produced.
+///
+/// One protocol wrapping another is refused by libavformat unless it is told
+/// otherwise: whatever is allowed at the top level, the protocol *inside* one
+/// is checked against a whitelist that holds `file` and nothing else. A DVD
+/// title in a folder is `subfile` around `concat`, so it needs saying.
+///
+/// Said only for the URLs this module writes, and never for a plain path:
+/// setting the list at all would narrow what libavformat opens, and a
+/// recording named by a URL of somebody else's is none of this module's
+/// business -- the same rule [`Input::parse`] follows.
+///
+/// The other three things said here are for program streams, for a container
+/// that could not say how often pictures arrive, and for a recording whose
+/// captions the head of the file does not mention; all three are below.
+pub fn demux(url: &str) -> Result<Demux> {
+    let ictx = open(url, false)?;
+    // A program stream -- which on a DVD is every stream -- leaves the
+    // presentation time off any picture whose place in the display order can
+    // be worked out from the pictures around it, which on the disc this was
+    // written against is one picture in four. libavformat will work them out,
+    // and will only do it if it is asked before the file is opened, so a
+    // program stream is opened again with the flag on.
+    //
+    // Asked of the format rather than of the name, and asked at all rather
+    // than always set, because a transport stream times every picture it
+    // carries and a flag that changes nothing is still a flag on the path
+    // every recording goes down.
+    //
+    // The second reopening is for a recording whose frame rate the container
+    // could not work out, and reads every program map to get it. Same
+    // reasoning: it is asked for where it is needed rather than always. See
+    // [`states_frame_rate`].
+    //
+    // The third is for a recording that began before the broadcaster
+    // finished announcing what it was sending; see [`announced_late`].
+    let (genpts, all_maps) = (is_program_stream(&ictx), !states_frame_rate(&ictx));
+    let deeper = announced_late(url, &ictx);
+    if genpts || all_maps || deeper {
+        return open_with(url, genpts, all_maps, deeper);
+    }
+    Ok(ictx)
+}
+
+/// Leave the demuxer only the streams the caller is going to read.
+///
+/// Everything else in the container is marked to be thrown away before it
+/// is assembled, which is what `ffmpeg -map` does to the streams it was not
+/// asked for. The obvious gain is the work saved on a stream nobody reads.
+///
+/// **The gain that matters is the streams that are read.** libavformat's
+/// Matroska demuxer wants a WebVTT block to be `identifier\nsettings\ntext`,
+/// and answers a block that is not with "invalid data" -- on which the
+/// demuxer gives up on the cluster that block sits in and resumes at the
+/// next thing that looks like a top-level element. That is usually the real
+/// next cluster, which begins on a key picture, and sometimes a false match
+/// inside coded picture data. Everything in between is dropped, from every
+/// stream it was delivering, and the packets that do arrive are whole and
+/// correctly timed, so nothing downstream can tell.
+///
+/// Recordings off a video site are written this way. Measured on one of
+/// them: 10798 of 18782 pictures arrive, the rest lost in 125 runs of one to
+/// four seconds, 76 of which end on a key picture; the sound loses the same
+/// share. Playback stopped part way through, the film strip drew stretches it
+/// had no picture for, the frame rate read as varying when it does not, and
+/// a cut wrote three frames in five. libavformat says nothing at all about it
+/// on that recording; on another it reports reading a block as 795 MB and an
+/// element overrunning the one containing it. `ffmpeg` reading every stream
+/// of these files loses them too, and `ffmpeg -map 0:v` does not. A subtitle
+/// track thrown away here is never parsed, so the blocks it cannot read are
+/// never read. See `examples/demuxdiag.rs`, which measures it, and
+/// `tests/run_demux_tests.sh`, which makes such a file and holds a cut of it
+/// to the plain one's pictures.
+///
+/// So this is not a tidiness rule: **a reader that does not say what it
+/// reads is a reader that can be handed less than the recording holds.**
+///
+/// **Seek before calling this, not after.** A recording is seeked by one of
+/// its streams and libavformat will not seek one that has been thrown away.
+/// See [`crate::cut`]'s look back over the subtitles, where that was learnt.
+pub fn keep_only(ictx: &mut Demux, keep: &[usize]) {
+    for stream in ictx.streams() {
+        if keep.contains(&stream.index()) {
+            continue;
+        }
+        // Through the pointer because the binding offers no setter for it on
+        // a borrowed stream. The field is a plain enum and nothing is being
+        // read out of the context while this runs.
+        unsafe {
+            (*(stream.as_ptr() as *mut ff::ffi::AVStream)).discard = ff::Discard::All.into();
+        }
+    }
+}
+
+/// Packets, read the way [`ff::format::context::Input::packets`] reads them
+/// but with an end to it.
+///
+/// That iterator answers the end of the file by stopping and every other
+/// error by reading again, at once and for ever. A recording on a share that
+/// goes away while it is being read answers every read with the same error,
+/// and the pass that was reading it spun one core at full speed and could
+/// not be stopped -- the checks for a stop are in the loops' bodies, and the
+/// spinning was inside `next`. A damaged recording can fail a read and then
+/// carry on, so a few failures in a row are read past; a run of them is the
+/// end of what can be read, and is said once.
+///
+/// What stops the reading is kept: a pass that only looks can use what it
+/// read, but one that writes a cut must not call a recording that went away
+/// half way through "the end of the file". See [`Packets::finished`].
+pub struct Packets<'a> {
+    ctx: &'a mut ff::format::context::Input,
+    failures: u32,
+    failed: Option<String>,
+    read: u32,
+}
+
+thread_local! {
+    /// What a pass on this thread is to be stopped by. See [`stop_reads_when`].
+    static STOP_READS: std::cell::RefCell<Option<Box<dyn Fn() -> bool>>> =
+        const { std::cell::RefCell::new(None) };
+    static READS_STOPPED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static READS_FAILED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Stop every read on this thread once `stop` says so, until the answer is
+/// dropped.
+///
+/// **For a pass with no stop of its own.** The commercial detection and the
+/// two flat passes read a recording several times over and took no stop
+/// anywhere inside, so 解析を中止 in the list landed only when the pass had
+/// finished -- three minutes on a two-and-a-half-hour broadcast, with the
+/// button saying nothing meanwhile. Every read here goes through [`Packets`],
+/// so it is asked there, and each read ends as though at a failure: a pass
+/// that writes says so ([`Packets::finished`]), and one that only looks comes
+/// back early with part of an answer, which its caller throws away on
+/// seeing the stop -- see [`reads_stopped`].
+pub fn stop_reads_when(stop: impl Fn() -> bool + 'static) -> StopReads {
+    STOP_READS.with(|s| *s.borrow_mut() = Some(Box::new(stop)));
+    READS_STOPPED.with(|s| s.set(false));
+    READS_FAILED.with(|s| s.set(false));
+    StopReads(())
+}
+
+/// Whether a read on this thread was ended by [`stop_reads_when`]: an answer
+/// made since then is only part of one.
+pub fn reads_stopped() -> bool {
+    READS_STOPPED.with(|s| s.get())
+}
+
+/// Whether a read on this thread, since [`stop_reads_when`], gave up at
+/// errors the recording kept giving. The pass still answers with what it
+/// read, but that answer is not the recording's and is not to be cached
+/// under the recording's size and time: a share that dropped half way would
+/// have its half answer served until the file changed.
+pub fn reads_failed() -> bool {
+    READS_FAILED.with(|s| s.get())
+}
+
+/// Held for as long as [`stop_reads_when`] is to apply.
+pub struct StopReads(());
+
+impl Drop for StopReads {
+    fn drop(&mut self) {
+        STOP_READS.with(|s| *s.borrow_mut() = None);
+        READS_STOPPED.with(|s| s.set(false));
+        READS_FAILED.with(|s| s.set(false));
+    }
+}
+
+/// Asked every this many packets: a few milliseconds of reading.
+const STOP_EVERY: u32 = 64;
+
+fn asked_to_stop() -> bool {
+    STOP_READS.with(|s| s.borrow().as_ref().is_some_and(|f| f()))
+}
+
+impl Packets<'_> {
+    /// Whether the reading got to the end of the file, or was stopped by the
+    /// errors described above. For the loops that write: a share that went
+    /// away left a cut that ended there and said it had succeeded.
+    pub fn finished(&self) -> anyhow::Result<()> {
+        match &self.failed {
+            None => Ok(()),
+            Some(e) => anyhow::bail!("the recording could not be read to the end ({e})"),
+        }
+    }
+}
+
+/// How many reads in a row may fail before the reading is over.
+const MOST_FAILURES: u32 = 64;
+
+/// How many "try again"s count as one failure. See [`Packets`].
+const EAGAIN_WORTH: u32 = 1024;
+
+/// EAGAIN as libavutil numbers it on this platform.
+fn libc_eagain() -> i32 {
+    ff::util::error::EAGAIN
+}
+
+impl<'a> Iterator for Packets<'a> {
+    type Item = (ff::format::stream::Stream<'a>, ff::Packet);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut packet = ff::Packet::empty();
+        loop {
+            match packet.read(self.ctx) {
+                Ok(()) => {
+                    self.failures = 0;
+                    self.read = self.read.wrapping_add(1);
+                    if self.read % STOP_EVERY == 1 && asked_to_stop() {
+                        READS_STOPPED.with(|s| s.set(true));
+                        self.failed = Some("stopped".to_string());
+                        return None;
+                    }
+                    // As ffmpeg-next's own iterator does: the stream borrows
+                    // the context for as long as the iterator does, and
+                    // nothing reads from the context while it is held.
+                    let ctx: &'a ff::format::context::Input =
+                        unsafe { &*(self.ctx as *const ff::format::context::Input) };
+                    let stream = unsafe { ff::format::stream::Stream::wrap(ctx, packet.stream()) };
+                    return Some((stream, packet));
+                }
+                Err(ff::Error::Eof) => return None,
+                Err(e) => {
+                    // "Try again" is what the transport stream demuxer says
+                    // while it resynchronises over damage, many times in a
+                    // row and then carries on; every other error in a row
+                    // this long is a read that is not going to succeed.
+                    let again = matches!(
+                        e,
+                        ff::Error::Other { errno } if errno == libc_eagain()
+                    );
+                    self.failures += if again { 1 } else { EAGAIN_WORTH };
+                    if self.failures >= MOST_FAILURES * EAGAIN_WORTH {
+                        self.failed = Some(e.to_string());
+                        // Only inside a pass that asks: a thread from a pool
+                        // with no pass on it would keep the mark for the next.
+                        if STOP_READS.with(|s| s.borrow().is_some()) {
+                            READS_FAILED.with(|s| s.set(true));
+                        }
+                        // Which recording, as the demuxer was handed it: the
+                        // note is said once a line, so a second recording
+                        // that failed the same way -- the same share going
+                        // away -- was said nowhere, nor in the run's log.
+                        let url = unsafe {
+                            let u = (*self.ctx.as_ptr()).url;
+                            if u.is_null() {
+                                String::new()
+                            } else {
+                                std::ffi::CStr::from_ptr(u).to_string_lossy().into_owned()
+                            }
+                        };
+                        let of = if url.is_empty() { String::new() } else { format!(" of {url}") };
+                        crate::note_once(format!(
+                            "note: reading{of} stopped at an error the recording kept giving \
+                             ({e}); what was read before it is used"
+                        ));
+                        return None;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The reading every pass here does. See [`Packets`].
+pub trait ReadPackets {
+    fn read_packets(&mut self) -> Packets<'_>;
+}
+
+impl ReadPackets for ff::format::context::Input {
+    fn read_packets(&mut self) -> Packets<'_> {
+        Packets { ctx: self, failures: 0, failed: None, read: 0 }
+    }
+}
+
+/// As [`keep_only`], and the pictures as well.
+///
+/// **For a read that stops by counting packets, or by the clock.** With
+/// every other stream thrown away, libavformat hands back nothing until it
+/// finds a packet of the ones kept -- and a broadcast's second sound track
+/// is often there only for the programme before this one, in the first
+/// minute of the recording. A read for it anywhere after that went on to the
+/// end of the file without returning, once per place it was asked about: a
+/// two-and-a-half-hour recording was read some thirty times over while it
+/// was being added to the list, and every seam of a cut did it again. The
+/// pictures are in every stretch of a recording, so with them kept a count
+/// runs out and a clock moves on whether the track is there or not.
+pub fn keep_with_pictures(ictx: &mut Demux, keep: &[usize]) {
+    let mut keep = keep.to_vec();
+    if let Some(video) = ictx.streams().best(ff::media::Type::Video) {
+        keep.push(video.index());
+    }
+    keep_only(ictx, &keep);
+}
+
+/// When a packet of any stream is presented, on the recording's own clock --
+/// what a read kept with [`keep_with_pictures`] watches to know it has gone
+/// past what it was looking for.
+pub fn packet_time(
+    stream: &ff::format::stream::Stream,
+    packet: &ff::Packet,
+    start_time: f64,
+) -> Option<f64> {
+    packet
+        .pts()
+        .or(packet.dts())
+        .map(|p| p as f64 * f64::from(stream.time_base()) - start_time)
+}
+
+/// Put every stream back, so the recording can be seeked again.
+///
+/// A pass that seeks more than once has to: libavformat will not seek by a
+/// stream it has been told to discard, and the note on [`keep_only`] is
+/// about doing the two in the right order the first time. Doing them in that
+/// order every time is this.
+pub fn keep_everything(ictx: &mut Demux) {
+    for stream in ictx.streams() {
+        // SAFETY: as in [`keep_only`].
+        unsafe {
+            (*(stream.as_ptr() as *mut ff::ffi::AVStream)).discard = ff::Discard::Default.into();
+        }
+    }
+}
+
+/// How far into a recording to look for a stream the first program map did
+/// not mention. libavformat's own limit is five megabytes.
+///
+/// A ceiling rather than a read: the analysis stops at five seconds of
+/// stream whatever this says, which on a Japanese broadcast is about ten
+/// megabytes. So a recording with nothing more to find pays for ten and not
+/// for thirty-two -- three tenths of a second, measured, on top of an open
+/// that took a quarter.
+const DEEP_PROBE: &str = "32000000";
+
+/// Whether this recording may be carrying streams libavformat has not listed.
+///
+/// **A recorder starts before the programme does, and a broadcast announces
+/// what it is sending when the programme starts.** The program map at the
+/// head of the file describes whatever was on before -- often the video and
+/// one sound track and nothing else; a few seconds in, it is replaced by one
+/// that names the rest. libavformat probes the head of the file and stops
+/// after five megabytes, which on a Japanese broadcast is about two and a
+/// half seconds, so it never sees the second map and the recording arrives
+/// here with those streams invisible.
+///
+/// Two kinds of stream arrive that way, and both were measured.
+///
+/// **The captions.** Over 300 recordings, two from each of 32 channels: 279
+/// carry captions and 7 of them are announced between 8.4 and 8.8 megabytes
+/// in -- just past where the probe stops. Invisible captions mean nothing to
+/// draw over the preview, nothing for the commercial detector's caption
+/// marks, and nothing named for the cut to carry.
+///
+/// **The second sound track.** Over 400 recordings: 37 carry two, which is
+/// how a Japanese broadcast sends a programme in two languages -- the first
+/// track the original, the second the dub, on their own pids. **22 of those
+/// 37 name the second track only past the probe**, one of them 7.2 megabytes
+/// in. Those 22 arrived here as ordinary single-track recordings: the second
+/// language was not listed, not described, and not carried into the cut.
+///
+/// A narrower question was asked here before -- only of a recording that
+/// came back with no subtitles at all -- because that is what it cost
+/// nothing to ask. The sound cannot be asked the same way: three quarters of
+/// the recordings that turn out to have two tracks look exactly like the
+/// ones that have one until the deeper probe is spent. So it is spent on
+/// every broadcast recording, which is measured at a fifth of a second on a
+/// file being read cold off a network share and nothing at all on one
+/// already in the page cache.
+///
+/// Not on a disc, though. A clip on a Blu-ray is a transport stream too, and
+/// its map is written once by an authoring tool: everything it carries is in
+/// the first copy of it, so a deeper probe there reads more of an image for
+/// an answer that cannot change.
+fn announced_late(url: &str, ictx: &ff::format::context::Input) -> bool {
+    is_transport_stream(ictx) && !off_a_disc(url)
+}
+
+/// Whether a URL names a clip on a disc rather than a recording off the air.
+///
+/// Two shapes, because a disc is read two ways: the clip's own path, when the
+/// disc is a folder, and the wrapper this module writes around a range of an
+/// image, which is the only thing that produces one.
+fn off_a_disc(url: &str) -> bool {
+    // A recorder's clip whose clocks are put back together is a `restamp:`
+    // URL wrapping one of the other two, and it is off a disc as much as
+    // they are: taken for a broadcast, it was opened a second time with the
+    // deep probe on every open.
+    let url = split_restamp(url).map_or(url, |(_, under)| under);
+    url.starts_with("subfile,") || crate::disc::clip_on_a_disc(url).is_some()
+}
+
+/// Whether what is open is a transport stream: a broadcast recording, or a
+/// clip off a Blu-ray.
+fn is_transport_stream(ictx: &ff::format::context::Input) -> bool {
+    ictx.format()
+        .name()
+        .split(',')
+        .any(|n| n.trim() == "mpegts")
+}
+
+/// Did the container come back knowing how often pictures arrive?
+///
+/// libavformat works this out while it probes, and stops probing at the
+/// first program map unless it is told otherwise. On a Blu-ray written in
+/// VC-1 that is too early: the answer comes back unset, and a frame rate of
+/// "not a number" makes nonsense of every duration derived from it. Reading
+/// every map fixes it, but it also turns up the second program a Japanese
+/// broadcast carries -- the phone-sized copy of the same material, on its own
+/// pids -- which is a different recording than the one that was asked for.
+/// So the thorough read is kept for the recordings that need it, which is
+/// what this asks.
+fn states_frame_rate(ictx: &ff::format::context::Input) -> bool {
+    ictx.streams()
+        .best(ff::media::Type::Video)
+        .map(|s| s.avg_frame_rate())
+        .is_some_and(|r| r.numerator() > 0 && r.denominator() > 0)
+}
+
+/// Whether what is open is an MPEG program stream: a `.vob`, a `.mpg`, or a
+/// DVD title read out of either.
+fn is_program_stream(ictx: &ff::format::context::Input) -> bool {
+    ictx.format().name().split(',').any(|n| n.trim() == "mpeg")
+}
+
+/// What libavformat may open to read a recording. See [`open_with`].
+pub(crate) const LOCAL_PROTOCOLS: &str = "file,subfile,concat";
+
+/// Open a file that is not a recording -- an image, a stream this program
+/// has just written -- under the same rule as [`open_with`].
+pub fn open_local(path: &str) -> Result<ff::format::context::Input> {
+    no_nul(path)?;
+    let mut opts = ff::Dictionary::new();
+    opts.set("protocol_whitelist", LOCAL_PROTOCOLS);
+    Ok(ff::format::input_with_dictionary(&*as_local(path), opts)?)
+}
+
+/// A name with a NUL in it cannot be handed to libavformat, and ffmpeg-next
+/// unwraps the conversion: it would panic rather than fail.
+fn no_nul(name: &str) -> Result<()> {
+    if name.contains('\0') {
+        bail!("that name has a NUL character in it and cannot be opened");
+    }
+    Ok(())
+}
+
+/// The name libavformat is to be handed for `url`: `file:` in front of a file
+/// on disk that it would otherwise read as a protocol.
+///
+/// libavformat takes whatever stands before the first colon for a protocol
+/// wherever that is all letters, digits and `+-.`, so a recording named
+/// `12:00.ts` and given relative, as a command line gives it, was opened as
+/// the protocol `12` and refused with "Protocol not found". Everything else --
+/// an absolute path, a drive letter, a URL this module wrote -- is handed on
+/// as it stands.
+fn as_local(url: &str) -> std::borrow::Cow<'_, str> {
+    if Path::new(url).is_file() {
+        if let Ok(name) = CString::new(url) {
+            let protocol = unsafe { ff::ffi::avio_find_protocol_name(name.as_ptr()) };
+            let file = !protocol.is_null()
+                && unsafe { std::ffi::CStr::from_ptr(protocol) }.to_bytes() == b"file";
+            // A file whose own name begins `file:` is read as the protocol
+            // too, which takes the prefix off and opens a different file.
+            if !file || url.starts_with("file:") {
+                return format!("file:{url}").into();
+            }
+        }
+    }
+    url.into()
+}
+
+/// The name to hand the muxer for an output that has passed
+/// [`refuse_url_output`]: [`as_local`]'s other half. `13:00.ts` names no
+/// protocol anyone has, which is why it passed, and is then opened as one
+/// anyway -- "Protocol not found", after the whole cut has been worked out.
+///
+/// A name that begins `file:` is written under that name too, as every other
+/// part of this program -- the check against overwriting the recording, the
+/// files written beside the output -- takes it: handed on as it stands, the
+/// muxer took the prefix off and wrote `-o file:rec.ts` over `rec.ts`, the
+/// recording being read, which the check had passed as a different file.
+pub fn as_output(output: &str) -> std::borrow::Cow<'_, str> {
+    let named = CString::new(output)
+        .map(|name| unsafe { ff::ffi::avio_find_protocol_name(name.as_ptr()) })
+        .map_or(true, |p| !p.is_null());
+    if (!named && output.contains(':')) || output.starts_with("file:") {
+        format!("file:{output}").into()
+    } else {
+        output.into()
+    }
+}
+
+/// Refuse an output that is not a file on this machine.
+///
+/// libavformat opens an output by name, and a name that is a URL is opened
+/// as one: `http://host/x.ts` would have the cut sent there. Nothing in this
+/// program writes anywhere but a file, and a project or a batch job that
+/// says otherwise is not to be taken at its word.
+pub fn refuse_url_output(output: &str) -> Result<()> {
+    let name = CString::new(output).context("that name cannot be written")?;
+    let protocol = unsafe {
+        let p = ff::ffi::avio_find_protocol_name(name.as_ptr());
+        (!p.is_null()).then(|| std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned())
+    };
+    match protocol.as_deref() {
+        None | Some("file") => Ok(()),
+        Some(other) => bail!("{output} names a {other} address; the output has to be a file"),
+    }
+}
+
+fn open(url: &str, generate_pts: bool) -> Result<Demux> {
+    open_with(url, generate_pts, false, false)
+}
+
+fn open_with(url: &str, generate_pts: bool, all_maps: bool, deep_probe: bool) -> Result<Demux> {
+    if let Some((table, under)) = split_restamp(url) {
+        return restamped(under, table, generate_pts, all_maps, deep_probe);
+    }
+    no_nul(url)?;
+    let mut opts = ff::Dictionary::new();
+    // Local files and the two ways this program names a part of one, and
+    // nothing else -- here and in everything the demuxer opens on its own
+    // behalf. A "recording" can be a playlist in disguise: an HLS or concat
+    // file named `.ts` has libavformat fetch whatever it lists, over the
+    // network if it says so, as soon as a list or a batch opens it.
+    opts.set("protocol_whitelist", LOCAL_PROTOCOLS);
+    if all_maps {
+        opts.set("scan_all_pmts", "1");
+    }
+    if deep_probe {
+        opts.set("probesize", DEEP_PROBE);
+    }
+    if generate_pts {
+        opts.set("fflags", "+genpts");
+    }
+    Ok(Demux::plain(ff::format::input_with_dictionary(&*as_local(url), opts)?))
+}
+
+/// The seams in a recording, timed on the clock the demuxer will report.
+/// Empty for everything that is one run of time, which is every recording but
+/// a recorder's clip written in several stretches.
+///
+/// Read back out of the name rather than off the disc a second time: the
+/// table travelled there when the recording was parsed, and this is the one
+/// place downstream that needs it. See [`crate::restamp::Restamp::seams`].
+pub fn joins(input: &Input) -> Vec<crate::restamp::Seam> {
+    split_restamp(&input.url).map_or_else(Vec::new, |(table, _)| table.seams())
+}
+
+/// Split a `restamp:` URL into the table and the URL it wraps. `None` for
+/// every other URL, which is nearly all of them.
+fn split_restamp(url: &str) -> Option<(Restamp, &str)> {
+    let rest = url.strip_prefix(RESTAMP)?;
+    let (table, under) = rest.split_once(UNDER)?;
+    Some((Restamp::decode(table)?, under))
+}
+
+/// An open demuxer, and whatever had to be built to open it.
+///
+/// A recording is nearly always opened straight off a URL, and then this is
+/// libavformat's own context and nothing else. A recorder's clip whose
+/// clocks are being put back together needs a reader of this program's own
+/// in front of it -- see [`Bridge`] -- and that reader has to live exactly as
+/// long as the demuxer reading through it. Holding both here is what says so.
+///
+/// It stands in for the context everywhere one was used before, because it
+/// hands out the context on demand.
+pub struct Demux {
+    ictx: std::mem::ManuallyDrop<ff::format::context::Input>,
+    /// The reader underneath, when there is one. libavformat is told the i/o
+    /// is not its own -- `AVFMT_FLAG_CUSTOM_IO` -- so closing the context
+    /// leaves this alone and it is freed here.
+    io: Option<*mut ff::ffi::AVIOContext>,
+}
+
+// The context is `Send` and so is everything hung off it here: the reader is
+// reached only through the context, which is only ever used from one thread
+// at a time.
+unsafe impl Send for Demux {}
+
+impl Demux {
+    fn plain(ictx: ff::format::context::Input) -> Demux {
+        Demux {
+            ictx: std::mem::ManuallyDrop::new(ictx),
+            io: None,
+        }
+    }
+}
+
+impl Deref for Demux {
+    type Target = ff::format::context::Input;
+    fn deref(&self) -> &Self::Target {
+        &self.ictx
+    }
+}
+
+impl DerefMut for Demux {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.ictx
+    }
+}
+
+impl Drop for Demux {
+    fn drop(&mut self) {
+        // The context goes first: it may still read while it is being closed,
+        // and what it would read through is freed below.
+        unsafe { std::mem::ManuallyDrop::drop(&mut self.ictx) };
+        let Some(pb) = self.io.take() else { return };
+        unsafe {
+            // The buffer is freed as it stands rather than as it was handed
+            // over, because libavformat is free to have grown it.
+            let bridge = (*pb).opaque as *mut Bridge;
+            ff::ffi::av_freep(std::ptr::addr_of_mut!((*pb).buffer) as *mut c_void);
+            let mut pb = pb;
+            ff::ffi::avio_context_free(&mut pb);
+            if !bridge.is_null() {
+                drop(Box::from_raw(bridge));
+            }
+        }
+    }
+}
+
+/// How much of the stream this program's own reader hands over at a time.
+/// A multiple of a source packet, so that a read that starts on one ends on
+/// one and the next begins where a packet does.
+const BRIDGE_BUFFER: usize = crate::restamp::SOURCE_PACKET * 256;
+
+/// The reader that sits between libavformat and the bytes, correcting the
+/// times as they go past.
+///
+/// It reads through an ordinary libavformat i/o context of its own, so the
+/// `subfile` and `concat` protocols keep doing what they do and this has no
+/// opinion about where the bytes are. What it adds is alignment -- a
+/// correction is applied to whole source packets, and libavformat asks for
+/// whatever it likes -- and the correction itself.
+struct Bridge {
+    under: *mut ff::ffi::AVIOContext,
+    table: Restamp,
+    /// Whole packets, read and corrected before any of them is handed over.
+    scratch: Vec<u8>,
+}
+
+/// libavformat's two flags for a seek that is not a seek: one asks how long
+/// the stream is, the other insists on moving even where moving is dear.
+const AVSEEK_SIZE: c_int = 0x10000;
+const AVSEEK_FORCE: c_int = 0x20000;
+
+/// Seek from where the reader stands, and seek from the start.
+const SEEK_CUR: c_int = 1;
+const SEEK_SET: c_int = 0;
+
+impl Bridge {
+    fn read(&mut self, out: *mut u8, size: c_int) -> c_int {
+        let size = size.max(0) as usize;
+        // Where the reader underneath stands. `avio_tell` is a header's
+        // one-liner rather than a function to call, so it is written out.
+        let at = unsafe { ff::ffi::avio_seek(self.under, 0, SEEK_CUR) };
+        if at < 0 || size == 0 {
+            return ff::ffi::AVERROR_EOF;
+        }
+        let packet = crate::restamp::SOURCE_PACKET;
+        // Where the packet this read starts inside begins, and how much of
+        // it has already gone by.
+        let past = at as usize % packet;
+        let want = (past + size).div_ceil(packet) * packet;
+        if self.scratch.len() < want {
+            self.scratch.resize(want, 0);
+        }
+        if past != 0 {
+            unsafe { ff::ffi::avio_seek(self.under, at - past as i64, SEEK_SET) };
+        }
+        let mut got = 0usize;
+        let mut failed = None;
+        while got < want {
+            let n = unsafe {
+                ff::ffi::avio_read(
+                    self.under,
+                    self.scratch[got..].as_mut_ptr(),
+                    (want - got) as c_int,
+                )
+            };
+            if n <= 0 {
+                if n < 0 && n != ff::ffi::AVERROR_EOF {
+                    failed = Some(n);
+                }
+                break;
+            }
+            got += n as usize;
+        }
+        // A read that failed is handed up as the failure it is, not as the
+        // end of the stream: said as the end, a share that went away part way
+        // through a recorder's clip was a clip that ended there -- the cut
+        // stopped short and said it had succeeded, and the walk's half was
+        // kept as the clip's index under an image that never changes.
+        // Whatever was read before the failure is handed over first; the
+        // next read meets the failure again.
+        if got <= past {
+            return failed.unwrap_or(ff::ffi::AVERROR_EOF);
+        }
+        self.table.apply(at as u64 - past as u64, &mut self.scratch[..got]);
+        let mut n = (got - past).min(size);
+        // Whole packets wherever there are any, so that the next read starts
+        // where a packet does and nothing has to be read twice.
+        if n >= packet {
+            n -= n % packet;
+        }
+        unsafe {
+            std::ptr::copy_nonoverlapping(self.scratch[past..].as_ptr(), out, n);
+            ff::ffi::avio_seek(self.under, at + n as i64, SEEK_SET);
+        }
+        n as c_int
+    }
+
+    fn seek(&mut self, to: i64, whence: c_int) -> i64 {
+        if whence & AVSEEK_SIZE != 0 {
+            return unsafe { ff::ffi::avio_size(self.under) };
+        }
+        unsafe { ff::ffi::avio_seek(self.under, to, whence & !AVSEEK_FORCE) }
+    }
+}
+
+impl Drop for Bridge {
+    /// The reader underneath is this one's to close, and closing it is what
+    /// gives the file handle back.
+    fn drop(&mut self) {
+        unsafe { ff::ffi::avio_closep(&mut self.under) };
+    }
+}
+
+unsafe extern "C" fn bridge_read(opaque: *mut c_void, out: *mut u8, size: c_int) -> c_int {
+    (*(opaque as *mut Bridge)).read(out, size)
+}
+
+unsafe extern "C" fn bridge_seek(opaque: *mut c_void, to: i64, whence: c_int) -> i64 {
+    (*(opaque as *mut Bridge)).seek(to, whence)
+}
+
+/// Open `under` with the clocks in it corrected as it is read.
+///
+/// The same three questions the ordinary path answers are answered here --
+/// whether to invent presentation times, whether to read every program map,
+/// how far to probe -- because the caller has already asked them of a first
+/// open and is asking for a second.
+fn restamped(
+    under: &str,
+    table: Restamp,
+    generate_pts: bool,
+    all_maps: bool,
+    deep_probe: bool,
+) -> Result<Demux> {
+    unsafe {
+        let mut below: *mut ff::ffi::AVIOContext = ptr::null_mut();
+        let name = CString::new(&*as_local(under)).context("that name cannot be opened")?;
+        let mut opts: *mut ff::ffi::AVDictionary = ptr::null_mut();
+        set(&mut opts, "protocol_whitelist", LOCAL_PROTOCOLS);
+        let err = ff::ffi::avio_open2(
+            &mut below,
+            name.as_ptr(),
+            ff::ffi::AVIO_FLAG_READ as c_int,
+            ptr::null(),
+            &mut opts,
+        );
+        ff::ffi::av_dict_free(&mut opts);
+        if err < 0 {
+            bail!("cannot open {under}: {}", ff::Error::from(err));
+        }
+
+        let buffer = ff::ffi::av_malloc(BRIDGE_BUFFER) as *mut u8;
+        let bridge = Box::into_raw(Box::new(Bridge {
+            under: below,
+            table,
+            scratch: Vec::new(),
+        }));
+        let pb = ff::ffi::avio_alloc_context(
+            buffer,
+            BRIDGE_BUFFER as c_int,
+            0,
+            bridge as *mut c_void,
+            Some(bridge_read),
+            None,
+            Some(bridge_seek),
+        );
+
+        let mut ctx = ff::ffi::avformat_alloc_context();
+        (*ctx).pb = pb;
+        (*ctx).flags |= ff::ffi::AVFMT_FLAG_CUSTOM_IO as c_int;
+        let mut opts: *mut ff::ffi::AVDictionary = ptr::null_mut();
+        set(&mut opts, "protocol_whitelist", LOCAL_PROTOCOLS);
+        if all_maps {
+            set(&mut opts, "scan_all_pmts", "1");
+        }
+        if deep_probe {
+            set(&mut opts, "probesize", DEEP_PROBE);
+        }
+        if generate_pts {
+            set(&mut opts, "fflags", "+genpts");
+        }
+        let err = ff::ffi::avformat_open_input(&mut ctx, ptr::null(), ptr::null_mut(), &mut opts);
+        ff::ffi::av_dict_free(&mut opts);
+        if err < 0 {
+            // `avformat_open_input` has freed the context and left the i/o
+            // alone, so what this module made is what this module takes back.
+            ff::ffi::av_freep(std::ptr::addr_of_mut!((*pb).buffer) as *mut c_void);
+            let mut pb = pb;
+            ff::ffi::avio_context_free(&mut pb);
+            drop(Box::from_raw(bridge));
+            bail!("cannot open {under}: {}", ff::Error::from(err));
+        }
+        let demux = Demux {
+            ictx: std::mem::ManuallyDrop::new(ff::format::context::Input::wrap(ctx)),
+            io: Some(pb),
+        };
+        let err = ff::ffi::avformat_find_stream_info(ctx, ptr::null_mut());
+        if err < 0 {
+            bail!("cannot read {under}: {}", ff::Error::from(err));
+        }
+        Ok(demux)
+    }
+}
+
+/// One option, said the way libavformat wants to hear it.
+unsafe fn set(opts: *mut *mut ff::ffi::AVDictionary, key: &str, value: &str) {
+    let (Ok(key), Ok(value)) = (CString::new(key), CString::new(value)) else {
+        return;
+    };
+    ff::ffi::av_dict_set(opts, key.as_ptr(), value.as_ptr(), 0);
+}
+
+/// Split a DVD title's name into the stream it plays and the sectors of it.
+///
+/// `…/VTS_01_1.VOB@0-2082359` becomes the path and the pair. Anything else --
+/// including a real file whose name happens to hold an `@` -- comes back
+/// `None`, because the suffix only counts on a name that ends in a `.VOB`
+/// with two sector numbers behind it.
+fn split_at_sectors(spec: &str) -> Option<(&str, u64, u64)> {
+    let (base, range) = spec.rsplit_once('@')?;
+    if !base.to_ascii_uppercase().ends_with(".VOB") {
+        return None;
+    }
+    let (first, last) = range.split_once('-')?;
+    let (first, last): (u64, u64) = (first.parse().ok()?, last.parse().ok()?);
+    // A number too large to be a byte offset is no sector of any disc, and
+    // multiplied out it would overflow.
+    last.checked_add(1)?.checked_mul(SECTOR)?;
+    (first <= last).then_some((base, first, last))
+}
+
+/// The clip a name plays a stretch of, and which source packets those are.
+///
+/// `None` for every other name, the bare clip included: a clip whose clock
+/// never restarts is played whole and named whole.
+pub fn clip_window(spec: &str) -> Option<(&str, u64, u64)> {
+    let (base, range) = spec.rsplit_once('@')?;
+    if !base.to_ascii_uppercase().ends_with(".M2TS") {
+        return None;
+    }
+    let (first, last) = range.split_once('-')?;
+    let (first, last): (u64, u64) = (first.parse().ok()?, last.parse().ok()?);
+    last.checked_add(1)?.checked_mul(SOURCE_PACKET)?;
+    (first <= last).then_some((base, first, last))
+}
+
+/// One sequence of a clip: the bytes its source packets occupy.
+///
+/// The clip is parsed first and the stretch taken out of the answer, so that
+/// a clip inside an image and a clip beside one are the same case here --
+/// the first arrives as a range of the image and the second as a whole file,
+/// and a stretch of either is a range of one file.
+fn clip_sequence(spec: &str, base: &str, first: u64, last: u64) -> Result<Input> {
+    let clip = Input::parse(base)?;
+    if !clip.parts.is_empty() {
+        bail!("{spec}: a clip written in pieces cannot be played a sequence at a time");
+    }
+    let whole = match clip.range {
+        Some(r) => r.len,
+        None => std::fs::metadata(&clip.file)
+            .with_context(|| format!("cannot measure {}", clip.file.display()))?
+            .len(),
+    };
+    let at = clip.range.map_or(0, |r| r.at);
+    let want = Range {
+        at: first * SOURCE_PACKET,
+        len: (last + 1 - first) * SOURCE_PACKET,
+    };
+    let range = clamp(want, whole)
+        .ok_or_else(|| anyhow!("{spec}: those packets are not in this clip"))?;
+    let url = format!(
+        "subfile,,start,{},end,{},,:file:{}",
+        at + range.at,
+        at + range.at + range.len,
+        clip.file.to_string_lossy()
+    );
+    Ok(Input {
+        spec: spec.to_string(),
+        url,
+        file: clip.file,
+        range: Some(Range {
+            at: at + range.at,
+            len: range.len,
+        }),
+        parts: Vec::new(),
+    })
+}
+
+/// Where a DVD title's bytes are, and how to hand them to a demuxer.
+///
+/// The name points at the first of the pieces the title set's stream is
+/// written in; the rest are its numbered siblings, and the sectors are
+/// counted across all of them together. So the pieces are found first and the
+/// range is taken out of the whole.
+fn dvd_title(spec: &str, base: &str, first: u64, last: u64) -> Result<Input> {
+    let want = Range {
+        at: first * SECTOR,
+        len: (last + 1 - first) * SECTOR,
+    };
+    let path = Path::new(base);
+    match split_at_image(path) {
+        // Inside an image the pieces are laid down end to end, so the title
+        // is one range of the image and the demuxer never learns there was a
+        // filesystem, let alone nine files.
+        Some((image, inside)) => {
+            let img = udf::Image::open(&image)?;
+            let (at, whole) = vobs_in_image(&img, &inside, &image)?;
+            let range = clamp(want, whole)
+                .ok_or_else(|| anyhow!("{spec}: those sectors are not on this disc"))?;
+            let url = format!(
+                "subfile,,start,{},end,{},,:file:{}",
+                at + range.at,
+                at + range.at + range.len,
+                image.to_string_lossy()
+            );
+            Ok(Input {
+                spec: spec.to_string(),
+                url,
+                file: image,
+                range: Some(Range {
+                    at: at + range.at,
+                    len: range.len,
+                }),
+                parts: Vec::new(),
+            })
+        }
+        // On a folder they are nine files, and putting them back together is
+        // libavformat's `concat`.
+        None => {
+            let parts = vobs_beside(path)?;
+            let whole: u64 = parts.iter().map(|(_, len)| len).sum();
+            let range = clamp(want, whole)
+                .ok_or_else(|| anyhow!("{spec}: those sectors are not on this disc"))?;
+            // Each piece as [`as_local`] spells it: `concat` opens every one
+            // as a URL of its own, and a folder given relative whose first
+            // name holds a colon (`12:00/VIDEO_TS/...`) was the protocol `12`.
+            let joined: Vec<String> = parts
+                .iter()
+                .map(|(p, _)| as_local(&p.to_string_lossy()).into_owned())
+                .collect();
+            let concat = format!("concat:{}", joined.join("|"));
+            // A title that is the whole stream needs no window around the
+            // join, and one protocol is worth more than two.
+            let url = if range.at == 0 && range.len == whole {
+                concat
+            } else {
+                format!(
+                    "subfile,,start,{},end,{},,:{concat}",
+                    range.at,
+                    range.at + range.len
+                )
+            };
+            Ok(Input {
+                spec: spec.to_string(),
+                url,
+                file: parts[0].0.clone(),
+                range: Some(range),
+                parts: parts.into_iter().map(|(p, _)| p).collect(),
+            })
+        }
+    }
+}
+
+/// A range held to what is actually there.
+///
+/// The last cell of a title runs to the end of the last VOBU, and an index
+/// that rounds that up past the end of the stream is a disc that was written
+/// slightly wrong rather than one that cannot be played.
+fn clamp(want: Range, whole: u64) -> Option<Range> {
+    if want.at >= whole {
+        return None;
+    }
+    Some(Range {
+        at: want.at,
+        len: want.len.min(whole - want.at),
+    })
+}
+
+/// Where a title set's stream begins inside an image, and how long it is.
+///
+/// The pieces have to be one unbroken run for this to be a byte range at all.
+/// The format makes them one -- a title set's stream is written in one go,
+/// and the gigabyte boundary is a limit on file size and not on layout -- so
+/// an image where they are not is one that was assembled by something that
+/// took the files apart, and saying so is better than reading the pieces in
+/// whatever order they happen to lie in.
+fn vobs_in_image(img: &udf::Image, inside: &str, image: &Path) -> Result<(u64, u64)> {
+    let mut at = 0u64;
+    let mut whole = 0u64;
+    for (n, name) in vob_names(inside).into_iter().enumerate() {
+        let Some(entry) = img.find(&name) else { break };
+        let run = entry.contiguous().ok_or_else(|| {
+            anyhow!(
+                "{name} is written in pieces on {}, which cannot be read in place",
+                image.display()
+            )
+        })?;
+        if n == 0 {
+            at = run.at;
+        } else if run.at != at + whole {
+            bail!(
+                "{name} does not follow the piece before it on {}",
+                image.display()
+            );
+        }
+        whole += run.len;
+    }
+    if whole == 0 {
+        bail!("{inside} is not on {}", image.display());
+    }
+    Ok((at, whole))
+}
+
+/// The pieces of a title set's stream in a folder, in order, with their
+/// lengths.
+fn vobs_beside(first: &Path) -> Result<Vec<(PathBuf, u64)>> {
+    let dir = first.parent().unwrap_or(Path::new("."));
+    let name = first
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let mut out = Vec::new();
+    for want in vob_names(&name) {
+        let path = dir.join(&want);
+        let path = if path.exists() {
+            path
+        } else {
+            dir.join(want.to_ascii_lowercase())
+        };
+        let Ok(meta) = std::fs::metadata(&path) else {
+            break;
+        };
+        out.push((path, meta.len()));
+    }
+    if out.is_empty() {
+        bail!("cannot open {}", first.display());
+    }
+    Ok(out)
+}
+
+/// `VTS_01_1.VOB` and the eight names that may follow it, keeping whatever
+/// path was in front.
+fn vob_names(first: &str) -> Vec<String> {
+    let Some(at) = first.to_ascii_uppercase().rfind(".VOB") else {
+        return Vec::new();
+    };
+    // The piece number is the character before the extension.
+    let Some(number) = first[..at].chars().last() else {
+        return Vec::new();
+    };
+    if !number.is_ascii_digit() {
+        return Vec::new();
+    }
+    let stem = &first[..at - 1];
+    let ext = &first[at..];
+    (1..=MAX_VOB).map(|n| format!("{stem}{n}{ext}")).collect()
+}
+
+/// Whether two paths name one file: the same name, a link to it, or on Unix
+/// a hard link. A path that does not exist names nothing yet.
+pub fn same_file(a: &Path, b: &Path) -> bool {
+    let (Ok(ma), Ok(mb)) = (std::fs::metadata(a), std::fs::metadata(b)) else {
+        return false;
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        ma.dev() == mb.dev() && ma.ino() == mb.ino()
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (ma, mb);
+        match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+            (Ok(x), Ok(y)) => x == y,
+            _ => false,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn an_output_is_written_under_the_name_it_is_given() {
+        assert_eq!(as_output("/a/rec.ts"), "/a/rec.ts");
+        assert_eq!(as_output("13:00.ts"), "file:13:00.ts");
+        // Not `rec.ts`, which is what the muxer makes of it as it stands.
+        assert_eq!(as_output("file:rec.ts"), "file:file:rec.ts");
+        assert!(refuse_url_output("http://host/x.ts").is_err());
+    }
+
+    #[test]
+    fn a_file_url_is_the_file_it_names() {
+        let dir = std::env::temp_dir().join("smartcut-input-file-url");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("rec.ts");
+        File::create(&path).unwrap().write_all(b"0123456789").unwrap();
+        let input = Input::parse(&format!("file:{}", path.display())).unwrap();
+        assert!(input.refuse_as_output(&path.to_string_lossy()).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_ordinary_path_is_left_alone() {
+        let dir = std::env::temp_dir().join("smartcut-input-plain");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("rec.ts");
+        let mut f = File::create(&path).unwrap();
+        f.write_all(b"0123456789").unwrap();
+
+        let spec = path.to_string_lossy().into_owned();
+        let input = Input::parse(&spec).unwrap();
+        assert_eq!(input.url, spec);
+        assert!(!input.nested());
+        assert_eq!(input.bytes().unwrap(), 10);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn one_sequence_of_a_clip_names_the_packets_it_plays() {
+        assert_eq!(
+            clip_window("/rec/R.iso/BDAV/STREAM/00001.m2ts@8960-4605951"),
+            Some(("/rec/R.iso/BDAV/STREAM/00001.m2ts", 8960, 4_605_951))
+        );
+        // A clip named whole, a title of a DVD, and a recording whose own
+        // name holds an at-sign are none of them this.
+        assert_eq!(clip_window("/rec/R.iso/BDAV/STREAM/00001.m2ts"), None);
+        assert_eq!(clip_window("/rec/D.iso/VIDEO_TS/VTS_01_1.VOB@0-2267"), None);
+        assert_eq!(clip_window("/rec/2026-08-17@22.ts"), None);
+        // Backwards, and not a pair of numbers at all.
+        assert_eq!(clip_window("/x/00001.m2ts@900-100"), None);
+        assert_eq!(clip_window("/x/00001.m2ts@first-last"), None);
+    }
+
+    #[test]
+    fn a_sequence_is_read_as_the_bytes_it_occupies() {
+        let dir = std::env::temp_dir().join("smartcut-input-sequence");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("00001.m2ts");
+        let mut f = File::create(&path).unwrap();
+        f.write_all(&vec![0u8; 10 * SOURCE_PACKET as usize]).unwrap();
+
+        let input = Input::parse(&format!("{}@2-5", path.to_string_lossy())).unwrap();
+        assert!(input.nested());
+        let range = input.range.unwrap();
+        assert_eq!(range.at, 2 * SOURCE_PACKET);
+        assert_eq!(range.len, 4 * SOURCE_PACKET);
+        // A stretch that runs off the end is cut to what is there rather
+        // than asked for past it.
+        let input = Input::parse(&format!("{}@8-99", path.to_string_lossy())).unwrap();
+        assert_eq!(input.range.unwrap().len, 2 * SOURCE_PACKET);
+        // And one that begins past the end is refused.
+        assert!(Input::parse(&format!("{}@20-30", path.to_string_lossy())).is_err());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_dvd_title_names_the_sectors_it_plays() {
+        assert_eq!(
+            split_at_sectors("/rec/Denshi.iso/VIDEO_TS/VTS_01_1.VOB@0-2082359"),
+            Some(("/rec/Denshi.iso/VIDEO_TS/VTS_01_1.VOB", 0, 2082359))
+        );
+        // A recording whose own name holds an at-sign is not one of these.
+        assert_eq!(split_at_sectors("/rec/2026-08-17@22.ts"), None);
+        assert_eq!(split_at_sectors("/rec/VTS_01_1.VOB@nine-ten"), None);
+        // Backwards is not a range.
+        assert_eq!(split_at_sectors("/rec/VTS_01_1.VOB@9-8"), None);
+    }
+
+    #[test]
+    fn a_title_sets_stream_is_nine_files_at_the_most() {
+        let names = vob_names("VTS_01_1.VOB");
+        assert_eq!(names.len(), 9);
+        assert_eq!(names[0], "VTS_01_1.VOB");
+        assert_eq!(names[8], "VTS_01_9.VOB");
+        // The path in front is kept, and the piece number is the one digit
+        // that changes.
+        assert_eq!(
+            vob_names("VIDEO_TS/VTS_12_1.VOB")[1],
+            "VIDEO_TS/VTS_12_2.VOB"
+        );
+        assert!(vob_names("recording.ts").is_empty());
+    }
+
+    #[test]
+    fn a_dvd_title_in_a_folder_is_the_pieces_joined_and_a_window_on_them() {
+        let dir = std::env::temp_dir().join("smartcut-input-dvd");
+        let _ = std::fs::create_dir_all(&dir);
+        // Two pieces of one sector each, so that a title of the second sector
+        // is a range that begins inside the second file.
+        for (n, fill) in [(1u8, b'A'), (2, b'B')] {
+            let mut f = File::create(dir.join(format!("VTS_01_{n}.VOB"))).unwrap();
+            f.write_all(&vec![fill; SECTOR as usize]).unwrap();
+        }
+        let first = dir.join("VTS_01_1.VOB");
+        let spec = format!("{}@1-1", first.to_string_lossy());
+        let input = Input::parse(&spec).unwrap();
+
+        assert_eq!(input.parts.len(), 2);
+        assert_eq!(
+            input.range,
+            Some(Range {
+                at: SECTOR,
+                len: SECTOR
+            })
+        );
+        assert!(
+            input
+                .url
+                .starts_with("subfile,,start,2048,end,4096,,:concat:"),
+            "{}",
+            input.url
+        );
+        assert_eq!(input.bytes().unwrap(), SECTOR);
+
+        // And the window reads out of the second file, which is the whole
+        // point of joining them.
+        let mut buf = vec![0u8; SECTOR as usize + 1];
+        let n = input.open().unwrap().read(&mut buf).unwrap();
+        assert_eq!(&buf[..n], &vec![b'B'; n][..]);
+
+        // A title that is the whole stream needs no window around the join.
+        let spec = format!("{}@0-1", first.to_string_lossy());
+        assert!(Input::parse(&spec).unwrap().url.starts_with("concat:"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_name_that_is_nothing_yet_is_handed_on() {
+        // libavformat opens more than files; this is not the place to say no.
+        let input = Input::parse("http://example.invalid/a.ts").unwrap();
+        assert_eq!(input.url, "http://example.invalid/a.ts");
+    }
+
+    #[test]
+    fn a_window_reads_and_seeks_inside_its_own_bounds() {
+        let dir = std::env::temp_dir().join("smartcut-input-window");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("image.bin");
+        File::create(&path)
+            .unwrap()
+            .write_all(b"AAAAhello worldZZZZ")
+            .unwrap();
+
+        let input = Input {
+            spec: "x".into(),
+            url: "x".into(),
+            file: path.clone(),
+            range: Some(Range { at: 4, len: 11 }),
+            parts: Vec::new(),
+        };
+        let mut r = input.open().unwrap();
+        let mut buf = [0u8; 32];
+        let n = r.read(&mut buf).unwrap();
+        assert_eq!(&buf[..n], b"hello world");
+        // The window ends where it ends: the Zs are another clip's.
+        assert_eq!(r.read(&mut buf).unwrap(), 0);
+        r.seek(SeekFrom::Start(6)).unwrap();
+        let n = r.read(&mut buf).unwrap();
+        assert_eq!(&buf[..n], b"world");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A reader underneath that fails part way through: the bytes before
+    /// the failure are handed over, and then the failure itself rather than
+    /// the end of the stream, again on every read after it.
+    #[test]
+    fn a_failed_read_is_not_the_end() {
+        const HAS: usize = 1000;
+        const FAIL: c_int = -5;
+        struct Fake {
+            at: usize,
+        }
+        unsafe extern "C" fn fake_read(opaque: *mut c_void, out: *mut u8, size: c_int) -> c_int {
+            let fake = &mut *(opaque as *mut Fake);
+            let n = (size.max(0) as usize).min(HAS.saturating_sub(fake.at));
+            if n == 0 {
+                return FAIL;
+            }
+            ptr::write_bytes(out, 0x47, n);
+            fake.at += n;
+            n as c_int
+        }
+        unsafe extern "C" fn fake_seek(opaque: *mut c_void, to: i64, whence: c_int) -> i64 {
+            if whence & AVSEEK_SIZE != 0 {
+                return -1;
+            }
+            (*(opaque as *mut Fake)).at = to as usize;
+            to
+        }
+        let mut fake = Fake { at: 0 };
+        let mut bridge = unsafe {
+            let buffer = ff::ffi::av_malloc(4096) as *mut u8;
+            Bridge {
+                under: ff::ffi::avio_alloc_context(
+                    buffer,
+                    4096,
+                    0,
+                    &mut fake as *mut Fake as *mut c_void,
+                    Some(fake_read),
+                    None,
+                    Some(fake_seek),
+                ),
+                table: Restamp::default(),
+                scratch: Vec::new(),
+            }
+        };
+        let mut out = vec![0u8; 768];
+        let mut total = 0usize;
+        let last = loop {
+            let n = bridge.read(out.as_mut_ptr(), out.len() as c_int);
+            if n <= 0 || total > HAS {
+                break n;
+            }
+            total += n as usize;
+        };
+        let again = bridge.read(out.as_mut_ptr(), out.len() as c_int);
+        // Not a context `avio_closep` may close, its opaque being no URL:
+        // taken apart here, before anything can fail and drop it.
+        unsafe {
+            ff::ffi::av_freep(std::ptr::addr_of_mut!((*bridge.under).buffer) as *mut c_void);
+            ff::ffi::avio_context_free(&mut bridge.under);
+        }
+        assert_eq!(total, HAS);
+        assert_eq!(last, FAIL);
+        assert_eq!(again, FAIL);
+    }
+}

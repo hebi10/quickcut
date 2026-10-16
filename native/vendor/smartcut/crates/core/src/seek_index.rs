@@ -1,0 +1,871 @@
+//! What is written down about a recording so that opening it again is cheap.
+//!
+//! Two passes stand between opening a file and being able to work on it, and
+//! neither depends on anything but the file itself:
+//!
+//!   * the **access-point index** -- every packet read once, in decode order,
+//!     to find the entry points and the leading pictures that hang off them.
+//!     About a second per gigabyte from cache, far worse from a disc.
+//!   * the **thumbnail track** -- every key picture decoded once, for the
+//!     pictures the scrubber and the film strip show and for the scene index
+//!     that falls out of comparing them. Around ten seconds for half an hour
+//!     of 1440x1080 MPEG-2.
+//!
+//! Both answers are the same every time the same file is opened, so they are
+//! kept: this is the seek index. What it buys is the second open and every
+//! one after it, which for a recording being cut over several sittings is
+//! most of them.
+//!
+//! It is deliberately not a proxy. Nothing here is re-encoded and nothing
+//! stands in for the recording -- the pictures still come from the recording
+//! itself. The index only says *where in the file* they are, which is the
+//! part that was being worked out again from scratch every time.
+//!
+//! The file is keyed on the recording's path, size and modification time, so
+//! a re-recording under the same name gets its own and never the old one.
+
+use anyhow::{anyhow, bail, Context, Result};
+use std::path::{Path, PathBuf};
+
+use crate::{index, thumbs, AccessPoint};
+
+/// Tells one half-written index from another within this process; see
+/// [`SeekIndex::save`].
+static SERIAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Bumped when a change here would make an existing file wrong. It goes into
+/// the cache key, so older ones are simply never looked at again.
+///
+/// 3: the held pictures are capped by what they weigh rather than by how many
+/// there are ([`thumbs::ThumbOptions::max_bytes`]). The format did not change
+/// and an old file still reads, but the track inside one made under the old
+/// cap is thinner than the film strip needs on anything over half an hour --
+/// which is the whole of what that change was for, so an index carrying one
+/// has to be made again rather than picked up.
+///
+/// 4: an index made for a program stream held the probe's own handful of
+/// entry points rather than the recording's, because the test that was meant
+/// to turn that table away let it through ([`index::ContainerIndex`]).
+/// Nothing in an
+/// index says which source made it, and a saved one is simply believed, so a
+/// DVD opened before this stayed broken however often it was opened again.
+///
+/// 5: an HEVC recording's leading pictures are droppable by the standard's
+/// own rule rather than by what each picture says about itself
+/// ([`crate::bitstream::leading_always_droppable`]), and an index written
+/// before that says they are not. Nothing in the file says which codec it was
+/// made for, and a saved index is believed, so a 4K recording opened before
+/// this would go on re-encoding thirteen seconds at a cut's head however
+/// often it was opened again.
+///
+/// 6: an index made off a disc's entry-point map carries what the pictures
+/// weigh, sampled at a few dozen places ([`index::sample_bit_rate`]), where
+/// one made before this carries nothing and `--fit` sizes the disc from the
+/// whole file's rate less a tenth instead. On six broadcast recordings that
+/// guess was 2% low, which is a quarter of a gigabyte over a single layer --
+/// and a saved index is believed, so the disc that would not fit went on not
+/// fitting however often it was opened again.
+/// 8: an index made off a container's seek table holds the instants its
+/// pictures are *shown* at, where one made before this holds the instants
+/// they are decoded at ([`index::table_shift`]). On an MP4 carrying B
+/// pictures those are the reorder delay apart -- two frames on the 23.976 fps
+/// H.264 recording measured here -- so every entry point in a saved index is
+/// two frames early, and nothing in the file says so: the film strip went on
+/// decoding a GOP per cell however often the recording was opened again.
+///
+/// 9: every time is rebased by [`crate::container_start`], a stream's own
+/// start, where before it was libav's figure rounded to the microsecond. An
+/// index written before holds its entry points up to half a microsecond off
+/// the pictures the recording now decodes to, and the tests against a point
+/// with no tolerance (`p.time <= from + 1e-9`) then took the one before it:
+/// a GOP out.
+///
+/// 10: a short program stream -- a DVD title of a few seconds, a `.mpg` off a
+/// camera -- was indexed off libavformat's pseudo-table, which [`index::ContainerIndex`]
+/// now declines for every MPEG stream: entries that were not entry points,
+/// and none for the first half second. As with 4, nothing in the file says
+/// which source made it, and a disc image never changes size or time.
+///
+/// 11: two things a walk saved before got wrong and kept. An `.mp4` cut out
+/// with `ffmpeg -ss X -c copy` hides a key picture before 0 behind its edit
+/// list; it was saved as an entry point at 0, and every range from the head
+/// then failed ("passed without being met") however often it was opened.
+/// And a field-coded (PAFF) H.264 recording was saved as variable-rate, its
+/// two fields counted as two pictures.
+///
+/// 12: whether each entry point has been read is kept point by point. It was
+/// written once for the lot, as whether the index had read its leading
+/// pictures, and an index off a container's table says it had not -- so the
+/// pre-roll entry point of an `.mp4` cut with `ffmpeg -ss`, which the open
+/// that found it marks as read, came back unread on the next open, was read
+/// for a key picture at 0, and took the next one's place where that one is
+/// decoded at 0: the copy then began a picture late, and the cut lost its
+/// first picture on every open but the first.
+///
+/// 13: an H.264 entry point whose leading pictures predict only from one
+/// another is droppable ([`crate::leadrefs`]), where before any leading
+/// picture that was a reference made it one no copy could open on. A
+/// recorder's field-coded recording is built that way at every entry point,
+/// and an index saved before this says so of each point it read, which a
+/// saved index is believed on: each range's head went on being re-encoded
+/// up to the first point nobody had read.
+///
+/// 14: a leading reference picture that marks the buffer itself
+/// (`memory_management_control_operation`) makes its entry point one a copy
+/// cannot open on, even where all it unmarks is from before the point. An
+/// index of 13 -- written only by development builds, never a release --
+/// may call such a point droppable, and a copy opened there decoded a B
+/// picture against the wrong list.
+///
+/// 15: a clip on a disc whose container states a length ends where its last
+/// picture does, read off the clip's tail ([`index::DiscIndex`]); the length
+/// libavformat guesses can be a picture short. An index of 14 -- again only
+/// from development builds -- keeps the guess as the clip's end.
+pub const VERSION: u32 = 15;
+
+const MAGIC: &[u8; 4] = b"SCIX";
+
+const FLAG_LEADING_KNOWN: u32 = 1 << 0;
+const FLAG_PULLDOWN_KNOWN: u32 = 1 << 1;
+const FLAG_PULLDOWN: u32 = 1 << 2;
+const FLAG_HAS_TRACK: u32 = 1 << 3;
+const FLAG_END_KNOWN: u32 = 1 << 4;
+const FLAG_VARIABLE_KNOWN: u32 = 1 << 5;
+const FLAG_VARIABLE: u32 = 1 << 6;
+
+/// Beside `droppable` in an entry point's flag byte: the point has been read
+/// and is not to be read again. See [`VERSION`] 12.
+const MEASURED: u8 = 1 << 1;
+
+/// The fewest bytes one access point can take: its time, the time its lead
+/// pictures begin at, its position, whether it is droppable, and the count of
+/// the lead pictures -- which is zero often enough that the count is where one
+/// stops. Used to disbelieve a count before a vector is raised for it.
+const ACCESS_POINT: usize = 8 + 8 + 8 + 1 + 4;
+
+/// And one thumbnail: its time and the length of its JPEG.
+const THUMB: usize = 8 + 4;
+
+/// Everything a previous open worked out about a recording.
+pub struct SeekIndex {
+    pub points: Vec<AccessPoint>,
+    /// Whether the leading-picture fields were measured or merely assumed.
+    pub leading_known: bool,
+    /// Where the last picture is, when the pass that made this read far
+    /// enough to know. See [`index::Index::end`].
+    pub end: Option<f64>,
+    /// Whether the stream uses 2:3 pulldown, when the pass that made this
+    /// could tell.
+    pub pulldown: Option<bool>,
+    /// Whether its pictures come at a rate the frame arithmetic can predict,
+    /// when the pass that made this could tell. See
+    /// [`crate::VideoInfo::variable_rate`].
+    pub variable: Option<bool>,
+    /// What the pictures weigh, when the pass that made this counted them.
+    /// See [`crate::VideoInfo::bit_rate`].
+    ///
+    /// Written after everything else, so that an index from before there was
+    /// such a figure still loads -- it simply has nothing there, and the
+    /// recording is re-encoded against its frame size as it was before. That
+    /// is worth more than the alternative, which is every held index on the
+    /// machine being thrown away and read again for one number.
+    pub bit_rate: Option<f64>,
+    /// The thumbnail track and scene index, when one was built.
+    ///
+    /// Optional because the index is worth keeping on its own: a file whose
+    /// track failed to build, or was never asked for, still saves the pass
+    /// over its packets next time.
+    pub track: Option<thumbs::Track>,
+    /// Whether the pass behind this read the recording to its end. Not
+    /// written to the file: one that did not is never written at all.
+    whole: bool,
+}
+
+/// A held index drops straight into [`crate::scan_with`] in place of the
+/// walk it came from.
+///
+/// The seam is [`index::IndexSource`] itself: what the walk produced is
+/// exactly what this hands back, so nothing downstream can tell which one
+/// answered.
+impl index::IndexSource for SeekIndex {
+    fn name(&self) -> &'static str {
+        "seek index"
+    }
+
+    fn build(&self, _input: index::IndexInput) -> Result<index::Index> {
+        if self.points.is_empty() {
+            bail!("the seek index holds no access points");
+        }
+        Ok(index::Index {
+            points: self.points.clone(),
+            leading_known: self.leading_known,
+            pulldown: self.pulldown,
+            variable: self.variable,
+            bit_rate: self.bit_rate,
+            end: self.end,
+            whole: true,
+        })
+    }
+}
+
+impl SeekIndex {
+    /// The index a finished scan and thumbnail pass amount to.
+    pub fn of(src: &crate::Source, track: Option<&thumbs::Track>) -> SeekIndex {
+        SeekIndex {
+            points: src.points.clone(),
+            leading_known: src.leading_known,
+            pulldown: Some(src.video.pulldown),
+            variable: Some(src.video.variable_rate),
+            bit_rate: src.video.bit_rate,
+            // The duration a `Source` carries is the pass's own answer where
+            // the container had none worth having, so it is the answer to
+            // keep.
+            end: Some(src.duration),
+            track: track.map(clone_track),
+            whole: src.read_whole,
+        }
+    }
+
+    pub fn save(&self, path: &Path) -> Result<()> {
+        // A walk that stopped at errors the recording kept giving -- a share
+        // that went away half way -- holds the entry points of the half it
+        // read. Kept under the recording's size and time, that half was what
+        // every later open was handed, until the file itself changed: the
+        // rest of the recording had no entry point, and no length past it.
+        if !self.whole {
+            bail!("the recording was not read to its end, so what was read is not kept");
+        }
+        let mut w = Writer(Vec::with_capacity(16 + self.points.len() * 40));
+        w.0.extend_from_slice(MAGIC);
+        w.u32(VERSION);
+
+        let mut flags = 0;
+        if self.leading_known {
+            flags |= FLAG_LEADING_KNOWN;
+        }
+        if let Some(p) = self.pulldown {
+            flags |= FLAG_PULLDOWN_KNOWN;
+            if p {
+                flags |= FLAG_PULLDOWN;
+            }
+        }
+        if self.track.is_some() {
+            flags |= FLAG_HAS_TRACK;
+        }
+        if self.end.is_some() {
+            flags |= FLAG_END_KNOWN;
+        }
+        if let Some(v) = self.variable {
+            flags |= FLAG_VARIABLE_KNOWN;
+            if v {
+                flags |= FLAG_VARIABLE;
+            }
+        }
+        w.u32(flags);
+        w.f64(self.end.unwrap_or(0.0));
+
+        w.u64(self.points.len() as u64);
+        for p in &self.points {
+            w.f64(p.time);
+            w.f64(p.lead_start);
+            w.i64(p.pos);
+            w.u8(u8::from(p.droppable) | if p.measured { MEASURED } else { 0 });
+            w.u32(p.lead_indices.len() as u32);
+            for i in &p.lead_indices {
+                w.u32(*i as u32);
+            }
+        }
+
+        if let Some(t) = &self.track {
+            w.u32(t.width);
+            w.f64(t.interval);
+            w.f64(t.covered);
+            w.f64(t.threshold);
+            w.f64(t.typical);
+            w.u64(t.scenes.len() as u64);
+            for s in &t.scenes {
+                w.f64(*s);
+            }
+            w.u64(t.thumbs.len() as u64);
+            for th in &t.thumbs {
+                w.f64(th.time);
+                w.bytes(&th.jpeg);
+            }
+        }
+
+        // Last, and outside the flags, so that a reader which stops before it
+        // reads a whole file and a reader which knows about it reads a whole
+        // file too. Zero says the pass never counted.
+        w.f64(self.bit_rate.unwrap_or(0.0));
+
+        // Through a temporary and renamed into place. This runs to tens of
+        // megabytes and the process can be closed while it is writing; a
+        // half-written index that still had the right name would be found
+        // and trusted on the next open.
+        //
+        // The temporary is named apart from every other one, because two
+        // passes over the same recording can be running at once -- the clip
+        // list indexing a row while the editor opens that same file -- and a
+        // shared temporary would have them writing over each other and
+        // renaming the result into place as if it were whole.
+        let part = path.with_extension(format!(
+            "{}-{}.part.scix",
+            std::process::id(),
+            SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        //
+        // Taken away again where it does not make it into place: `prune`
+        // passes over a temporary, so one left by a full disk would stay.
+        //
+        // Made afresh and never opened through what is there, as
+        // [`crate::bdav`] makes its own: the folder can be one other people
+        // write in, and a link left under this name would have had the file
+        // it names truncated and filled, then renamed into place as the index.
+        let _ = std::fs::remove_file(&part);
+        let placed = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&part)
+            .and_then(|mut f| std::io::Write::write_all(&mut f, &w.0))
+            .with_context(|| format!("cannot write {}", part.display()))
+            .and_then(|()| {
+                std::fs::rename(&part, path)
+                    .with_context(|| format!("cannot put {} in place", path.display()))
+            });
+        if placed.is_err() {
+            let _ = std::fs::remove_file(&part);
+        }
+        placed
+    }
+
+    pub fn load(path: &Path) -> Result<SeekIndex> {
+        let raw = std::fs::read(path)?;
+        let mut r = Reader { raw: &raw, at: 0 };
+        if r.take(4)? != MAGIC {
+            bail!("{} is not a seek index", path.display());
+        }
+        if r.u32()? != VERSION {
+            bail!("{} was written by another version", path.display());
+        }
+        let flags = r.u32()?;
+        let end = r.f64()?;
+        let end = (flags & FLAG_END_KNOWN != 0).then_some(end);
+        // A time that is not a number, or not a finite one, is an index
+        // damaged on disc -- this never writes one. Taken as read, an end at
+        // infinity made every whole-file range endless. Read again instead.
+        if end.is_some_and(|e| !e.is_finite()) {
+            bail!("{} holds a length that is not a time", path.display());
+        }
+
+        let n = r.u64()? as usize;
+        let n = r.fits(n, ACCESS_POINT)?;
+        let mut points = Vec::with_capacity(n);
+        for _ in 0..n {
+            let time = r.f64()?;
+            let lead_start = r.f64()?;
+            if !time.is_finite() || !lead_start.is_finite() {
+                bail!("{} holds an entry point that is not at a time", path.display());
+            }
+            let pos = r.i64()?;
+            let held = r.u8()?;
+            let droppable = held & 1 != 0;
+            let leads = r.u32()? as usize;
+            let leads = r.fits(leads, 4)?;
+            let mut lead_indices = Vec::with_capacity(leads);
+            for _ in 0..leads {
+                lead_indices.push(r.u32()? as usize);
+            }
+            points.push(AccessPoint {
+                time,
+                lead_start,
+                lead_indices,
+                droppable,
+                pos,
+                // Point by point, beside the index's own answer: an index
+                // off a table leaves its points to be read when a cut needs
+                // them, but one it already knows all it ever will about --
+                // the pre-roll point [`crate::scan_with`] stands at 0 -- is
+                // not to be read again. See [`VERSION`] 12.
+                measured: flags & FLAG_LEADING_KNOWN != 0 || held & MEASURED != 0,
+            });
+        }
+
+        let track = if flags & FLAG_HAS_TRACK != 0 {
+            let width = r.u32()?;
+            // Read, but only as the fallback below. The spacing is a
+            // property of the pictures themselves, so it is taken from them
+            // rather than trusted -- an index written by a version that
+            // meant the *floor* by this field then still loads with the
+            // right answer, instead of every recording already cached
+            // having to be read again to correct one number.
+            let stored_interval = r.f64()?;
+            let covered = r.f64()?;
+            let threshold = r.f64()?;
+            let typical = r.f64()?;
+            let n = r.u64()? as usize;
+            let n = r.fits(n, 8)?;
+            let mut scenes = Vec::with_capacity(n);
+            for _ in 0..n {
+                scenes.push(r.f64()?);
+            }
+            // As with the entry points above: never written, so damage.
+            if scenes.iter().any(|s| !s.is_finite()) {
+                bail!("{} holds a scene change that is not at a time", path.display());
+            }
+            let n = r.u64()? as usize;
+            let n = r.fits(n, THUMB)?;
+            let mut list = Vec::with_capacity(n);
+            for _ in 0..n {
+                let time = r.f64()?;
+                if !time.is_finite() {
+                    bail!("{} holds a thumbnail that is not at a time", path.display());
+                }
+                let jpeg = r.bytes()?.to_vec();
+                list.push(thumbs::Thumb { time, jpeg });
+            }
+            Some(thumbs::Track {
+                width,
+                interval: thumbs::spacing(&list).unwrap_or(stored_interval),
+                covered,
+                thumbs: list,
+                scenes,
+                threshold,
+                typical,
+            })
+        } else {
+            None
+        };
+
+        Ok(SeekIndex {
+            points,
+            leading_known: flags & FLAG_LEADING_KNOWN != 0,
+            pulldown: (flags & FLAG_PULLDOWN_KNOWN != 0).then_some(flags & FLAG_PULLDOWN != 0),
+            variable: (flags & FLAG_VARIABLE_KNOWN != 0).then_some(flags & FLAG_VARIABLE != 0),
+            end,
+            track,
+            // Whatever is left after the track, if a version that wrote one
+            // put it there. Zero is how "not measured" is written, a rate of
+            // nothing being no rate at all.
+            bit_rate: r.f64().ok().filter(|r| r.is_finite() && *r > 0.0),
+            whole: true,
+        })
+    }
+}
+
+/// `Track` is not `Clone`: it is tens of megabytes of JPEG and copying one by
+/// accident is not a mistake worth making easy. Saying it here is the one
+/// place it is meant.
+fn clone_track(t: &thumbs::Track) -> thumbs::Track {
+    thumbs::Track {
+        width: t.width,
+        interval: t.interval,
+        covered: t.covered,
+        thumbs: t
+            .thumbs
+            .iter()
+            .map(|th| thumbs::Thumb {
+                time: th.time,
+                jpeg: th.jpeg.clone(),
+            })
+            .collect(),
+        scenes: t.scenes.clone(),
+        threshold: t.threshold,
+        typical: t.typical,
+    }
+}
+
+/// Where the seek index for `src_path` belongs inside `dir`.
+///
+/// Keyed by the recording's path, size and modification time, so a file
+/// re-recorded under the same name gets a new index rather than the old one.
+pub fn cache_path(dir: &Path, src_path: &str) -> Result<PathBuf> {
+    // What is asked about is the file the bytes are in, which for a clip
+    // inside a disc image is the image: a path into an image is not a path
+    // the operating system knows. What is *keyed* on is still the name the
+    // clip goes by, so two clips on one disc do not share an entry.
+    let meta = std::fs::metadata(&crate::input::Input::parse(src_path)?.file)
+        .with_context(|| format!("cannot stat {src_path}"))?;
+    let mtime = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0);
+
+    // FNV-1a, as in `proxy::cache_path`: plenty for telling one opened file
+    // from another, and it costs no dependency.
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut eat = |bytes: &[u8]| {
+        for b in bytes {
+            h ^= *b as u64;
+            h = h.wrapping_mul(0x1_0000_01b3);
+        }
+    };
+    eat(src_path.as_bytes());
+    eat(&meta.len().to_le_bytes());
+    eat(&mtime.to_le_bytes());
+    eat(&VERSION.to_le_bytes());
+
+    let stem: String = Path::new(src_path)
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default()
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
+        .take(40)
+        .collect();
+    Ok(dir.join(format!("{stem}-{h:016x}.scix")))
+}
+
+/// Delete the least recently used indexes in `dir` until at most `keep`
+/// remain and they take no more than `budget` bytes between them.
+///
+/// Same shape as [`crate::proxy::prune`] and for the same reason: what one
+/// costs depends on how long the recording is, so a count alone is the wrong
+/// limit. These are an order of magnitude smaller than a proxy -- the
+/// pictures are 192 pixels wide and there is no video -- so the budget can be
+/// smaller and the count much larger, which is the point: the index for a
+/// recording finished last week is worth keeping.
+///
+/// The most recent is never deleted, however far over budget it is on its
+/// own: it is almost certainly the recording being cut right now.
+///
+/// Nor is anything in `spare`: the indexes of the recordings in the list.
+/// Age alone took those away -- the list is indexed from the top down, so
+/// the top rows are the oldest -- and a list of thirty-odd hour-long
+/// recordings came to more than the budget, so the top third were walked
+/// again, half a minute apiece, the moment they were opened. They still
+/// count towards `keep` and `budget`, so what goes first is everything else.
+pub fn prune(
+    dir: &Path,
+    keep: usize,
+    budget: u64,
+    spare: &std::collections::HashSet<PathBuf>,
+) -> Result<usize> {
+    /// How long a temporary may sit untouched before it is taken for one
+    /// whose writer is gone. Writing one takes seconds.
+    const ABANDONED: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
+    let mut found: Vec<(std::time::SystemTime, u64, PathBuf)> = Vec::new();
+    let mut gone = 0;
+    for entry in std::fs::read_dir(dir)? {
+        let path = entry?.path();
+        // Only ours: the folder can be one the user chose, with other files in it.
+        if path.extension().and_then(|e| e.to_str()) != Some("scix") || !ours(&path) {
+            continue;
+        }
+        // One still being written is not one of the finished ones. One that
+        // nothing has written to for a day is the temporary of a process
+        // that was closed or killed part way through writing it: `save` only
+        // takes back its own on an error it lives to see, and nothing else
+        // ever would -- tens of megabytes apiece, outside the budget.
+        if path.to_string_lossy().ends_with(".part.scix") {
+            let abandoned = path
+                .metadata()
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.elapsed().ok())
+                .is_some_and(|age| age > ABANDONED);
+            if abandoned && std::fs::remove_file(&path).is_ok() {
+                gone += 1;
+            }
+            continue;
+        }
+        let meta = path.metadata();
+        let when = meta
+            .as_ref()
+            .ok()
+            .and_then(|m| m.modified().ok())
+            .unwrap_or(std::time::UNIX_EPOCH);
+        let bytes = meta.map(|m| m.len()).unwrap_or(0);
+        found.push((when, bytes, path));
+    }
+    found.sort_by_key(|(when, _, _)| std::cmp::Reverse(*when));
+
+    // The list's are counted before anything else, wherever their age puts
+    // them. Counted where they fell, one older than the rest counted against
+    // nothing: a project of thirty rows put back up, not yet opened and so
+    // the oldest in the folder, left every newer index standing beside them
+    // up to the whole budget again -- twice what the limit says.
+    let (mut held, mut running) = (0usize, 0u64);
+    for (_, bytes, path) in &found {
+        if spare.contains(path) {
+            held += 1;
+            running = running.saturating_add(*bytes);
+        }
+    }
+    // The newest of the rest, not the newest in the folder: a list row's
+    // index is touched as the row is read, so one of the list's was often
+    // the newest -- and with the list's alone over the count, an index just
+    // written for a recording outside the list was taken at once.
+    let mut newest = true;
+    for (_, bytes, path) in found {
+        if spare.contains(&path) {
+            continue;
+        }
+        held += 1;
+        running = running.saturating_add(bytes);
+        if std::mem::take(&mut newest) || (held <= keep && running <= budget) {
+            continue;
+        }
+        if std::fs::remove_file(&path).is_ok() {
+            gone += 1;
+        }
+    }
+    Ok(gone)
+}
+
+/// Whether a file in a cache directory is one of this program's: every cache
+/// names its files `<stem>-<sixteen hex digits>.<ext>`, and a sidecar or a
+/// file being written adds to the end of that.
+///
+/// Asked before deleting anything, because the cache can be put anywhere in
+/// 環境設定 -- and a folder of somebody's own work with a `proxy` or an
+/// `index` folder in it would otherwise be emptied as though it were ours.
+pub fn ours(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+        return false;
+    };
+    name.char_indices().any(|(i, c)| {
+        c == '-'
+            && name
+                .get(i + 1..i + 18)
+                .is_some_and(|t| t.ends_with('.') && t[..16].bytes().all(|b| b.is_ascii_hexdigit()))
+    })
+}
+
+/// Mark a file as used just now, so that the least-recently-used pruning is
+/// about use and not about when the file happened to be written.
+pub fn touch(path: &Path) {
+    let _ = std::fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .and_then(|f| {
+            f.set_times(std::fs::FileTimes::new().set_modified(std::time::SystemTime::now()))
+        });
+}
+
+// --- the little-endian plumbing -----------------------------------------
+
+struct Writer(Vec<u8>);
+
+impl Writer {
+    fn u8(&mut self, v: u8) {
+        self.0.push(v);
+    }
+    fn u32(&mut self, v: u32) {
+        self.0.extend_from_slice(&v.to_le_bytes());
+    }
+    fn u64(&mut self, v: u64) {
+        self.0.extend_from_slice(&v.to_le_bytes());
+    }
+    fn i64(&mut self, v: i64) {
+        self.0.extend_from_slice(&v.to_le_bytes());
+    }
+    fn f64(&mut self, v: f64) {
+        self.0.extend_from_slice(&v.to_le_bytes());
+    }
+    fn bytes(&mut self, b: &[u8]) {
+        self.u32(b.len() as u32);
+        self.0.extend_from_slice(b);
+    }
+}
+
+struct Reader<'a> {
+    raw: &'a [u8],
+    at: usize,
+}
+
+impl<'a> Reader<'a> {
+    fn take(&mut self, n: usize) -> Result<&'a [u8]> {
+        let end = self
+            .at
+            .checked_add(n)
+            .ok_or_else(|| anyhow!("seek index is corrupt"))?;
+        if end > self.raw.len() {
+            bail!("the seek index is truncated");
+        }
+        let out = &self.raw[self.at..end];
+        self.at = end;
+        Ok(out)
+    }
+    fn u8(&mut self) -> Result<u8> {
+        Ok(self.take(1)?[0])
+    }
+    fn u32(&mut self) -> Result<u32> {
+        Ok(u32::from_le_bytes(self.take(4)?.try_into()?))
+    }
+    fn u64(&mut self) -> Result<u64> {
+        Ok(u64::from_le_bytes(self.take(8)?.try_into()?))
+    }
+    fn i64(&mut self) -> Result<i64> {
+        Ok(i64::from_le_bytes(self.take(8)?.try_into()?))
+    }
+    fn f64(&mut self) -> Result<f64> {
+        Ok(f64::from_le_bytes(self.take(8)?.try_into()?))
+    }
+    fn bytes(&mut self) -> Result<&'a [u8]> {
+        let n = self.u32()? as usize;
+        self.take(n)
+    }
+    /// A count of things, checked against the bytes there are left to hold
+    /// them -- `each` being the fewest one of them can take.
+    ///
+    /// A file is free to say it holds four billion access points. Raising the
+    /// vector before reading them is how forty bytes asked for an allocation
+    /// of sixty terabytes, and a failed allocation aborts the process rather
+    /// than failing the read: there is no error to return by then. So the
+    /// count is disbelieved here, where there is still a `Result` to put the
+    /// answer in.
+    fn fits(&self, n: usize, each: usize) -> Result<usize> {
+        let left = self.raw.len() - self.at;
+        if n.checked_mul(each).is_none_or(|want| want > left) {
+            bail!("the seek index says it holds more than it has room for");
+        }
+        Ok(n)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    #[test]
+    fn only_our_names_are_ours() {
+        assert!(ours(Path::new("/c/proxy/rec-0123456789abcdef.mp4")));
+        assert!(ours(Path::new("/c/proxy/a-b-0123456789abcdef.part.mp4")));
+        assert!(ours(Path::new("/c/proxy/rec-0123456789abcdef.marks")));
+        assert!(!ours(Path::new("/work/proxy/holiday.mp4")));
+        assert!(!ours(Path::new("/work/proxy/take-2.mp4")));
+        assert!(!ours(Path::new("/work/proxy/rec-0123456789abcdeg.mp4")));
+    }
+    use super::*;
+
+    /// Forty bytes that say they hold a trillion access points.
+    ///
+    /// The count used to size the vector before a single point was read, and
+    /// an allocation that large does not fail -- it aborts the process, with
+    /// no error left to return. So the count is disbelieved first.
+    #[test]
+    fn a_count_larger_than_the_file() {
+        let mut raw = Vec::new();
+        raw.extend_from_slice(MAGIC);
+        raw.extend_from_slice(&VERSION.to_le_bytes());
+        raw.extend_from_slice(&0u32.to_le_bytes()); // no track, no known end
+        raw.extend_from_slice(&0f64.to_le_bytes());
+        raw.extend_from_slice(&(1u64 << 40).to_le_bytes());
+
+        let at = std::env::temp_dir().join("smartcut-scix-too-many.scix");
+        std::fs::write(&at, &raw).unwrap();
+        assert!(SeekIndex::load(&at).is_err());
+        let _ = std::fs::remove_file(&at);
+    }
+
+    /// A temporary whose writer is gone is taken away; one being written now
+    /// is left to its writer, and neither counts as a finished index.
+    #[test]
+    fn an_abandoned_temporary_is_taken_away() {
+        let dir = std::env::temp_dir().join(format!("smartcut-scix-prune-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let old = dir.join("rec-0123456789abcdef.1-0.part.scix");
+        let new = dir.join("rec-0123456789abcdef.2-0.part.scix");
+        let done = dir.join("rec-0123456789abcdef.scix");
+        for p in [&old, &new, &done] {
+            std::fs::write(p, b"x").unwrap();
+        }
+        let long_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(3 * 86_400);
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&old)
+            .unwrap()
+            .set_times(std::fs::FileTimes::new().set_modified(long_ago))
+            .unwrap();
+        assert_eq!(prune(&dir, 8, 1 << 20, &Default::default()).unwrap(), 1);
+        assert!(!old.exists());
+        assert!(new.exists() && done.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Over the count, the oldest goes -- unless it is one of the list's.
+    #[test]
+    fn the_list_is_spared() {
+        let dir = std::env::temp_dir().join(format!("smartcut-scix-spare-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let names = ["a-0000000000000001.scix", "b-0000000000000002.scix", "c-0000000000000003.scix"];
+        let paths: Vec<PathBuf> = names.iter().map(|n| dir.join(n)).collect();
+        let now = std::time::SystemTime::now();
+        for (i, p) in paths.iter().enumerate() {
+            std::fs::write(p, b"x").unwrap();
+            let when = now - std::time::Duration::from_secs(60 * (3 - i as u64));
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(p)
+                .unwrap()
+                .set_times(std::fs::FileTimes::new().set_modified(when))
+                .unwrap();
+        }
+        // Oldest first: a, then b. Keep one; a is in the list.
+        let spare = std::collections::HashSet::from([paths[0].clone()]);
+        assert_eq!(prune(&dir, 1, 1 << 20, &spare).unwrap(), 1);
+        assert!(paths[0].exists() && !paths[1].exists() && paths[2].exists());
+
+        // And counted first, however old: room for two, the list's oldest
+        // takes one, the newest the other, and the one between goes.
+        std::fs::write(&paths[1], b"x").unwrap();
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&paths[1])
+            .unwrap()
+            .set_times(std::fs::FileTimes::new().set_modified(now - std::time::Duration::from_secs(120)))
+            .unwrap();
+        assert_eq!(prune(&dir, 2, 1 << 20, &spare).unwrap(), 1);
+        assert!(paths[0].exists() && !paths[1].exists() && paths[2].exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A point already read comes back read, in an index that otherwise
+    /// leaves its points to be read: the pre-roll point of an `.mp4` cut with
+    /// `ffmpeg -ss`. Read again on the next open, it took the place of the
+    /// key picture after it and the cut lost its first picture.
+    #[test]
+    fn a_point_read_stays_read() {
+        let point = |time: f64, measured: bool| AccessPoint {
+            time,
+            lead_start: time,
+            lead_indices: vec![1],
+            droppable: false,
+            pos: 48,
+            measured,
+        };
+        let ix = SeekIndex {
+            points: vec![point(0.0, true), point(1.0, false)],
+            leading_known: false,
+            end: Some(2.0),
+            pulldown: None,
+            variable: None,
+            bit_rate: None,
+            track: None,
+            whole: true,
+        };
+        let at = std::env::temp_dir().join(format!("smartcut-scix-read-{}.scix", std::process::id()));
+        ix.save(&at).unwrap();
+        let back = SeekIndex::load(&at).unwrap();
+        let _ = std::fs::remove_file(&at);
+        let got: Vec<(bool, bool)> = back.points.iter().map(|p| (p.measured, p.droppable)).collect();
+        assert_eq!(got, [(true, false), (false, false)]);
+    }
+
+    /// And one that says it holds none, which is a file that reads.
+    #[test]
+    fn a_count_of_none() {
+        let mut raw = Vec::new();
+        raw.extend_from_slice(MAGIC);
+        raw.extend_from_slice(&VERSION.to_le_bytes());
+        raw.extend_from_slice(&0u32.to_le_bytes());
+        raw.extend_from_slice(&0f64.to_le_bytes());
+        raw.extend_from_slice(&0u64.to_le_bytes());
+
+        let at = std::env::temp_dir().join("smartcut-scix-empty.scix");
+        std::fs::write(&at, &raw).unwrap();
+        assert!(SeekIndex::load(&at).unwrap().points.is_empty());
+        let _ = std::fs::remove_file(&at);
+    }
+}

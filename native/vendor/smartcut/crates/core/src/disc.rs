@@ -1,0 +1,4162 @@
+//! What a Blu-ray holds, read from the disc's own index.
+//!
+//! There are two halves to Blu-ray and this reads both.
+//!
+//! **BDAV** is the recording half: what a set-top recorder writes, and what
+//! an authoring tool writes when it is asked for a disc of recordings rather
+//! than a film. One directory called `BDAV` and three inside it.
+//!
+//! ```text
+//! BDAV/
+//!   info.bdav              which playlists there are, and in what order
+//!   PLAYLIST/00001.rpls    one recording: which clip, from when to when
+//!   CLIPINF/00001.clpi     that clip's own index
+//!   STREAM/00001.m2ts      the transport stream itself
+//! ```
+//!
+//! **BDMV** is the film half: a pressed disc, or a copy of one. The shape is
+//! the same and the names are not, and there is a great deal more of it --
+//! menus, a Java application, a second copy of the index under `BACKUP` --
+//! none of which is a recording.
+//!
+//! ```text
+//! BDMV/
+//!   index.bdmv             the titles, for a player's own menu
+//!   PLAYLIST/00009.mpls    one way through the disc: which clips, in order
+//!   CLIPINF/00014.clpi     that clip's own index
+//!   STREAM/00014.m2ts      the transport stream itself
+//!   META/DL/bdmt_eng.xml   what the disc is called
+//!   BACKUP/                all of the above again
+//! ```
+//!
+//! The two dialects differ in four places -- the directory's name, the
+//! playlist's extension and magic, where the list of playlists comes from,
+//! and whether a playlist carries a programme name -- and agree everywhere
+//! else, including the byte layout of a play item and of a chapter mark. So
+//! they are read by one reader that is told which dialect it is looking at,
+//! rather than by two readers that would be the same reader twice.
+//!
+//! The stream is an ordinary MPEG-2 transport stream in 192 byte packets --
+//! 188 of packet behind four bytes of arrival time -- which libavformat reads
+//! without being told anything. So the streams were never the difficulty.
+//! What was missing was the index: a directory of `00014.m2ts`,
+//! `00015.m2ts`, `00016.m2ts` says nothing about which of them is an episode
+//! and which is the eight second logo that plays before the menu.
+//!
+//! Both shapes a disc arrives in are read the same way, because the only
+//! thing that differs is how a file is found:
+//!
+//!   * a **directory** -- a disc copied to a hard disk, or one mounted by the
+//!     desktop, which is the same thing to a program reading it;
+//!   * an **image** -- an `.iso`, read where it lies by [`crate::udf`],
+//!     without mounting it and without unpacking thirty gigabytes to a
+//!     temporary file.
+//!
+//! What comes back names each recording by a path. For a directory that is
+//! the path of the stream; for an image it is the path of the stream *inside*
+//! the image, written as though the image were a directory:
+//! `/rec/Anime.iso/BDAV/STREAM/00001.m2ts`. One string, openable by
+//! [`crate::input`], and the rest of the program is none the wiser.
+//!
+//! **Encrypted discs are not handled and will not be.** AACS is a decryption
+//! problem and this program has none of it. A pressed disc copied by a tool
+//! that removed the encryption -- which is what the `MAKEMKV/` directory
+//! beside `BDMV/` on some images is a sign of -- reads like any other.
+//!
+//! **A DVD arrives by the same door and is read elsewhere.** It shares the
+//! folder and the `.iso` with a Blu-ray and nothing else -- no playlists, no
+//! clip index, a different filesystem layout and a program stream instead of
+//! a transport stream -- so [`crate::dvd`] reads it, and [`read`] here asks
+//! both and lets the one that recognises the disc answer. What comes back is
+//! the same [`Disc`] either way.
+
+use crate::arib;
+use crate::dvd;
+use crate::udf;
+use anyhow::{anyhow, bail, Context, Result};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+
+/// Playlist and clip times are in 45 kHz ticks -- half the clock the packets
+/// carry, which is how a 32 bit field reaches thirteen hours.
+const TICK: f64 = 45_000.0;
+
+/// How long a clip has to be before it is offered already ticked.
+///
+/// A BDMV disc is mostly not the film: the twelve episodes on the disc this
+/// was written against sit among fifty other clips that are logos, warnings,
+/// menu loops and eight second transitions, and ticking all sixty-two would
+/// make the chooser a list to undo rather than a list to choose from. Five
+/// minutes is well under the shortest thing anybody keeps a disc for and well
+/// over the longest thing a menu is made of.
+const WORTH_TICKING: f64 = 300.0;
+
+/// A source packet: the transport packet and the four bytes in front of it
+/// that say when it arrived, which is the unit a clip index counts in.
+const SOURCE_PACKET: u64 = 192;
+
+/// The most seventeen-bit turns an entry point is carried forward by when the
+/// map it came out of states a position behind the one before it. Sixty-four
+/// of them is eight million packets, or a gigabyte and a half: past that, the
+/// map is not one turn out of step but wrong, and it is left as it reads.
+const TURNS: u32 = 64;
+
+/// One turn of the 33-bit clock, and the minute libavformat keeps back from
+/// the first timestamp when it decides which side of a turn a stamp is on.
+const WRAP: i64 = 1 << 33;
+const WRAP_MARGIN: i64 = 60 * 90_000;
+
+/// What wrote this disc.
+///
+/// Two of the three are the halves of the Blu-ray specification and are read
+/// here; the third is a DVD, which shares nothing with them but the door it
+/// arrives by and is read by [`crate::dvd`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Shape {
+    /// A disc of recordings. See the module documentation.
+    Bdav,
+    /// A film, or a copy of one.
+    Bdmv,
+    /// A DVD-Video.
+    Dvd,
+}
+
+impl Shape {
+    /// The directory the disc keeps everything in.
+    fn root(self) -> &'static str {
+        match self {
+            Shape::Bdav => "BDAV",
+            Shape::Bdmv => "BDMV",
+            Shape::Dvd => "VIDEO_TS",
+        }
+    }
+
+    /// What a playlist file is called here.
+    fn ext(self) -> &'static str {
+        match self {
+            Shape::Bdav => ".rpls",
+            Shape::Bdmv => ".mpls",
+            Shape::Dvd => ".ifo",
+        }
+    }
+
+    /// The four bytes a playlist opens with.
+    fn magic(self) -> &'static [u8] {
+        match self {
+            Shape::Bdav => b"PLST",
+            Shape::Bdmv => b"MPLS",
+            Shape::Dvd => b"DVDV",
+        }
+    }
+
+    /// What to call it to the user, and to the window.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Shape::Bdav => "bdav",
+            Shape::Bdmv => "bdmv",
+            Shape::Dvd => "dvd",
+        }
+    }
+}
+
+/// One recording on the disc: what a playlist describes.
+#[derive(Debug, Clone)]
+pub struct Title {
+    /// The playlist file this came from, `00001.rpls` or `00009.mpls`.
+    pub playlist: String,
+    /// The programme's name, as the broadcaster wrote it. BDMV playlists
+    /// carry no name -- a film's titles live in the menu, which is a Java
+    /// application -- so this is `None` on a pressed disc.
+    pub name: Option<String>,
+    /// When the playlist says it was made. A recorder writes the moment the
+    /// recording started; an authoring tool writes the moment it wrote the
+    /// disc. `None` on BDMV, which does not record it.
+    ///
+    /// Carried as the moment rather than as a sentence about it, because it
+    /// goes back out again: a cut of this recording written onto a disc of
+    /// its own says the recording was made when this one says it was. See
+    /// [`crate::bdav`].
+    pub made: Option<crate::si::Began>,
+    /// How long the programme ran on air, in seconds -- the slot rather than
+    /// the recording. Carried out again for the same reason the moment is.
+    pub ran: Option<u32>,
+    /// What the recorder wrote down about the programme beside its name:
+    /// the sentence a listing carries, and the cast and staff under it. A
+    /// recorder fills this in from the broadcast's own event information;
+    /// an authoring tool leaves it empty.
+    pub description: Option<String>,
+    /// The channel it was recorded off, as the recorder wrote it: the name,
+    /// and the three digits a viewer knows it by.
+    pub channel: Option<String>,
+    pub channel_number: u16,
+    /// Playing time, which is the IN to OUT of the clips it names.
+    pub duration: f64,
+    pub clips: Vec<Clip>,
+}
+
+impl Title {
+    /// What to call this in a list. The name if there is one, and the file
+    /// number when there is not -- never an empty row.
+    pub fn label(&self) -> String {
+        let stem = self
+            .playlist
+            .trim_end_matches(".rpls")
+            .trim_end_matches(".RPLS")
+            .trim_end_matches(".mpls")
+            .trim_end_matches(".MPLS");
+        match (&self.name, &self.made) {
+            (Some(name), _) => name.clone(),
+            (None, Some(made)) => format!("{stem} {made}"),
+            (None, None) => stem.to_string(),
+        }
+    }
+}
+
+/// One clip a title plays, and the part of it the title plays.
+#[derive(Debug, Clone)]
+pub struct Clip {
+    /// `00001`, the number the three files share.
+    pub name: String,
+    /// The path to open, which for an image is a path through it.
+    pub path: String,
+    /// Where the title starts and ends in the clip, in seconds on the clip's
+    /// own timeline -- the one the demuxer reports, which does not begin at
+    /// zero either.
+    pub start: f64,
+    pub end: f64,
+    /// Which of the clip's sequences the times above are on.
+    ///
+    /// A recorder can write several into one clip -- it stops and starts, and
+    /// each stretch keeps its own clock -- and then a playlist plays one item
+    /// per sequence, each naming the sequence it belongs to. Zero on every
+    /// clip that has only one, which is every disc but a recorder's.
+    pub stc: u8,
+    /// The chapter points the disc set inside this clip, in seconds from
+    /// [`Clip::start`]. Empty when the playlist carries none, or carries them
+    /// in a shape this could not vouch for.
+    ///
+    /// Per clip and not per title, because that is where a mark actually is:
+    /// a playlist that runs twelve episodes together holds fifty-three marks
+    /// and each of them is a time on its own episode's clock, not a time in
+    /// the three hours the playlist plays.
+    pub marks: Vec<f64>,
+}
+
+/// One elementary stream a clip carries, as the disc's own index describes
+/// it.
+///
+/// Read from `CLIPINF` rather than from the stream, because the point of it
+/// is to be answerable before anything is opened: a chooser that had to
+/// demux thirty gigabytes to draw itself would not be a chooser anybody
+/// waited for. What the demuxer says later is the authority at cutting time;
+/// this is what the disc says it wrote.
+#[derive(Debug, Clone)]
+pub struct Track {
+    /// `"video"`, `"audio"`, `"subtitle"`, `"menu"` or `"other"`.
+    pub kind: &'static str,
+    /// The PID it sits on, which is the one name for it that survives
+    /// everything: the demuxer reports it, the cut writes it back, and a
+    /// stream index does not exist until something is open.
+    pub pid: i32,
+    /// The codec and shape, `H.264 1080p 23.976fps` or `TrueHD 5.1 48kHz`.
+    pub detail: String,
+    /// The coding the index states, which is the disc's own number for what
+    /// is on this PID: `0x1B` for H.264, `0x90` for the subtitles it draws,
+    /// `0x91` for a menu. Zero where the disc has no such number to give --
+    /// a DVD names its streams by their substream id and nothing else.
+    ///
+    /// Kept because for two of them the index is the *only* thing that
+    /// knows: see [`unreadable`].
+    pub coding: u8,
+    /// The language the disc declared, when it declared one.
+    pub language: Option<String>,
+    /// Whether a cut can take it with it.
+    ///
+    /// A menu cannot: its buttons have states and targets that point into a
+    /// timeline the cut has just taken apart. Nor can the text subtitle
+    /// format, for a plainer reason -- its typeface is a file on the disc
+    /// and not in the stream, so what travelled would be text nothing could
+    /// draw. Both are listed to say they are being left behind, not to offer
+    /// a choice about them.
+    ///
+    /// The subtitles a disc *draws* are the same kind of stream doing a
+    /// different job, and those travel; see [`crate::pgs`].
+    pub carried: bool,
+}
+
+/// One row of a list of recordings: something that opens.
+///
+/// A title and a row are the same thing until a title plays more than one
+/// clip, which is what a recorder writes when a programme ran past the length
+/// it splits its streams at, and what an authoring tool writes for a "play
+/// all" that runs twelve episodes together. Those become a row each. Joining
+/// them into one timeline is a different piece of work -- each clip carries
+/// its own clock, and splicing two of them is not the same operation as
+/// cutting one -- and until that exists, showing the pieces is the honest
+/// thing: every second of the disc is reachable, and the list says plainly
+/// that it is in pieces.
+///
+/// A clip that several playlists play is one row and not several. On a
+/// pressed disc that is the difference between sixty-two rows and three
+/// hundred and twenty-eight: an episode is named by its own playlist, again
+/// by the "play all", and again by the one the menu's chapter list points at,
+/// and all three would open the same stream at the same instant.
+#[derive(Debug, Clone)]
+pub struct Entry {
+    /// What to open, which is what everything downstream is keyed on.
+    pub path: String,
+    /// The clip's number on the disc, `00014`.
+    pub clip: String,
+    /// What to call it in a list.
+    pub label: String,
+    pub duration: f64,
+    /// Chapter marks, in seconds from the start of this clip.
+    pub marks: Vec<f64>,
+    /// Where that start is on the clip's own clock -- the playlist's IN
+    /// point, in the same seconds the demuxer reports.
+    ///
+    /// A mark is only a number until something says which clock it is on. The
+    /// stream is opened whole, and its times are rebased to the container's
+    /// start, so a mark becomes a time in the recording as
+    /// `start + mark - container start time`. Nothing on this side knows the
+    /// last of those three, which is why the first is carried rather than
+    /// folded in.
+    pub start: f64,
+    /// What the disc's own playlist plays of it: each play item's IN and OUT,
+    /// on the same clock as [`Entry::start`], in order.
+    ///
+    /// **A recorder's title is less than the clip it is opened as.** The
+    /// clip begins a second or so ahead of the first IN -- the end of the
+    /// programme before, or a station spot -- and runs on past the last OUT
+    /// into the next one; and where the recorder was stopped to leave a
+    /// break out, the clip still holds the moment either side of the stop,
+    /// which the playlist steps over. Opened whole, all of that was cut into
+    /// the output. See [`unplayed`], which turns these into what a cut with
+    /// no ranges of its own leaves out.
+    ///
+    /// Empty where the disc is not a disc of recordings: a pressed disc's
+    /// play items are not something this reader leaves anything out by.
+    pub plays: Vec<(f64, f64)>,
+    /// Where a cut of it belongs when no output folder has been chosen.
+    ///
+    /// Beside the disc rather than in it: a cut of `Anime.iso` is written in
+    /// the folder the image is in, because inside the image there is nowhere
+    /// to write, and inside a copied disc there is nowhere that belongs to
+    /// anything but the disc.
+    pub home: String,
+    /// What to name that cut. The programme's own name where the disc knows
+    /// one -- which is the whole reason for reading the index, since
+    /// `00014.m2ts` is not a name anybody wants a file called.
+    pub stem: String,
+    /// How many bytes of disc the stream occupies. Shown in the chooser: on
+    /// a disc whose index names everything `000NN`, size and length are what
+    /// tell an episode from a logo.
+    pub bytes: u64,
+    /// What the disc's own playlist said about the programme: when it was
+    /// recorded, what it was about, and which channel it came off.
+    ///
+    /// Carried for the same reason the name is: a cut of this recording can
+    /// be written onto a disc of its own, and a recording that arrived with
+    /// all of this should leave with the same. See [`crate::bdav`].
+    pub made: Option<crate::si::Began>,
+    pub ran: Option<u32>,
+    pub description: Option<String>,
+    pub channel: Option<String>,
+    pub channel_number: u16,
+    /// What the disc says the clip carries. Empty when the clip has no
+    /// `CLIPINF` beside it, or one this could not read -- in which case
+    /// nothing is claimed rather than something guessed.
+    pub tracks: Vec<Track>,
+    /// Whether to offer it already ticked. See [`WORTH_TICKING`].
+    pub wanted: bool,
+}
+
+/// A disc, as far as its own index describes it.
+#[derive(Debug, Clone)]
+pub struct Disc {
+    /// Which half of the specification wrote it.
+    pub shape: Shape,
+    /// What the disc calls itself: the name in `META` on a pressed disc, and
+    /// the image or folder's own name where there is no such thing.
+    pub label: String,
+    /// Everything on it that can be opened, in the order its index lists it.
+    pub entries: Vec<Entry>,
+    /// Whether the disc carries AACS. See [`Volume::protected`].
+    pub protected: bool,
+}
+
+/// Whether this is worth trying to read as a disc.
+///
+/// Cheap on purpose: it is asked of everything dropped on the window, and the
+/// answer for a `.ts` file has to cost nothing.
+pub fn looks_like_disc(at: &Path) -> bool {
+    if at.is_dir() {
+        return disc_dir(at).is_some() || dvd::looks_like_dvd(at);
+    }
+    at.extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("iso"))
+}
+
+/// The recordings a disc holds, in the order its own index lists them.
+pub fn titles(at: &Path) -> Result<(Shape, Vec<Title>)> {
+    let mut vol = Volume::open(at)?;
+    let shape = vol.shape();
+    let order = vol.playlists();
+    let mut out = Vec::new();
+    for name in order {
+        let raw = match vol.read(&format!("PLAYLIST/{name}")) {
+            Ok(raw) => raw,
+            // A playlist the index names and the disc does not hold is a
+            // damaged disc, not a reason to show none of the others.
+            Err(_) => continue,
+        };
+        match playlist(&raw, &name, shape, &mut vol) {
+            Ok(title) => out.push(title),
+            Err(_) => continue,
+        }
+    }
+    if out.is_empty() {
+        bail!("{}: no playable playlist on this disc", at.display());
+    }
+    Ok((shape, out))
+}
+
+/// What a disc's own index says the recording in `path` was, for a clip on a
+/// recorder's disc.
+///
+/// A recorder writes the programme into the playlist and not into the stream
+/// (see [`crate::si::Listed`]), so a cut of one into a `.ts` had nothing to
+/// name its service or its programme with. Asked of the first playlist that
+/// plays this clip and has anything to say; `None` off a disc, on a pressed
+/// one -- whose playlists name nothing -- and where the index cannot be read.
+pub fn listing_of(path: &str) -> Option<crate::si::Listed> {
+    let (root, clip) = clip_on_a_disc(path)?;
+    let (_, titles) = titles(Path::new(root)).ok()?;
+    let said = |t: &Title| t.name.is_some() || t.channel.is_some();
+    // The title that opens this very path first: a recorder that divided a
+    // recording plays one clip from two playlists, each a stretch of it named
+    // by its window, and the name of the clip alone would give both cuts the
+    // first one's programme. The clip's name where no title opens the path
+    // as given -- a clip opened whole, from its folder.
+    //
+    // A title's items name the clip whole (the window is put on in
+    // [`rows_of`]), so the window is matched by the sequence it opens at.
+    let stc = crate::input::clip_window(path).and_then(|(_, first, _)| {
+        let mut vol = Volume::open(Path::new(root)).ok()?;
+        let raw = vol.read(&format!("CLIPINF/{clip}.clpi")).ok()?;
+        sequence_starts(&raw).iter().find(|s| s.at == first).map(|s| s.id)
+    });
+    let exact = stc.and_then(|stc| {
+        titles.iter().position(|t| {
+            said(t)
+                && t.clips
+                    .iter()
+                    .any(|c| c.stc == stc && c.name.eq_ignore_ascii_case(clip))
+        })
+    });
+    let named = || {
+        titles
+            .iter()
+            .position(|t| said(t) && t.clips.iter().any(|c| c.name.eq_ignore_ascii_case(clip)))
+    };
+    let at = exact.or_else(named)?;
+    titles
+        .into_iter()
+        .nth(at)
+        .map(|t| crate::si::Listed {
+            channel: t.channel,
+            name: t.name,
+            description: t.description,
+            began: t.made,
+            ran: t.ran,
+        })
+}
+
+/// Everything on a disc that can be opened, once and not once per playlist.
+///
+/// A Blu-ray and a DVD arrive by the same door -- a folder, or an `.iso` --
+/// and nothing about the door says which one it is. So both readers are
+/// asked, and the one that recognises the disc answers. Blu-ray goes first
+/// because its test is the cheaper of the two: a directory listing, against
+/// reading a table.
+pub fn read(at: &Path) -> Result<Disc> {
+    let bluray = read_bluray(at);
+    if bluray.is_ok() {
+        return bluray;
+    }
+    match dvd::read(at) {
+        Ok(disc) => Ok(disc),
+        // Neither reader knew it. Whichever of them got as far as opening the
+        // disc has the complaint worth showing; a disc that is not a DVD at
+        // all is better described by the reader that was tried first.
+        Err(err) if dvd::is_dvd(at) => Err(err),
+        Err(_) => bluray,
+    }
+}
+
+/// Give an opened recording the languages the disc's index knows.
+///
+/// **A pressed disc says what language a track is in, and says it in
+/// `CLIPINF`.** Nothing in the stream itself does: a Blu-ray's programme map
+/// carries no language descriptor, so a demuxer handed the `.m2ts` alone has
+/// nothing to go on. The list drawn from the disc could therefore show `eng`
+/// and `jpn` while a cut of that same recording came out with two tracks
+/// nobody could tell apart -- no language in the transport stream it was
+/// written to, and none in the clip index of a disc written from it either.
+///
+/// Matched on PID, which is the one name for a track that both sides use.
+/// Only what is empty is filled: where the stream did declare a language,
+/// the stream sits nearer the sound than the disc's index does.
+/// The same, for a recording that was opened by its path on a disc rather
+/// than chosen out of a list.
+///
+/// Costs one `.clpi` -- a few kilobytes -- because the clip is named in the
+/// path and there is no need to read a playlist to find it. A path that is
+/// not on a disc costs a look at two directory names and nothing else.
+pub fn carry_disc_languages(src: &mut crate::Source) {
+    let path = src.path.clone();
+    let Some((root, clip)) = clip_on_a_disc(&path) else {
+        return;
+    };
+    let Ok(mut vol) = Volume::open(Path::new(root)) else {
+        return;
+    };
+    let tracks = vol.tracks(clip);
+    if !tracks.is_empty() {
+        carry_languages(src, &tracks);
+    }
+}
+
+/// Split `<disc>/BDMV/STREAM/00014.m2ts` into the disc's own directory,
+/// `<disc>/BDMV`, and `00014`.
+///
+/// The shape is the same on both dialects and is the only thing being asked
+/// for: which disc, and which clip on it. Anything else is not on a disc as
+/// far as this is concerned.
+///
+/// The directory the clip is in and not the folder above it, because that is
+/// the disc the clip belongs to: a folder holding both a `BDMV` and a `BDAV`
+/// opens as its `BDMV`, and a clip of its `BDAV` was given the other disc's
+/// clip index. And the directory need not be called either: a disc copied
+/// under somebody's own name (`Anime 2026-08-17/STREAM/00001.m2ts`) is still
+/// a disc -- [`Volume::open`] reads its dialect off its playlists -- and
+/// taken for a broadcast it lost its languages, its listing, its entry
+/// points and the join of its clocks.
+pub fn clip_on_a_disc(path: &str) -> Option<(&str, &str)> {
+    // A name that plays one sequence of a clip still names the clip, and the
+    // index beside it is the clip's.
+    let path = crate::input::clip_window(path).map_or(path, |(base, _, _)| base);
+    // Asked of a copy with one separator and one case, because on Windows a
+    // folder disc comes back as `D:\disc\BDAV\STREAM/00001.m2ts` -- the
+    // folder as the user named it and the rest as [`Volume::stream`] put it
+    // -- and a recorder's disc copied off a FAT card can be lower case. The
+    // copy is the same length, so what is found in it is found in `path`.
+    let plain: String = path
+        .chars()
+        .map(|c| if c == '\\' { '/' } else { c.to_ascii_uppercase() })
+        .collect();
+    let at = plain.rfind("/STREAM/")?;
+    let (root, rest) = (&path[..at], &path[at + "/STREAM/".len()..]);
+    let clip = rest.get(..rest.len().checked_sub(".m2ts".len())?)?;
+    let named = rest[clip.len()..].eq_ignore_ascii_case(".m2ts");
+    if !named || clip.is_empty() || clip.contains(['/', '\\']) {
+        return None;
+    }
+    let dialect = plain[..at].ends_with("/BDMV") || plain[..at].ends_with("/BDAV");
+    // A directory of any other name is asked whether it is a disc's: what a
+    // disc calls a clip, and a folder of playlists beside the clips. Asked
+    // only of a name shaped like a clip, so everything else still costs
+    // nothing. A path through an image cannot be looked at from here and
+    // is taken on its shape -- but only one that does go through an image:
+    // a URL, or a folder that is not there, is not a disc.
+    let disc = dialect || {
+        let dir = Path::new(root);
+        clip.len() == 5
+            && clip.bytes().all(|b| b.is_ascii_digit())
+            && if dir.is_dir() {
+                ["PLAYLIST", "playlist"].iter().any(|n| dir.join(n).is_dir())
+            } else {
+                // The image itself, too: one whose disc was written without
+                // a directory of its own around it ([`prefix_of`] reads it)
+                // names its clips `x.iso/STREAM/00001.m2ts`.
+                dir.is_file() || inside_image(dir).is_some()
+            }
+    };
+    disc.then_some((root, clip))
+}
+
+pub fn carry_languages(src: &mut crate::Source, tracks: &[Track]) {
+    let said = |pid: i32| {
+        tracks
+            .iter()
+            .find(|t| t.pid == pid && t.language.is_some())
+            .and_then(|t| t.language.clone())
+    };
+    for a in src.audios.iter_mut() {
+        if a.language.is_none() {
+            a.language = said(a.pid);
+        }
+    }
+    // The chosen track is a copy of one of those, made before this ran.
+    if let Some(a) = src.audio.as_mut() {
+        if a.language.is_none() {
+            a.language = said(a.pid);
+        }
+    }
+    for c in src.captions.iter_mut() {
+        if c.language.is_none() {
+            c.language = said(c.pid);
+        }
+    }
+    // A disc's own subtitles are where this matters most: a Blu-ray's map
+    // says nothing at all about them, and the language is written only in
+    // `CLIPINF`. Without this a cut of a disc with four subtitle tracks
+    // arrives with four anonymous ones.
+    for g in src.graphics.iter_mut() {
+        if g.language.is_none() {
+            g.language = said(g.pid);
+        }
+    }
+}
+
+/// The streams a disc's index names that a demuxer cannot, with their PID.
+///
+/// **A menu is not a stream libavformat has a name for.** Asked what is on
+/// the PID one sits on, the probe answers with whatever the bytes happened to
+/// look like: on the disc measured here, the menu on `0x1400` came back as
+/// **MP3 audio** -- and a cut that believed it would have carried a menu into
+/// the output declared as sound. It got away with it only because the same
+/// probe could not find a sample rate to go with the guess, and a track with
+/// no rate is left out a few lines later, under a note calling it "the sound
+/// on pid 0x1400".
+///
+/// The index has known all along. So a PID it says carries a menu, or the
+/// text subtitle format, is kept out of every list the probe would have put
+/// it in and named in [`crate::DroppedStream`] instead -- which is where a
+/// stream this program will not carry belongs, and which is what the tool
+/// then says out loud.
+///
+/// Costs one `.clpi` on a recording opened from a disc, and a look at two
+/// directory names on everything else.
+pub fn unreadable_streams(path: &str) -> Vec<(i32, &'static str)> {
+    let Some((root, clip)) = clip_on_a_disc(path) else {
+        return Vec::new();
+    };
+    let Ok(mut vol) = Volume::open(Path::new(root)) else {
+        return Vec::new();
+    };
+    vol.tracks(clip)
+        .iter()
+        .filter_map(|t| unreadable(t.coding).map(|what| (t.pid, what)))
+        .collect()
+}
+
+/// What a coding the index states means to a cut, for the two a demuxer
+/// cannot name.
+///
+/// Everything else a Blu-ray carries is something libavcodec knows by sight,
+/// including the subtitles it draws. These two it does not:
+///
+/// * **A menu** is interactive graphics -- pictures, and buttons with states
+///   and navigation commands. libavcodec has no name for the format at all.
+/// * **Text subtitles** it has a name for and nothing else: `hdmv_text_subtitle`
+///   is a codec id with no decoder behind it. And a decoder would not be
+///   enough, because the typeface those subtitles are set in is a file in the
+///   disc's `AUXDATA` rather than anything in the stream -- what travelled
+///   into a cut would be text nothing could draw.
+fn unreadable(coding: u8) -> Option<&'static str> {
+    match coding {
+        0x91 => Some("menu"),
+        0x92 => Some("text subtitles"),
+        _ => None,
+    }
+}
+
+fn read_bluray(at: &Path) -> Result<Disc> {
+    let mut vol = Volume::open(at)?;
+    let shape = vol.shape();
+    let label = vol.label(at);
+    let home = beside(at);
+
+    let mut entries: Vec<Entry> = Vec::new();
+    // What has already been offered, so that the "play all" playlist and the
+    // twelve that play one episode each come to twelve rows rather than
+    // twenty-four. Keyed on the part of the clip a playlist plays and not on
+    // the clip alone: a recorder can write two programmes into one stream and
+    // two playlists that each name half of it, and those are two recordings.
+    // By what is opened rather than by the clip: the times of a row that
+    // plays one sequence are on that sequence's own clock, and two sequences
+    // of one clip can state the same ones.
+    //
+    // Each key remembers the row it made and how many clips its playlist
+    // played, because the marks are worth taking from the shortest playlist
+    // that offers them. A disc names an episode twice -- once in a playlist
+    // of its own and once inside the "play all" -- and only the first of
+    // those has chapter points this can be sure it has placed correctly.
+    let mut seen: HashMap<(String, i64, i64), (usize, usize)> = HashMap::new();
+    // Every row of a clip lists the same tracks, and a disc may play one
+    // clip from hundreds of playlists: its index is read once.
+    let mut clip_tracks: HashMap<String, Vec<Track>> = HashMap::new();
+
+    for name in vol.playlists() {
+        let Ok(raw) = vol.read(&format!("PLAYLIST/{name}")) else {
+            continue;
+        };
+        let Ok(title) = playlist(&raw, &name, shape, &mut vol) else {
+            continue;
+        };
+        let rows = rows_of(&title.clips, shape, &mut vol);
+        let many = rows.len();
+        for (i, c) in rows.iter().enumerate() {
+            let key = (c.path.clone(), ticks(c.start), ticks(c.end));
+            if let Some((row, from)) = seen.get_mut(&key) {
+                if many < *from && !c.marks.is_empty() {
+                    entries[*row].marks = c.marks.clone();
+                    *from = many;
+                }
+                continue;
+            }
+            // A recorder splits a long programme across clips, and the
+            // pieces are named as pieces so that a list of them reads as one
+            // recording in three parts. A pressed disc's "play all" is not
+            // that -- it is twelve separate episodes played one after
+            // another -- and numbering them (1/15) would be claiming a
+            // relationship the disc never asserted.
+            let part = match (shape, many > 1) {
+                (Shape::Bdav, true) => format!(" ({}/{})", i + 1, many),
+                _ => String::new(),
+            };
+            // A disc whose playlists carry no name -- which is every pressed
+            // disc -- still has to name its rows something, and the disc's
+            // own name with the clip's number is what there is. It is also
+            // what the files a cut writes will be called, so it has to be
+            // something a person can tell apart at a glance in a folder.
+            let label_row = match &title.name {
+                Some(programme) => format!("{programme}{part}"),
+                None => format!("{label} {}{part}", c.clip),
+            };
+            seen.insert(key, (entries.len(), many));
+            entries.push(Entry {
+                path: c.path.clone(),
+                clip: c.clip.clone(),
+                duration: c.end - c.start,
+                marks: c.marks.clone(),
+                start: c.start,
+                plays: match shape {
+                    Shape::Bdav => c.plays.clone(),
+                    Shape::Bdmv | Shape::Dvd => Vec::new(),
+                },
+                home: home.clone(),
+                stem: filename(&label_row),
+                label: label_row,
+                made: title.made,
+                ran: title.ran,
+                description: title.description.clone(),
+                channel: title.channel.clone(),
+                channel_number: title.channel_number,
+                // A row that plays one sequence of a clip is those packets of
+                // it, and two programmes a recorder wrote into one clip are
+                // not each the size of both.
+                bytes: crate::input::clip_window(&c.path).map_or_else(
+                    || vol.bytes(&c.clip),
+                    |(_, first, last)| (last + 1 - first) * SOURCE_PACKET,
+                ),
+                tracks: match clip_tracks.get(&c.clip) {
+                    Some(t) => t.clone(),
+                    None => {
+                        let t = vol.tracks(&c.clip);
+                        clip_tracks.insert(c.clip.clone(), t.clone());
+                        t
+                    }
+                },
+                // Filled in below, once the whole disc is known.
+                wanted: false,
+            });
+        }
+    }
+    if entries.is_empty() {
+        bail!("{}: no playable playlist on this disc", at.display());
+    }
+
+    let lengths: Vec<f64> = entries.iter().map(|e| e.duration).collect();
+    for (e, wanted) in entries.iter_mut().zip(worth_ticking(shape, &lengths)) {
+        e.wanted = wanted;
+    }
+
+    Ok(Disc {
+        shape,
+        label,
+        entries,
+        protected: vol.protected(),
+    })
+}
+
+/// One row of the list, once it has been decided what a row is.
+///
+/// A play item and a row used to be the same thing. They still are on a
+/// pressed disc and on most of a recorder's, and they are not on the discs a
+/// recorder writes when it stops and starts inside a clip: there a
+/// programme is one playlist, several play items, and one row. See
+/// [`rows_of`].
+struct Row {
+    /// The clip's number on the disc, `00001`.
+    clip: String,
+    /// What to open, which for a joined clip is the clip's own name.
+    path: String,
+    /// Where the row begins and ends on the clock the demuxer will report --
+    /// which for a joined clip is the joined one. See [`joined`].
+    start: f64,
+    end: f64,
+    /// The chapter points inside it, in seconds from `start`.
+    marks: Vec<f64>,
+    /// Each play item's IN and OUT, on the same clock as `start`. One pair
+    /// for a row of one item; one per item for a joined clip.
+    plays: Vec<(f64, f64)>,
+}
+
+/// Turn the items a playlist plays into the rows a list offers.
+///
+/// **A recorder's clip is one recording however many pieces it is written
+/// in.** It stops and starts -- for a pause, or to leave the commercials out
+/// -- and each stretch keeps a clock of its own, so the playlist that plays
+/// the programme back plays it as five, six or seven items. Those are not
+/// five recordings. Offering them as five rows was what this did while there
+/// was no way to read such a clip whole; there is one now, so the run of
+/// items becomes the row it always was.
+///
+/// Joined only where the playlist accounts for the whole clip: every
+/// sequence the clip holds, in the order the file holds them, one item each.
+/// Anything else -- a playlist that plays half a clip, a clip whose index
+/// does not read, a pressed disc's "play all" running twelve episodes
+/// together -- is left as it was, a row per item, each naming the packets it
+/// plays. See [`stretch`].
+fn rows_of(clips: &[Clip], shape: Shape, vol: &mut Volume) -> Vec<Row> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < clips.len() {
+        // The items that name the same clip, one after another, are the most
+        // that could be one recording.
+        let mut j = i + 1;
+        while j < clips.len() && clips[j].name == clips[i].name {
+            j += 1;
+        }
+        let run = &clips[i..j];
+        let raw = vol
+            .read(&format!("CLIPINF/{}.clpi", clips[i].name))
+            .unwrap_or_default();
+        let starts = sequence_starts(&raw);
+        let bytes = vol.bytes(&clips[i].name);
+        match whole_clip(run, shape, &starts, &raw, bytes) {
+            Some(row) => out.push(row),
+            None => out.extend(run.iter().map(|c| Row {
+                clip: c.name.clone(),
+                path: stretch(&c.path, &starts, c.stc, bytes),
+                start: c.start,
+                end: c.end,
+                marks: c.marks.clone(),
+                plays: vec![(c.start, c.end)],
+            })),
+        }
+        i = j;
+    }
+    out
+}
+
+/// A run of play items read as the one clip they cover, or `None` where they
+/// do not cover it.
+///
+/// The times come back on the joined clock, because that is the clock the
+/// demuxer will report once the clip is opened: a row's start, its end and
+/// every chapter point inside it are moved by however much the sequence they
+/// sit in was moved. A clip whose sequences already run on from one another
+/// is joined too, and moved by nothing.
+fn whole_clip(
+    run: &[Clip],
+    shape: Shape,
+    starts: &[Sequence],
+    raw: &[u8],
+    bytes: u64,
+) -> Option<Row> {
+    if shape != Shape::Bdav || run.len() < 2 || starts.len() != run.len() {
+        return None;
+    }
+    if !sound(starts, bytes / SOURCE_PACKET) {
+        return None;
+    }
+    // Each item on the sequence the file holds in that place, and no
+    // sequence named twice or missed out.
+    if !starts.iter().zip(run).all(|(s, c)| s.id == c.stc) {
+        return None;
+    }
+    let table = joined(raw, bytes / SOURCE_PACKET);
+    let moved = |k: usize| {
+        table
+            .as_ref()
+            .map_or(0.0, |t| t.seconds_at(starts[k].at * SOURCE_PACKET))
+    };
+    let start = run[0].start + moved(0);
+    let end = run.last()?.end + moved(run.len() - 1);
+    if end <= start {
+        return None;
+    }
+    let mut marks: Vec<f64> = run
+        .iter()
+        .enumerate()
+        .flat_map(|(k, c)| {
+            c.marks
+                .iter()
+                .map(move |m| c.start + m + moved(k) - start)
+        })
+        .collect();
+    marks.sort_by(f64::total_cmp);
+    let plays = run
+        .iter()
+        .enumerate()
+        .map(|(k, c)| (c.start + moved(k), c.end + moved(k)))
+        .collect();
+    Some(Row {
+        clip: run[0].name.clone(),
+        path: run[0].path.clone(),
+        start,
+        end,
+        marks,
+        plays,
+    })
+}
+
+/// The shortest stretch [`unplayed`] cuts. See there.
+///
+/// Measured: a playlist authored onto a disc states its IN and OUT within a
+/// millisecond of the clip's first and last picture (67 titles of eleven discs
+/// of that kind); what a recorder leaves out is 0.13 s at the least and
+/// mostly seconds (40 titles of seven discs). The window cuts by the same
+/// number (`UNPLAYED_LEAST` in `shared.js`).
+pub const UNPLAYED_LEAST: f64 = 0.1;
+
+/// What a disc's playlist leaves out of the clip a title is opened as, as
+/// stretches of the recording to cut: in the recording's own seconds, the
+/// clip's start being `start_time` on the clock [`Entry::plays`] is on, and
+/// in order.
+///
+/// What a cut with no ranges of its own cuts away, so that it keeps what the
+/// disc plays: the head before the first IN, every stretch from one item's
+/// OUT to the next one's IN -- the moment either side of a break the
+/// recorder was stopped for -- and what runs on past the last OUT. The
+/// command line takes these as its cuts and the window puts them down as the
+/// row's first cuts, so the two write the same thing.
+///
+/// A stretch shorter than `least` is not one: a playlist written to the
+/// pictures a clip holds -- every pressed disc, and a disc authored onto a
+/// recorder's format -- states its IN and OUT within a frame of the clip's
+/// own ends, and cutting that rounding away would be a cut of no pictures
+/// that still changed what the planner was asked. Nor is the head, where the
+/// first IN is not past `head` -- the first picture there is, before which
+/// nothing is kept anyway.
+pub fn unplayed(
+    plays: &[(f64, f64)],
+    start_time: f64,
+    head: f64,
+    duration: f64,
+    least: f64,
+) -> Vec<(f64, f64)> {
+    let mut out: Vec<(f64, f64)> = Vec::new();
+    if plays.is_empty() || duration.is_nan() || duration <= 0.0 {
+        return out;
+    }
+    let mut windows: Vec<(f64, f64)> = plays
+        .iter()
+        .map(|&(a, b)| (a - start_time, b - start_time))
+        .filter(|(a, b)| a.is_finite() && b.is_finite() && b > a)
+        .collect();
+    windows.sort_by(|x, y| x.0.total_cmp(&y.0));
+    if windows.is_empty() {
+        return out;
+    }
+    let mut take = |a: f64, b: f64| {
+        let (a, b) = (a.max(0.0), b.min(duration));
+        if b - a >= least {
+            out.push((a, b));
+        }
+    };
+    // Measured from the first picture: what lies ahead of it is not kept
+    // whatever this says.
+    if windows[0].0 - head.max(0.0) >= least {
+        take(0.0, windows[0].0);
+    }
+    let mut reach = windows[0].1;
+    for &(a, b) in &windows[1..] {
+        if a > reach {
+            take(reach, a);
+        }
+        reach = reach.max(b);
+    }
+    take(reach, duration);
+    out
+}
+
+/// [`unplayed`] for a recording that has been walked, each end of each
+/// stretch moved onto a picture (see [`onto_pictures`]).
+///
+/// A playlist's IN and OUT are the recorder's instants, not pictures of the
+/// clip it is opened as, and a cut ending between two pictures was counted
+/// one way by whatever numbers pictures and another by the cut: the window's
+/// Trim line of a title kept one picture more than the cut written from the
+/// same row, and a mark standing on an IN came back out of a `.keyframe` half
+/// a frame early, inside the cut, and was dropped. On the pictures, the
+/// command line and the window cut the same stretches and every count of
+/// them agrees.
+///
+/// The pictures are counted from the walk's own entry points, one stretch of
+/// the clip at a time: a recorder's seam starts its stretch on a phase of its
+/// own, so a grid laid from the first picture of the recording is off by up
+/// to a picture past the first seam. See [`onto_pictures`].
+pub fn unplayed_in(src: &crate::Source, plays: &[(f64, f64)]) -> Vec<(f64, f64)> {
+    let head = src.points.first().map_or(0.0, |p| p.time);
+    let cuts = unplayed(plays, src.start_time, head, src.duration, UNPLAYED_LEAST);
+    if src.video.variable_rate {
+        // No grid to count along: the instants as the playlist says them.
+        return cuts;
+    }
+    // Named by the frame they fall in, as the window has them (see
+    // `weave::on_frame`), so that a bound lands on a frame the editor steps
+    // to.
+    let points: Vec<f64> = src.points.iter().map(|p| crate::weave::on_frame(src, p.time)).collect();
+    let seams: Vec<f64> = src.joins.iter().map(|s| s.time).collect();
+    onto_pictures(&cuts, &points, &seams, src.video.frame_duration(), src.duration)
+}
+
+/// How far ahead of an entry point's stated time its picture can be: a
+/// disc's entry point map keeps the time to 512 ticks of 90 kHz (the eleven
+/// bits of a fine entry start at bit nine), and an index read off it states
+/// every entry point up to that much early. A walk's are exact, and lose
+/// nothing by the allowance.
+const POINT_EARLY: f64 = 512.0 / 90_000.0;
+
+/// Move each end of `cuts` onto a picture: counted in frames of `fd` from the
+/// last entry point (`points`, in order) of the stretch the end lies in, a
+/// stretch running from one of `seams` to the next.
+///
+/// A cut's start (a playlist item's OUT) goes to the first picture at or
+/// after it, and its end (the next item's IN) to the picture on screen at
+/// it: what is cut is the pictures the playlist shows none of. A recorder's
+/// 1080i starts and stops an item on a frame's second field, and the frame
+/// whose one field is played is kept -- which is what the cut always did
+/// there, and on an IN that is an entry point's second field it is a copy
+/// from that entry point rather than a picture short and a stretch
+/// re-encoded.
+///
+/// Where a picture is, it is known to within [`POINT_EARLY`] after the grid
+/// laid from an entry point's stated time, and an end is put on that grid:
+/// no later than the picture, so a cut from there takes it or a range from
+/// there keeps it, and most of a frame after the picture before. An end on a
+/// picture already -- a playlist states its times in ticks of 45 kHz, the
+/// pictures are on a clock of 90 -- moves by no more than that allowance.
+///
+/// An end ahead of every entry point of its stretch -- the moment after a
+/// seam before its first picture, which no cut writes -- goes to that first
+/// entry point; one at either end of the recording stays where it is.
+fn onto_pictures(
+    cuts: &[(f64, f64)],
+    points: &[f64],
+    seams: &[f64],
+    fd: f64,
+    duration: f64,
+) -> Vec<(f64, f64)> {
+    if fd.is_nan() || fd <= 0.0 || points.is_empty() {
+        return cuts.to_vec();
+    }
+    let slack = fd * 0.01;
+    // `start`: the first picture at or after `t`; otherwise the one on
+    // screen at it.
+    let on = |t: f64, start: bool| -> f64 {
+        if t.is_nan() || t <= 0.0 || t >= duration {
+            return t;
+        }
+        let since = seams
+            .iter()
+            .copied()
+            .filter(|s| *s <= t + slack)
+            .fold(f64::NEG_INFINITY, f64::max);
+        let anchor = points
+            .iter()
+            .rev()
+            .copied()
+            .find(|p| *p <= t + slack && *p >= since - slack);
+        let at = match anchor {
+            Some(p) if start => p + ((t - p - POINT_EARLY - slack) / fd).ceil().max(0.0) * fd,
+            Some(p) => p + ((t - p + slack) / fd).floor().max(0.0) * fd,
+            None => points.iter().copied().find(|p| *p >= t - slack).unwrap_or(t),
+        };
+        at.min(duration)
+    };
+    let mut out: Vec<(f64, f64)> = Vec::new();
+    for &(a, b) in cuts {
+        let (a, b) = (on(a, true), on(b, false));
+        if b <= a {
+            continue;
+        }
+        match out.last_mut() {
+            Some(last) if a <= last.1 => last.1 = last.1.max(b),
+            _ => out.push((a, b)),
+        }
+    }
+    out
+}
+
+/// Which rows to offer already ticked.
+///
+/// A disc of recordings is a disc of things somebody chose to record, so all
+/// of it is offered. A pressed disc is mostly not the film: see
+/// [`WORTH_TICKING`].
+fn worth_ticking(shape: Shape, lengths: &[f64]) -> Vec<bool> {
+    if shape == Shape::Bdav {
+        return vec![true; lengths.len()];
+    }
+    let mut out: Vec<bool> = lengths.iter().map(|d| *d >= WORTH_TICKING).collect();
+    // A disc whose longest clip is four minutes is a disc of four minute
+    // clips, and offering none of them ticked would be this reader deciding
+    // that a disc it does not understand holds nothing worth opening.
+    if !out.contains(&true) {
+        let longest = lengths
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1.total_cmp(b.1))
+            .map(|(i, _)| i);
+        if let Some(i) = longest {
+            out[i] = true;
+        }
+    }
+    out
+}
+
+/// Two playlists play the same part of a clip when they agree to the tick.
+/// Comparing the seconds themselves would be comparing two divisions by
+/// 45000 for equality, which is a thing that happens to work.
+fn ticks(seconds: f64) -> i64 {
+    (seconds * TICK).round() as i64
+}
+
+/// The folder a disc is in, which is where a cut of it can be written.
+fn beside(at: &Path) -> String {
+    at.parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(at)
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// A programme name as a file name.
+///
+/// A broadcaster writes titles with the characters it likes, and some of them
+/// are characters a filesystem will not take. They are turned into their full
+/// width forms rather than dropped, which is what a Japanese recorder does
+/// with the same problem: `?` becomes `？` and the name still reads.
+pub(crate) fn filename(name: &str) -> String {
+    /// What a name is cut to. The limit is on bytes rather than characters
+    /// because that is what a filesystem counts, and a title in Japanese is
+    /// three bytes a character.
+    const LIMIT: usize = 180;
+    let mut out = String::new();
+    for c in name.chars() {
+        let c = match c {
+            '\\' => '＼',
+            '/' => '／',
+            ':' => '：',
+            '*' => '＊',
+            '?' => '？',
+            '"' => '＂',
+            '<' => '＜',
+            '>' => '＞',
+            '|' => '｜',
+            c if (c as u32) < 0x20 => ' ',
+            c => c,
+        };
+        if out.len() + c.len_utf8() > LIMIT {
+            break;
+        }
+        out.push(c);
+    }
+    // Windows will not have a name that ends in a dot or a space, and no
+    // filesystem is improved by one.
+    let out = out.trim_matches([' ', '.', '\u{3000}']).to_string();
+    // And a name Windows keeps for a device, with or without an extension:
+    // a programme called `AUX` would be written to no file at all.
+    let device = {
+        let stem = out.split('.').next().unwrap_or("").to_ascii_uppercase();
+        matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+            || (stem.len() == 4
+                && (stem.starts_with("COM") || stem.starts_with("LPT"))
+                && stem.as_bytes()[3].is_ascii_digit()
+                && stem.as_bytes()[3] != b'0')
+    };
+    let out = if device { format!("_{out}") } else { out };
+    if out.is_empty() {
+        "recording".to_string()
+    } else {
+        out
+    }
+}
+
+/// A disc, whichever of its two shapes it arrived in and whichever dialect
+/// wrote it.
+///
+/// Each carries how many bytes of index it has read so far; see
+/// [`MAX_INDEX_TOTAL`].
+enum Volume {
+    /// A directory, and the path of the `BDAV` or `BDMV` directory inside it.
+    Dir { shape: Shape, dir: PathBuf, spent: u64 },
+    /// An image, the path it was opened from, and the prefix that directory
+    /// sits at inside it.
+    Image {
+        shape: Shape,
+        image: Box<udf::Image>,
+        path: PathBuf,
+        prefix: String,
+        spent: u64,
+    },
+}
+
+impl Volume {
+    fn open(at: &Path) -> Result<Volume> {
+        if at.is_dir() {
+            let (shape, dir) = disc_dir(at)
+                .ok_or_else(|| anyhow!("{}: no BDMV or BDAV directory here", at.display()))?;
+            return Ok(Volume::Dir { shape, dir, spent: 0 });
+        }
+        // A disc in a folder of an image arrives here as a path through it --
+        // `x.iso/DISC`, the part in front of `BDAV/STREAM` of a clip's name --
+        // and that path is neither a directory nor a file. Opened as given,
+        // every question asked of such a clip's disc (its languages, its
+        // listing, its entry points, the join of its clocks) came back empty.
+        let (file, under) =
+            inside_image(at).unwrap_or_else(|| (at.to_path_buf(), String::new()));
+        let image = udf::Image::open(&file)?;
+        let (shape, prefix) = prefix_of(&image, &under)
+            .ok_or_else(|| anyhow!("{}: no BDMV or BDAV directory on this image", at.display()))?;
+        Ok(Volume::Image {
+            shape,
+            image: Box::new(image),
+            path: file,
+            prefix,
+            spent: 0,
+        })
+    }
+
+    fn shape(&self) -> Shape {
+        match self {
+            Volume::Dir { shape, .. } | Volume::Image { shape, .. } => *shape,
+        }
+    }
+
+    /// Whether the disc carries AACS, which is what a Blu-ray recorder
+    /// encrypts everything it records with.
+    ///
+    /// The directory sits *beside* `BDAV` or `BDMV` rather than inside it,
+    /// so this is the one thing here that looks a level up. What it means is
+    /// that the streams are encrypted and the index files are not: such a
+    /// disc lists its recordings perfectly and opens none of them, and being
+    /// handed that without a word about why is the thing to avoid.
+    ///
+    /// Not a verdict on any particular clip. An image made by a tool that
+    /// decrypted the streams where they lay would keep the directory and
+    /// open anyway -- and the tools that move the streams instead put the
+    /// directory somewhere of their own, which is not this one.
+    fn protected(&self) -> bool {
+        match self {
+            Volume::Dir { dir, .. } => dir
+                .parent()
+                .is_some_and(|root| at_name(root, "AACS").is_dir()),
+            Volume::Image { image, prefix, .. } => {
+                let beside = prefix
+                    .trim_end_matches('/')
+                    .rsplit_once('/')
+                    .map_or(String::new(), |(above, _)| format!("{above}/"));
+                let want = format!("{beside}AACS/").to_ascii_uppercase();
+                image
+                    .files()
+                    .iter()
+                    .any(|e| e.path.to_ascii_uppercase().starts_with(&want))
+            }
+        }
+    }
+
+    /// Read one of the small index files, named relative to `BDAV` or `BDMV`.
+    fn read(&mut self, rel: &str) -> Result<Vec<u8>> {
+        let (Volume::Dir { spent, .. } | Volume::Image { spent, .. }) = self;
+        if *spent > MAX_INDEX_TOTAL {
+            bail!("this disc's index files come to more than {MAX_INDEX_TOTAL} bytes");
+        }
+        let raw = match self {
+            Volume::Dir { dir, .. } => read_index(&at_name(dir, rel))?,
+            Volume::Image { image, prefix, .. } => {
+                let want = format!("{prefix}{rel}");
+                let entry = image
+                    .find(&want)
+                    .ok_or_else(|| anyhow!("{want} is not on this image"))?
+                    .clone();
+                image.read(&entry)?
+            }
+        };
+        let (Volume::Dir { spent, .. } | Volume::Image { spent, .. }) = self;
+        *spent += raw.len() as u64;
+        Ok(raw)
+    }
+
+    /// What to hand [`crate::input`] for one clip's stream.
+    fn stream(&self, clip: &str) -> String {
+        let rel = format!("STREAM/{clip}.m2ts");
+        match self {
+            Volume::Dir { dir, .. } => at_name(dir, &rel).to_string_lossy().into_owned(),
+            Volume::Image { path, prefix, .. } => {
+                format!("{}/{prefix}{rel}", path.to_string_lossy())
+            }
+        }
+    }
+
+    /// How large that stream is. Zero where it cannot be asked, which is a
+    /// disc missing the file the playlist names -- the row still opens as far
+    /// as this module is concerned, and fails where it is opened.
+    fn bytes(&self, clip: &str) -> u64 {
+        let rel = format!("STREAM/{clip}.m2ts");
+        match self {
+            Volume::Dir { dir, .. } => std::fs::metadata(at_name(dir, &rel))
+                .map(|m| m.len())
+                .unwrap_or(0),
+            Volume::Image { image, prefix, .. } => image
+                .find(&format!("{prefix}{rel}"))
+                .map(|e| e.size)
+                .unwrap_or(0),
+        }
+    }
+
+    /// What the disc says one clip carries, out of `CLIPINF`.
+    fn tracks(&mut self, clip: &str) -> Vec<Track> {
+        self.read(&format!("CLIPINF/{clip}.clpi"))
+            .ok()
+            .map(|raw| tracks(&raw))
+            .unwrap_or_default()
+    }
+
+    /// Everything in one of the disc's directories, whichever case it spells
+    /// its names in.
+    fn names_in(&self, dir: &str, ext: &str) -> Vec<String> {
+        let ext = ext.to_ascii_lowercase();
+        let mut names: Vec<String> = match self {
+            Volume::Dir { dir: root, .. } => std::fs::read_dir(at_name(root, dir))
+                .map(|d| {
+                    d.flatten()
+                        .map(|e| e.file_name().to_string_lossy().into_owned())
+                        .collect()
+                })
+                .unwrap_or_default(),
+            Volume::Image { image, prefix, .. } => {
+                let want = format!("{prefix}{dir}/").to_ascii_uppercase();
+                image
+                    .files()
+                    .iter()
+                    .filter(|e| e.path.to_ascii_uppercase().starts_with(&want))
+                    .map(|e| e.name().to_string())
+                    .collect()
+            }
+        };
+        names.retain(|n| n.to_ascii_lowercase().ends_with(&ext));
+        names.sort();
+        names
+    }
+
+    /// The playlists to offer, in the order the disc would show them.
+    ///
+    /// On BDAV that is what `info.bdav` says: the index is what a recorder's
+    /// own list would show, and it is also what says which playlists are real
+    /// -- a disc can hold a `.rpls` that its index does not name.
+    ///
+    /// On BDMV there is no such list to read. `index.bdmv` names *titles*,
+    /// and a title is a Java or navigation program rather than a playlist:
+    /// working out which playlist a title plays means running the disc's own
+    /// menu code, which is a Blu-ray player and not this. So the directory
+    /// stands in, sorted -- which is the order the authoring tool numbered
+    /// them in, and on every disc looked at that is the order a person would
+    /// have chosen anyway.
+    fn playlists(&mut self) -> Vec<String> {
+        if self.shape() == Shape::Bdav {
+            if let Ok(raw) = self.read("info.bdav") {
+                let names = table_of_playlists(&raw);
+                if !names.is_empty() {
+                    return names;
+                }
+            }
+        }
+        self.names_in("PLAYLIST", self.shape().ext())
+    }
+
+    /// What the disc calls itself.
+    ///
+    /// A pressed disc writes it down in `META`, for the player that shows a
+    /// shelf of covers. Nothing else does, and the file or folder the disc
+    /// arrived as is then the only name there is -- which is not a bad one,
+    /// since somebody chose it.
+    fn label(&mut self, at: &Path) -> String {
+        // The stem of an image and the whole name of a folder: a folder
+        // called `Anime vol.2` was labelled `Anime vol`, and two discs
+        // `.D1` and `.D2` beside each other gave their rows the same names.
+        let fallback = (if at.is_dir() { at.file_name() } else { at.file_stem() })
+            .or_else(|| at.file_name())
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| self.shape().root().to_string());
+        if self.shape() != Shape::Bdmv {
+            // A disc of recordings says what it is called in its own index,
+            // where a recorder puts the name somebody typed into it. The
+            // folder or the image is named by whoever copied it, which is
+            // the same thing at second hand and is what is left when the
+            // disc says nothing.
+            return self
+                .read("info.bdav")
+                .ok()
+                .and_then(|raw| info_name(&raw))
+                .unwrap_or(fallback);
+        }
+        // The disc may carry the same file in several languages. Japanese
+        // first, because this is a tool for Japanese recordings and a
+        // Japanese disc that also ships an English name means the Japanese
+        // one; English next, because it is the one a disc almost always has.
+        let mut names = self.names_in("META/DL", ".xml");
+        names.sort_by_key(|n| {
+            let n = n.to_ascii_lowercase();
+            match () {
+                _ if n.contains("jpn") || n.contains("ja") => 0,
+                _ if n.contains("eng") => 1,
+                _ => 2,
+            }
+        });
+        for name in names {
+            let Ok(raw) = self.read(&format!("META/DL/{name}")) else {
+                continue;
+            };
+            if let Some(found) = disc_name(&String::from_utf8_lossy(&raw)) {
+                return found;
+            }
+        }
+        fallback
+    }
+}
+
+/// The disc's own directory at or under a path, whichever the user named, and
+/// which dialect it speaks.
+///
+/// Both are worth taking: a disc mounted at `/media/disc` is named by its
+/// mount point, and a disc copied to a hard disk is as likely to be named by
+/// the `BDMV` directory itself as by the folder holding it -- or by whatever
+/// the person copying it typed, which is why the name is a hint and the
+/// contents are the answer.
+fn disc_dir(at: &Path) -> Option<(Shape, PathBuf)> {
+    // The directory inside first, and BDMV before BDAV: a folder holding both
+    // is a folder somebody put two things in, and the film is the larger
+    // claim.
+    for name in ["BDMV", "bdmv", "BDAV", "bdav"] {
+        let dir = at.join(name);
+        if let Some(shape) = dialect_of(&dir) {
+            return Some((shape, dir));
+        }
+    }
+    dialect_of(at).map(|shape| (shape, at.to_path_buf()))
+}
+
+/// Which dialect a directory holding a `PLAYLIST` speaks, by what is in it.
+///
+/// The extension is what says: `.rpls` is a recording's playlist and `.mpls`
+/// is a film's. Asking the directory rather than its name is what lets a disc
+/// copied under somebody's own name -- `Anime 2026-08-17/`, holding
+/// `PLAYLIST`, `CLIPINF` and `STREAM` -- still open.
+fn dialect_of(dir: &Path) -> Option<Shape> {
+    let playlists = ["PLAYLIST", "playlist"]
+        .iter()
+        .map(|n| dir.join(n))
+        .find(|p| p.is_dir())?;
+    let (mut rpls, mut mpls) = (0usize, 0usize);
+    for e in std::fs::read_dir(&playlists).ok()?.flatten() {
+        let name = e.file_name().to_string_lossy().to_ascii_lowercase();
+        if name.ends_with(".rpls") {
+            rpls += 1;
+        } else if name.ends_with(".mpls") {
+            mpls += 1;
+        }
+    }
+    if rpls > mpls {
+        return Some(Shape::Bdav);
+    }
+    if mpls > 0 {
+        return Some(Shape::Bdmv);
+    }
+    // A disc's three directories with no playlist in them is a copy that went
+    // wrong, and the only thing left to go on is what it was called.
+    match dir
+        .file_name()?
+        .to_string_lossy()
+        .to_ascii_uppercase()
+        .as_str()
+    {
+        "BDMV" => Some(Shape::Bdmv),
+        "BDAV" => Some(Shape::Bdav),
+        _ => None,
+    }
+}
+
+/// Where inside an image that directory sits, or `None` when it does not.
+///
+/// The case a disc spells its directories in is its own business, and so is
+/// whether it puts them at the root -- a burner asked for a subdirectory
+/// obliges.
+///
+/// `under` is the folder of the image the disc is known to be in, with its
+/// trailing slash, or empty for wherever the image holds one.
+fn prefix_of(image: &udf::Image, under: &str) -> Option<(Shape, String)> {
+    let under = under.to_ascii_uppercase();
+    // Where the directory has to start to be the one asked for.
+    let placed = |at: usize| under.is_empty() || at == under.len();
+    for shape in [Shape::Bdmv, Shape::Bdav] {
+        let want = format!("{}/PLAYLIST/", shape.root());
+        let ext = shape.ext().to_ascii_uppercase();
+        let found = image.files().iter().find_map(|e| {
+            let upper = e.path.to_ascii_uppercase();
+            if !upper.ends_with(&ext) || !upper.starts_with(&under) {
+                return None;
+            }
+            let at = upper[under.len()..].find(&want)? + under.len();
+            if !placed(at) {
+                return None;
+            }
+            // A pressed disc keeps a second copy of its whole index under
+            // `BACKUP`, for a player whose read of the first one failed.
+            // Reading it here would be reading the disc twice.
+            if upper[..at].contains("BACKUP/") {
+                return None;
+            }
+            Some(e.path[..at + shape.root().len() + 1].to_string())
+        });
+        if let Some(prefix) = found {
+            return Some((shape, prefix));
+        }
+    }
+    // An image whose disc was written without its own directory around it.
+    // The extension says which dialect, the same as it does for a folder.
+    for shape in [Shape::Bdmv, Shape::Bdav] {
+        let ext = shape.ext().to_ascii_uppercase();
+        let found = image.files().iter().find_map(|e| {
+            let upper = e.path.to_ascii_uppercase();
+            if !upper.ends_with(&ext) || !upper.starts_with(&under) {
+                return None;
+            }
+            let at = upper[under.len()..].find("PLAYLIST/")? + under.len();
+            (placed(at) && !upper[..at].contains("BACKUP/")).then(|| e.path[..at].to_string())
+        });
+        if let Some(prefix) = found {
+            return Some((shape, prefix));
+        }
+    }
+    None
+}
+
+/// The image a path runs through, and the folder of it the path names, with
+/// a trailing slash: `x.iso/DISC` is `x.iso` and `DISC/`.
+///
+/// `None` for a path that is there to be opened as it is, and for one that
+/// runs through no file at all.
+pub(crate) fn inside_image(at: &Path) -> Option<(PathBuf, String)> {
+    if at.exists() {
+        return None;
+    }
+    let mut inside: Vec<String> = Vec::new();
+    let mut here = at;
+    while let Some(parent) = here.parent() {
+        inside.push(here.file_name()?.to_string_lossy().into_owned());
+        if parent.as_os_str().is_empty() {
+            return None;
+        }
+        if parent.is_file() {
+            inside.reverse();
+            return Some((parent.to_path_buf(), format!("{}/", inside.join("/"))));
+        }
+        here = parent;
+    }
+    None
+}
+
+/// The most an index file on a folder disc is read as: an index, a playlist,
+/// a clip's information. The same limit an image's own files are held to.
+const MAX_INDEX: u64 = 64 << 20;
+
+/// How many bytes of index one opened disc reads in all.
+///
+/// [`MAX_INDEX`] is per file, and a playlist is allowed a thousand items: one
+/// that alternates between two clips whose indexes are sixty-four megabytes
+/// each is sixty-four gigabytes of reading for one row of the list, and
+/// every playlist on the disc may be that one again. A real disc reads a few
+/// hundred megabytes at the very most, its clip indexes re-read for every
+/// playlist that plays them included.
+const MAX_INDEX_TOTAL: u64 = 4 << 30;
+
+/// One of a folder disc's index files, whole.
+///
+/// Not `std::fs::read`, which takes whatever is there: a folder is as much
+/// somebody else's as an image is, and a `CLIPINF` entry that is a link to
+/// a device, or a pipe, or a file of forty gigabytes, was a read that never
+/// ended or an allocation of all of it.
+pub(crate) fn read_index(path: &Path) -> Result<Vec<u8>> {
+    use std::io::Read;
+    let cannot = || format!("cannot read {}", path.display());
+    if !std::fs::metadata(path).with_context(cannot)?.is_file() {
+        bail!("{} is not a file", path.display());
+    }
+    let mut out = Vec::new();
+    std::fs::File::open(path)
+        .with_context(cannot)?
+        .take(MAX_INDEX + 1)
+        .read_to_end(&mut out)
+        .with_context(cannot)?;
+    if out.len() as u64 > MAX_INDEX {
+        bail!("{} is larger than an index file is", path.display());
+    }
+    Ok(out)
+}
+
+/// A file inside the disc's directory, found whichever case the disc spells
+/// its directories in.
+fn at_name(dir: &Path, rel: &str) -> PathBuf {
+    let direct = dir.join(rel);
+    if direct.exists() {
+        return direct;
+    }
+    let lower = dir.join(rel.to_lowercase());
+    if lower.exists() {
+        return lower;
+    }
+    // Ask for the name as given, so that what cannot be found is reported
+    // under the name the disc ought to have used.
+    direct
+}
+
+/// The name a pressed disc gives itself, out of `META/DL/bdmt_*.xml`.
+///
+/// Scraped rather than parsed. The file is a document with a dozen
+/// namespaces declared and one interesting element in it, and pulling in an
+/// XML parser to reach `<di:name>` would be the largest dependency in the
+/// program by some way. What is taken is the first `name` element that is not
+/// a `titleName` -- the table of contents beside it is a list of the disc's
+/// menu titles, which is not what the disc is called.
+fn disc_name(xml: &str) -> Option<String> {
+    /// What a name is cut to. It is copied into the label of every row of
+    /// the disc, and the file it comes from may be sixty-four megabytes.
+    const LIMIT: usize = 255;
+    let mut rest = xml;
+    while let Some(at) = rest.find("name>") {
+        // `<di:name>` and `<name>` both end in `name>`; `<di:titleName>` ends
+        // in `Name>` and is passed over by the case-sensitive match above.
+        let after = &rest[at + "name>".len()..];
+        // An opening tag, `<name>` or `<di:name>`, and not the closing one:
+        // `</di:name>` ends in `:name>` too, and taken for an opening after
+        // an empty name it gave the disc the next element's markup as its
+        // name -- `<di:numSets>1`.
+        let open = rest[..at].rfind('<').is_some_and(|lt| {
+            let tag = &rest[lt + 1..at];
+            tag.is_empty()
+                || (tag.ends_with(':')
+                    && !tag.starts_with('/')
+                    && !tag.contains(|c: char| c == '>' || c.is_whitespace()))
+        });
+        if open {
+            // No closing tag after this one is none after any later one
+            // either. Looked for again at every opening, a file of nothing
+            // but `<name>` was searched to its end millions of times over.
+            let end = after.find("</")?;
+            // Asked of the line and not of the text: a name of nothing but
+            // `&#32;` is text, and no name.
+            let line: String = arib::one_line(&xml_text(after[..end].trim()))
+                .chars()
+                .take(LIMIT)
+                .collect();
+            if !line.is_empty() {
+                return Some(line);
+            }
+        }
+        rest = after;
+    }
+    None
+}
+
+/// The text of an element, with the references XML writes in place of `&`,
+/// `<` and the rest put back: a disc called `A & B` writes `A &amp; B`, and
+/// taken as it lies that was the name in the list and in every file cut
+/// from the disc. A reference this does not know is left as written.
+fn xml_text(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let mut rest = raw;
+    while let Some(at) = rest.find('&') {
+        out.push_str(&rest[..at]);
+        rest = &rest[at..];
+        // The longest reference is ten bytes (`&#x10FFFF;`), and a `;` any
+        // further off belongs to something else: searched for to the end of
+        // the text at every `&`, a name of nothing but them never finished.
+        let semicolon = rest.bytes().take(16).position(|b| b == b';');
+        let named = semicolon.and_then(|end| {
+            let c = match &rest[1..end] {
+                "amp" => '&',
+                "lt" => '<',
+                "gt" => '>',
+                "quot" => '"',
+                "apos" => '\'',
+                n => match n.strip_prefix("#x").or_else(|| n.strip_prefix("#X")) {
+                    Some(hex) => char::from_u32(u32::from_str_radix(hex, 16).ok()?)?,
+                    None => char::from_u32(n.strip_prefix('#')?.parse().ok()?)?,
+                },
+            };
+            (!c.is_control()).then_some((c, end))
+        });
+        match named {
+            Some((c, end)) => {
+                out.push(c);
+                rest = &rest[end + 1..];
+            }
+            None => {
+                out.push('&');
+                rest = &rest[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Read text a recorder wrote into its index, in whichever of the two
+/// encodings it used.
+///
+/// **ARIB text is no longer the only answer.** Every recorder and authoring
+/// tool read before this one wrote the broadcast's own encoding straight into
+/// the playlist; the 4K recorder read on 2026-09-15 writes UTF-8 instead, with
+/// the symbols a broadcast sends as its own characters -- `[新]` and the rest
+/// -- already turned into the Unicode ones. Read as ARIB, its `ＮＨＫ　ＢＳ`
+/// comes back as `わぜぎわぜえわぜかゃわぜあわぜこ`.
+///
+/// What says which is the version the file carries: `PLST0200` and `M2TS0200`
+/// against the `0100` and `0110` of every disc before it, which is the version
+/// 4K recordings are written at. `info.bdav` stays at `BDAV0100` even there,
+/// so the version cannot be the whole answer and the bytes are asked as well.
+///
+/// The bytes can only be asked so far. ARIB text shifts between its character
+/// sets with the control bytes `0E`, `0F` and `1B`, which no UTF-8 text holds,
+/// and single-shifts with `89` and `8A`, which no valid UTF-8 sequence begins
+/// with. A line break is not one of them: a programme description runs to
+/// several lines in both encodings, and `0A` in the middle of one says
+/// nothing about which it is. But a name written entirely in kanji needs no shift at all, since
+/// kanji is where the decoder starts, and such a name is a run of bytes below
+/// `0x80` that is also valid UTF-8 -- read as UTF-8 it would come back as the
+/// nonsense Latin the pairs spell. So a file that says 2.00 is read as UTF-8,
+/// and a file that does not only where the bytes carry a character ARIB could
+/// not have written them as: a valid multi-byte sequence and no shifts.
+/// Everything else is ARIB, as it has always been.
+fn recorded_text(magic: &[u8], bytes: &[u8]) -> String {
+    let major = magic
+        .get(4..6)
+        .and_then(|v| std::str::from_utf8(v).ok())
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(0);
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return arib::decode(bytes);
+    };
+    const SHIFTS: [u8; 4] = [0x0C, 0x0E, 0x0F, 0x1B];
+    let shifts = bytes.iter().any(|b| SHIFTS.contains(b) || (0x1C..0x20).contains(b));
+    let beyond_ascii = bytes.iter().any(|b| *b >= 0x80);
+    if !shifts && (major >= 2 || beyond_ascii) {
+        return text.to_string();
+    }
+    arib::decode(bytes)
+}
+
+/// What a disc of recordings calls itself, out of `info.bdav`.
+///
+/// Recorder text, read as [`recorded_text`] reads it, and counted the way a
+/// playlist counts the programme's: a length byte and then that many bytes.
+/// Read instead as a field running to the first zero, as this did before,
+/// every byte of every real disc's name came out one place early -- a
+/// recorder writes the name straight in kanji, so the length in front of it
+/// was decoded as the first half of a character and every pair after it split
+/// across two. A disc named `星降る夜の郵便局` read back as `〓厩澆詭襪陵絞惷`.
+/// Where the disc has been given no name the length is zero, and that is not
+/// a name either.
+fn info_name(raw: &[u8]) -> Option<String> {
+    const NAME_AT: usize = 64;
+    if raw.len() < 12 || &raw[..4] != b"BDAV" {
+        return None;
+    }
+    let end = (u32be(raw, 8) as usize).min(raw.len());
+    let len = usize::from(*raw.get(NAME_AT)?);
+    let text = raw.get(NAME_AT + 1..(NAME_AT + 1 + len).min(end))?;
+    let name = arib::one_line(&recorded_text(raw, text));
+    (!name.is_empty()).then_some(name)
+}
+
+/// The name of the disc of recordings already in the folder `at` writes
+/// into (`crate::bdav::root`), or `None` where there is no disc there yet or
+/// it has been given no name.
+///
+/// For a run adding recordings to a disc with nobody naming it: the disc
+/// keeps the name it has -- typed into a recorder, or given to an earlier
+/// run -- and the series of what is added names only a disc of its own.
+pub fn bdav_title(at: &Path) -> Option<String> {
+    // Through `read_index`, not `std::fs::read`: the folder is one the GUI
+    // asks about as it is typed, and an `info.bdav` that is a pipe or a file
+    // of gigabytes was a read that never ended or an allocation of all of it.
+    let raw = read_index(&crate::bdav::root(at).join("info.bdav")).ok()?;
+    info_name(&raw)
+}
+
+/// The playlist names `info.bdav` lists.
+fn table_of_playlists(raw: &[u8]) -> Vec<String> {
+    if raw.len() < 12 || &raw[..4] != b"BDAV" {
+        return Vec::new();
+    }
+    let at = u32be(raw, 8) as usize;
+    let Some(count) = raw
+        .get(at + 4..at + 6)
+        .map(|b| u16::from_be_bytes([b[0], b[1]]) as usize)
+    else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for i in 0..count.min(2000) {
+        let name_at = at + 6 + i * 10;
+        let Some(name) = raw.get(name_at..name_at + 10) else {
+            break;
+        };
+        // `01001.RPLS`: digits, a dot and letters. Anything else -- a `/`,
+        // a `..` -- would be joined onto the disc's folder and read from
+        // outside it.
+        if !name.iter().all(|b| b.is_ascii_alphanumeric() || *b == b'.')
+            || name.windows(2).any(|w| w == b"..")
+        {
+            break;
+        }
+        out.push(String::from_utf8_lossy(name).into_owned());
+    }
+    out
+}
+
+/// Read one `.rpls` or `.mpls`.
+///
+/// The two are the same file with different magic and a different idea of
+/// what belongs in the header: the play items and the marks sit at addresses
+/// the header gives, in the same layout, and are read by the same code.
+fn playlist(raw: &[u8], file: &str, shape: Shape, vol: &mut Volume) -> Result<Title> {
+    if raw.len() < 48 || &raw[..4] != shape.magic() {
+        bail!("{file} is not a playlist");
+    }
+    let list_at = u32be(raw, 8) as usize;
+    let marks_at = u32be(raw, 12) as usize;
+
+    let mut clips = play_items(raw, list_at, vol)?;
+    if clips.is_empty() {
+        bail!("{file} plays nothing");
+    }
+    let duration = clips.iter().map(|c| c.end - c.start).sum();
+    let found = play_marks(raw, marks_at, &clips);
+    for (clip, marks) in clips.iter_mut().zip(found) {
+        clip.marks = marks;
+    }
+
+    // Only a recording carries these. A pressed disc's header holds a
+    // playback type and a play-all flag where a recorder writes the name of
+    // the programme and the night it went out, so reading them there would be
+    // reading two numbers as a sentence.
+    let said = match shape {
+        Shape::Bdav => app_info(raw, list_at),
+        // A DVD never reaches here: it has no playlists to read.
+        Shape::Bdmv | Shape::Dvd => AppInfo::default(),
+    };
+
+    Ok(Title {
+        playlist: file.to_string(),
+        name: said.name,
+        made: said.made,
+        ran: said.ran,
+        description: said.description,
+        channel: said.channel,
+        channel_number: said.channel_number,
+        duration,
+        clips,
+    })
+}
+
+/// The PlayItems: which clip, and the part of it to play.
+fn play_items(raw: &[u8], at: usize, vol: &mut Volume) -> Result<Vec<Clip>> {
+    let count = raw
+        .get(at + 6..at + 8)
+        .map(|b| u16::from_be_bytes([b[0], b[1]]) as usize)
+        .ok_or_else(|| anyhow!("the playlist ends where its items should start"))?;
+    let mut out = Vec::new();
+    let mut item = at + 10;
+    for _ in 0..count.min(1000) {
+        let Some(len) = raw
+            .get(item..item + 2)
+            .map(|b| u16::from_be_bytes([b[0], b[1]]) as usize)
+        else {
+            break;
+        };
+        let Some(body) = raw.get(item + 2..item + 2 + len) else {
+            break;
+        };
+        if body.len() < 20 {
+            break;
+        }
+        // Five digits, which is what a clip is called on every disc. A name
+        // with a NUL or a separator in it goes into a path, and from there to
+        // libavformat.
+        if !body[..5].iter().all(u8::is_ascii_digit) {
+            bail!("a clip in this playlist is not named with five digits");
+        }
+        let name = String::from_utf8_lossy(&body[..5]).into_owned();
+        let codec = &body[5..9];
+        if codec != b"M2TS" {
+            bail!(
+                "a clip in {name} is {:?}, which is not a stream this reads",
+                // Quoted and escaped: four bytes of the file, printed to a
+                // terminal, can be a control sequence.
+                String::from_utf8_lossy(codec)
+            );
+        }
+        // Two bytes of flags, then the sequence this item's times are on,
+        // then the times. A disc whose clips hold one sequence writes zero
+        // here and nothing downstream looks twice at it.
+        let stc = body[11];
+        let start = u32be(body, 12) as f64 / TICK;
+        let end = u32be(body, 16) as f64 / TICK;
+        if end <= start {
+            bail!("a clip in the playlist ends before it begins");
+        }
+        out.push(Clip {
+            path: vol.stream(&name),
+            name,
+            stc,
+            start,
+            end,
+            marks: Vec::new(),
+        });
+        item += 2 + len;
+    }
+    Ok(out)
+}
+
+/// The chapter marks, when they can be believed, each on the clock of the
+/// clip it belongs to.
+///
+/// The entries are a fixed size that the section's own length gives away, but
+/// what sits where inside one is not the same on both dialects: BDMV's mark
+/// is fourteen bytes -- a byte reserved, the mark's kind, the play item it
+/// belongs to, then the time -- and the marks a BDAV recorder writes are
+/// forty-six, the kind first, then the maker who wrote the mark, then the
+/// play item and the time, and then room for a name and a thumbnail that no
+/// disc here fills in. So the layout is not assumed. Each candidate is tried, and the one whose times all land
+/// inside the clip they claim is the one that is right -- and when none of
+/// them does, the marks are left out rather than guessed at, because a
+/// chapter point in the wrong place is worse than no chapter point.
+///
+/// Reading which play item a mark belongs to is what makes a playlist of
+/// twelve episodes usable. Without it every mark is a number with no clock
+/// under it: the fifth episode's chapter points are on the fifth episode's
+/// own timeline, which shares nothing with the first's beyond both starting
+/// near eleven seconds.
+fn play_marks(raw: &[u8], at: usize, clips: &[Clip]) -> Vec<Vec<f64>> {
+    let none = || vec![Vec::new(); clips.len()];
+    if clips.is_empty() {
+        return Vec::new();
+    }
+    let Some(count) = raw
+        .get(at + 4..at + 6)
+        .map(|b| u16::from_be_bytes([b[0], b[1]]) as usize)
+    else {
+        return none();
+    };
+    if count == 0 || count > 10_000 {
+        return none();
+    }
+    let len = u32be(raw, at) as usize;
+    if len < 2 {
+        return none();
+    }
+    let stride = (len - 2) / count;
+    if stride < 8 {
+        return none();
+    }
+    let body_at = at + 6;
+
+    // Where the time sits, and where the play item's number sits when the
+    // layout is one that carries it. The two that can say which clip a mark
+    // is on come first, because they are the only ones a playlist of more
+    // than one clip can be read by: BDMV's, and then BDAV's, whose two bytes
+    // in front of the play item are the maker who wrote the mark rather than
+    // anything about the clip. Until 0.5.13 this looked for the play item
+    // there, in the maker, and asked for clip 0x0212 of a disc that has
+    // three -- so a playlist of several episodes fell through to a layout
+    // that could not place a mark at all, and came back with none.
+    for (time_at, item_at) in [(4usize, Some(2usize)), (6, Some(4)), (4, None), (6, None)] {
+        if item_at.is_some_and(|o| o + 2 > time_at) {
+            continue;
+        }
+        let mut out = none();
+        let mut sound = true;
+        for i in 0..count {
+            let entry = body_at + i * stride;
+            if raw.get(entry..entry + stride).is_none() {
+                sound = false;
+                break;
+            }
+            // **A recorder's playlist holds marks that are not chapters.**
+            // The kind is the mark's first byte: 0x01 and 0x02 are the
+            // picture the recorder shows for the title in its list, 0x03 is
+            // where playback last stopped, and 0x06 is a point to skip from.
+            // Every recorder playlist here carries one 0x01 (at the same
+            // second in all seven titles of one disc), and read as a chapter
+            // it put a chapter mark, and a chapter in the cut, a few seconds
+            // or a minute into every recording. The chapters themselves are
+            // 0x04 (a recorder's) and 0x05 (an authoring tool's, and this
+            // program's own). BDMV's kinds sit in another byte and mean other
+            // things, so this is asked only of the BDAV layouts.
+            if time_at == 6 && matches!(raw[entry], 0x01 | 0x02 | 0x03 | 0x06) {
+                continue;
+            }
+            // A layout that does not say which clip a mark is on can only be
+            // believed on a playlist that plays one.
+            let which = match item_at {
+                Some(o) => u16be(raw, entry + o) as usize,
+                None => 0,
+            };
+            let (Some(clip), Some(marks)) = (clips.get(which), out.get_mut(which)) else {
+                sound = false;
+                break;
+            };
+            let time = u32be(raw, entry + time_at) as f64 / TICK;
+            // A mark belongs to a play item and cannot fall outside it. That
+            // is the whole of the check, and it is enough: a field read from
+            // the wrong offset lands outside a ten minute window
+            // immediately.
+            if time < clip.start - 0.001 || time > clip.end + 0.001 {
+                sound = false;
+                break;
+            }
+            marks.push(time - clip.start);
+        }
+        if !sound || out.iter().all(Vec::is_empty) {
+            continue;
+        }
+        // A playlist of several clips whose marks all landed on the first of
+        // them has been read by a layout that cannot say which clip it meant.
+        // Believing it would put every episode's chapter points on episode
+        // one.
+        if item_at.is_none() && clips.len() > 1 {
+            continue;
+        }
+        for marks in out.iter_mut() {
+            marks.sort_by(f64::total_cmp);
+            marks.dedup_by(|a, b| (*a - *b).abs() < 0.001);
+        }
+        return out;
+    }
+    none()
+}
+
+/// Everything a recorder writes into a playlist about the recording, as
+/// against about the stream.
+///
+/// The four fields sit at fixed offsets in the description a playlist opens
+/// with, one after another with room left after each:
+///
+/// ```text
+///  50  when it was recorded    7 bytes, binary coded decimal, century first
+///  64  the channel's number    2 bytes  -- the three digits a viewer knows
+///  67  the channel's name      1 + 20   -- ARIB text
+///  88  the programme's name    1 + 255  -- ARIB text
+/// 344  what it was about       2 + …    -- ARIB text, lines and all
+/// ```
+///
+/// The offsets are the ones read off two discs written eighteen years apart
+/// by unrelated tools -- a Japanese recorder's, and an authoring tool's --
+/// which agree on all of them. The recorder fills all four in; the authoring
+/// tool writes the name and the date and leaves the channel and the
+/// description empty, which is what it knows.
+///
+/// Every length is checked against where the play items begin, so that a
+/// field this has misread cannot swallow the rest of the file.
+#[derive(Default)]
+struct AppInfo {
+    name: Option<String>,
+    made: Option<crate::si::Began>,
+    ran: Option<u32>,
+    description: Option<String>,
+    channel: Option<String>,
+    channel_number: u16,
+}
+
+fn app_info(raw: &[u8], list_at: usize) -> AppInfo {
+    const RAN_AT: usize = 57;
+    const CHANNEL_AT: usize = 64;
+    const CHANNEL_NAME_AT: usize = 67;
+    const NAME_LEN_AT: usize = 88;
+    const DESCRIPTION_AT: usize = 344;
+    let end = list_at.min(raw.len());
+    // A length and then that many bytes of ARIB text, if they are all still
+    // inside the description.
+    let text = |at: usize, len: usize| -> Option<String> {
+        if len == 0 || at + len > end {
+            return None;
+        }
+        let read = recorded_text(raw, raw.get(at..at + len)?);
+        let read = read.trim().to_string();
+        (!read.is_empty()).then_some(read)
+    };
+    let counted = |len_at: usize| text(len_at + 1, *raw.get(len_at)? as usize);
+    AppInfo {
+        name: counted(NAME_LEN_AT).map(|t| arib::one_line(&t)),
+        made: app_info_made(raw),
+        // How long it ran on air: three bytes of binary coded decimal, hours
+        // first. The slot rather than the recording -- a disc read here says
+        // half an hour against a twenty-four minute cut of it.
+        ran: raw.get(RAN_AT..RAN_AT + 3).and_then(|b| {
+            let d = |i: usize| -> Option<u32> {
+                let (hi, lo) = (b[i] >> 4, b[i] & 0x0F);
+                (hi <= 9 && lo <= 9).then_some(u32::from(hi) * 10 + u32::from(lo))
+            };
+            let seconds = d(0)? * 3600 + d(1)? * 60 + d(2)?;
+            (seconds > 0).then_some(seconds)
+        }),
+        // The only one of the four counted in two bytes: a description runs
+        // to hundreds of them where a name runs to tens.
+        description: text(DESCRIPTION_AT + 2, u16be(raw, DESCRIPTION_AT) as usize),
+        channel: counted(CHANNEL_NAME_AT).map(|t| arib::one_line(&t)),
+        channel_number: u16be(raw, CHANNEL_AT),
+    }
+}
+
+/// When the playlist says it was made: seven bytes of binary coded decimal,
+/// century first.
+fn app_info_made(raw: &[u8]) -> Option<crate::si::Began> {
+    const MADE_AT: usize = 50;
+    let b = raw.get(MADE_AT..MADE_AT + 7)?;
+    let d = |i: usize| -> Option<u32> {
+        let (hi, lo) = (b[i] >> 4, b[i] & 0x0F);
+        (hi <= 9 && lo <= 9).then_some(hi as u32 * 10 + lo as u32)
+    };
+    let year = d(0)? * 100 + d(1)?;
+    let (month, day, hour, min, sec) = (d(2)?, d(3)?, d(4)?, d(5)?, d(6)?);
+    if !(1970..=2200).contains(&year)
+        || !(1..=12).contains(&month)
+        || !(1..=31).contains(&day)
+        || hour > 23
+        || min > 59
+        || sec > 59
+    {
+        return None;
+    }
+    Some(crate::si::Began {
+        year: year as u16,
+        month: month as u8,
+        day: day as u8,
+        hour: hour as u8,
+        minute: min as u8,
+        second: sec as u8,
+    })
+}
+
+fn u32be(b: &[u8], at: usize) -> u32 {
+    b.get(at..at + 4)
+        .map(|v| u32::from_be_bytes([v[0], v[1], v[2], v[3]]))
+        .unwrap_or(0)
+}
+
+fn u16be(b: &[u8], at: usize) -> u16 {
+    b.get(at..at + 2)
+        .map(|v| u16::from_be_bytes([v[0], v[1]]))
+        .unwrap_or(0)
+}
+
+// --- what a clip carries, out of CLIPINF ---------------------------------
+//
+// A `.clpi` is the clip's own index: where its program sequences begin, what
+// streams each of them carries, and -- in the part this does not read -- a
+// map of every entry point in the video. Only the stream list is wanted here,
+// and only to draw a list somebody chooses from.
+
+/// The streams `raw`, one `.clpi` file, says its clip carries.
+///
+/// Empty for anything this cannot make sense of. A chooser that listed
+/// nothing is a chooser that offers the clip whole, which is the right answer
+/// when the disc will not say what is in it; a chooser that listed a guess
+/// would have somebody switch off a track that was never there.
+/// Every point a player may start at, as the clip's own index records them.
+///
+/// **This is the walk over the packets, already done.** A Blu-ray writes an
+/// entry-point map beside each stream -- where every picture a player may
+/// begin at is, on the presentation clock and in the file -- and reading it
+/// costs a hundred kilobytes against the eighty gigabytes the same answer
+/// used to be read out of. The UHD disc this was measured on took 8 minutes
+/// 45 seconds to index and takes under a second now.
+///
+/// Returned as `(presentation time in seconds, byte offset)`, on the stream's
+/// own clock, in the order the map holds them -- which is the order they are
+/// shown in. Empty where the file is not a clip index, holds no map, or holds
+/// one this cannot make sense of: the walk is always there to fall back on,
+/// and a half-read map is worse than none.
+///
+/// The map is two tables. A **coarse** entry holds the top of a timestamp and
+/// the top of a packet number, and points at the first of the **fine**
+/// entries that fill in the rest -- so a time is one of each, put together.
+/// The layout is the one `libbluray` reads, with one thing its own
+/// description of the format leaves out: the map for a stream opens with a
+/// four-byte offset to its own fine table, and the coarse table starts after
+/// that.
+///
+/// `clock` says which clock the times are wanted on, which is a question of
+/// what libavformat will be reading: see [`Clock`].
+fn entry_points(raw: &[u8], clock: Clock) -> Vec<(f64, u64)> {
+    if raw.len() < 24 || !matches!(&raw[..4], b"HDMV" | b"M2TS") {
+        return Vec::new();
+    }
+    // The CPI section: a length, twelve reserved bits, and four that say
+    // which kind of map follows. Type 1 is the entry-point map; nothing else
+    // has ever been seen and nothing else is guessed at.
+    let cpi = u32be(raw, 16) as usize;
+    if u32be(raw, cpi) == 0 || raw.get(cpi + 5).map(|b| b & 0x0F) != Some(1) {
+        return Vec::new();
+    }
+    let map = cpi + 6;
+    let Some(&streams) = raw.get(map + 1) else {
+        return Vec::new();
+    };
+    // One stream's worth is enough: the pictures are what a cut is planned
+    // against, and a clip carries one picture stream.
+    for i in 0..streams.min(16) as usize {
+        let at = map + 2 + i * 12;
+        let Some(head) = raw.get(at..at + 12) else {
+            break;
+        };
+        // Sixteen bits of PID, ten reserved, four of stream type, then the
+        // two counts -- sixteen bits and eighteen, which do not fall on byte
+        // boundaries, so the six bytes are read as one number.
+        let packed = head[2..8].iter().fold(0u64, |n, &b| (n << 8) | b as u64);
+        if (packed >> 34) & 0xF != 1 {
+            continue; // not the picture stream
+        }
+        let coarse_n = ((packed >> 18) & 0xFFFF) as usize;
+        let fine_n = (packed & 0x3_FFFF) as usize;
+        let start = map + u32be(raw, at + 8) as usize;
+        let fine_at = start + u32be(raw, start) as usize;
+        let coarse_at = start + 4;
+        if coarse_n == 0 || fine_n == 0 {
+            continue;
+        }
+        // Read the coarse table first: a fine entry means nothing without
+        // the coarse one it hangs off, and every entry is checked to be
+        // inside the file before any of it is believed.
+        let mut coarse = Vec::with_capacity(coarse_n);
+        for k in 0..coarse_n {
+            let Some(v) = raw.get(coarse_at + k * 8..coarse_at + k * 8 + 8) else {
+                return Vec::new();
+            };
+            let head = u32::from_be_bytes([v[0], v[1], v[2], v[3]]);
+            let spn = u32::from_be_bytes([v[4], v[5], v[6], v[7]]);
+            coarse.push(((head >> 14) as usize, (head & 0x3FFF) as u64, spn as u64));
+        }
+        if raw.len() < fine_at + fine_n * 4 {
+            return Vec::new();
+        }
+        let mut out = Vec::with_capacity(fine_n);
+        // The last position handed out. Entry points are places in a file and
+        // a file only goes one way, which is what the correction below leans
+        // on.
+        let mut behind = 0u64;
+        // The last time handed out, and where the stretch it belongs to ends.
+        //
+        // **A time only climbs inside one stretch.** A clip a recorder wrote
+        // in several goes holds a clock per stretch, and one of them starting
+        // again is not a map out of step -- on the discs here a stretch has
+        // begun 7 seconds before the one in front of it ended. So the same
+        // correction the positions get is made against a watermark that is
+        // dropped at every seam, and a map whose clocks restart is left
+        // exactly as it reads. See [`sequence_starts`].
+        let seams: Vec<u64> = sequence_starts(raw).into_iter().skip(1).map(|s| s.at).collect();
+        let mut seam = 0usize;
+        // Whole turns of the 33-bit clock the map has gone past. A broadcast
+        // recording carries the broadcaster's clock, which can pass 2^33 in
+        // the middle of a clip -- a couple of hours of recording does about
+        // one time in twelve. The map then drops back to near nought, which
+        // the stepping below cannot answer (it steps by 11.65 seconds, not by
+        // a day), and every entry point after it came out a day before the
+        // clip began and was thrown away. libavformat unwraps the clock it
+        // hands over, and the map is unwrapped to match.
+        //
+        // **By libavformat's own rule, and not by watching for the drop.**
+        // It takes the first timestamp it meets, less a minute, as a
+        // reference for the whole file: where that first timestamp is more
+        // than a minute short of the wrap, everything below the reference
+        // has 2^33 added; where it is inside that last minute, everything at
+        // or above the reference has 2^33 taken off instead. One reference,
+        // never reset -- so after a seam where the recorder's clock restarts
+        // low, what libavformat hands over has been moved up a turn, and an
+        // unwrapping that started again at each seam, as this did until
+        // 0.8.4, put that stretch's entry points a day away from its
+        // pictures. The first entry point stands in for the first packet:
+        // they are a picture's reordering apart, and the minute swallows it.
+        //
+        // That is the file read whole as it lies. A stretch opened on its own,
+        // or the stretches once a join has laid them end to end, is not that
+        // file: libavformat's first timestamp is then the stretch's, and a
+        // stretch whose clock starts more than a minute below the first one's
+        // is not a turn later. Taken against the file's first timestamp it
+        // came out a day late -- its entry points and, through the join,
+        // every seam after it. See [`Clock`].
+        let rule = |first: i64, lowers: bool| -> (i64, bool) {
+            let reference = first - WRAP_MARGIN;
+            (reference, !lowers || first < WRAP - WRAP_MARGIN)
+        };
+        let (mut reference, mut adds) = rule(
+            coarse
+                .first()
+                .map(|&(_, hi, _)| {
+                    let v = u32be(raw, fine_at);
+                    ((hi << 19) | (((v >> 17) & 0x7FF) as u64) << 9) as i64
+                })
+                .unwrap_or(0),
+            true,
+        );
+        let unwrap = |pts: i64, reference: i64, adds: bool| -> i64 {
+            if adds && pts < reference {
+                pts + WRAP
+            } else if !adds && pts >= reference {
+                pts - WRAP
+            } else {
+                pts
+            }
+        };
+        let mut earlier = i64::MIN;
+        // Each fine entry belongs to one coarse entry, so the coarse ones
+        // hand them out in order and never twice. A map whose coarse entries
+        // point back at fine ones already given out is not a map: taken as
+        // written, a clip of a megabyte and a half asked for hundreds of
+        // gigabytes of entry points.
+        if coarse.windows(2).any(|w| w[1].0 < w[0].0) {
+            return Vec::new();
+        }
+        for (k, &(first, pts_hi, spn_hi)) in coarse.iter().enumerate() {
+            let last = coarse.get(k + 1).map_or(fine_n, |c| c.0);
+            // The top of the packet number comes from the coarse entry and
+            // the bottom seventeen bits from the fine one, and the top of the
+            // timestamp likewise.
+            let mut top = spn_hi & !0x1_FFFF;
+            let mut ceiling = pts_hi << 19;
+            for f in first..last.min(fine_n) {
+                let v = u32be(raw, fine_at + f * 4);
+                let mut pts = ceiling | (((v >> 17) & 0x7FF) as u64) << 9;
+                let mut spn = top | (v & 0x1_FFFF) as u64;
+                // **A coarse entry does not always carry the top it should.**
+                // The seventeen bits a fine entry holds run out every 131072
+                // packets, about twenty seconds of a recording, and a coarse
+                // entry is written each time they do -- but on one clip of the
+                // recorder's discs measured here, nine of them state a top
+                // that is one such step behind, which reads as the map turning
+                // round and going back 25 megabytes. It does not: what a
+                // player is being told is where the next picture is, and the
+                // next picture is further in. So a position that would go
+                // backwards is stepped on by whole seventeen-bit turns until
+                // it does not, which leaves every well-written map exactly as
+                // it was and puts that one back in order.
+                let mut turns = 0;
+                while spn < behind && turns < TURNS {
+                    top += 0x2_0000;
+                    spn += 0x2_0000;
+                    turns += 1;
+                }
+                behind = spn;
+                // **And the timestamp is carried the same way.** A coarse
+                // entry that states a stale top states it in both of its
+                // fields: the eleven bits a fine entry holds of the time run
+                // out every 2^20 ticks, and where the coarse entry has not
+                // been stepped on the time reads a whole turn -- 11.65
+                // seconds -- early. Measured on one clip of the recorder's
+                // discs here, the map turns round and goes back that far
+                // twice inside a single stretch. A player is being told when
+                // the next picture is and the next picture is later, so the
+                // time is stepped on by whole turns until it does not go
+                // backwards.
+                while spn >= seams.get(seam).copied().unwrap_or(u64::MAX) {
+                    seam += 1;
+                    earlier = i64::MIN;
+                    if clock != Clock::File {
+                        (reference, adds) = rule(pts as i64, clock == Clock::Stretch);
+                    }
+                }
+                let mut turns = 0;
+                while unwrap(pts as i64, reference, adds) < earlier && turns < TURNS {
+                    ceiling += 0x10_0000;
+                    pts += 0x10_0000;
+                    turns += 1;
+                }
+                let at = unwrap(pts as i64, reference, adds);
+                earlier = at;
+                // A source packet is 192 bytes: a transport packet behind the
+                // four that say when it arrived.
+                out.push((at as f64 / 90_000.0, spn * SOURCE_PACKET));
+            }
+        }
+        return out;
+    }
+    Vec::new()
+}
+
+/// Which clock a clip's entry points are wanted on: whichever libavformat
+/// will report for what is opened.
+///
+/// The difference is only in how a clock that turns past 2^33 is unwrapped,
+/// and it matters only on a clip of several stretches whose clocks restart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Clock {
+    /// The file read whole as it lies: one reference, taken from its first
+    /// timestamp, for every stretch in it.
+    File,
+    /// Each stretch opened on its own, as a name that plays one sequence is:
+    /// the reference is that stretch's first timestamp.
+    Stretch,
+    /// Each stretch on its own clock run forwards from where it starts,
+    /// which is what a join lays end to end; the first stretch as the file
+    /// has it, since the join leaves it where it is and libavformat takes
+    /// its reference from there.
+    Joined,
+}
+
+/// Whether the streams of the disc a recording is on are encrypted.
+///
+/// Asked of a path rather than of an open disc, because the place it is
+/// needed is where opening one has just failed and all there is to go on is
+/// the name. `false` for everything that is not a clip on a disc, and for
+/// every disc that carries no AACS directory. See [`Volume::protected`].
+///
+/// Costs a read of the disc's filesystem, so it belongs on the path where
+/// something has already gone wrong and not on the one where things are
+/// working.
+pub fn encrypted(path: &str) -> bool {
+    let Some((root, _)) = clip_on_a_disc(path) else {
+        return false;
+    };
+    Volume::open(Path::new(root)).is_ok_and(|v| v.protected())
+}
+
+/// The entry points a disc holds for one of its own clips.
+///
+/// `None` for anything that is not a clip on a disc, and for a disc whose
+/// index does not answer -- both of which mean the packets get walked, which
+/// is what always used to happen. See [`entry_points`].
+pub fn clip_entry_points(path: &str) -> Option<Vec<(f64, u64)>> {
+    let (root, clip) = clip_on_a_disc(path)?;
+    let mut vol = Volume::open(Path::new(root)).ok()?;
+    let raw = vol.read(&format!("CLIPINF/{clip}.clpi")).ok()?;
+    // A name that plays one sequence is opened as those bytes alone, so the
+    // map has to be cut to them and counted from where they start: a point
+    // outside the sequence is not in what the demuxer is reading, and one
+    // inside it sits that many bytes earlier than the whole clip would put
+    // it.
+    let points = if let Some((_, first, last)) = crate::input::clip_window(path) {
+        let mut points = entry_points(&raw, Clock::Stretch);
+        let (from, to) = (first * SOURCE_PACKET, (last + 1) * SOURCE_PACKET);
+        points.retain(|(_, pos)| *pos >= from && *pos < to);
+        for p in points.iter_mut() {
+            p.1 -= from;
+        }
+        points
+    } else if let Some(table) = joins_clocks(root, &vol)
+        .then(|| joined(&raw, vol.bytes(clip) / SOURCE_PACKET))
+        .flatten()
+    {
+        // A clip read whole is read with its clocks joined, so the map has to
+        // be on the joined clock too: it is what says where in the file a
+        // moment is, and the moments the demuxer reports have moved. The
+        // corrections only ever go forwards, so a map that was in order stays
+        // in order.
+        let mut points = entry_points(&raw, Clock::Joined);
+        for p in points.iter_mut() {
+            p.0 += table.seconds_at(p.1);
+        }
+        points
+    } else {
+        entry_points(&raw, Clock::File)
+    };
+    (!points.is_empty()).then_some(points)
+}
+
+/// The moment a clip begins to *present*, on the clock the demuxer reports.
+///
+/// Not where the file begins. A recorder writes a few seconds of pictures in
+/// front of the recording -- what a decoder needs before the first one that
+/// is shown -- and the disc's index says where the showing starts. It is the
+/// same number a playlist's `IN_time` carries, read off the clip's own index
+/// so that a clip opened on its own still has it.
+///
+/// **This is the zero a 4K recording's subtitles count from.** Their times
+/// are inside the documents rather than on the packets, and they are counted
+/// from here; see [`crate::ttml`]. Measured on two clips whose presentation
+/// starts differ by half a second, the first caption of each falls exactly
+/// five seconds after this and on the frame the programme's title sequence
+/// cuts in.
+///
+/// `None` for anything that is not a clip on a disc, and for a disc whose
+/// index does not read.
+pub fn clip_presentation_start(path: &str) -> Option<f64> {
+    let (root, clip) = clip_on_a_disc(path)?;
+    let mut vol = Volume::open(Path::new(root)).ok()?;
+    let raw = vol.read(&format!("CLIPINF/{clip}.clpi")).ok()?;
+    let starts = sequence_starts(&raw);
+    // A name that plays one sequence is opened as those bytes alone, and the
+    // sequence it plays is the one whose packets it begins at. Both count
+    // source packets: taken as bytes, only the first sequence ever matched,
+    // and a later one's subtitles were timed from nought.
+    let wanted = crate::input::clip_window(path).map(|(_, first, _)| first);
+    match wanted {
+        Some(at) => starts.iter().find(|s| s.at == at),
+        None => starts.first(),
+    }
+    .map(|s| s.start)
+}
+
+/// Where each of a clip's sequences begins, in source packets, and which
+/// number a playlist calls it by.
+///
+/// The clip index opens with a table of them: an arrival-time sequence for
+/// every time the recorder stopped and started, and inside each one a
+/// presentation-time sequence for every time the clock it copied jumped.
+/// What a play item names is the second of those, numbered straight through
+/// the clip, and what has to be read is where it starts -- because a
+/// recording that plays one sequence is those bytes of the file and no
+/// others.
+///
+/// Empty for a clip index that does not read, and for the ordinary clip with
+/// a single sequence there is one entry, which is the same as none: the
+/// caller names such a clip whole.
+fn sequence_starts(raw: &[u8]) -> Vec<Sequence> {
+    if raw.len() < 24 || !matches!(&raw[..4], b"HDMV" | b"M2TS") {
+        return Vec::new();
+    }
+    let at = u32be(raw, 8) as usize + 4;
+    let Some(&arrivals) = raw.get(at + 1) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    let mut p = at + 2;
+    for _ in 0..arrivals.min(64) {
+        let Some(head) = raw.get(p..p + 6) else {
+            return out;
+        };
+        let count = head[4];
+        let first = head[5];
+        p += 6;
+        for j in 0..count {
+            // Sixteen bits of PCR PID, then where this sequence's packets
+            // begin, then the first and last moment it presents.
+            if raw.get(p..p + 14).is_none() {
+                return out;
+            }
+            out.push(Sequence {
+                id: first.wrapping_add(j),
+                at: u32be(raw, p + 2) as u64,
+                start: u32be(raw, p + 6) as f64 / TICK,
+                end: u32be(raw, p + 10) as f64 / TICK,
+            });
+            p += 14;
+        }
+    }
+    out
+}
+
+/// One stretch of a clip that keeps a single clock.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Sequence {
+    /// What a play item calls it, which is what its `ref_to_STC_id` holds.
+    id: u8,
+    /// Where its packets begin, in source packets from the front of the clip.
+    at: u64,
+    /// The first and last moment it presents, on its own clock, in seconds.
+    start: f64,
+    end: f64,
+}
+
+/// Whether a clip's sequence table reads as a table.
+///
+/// Three things have to hold: the sequences begin at the front of the clip,
+/// each starts after the one before it, and all of them are inside the file.
+/// A table that fails any of them is a table nothing should be worked out
+/// from -- the clip is named whole, and read as it always was.
+fn sound(starts: &[Sequence], packets: u64) -> bool {
+    !starts.is_empty()
+        && starts[0].at == 0
+        && starts.windows(2).all(|w| w[0].at < w[1].at)
+        && starts.last().is_some_and(|s| s.at < packets)
+}
+
+/// What to add to each stretch of a clip to make its clocks one clock.
+///
+/// **This is the whole of the join.** A recorder's clip holds a sequence per
+/// time it stopped and started, and the times in them neither run on from one
+/// another nor even always go forwards: the disc measured against has a clip
+/// whose last timestamp is 1.1 seconds and whose first is 8.3. So each
+/// sequence is given a place on a timeline of its own making, one after
+/// another in the order the file holds them, and the correction that moves it
+/// there is what comes back. See [`crate::restamp`].
+///
+/// Where a sequence begins and ends is asked of two witnesses. The sequence
+/// table states both, and the entry-point map shows where the pictures
+/// actually are -- and they disagree: on the clip measured, the first
+/// sequence's table says it presents from 7.04 seconds and its entry points
+/// begin at 5.13, because a play item plays the tail of a stretch the
+/// recorder left longer than it plays. Taking the wider of the two means the
+/// pictures outside what is played still land inside the piece they belong
+/// to, rather than on top of the piece before.
+///
+/// The first sequence is left where it is. Its own clock becomes the joined
+/// one, so a clip that is read from the front reads at the times it always
+/// did, and nothing can be pushed before zero.
+///
+/// `None` where there is nothing to join, which is every clip with one
+/// sequence, and where the table cannot be believed.
+fn joined(raw: &[u8], packets: u64) -> Option<crate::restamp::Restamp> {
+    let starts = sequence_starts(raw);
+    if starts.len() < 2 || !sound(&starts, packets) {
+        return None;
+    }
+    let points = entry_points(raw, Clock::Joined);
+    let clip = pace(&points).unwrap_or((0.0, 0.0));
+    let mut pieces = Vec::with_capacity(starts.len());
+    let mut end = 0.0f64;
+    for (i, s) in starts.iter().enumerate() {
+        let from = s.at * SOURCE_PACKET;
+        let to = starts.get(i + 1).map_or(packets, |n| n.at) * SOURCE_PACKET;
+        let (lo, hi) = span(&points, from, to, s, clip);
+        if hi < lo {
+            return None;
+        }
+        let shift = if i == 0 { 0.0 } else { end - lo };
+        let begins = if i == 0 { lo } else { end };
+        end = if i == 0 { hi } else { end + (hi - lo) };
+        pieces.push(crate::restamp::Piece {
+            at: from,
+            shift: (shift * 90_000.0).round() as i64,
+            from: (begins * 90_000.0).round() as i64,
+        });
+    }
+    let table = crate::restamp::Restamp::new(pieces);
+    table.wanted().then_some(table)
+}
+
+/// The first and last moment one stretch of a clip shows a picture.
+///
+/// **Neither witness knows the whole of it.** The sequence table states what
+/// the stretch presents, which is what a play item plays and not what the
+/// file holds: on the clip measured here it declares 892.94 seconds where the
+/// pictures run to 894.5, because a recorder writes to the end of a group and
+/// edits inside it. The entry-point map knows where pictures are but only at
+/// the places a player may start, so it stops a group short at each end.
+///
+/// What the map does give is the rate: how many bytes of this stretch a
+/// second of it takes, measured over the stretch itself. The bytes between
+/// the last entry point and the end of the stretch, read at that rate, are
+/// how much longer it goes on -- and the same at the front. Neither witness
+/// is overruled: whichever says the stretch is wider is the one taken, so
+/// nothing a play item plays can fall outside.
+fn span(points: &[(f64, u64)], from: u64, to: u64, s: &Sequence, clip: (f64, f64)) -> (f64, f64) {
+    let inside: Vec<(f64, u64)> = points
+        .iter()
+        .filter(|(_, p)| *p >= from && *p < to)
+        .copied()
+        .collect();
+    // The stretch's own pace where it has enough points to be measured, and
+    // the whole clip's where it does not -- which is the fragment a recorder
+    // leaves at the end of a file, a second of pictures with one entry point
+    // in it.
+    let (rate, gap) = pace(&inside).unwrap_or(clip);
+    if rate <= 0.0 {
+        return (s.start, s.end);
+    }
+    let (Some(&(t0, p0)), Some(&(t1, p1))) = (inside.first(), inside.last()) else {
+        // No entry point at all: the stretch runs as long as its bytes say.
+        return (s.start, s.end.max(s.start + (to - from) as f64 / rate));
+    };
+    let lo = t0 - (p0 - from) as f64 / rate;
+    // Never less than one entry point's worth at the end. Where the last one
+    // sits almost at the end of the stretch the bytes say the pictures stop
+    // there, and they do not: the group it opens is still to be shown, and
+    // its pictures present after it.
+    let hi = t1 + ((to - p1) as f64 / rate).max(gap);
+    (lo.min(s.start), hi.max(s.end))
+}
+
+/// How many bytes a second of a stretch takes, and how far apart the places
+/// a player may start in it are. `None` where there are too few points to
+/// measure either.
+fn pace(points: &[(f64, u64)]) -> Option<(f64, f64)> {
+    let (&(t0, p0), &(t1, p1)) = (points.first()?, points.last()?);
+    if points.len() < 2 || t1 <= t0 || p1 <= p0 {
+        return None;
+    }
+    Some((
+        (p1 - p0) as f64 / (t1 - t0),
+        (t1 - t0) / (points.len() - 1) as f64,
+    ))
+}
+
+/// The correction a recording needs to read as one, or `None` for the
+/// recordings that need none -- which is everything but a clip on a disc a
+/// recorder wrote, and most of those.
+///
+/// Asked of a name, because [`crate::input`] has nothing else to go on when
+/// it is handed one. A name that plays a single sequence is already one
+/// clock and is left alone; so is everything on a pressed disc, which is
+/// settled by looking at the name before anything is opened.
+pub fn clip_restamp(path: &str) -> Option<crate::restamp::Restamp> {
+    if crate::input::clip_window(path).is_some() {
+        return None;
+    }
+    // Only a recorder writes several clocks into one clip, and only a
+    // recorder writes `BDAV`. Asked of the name so that a pressed disc pays
+    // nothing at all: no image opened, no index read.
+    let (root, clip) = clip_on_a_disc(path)?;
+    if named_bdmv(root) {
+        return None;
+    }
+    // A directory under a name of its own is asked what it is.
+    let mut vol = Volume::open(Path::new(root)).ok()?;
+    if !joins_clocks(root, &vol) {
+        return None;
+    }
+    let raw = vol.read(&format!("CLIPINF/{clip}.clpi")).ok()?;
+    joined(&raw, vol.bytes(clip) / SOURCE_PACKET)
+}
+
+/// Whether a clip read whole off this disc is read with its clocks joined:
+/// a recorder's are, and nothing else is.
+///
+/// One test for both sides of it. [`clip_restamp`] decides what the demuxer
+/// reports and [`clip_entry_points`] puts the disc's map on a clock, and the
+/// two have to be the same clock: a pressed disc's clip holding two sequences,
+/// opened whole, was read unjoined and indexed joined, and every entry point
+/// past its first seam was placed where the demuxer's pictures are not.
+fn joins_clocks(root: &str, vol: &Volume) -> bool {
+    vol.shape() == Shape::Bdav && !named_bdmv(root)
+}
+
+/// Whether the disc's directory is called `BDMV`, which settles the dialect
+/// before anything is opened.
+fn named_bdmv(root: &str) -> bool {
+    let named = root.to_ascii_uppercase().replace('\\', "/");
+    named == "BDMV" || named.ends_with("/BDMV")
+}
+
+/// The part of a clip a play item plays, named the way it will be opened.
+///
+/// A clip holding one sequence is named whole, which is what every name in
+/// this program was until a recorder's own discs turned up. A clip holding
+/// several is named a sequence at a time, in source packets, because those
+/// are several recordings in one file and their clocks do not run on from
+/// one another: read whole, the times go backwards part-way through and
+/// nothing downstream can place a cut. See [`crate::input`].
+fn stretch(path: &str, starts: &[Sequence], stc: u8, bytes: u64) -> String {
+    let packets = bytes / SOURCE_PACKET;
+    // A clip index this could not make sense of names the clip whole, which
+    // is what a clip with one sequence is named and what every name was
+    // before this. See [`sound`].
+    if starts.len() < 2 || !sound(starts, packets) {
+        return path.to_string();
+    }
+    let Some(i) = starts.iter().position(|s| s.id == stc) else {
+        return path.to_string();
+    };
+    let from = starts[i].at;
+    let to = starts.get(i + 1).map_or(packets, |s| s.at);
+    if to <= from {
+        return path.to_string();
+    }
+    format!("{path}@{from}-{}", to - 1)
+}
+
+fn tracks(raw: &[u8]) -> Vec<Track> {
+    // The two dialects sign the file differently and write the same thing
+    // after it: a pressed disc's clip index opens `HDMV`, a recorder's opens
+    // `M2TS`.
+    if raw.len() < 24 || !matches!(&raw[..4], b"HDMV" | b"M2TS") {
+        return Vec::new();
+    }
+    let at = u32be(raw, 12) as usize;
+    let Some(&sequences) = raw.get(at + 5) else {
+        return Vec::new();
+    };
+    let mut out: Vec<Track> = Vec::new();
+    let mut p = at + 6;
+    for _ in 0..sequences.min(64) {
+        let Some(&count) = raw.get(p + 6) else { break };
+        p += 8;
+        for _ in 0..count {
+            let pid = u16be(raw, p) as i32;
+            let Some(&len) = raw.get(p + 2) else {
+                return out;
+            };
+            let Some(attr) = raw.get(p + 3..p + 3 + len as usize) else {
+                return out;
+            };
+            p += 3 + len as usize;
+            // A clip whose program map changes part-way through is written as
+            // several sequences naming the same streams. One row each would
+            // be the same track listed twice.
+            if out.iter().any(|t| t.pid == pid) {
+                continue;
+            }
+            if let Some(track) = track_of(pid, attr) {
+                out.push(track);
+                // More than a disc's player could offer: what follows is
+                // damage, and each row would carry a copy of it.
+                if out.len() >= 128 {
+                    return out;
+                }
+            }
+        }
+    }
+    out
+}
+
+/// One entry of a `.clpi` stream list.
+fn track_of(pid: i32, attr: &[u8]) -> Option<Track> {
+    let coding = *attr.first()?;
+    let lang = |at: usize| -> Option<String> {
+        let raw = attr.get(at..at + 3)?;
+        let text: String = raw
+            .iter()
+            .take_while(|b| b.is_ascii_alphabetic())
+            .map(|b| *b as char)
+            .collect();
+        (text.len() == 3).then_some(text.to_lowercase())
+    };
+    let (kind, detail, language, carried) = match coding {
+        // Video. The second byte is the frame's shape and its rate, four bits
+        // each.
+        0x01 | 0x02 | 0x1B | 0x20 | 0x24 | 0xEA => {
+            let name = match coding {
+                0x01 => "MPEG-1",
+                0x02 => "MPEG-2",
+                0x1B => "H.264",
+                0x20 => "MVC",
+                0x24 => "HEVC",
+                _ => "VC-1",
+            };
+            let b = attr.get(1).copied().unwrap_or(0);
+            let shape = match b >> 4 {
+                1 => "480i",
+                2 => "576i",
+                3 => "480p",
+                4 => "1080i",
+                5 => "720p",
+                6 => "1080p",
+                7 => "576p",
+                8 => "2160p",
+                _ => "",
+            };
+            let rate = match b & 0x0F {
+                1 => "23.976",
+                2 => "24",
+                3 => "25",
+                4 => "29.97",
+                6 => "50",
+                7 => "59.94",
+                _ => "",
+            };
+            let mut detail = name.to_string();
+            if !shape.is_empty() {
+                detail.push(' ');
+                detail.push_str(shape);
+            }
+            if !rate.is_empty() {
+                detail.push(' ');
+                detail.push_str(rate);
+                detail.push_str("fps");
+            }
+            ("video", detail, None, true)
+        }
+        // Sound. The second byte is the channel arrangement and the sample
+        // rate, four bits each; the language follows it.
+        0x03 | 0x04 | 0x0F | 0x11 | 0x80..=0x86 | 0xA1 | 0xA2 => {
+            let name = match coding {
+                0x03 => "MPEG-1 audio",
+                0x04 => "MPEG-2 audio",
+                // The two AACs a broadcast sends, which are two framings of
+                // the same codec: an HD recording's is MPEG-2 AAC in ADTS
+                // frames, a 4K recording's MPEG-4 AAC in LATM ones. The
+                // stream type is where a disc says which.
+                0x0F => "MPEG-2 AAC",
+                0x11 => "MPEG-4 AAC",
+                0x80 => "LPCM",
+                0x81 => "AC-3",
+                0x82 => "DTS",
+                0x83 => "TrueHD",
+                0x84 => "E-AC-3",
+                0x85 => "DTS-HD",
+                0x86 => "DTS-HD MA",
+                0xA1 => "E-AC-3",
+                _ => "DTS-HD",
+            };
+            let b = attr.get(1).copied().unwrap_or(0);
+            let channels = match b >> 4 {
+                1 => "mono",
+                3 => "stereo",
+                6 => "multi",
+                12 => "stereo+multi",
+                _ => "",
+            };
+            // The rates a disc can name. A 4K recorder writes 15 for its
+            // AAC -- not one of them, and not a rate: the frames say what
+            // they run at and the index leaves it to them. Saying nothing is
+            // the honest reading of that, and the track's own line says 48
+            // kHz once the recording is open.
+            let rate = match b & 0x0F {
+                1 => "48kHz",
+                4 => "96kHz",
+                5 => "192kHz",
+                12 => "48/192kHz",
+                14 => "48/96kHz",
+                _ => "",
+            };
+            let mut detail = name.to_string();
+            for bit in [channels, rate] {
+                if !bit.is_empty() {
+                    detail.push(' ');
+                    detail.push_str(bit);
+                }
+            }
+            ("audio", detail, lang(2), true)
+        }
+        // The graphics a Blu-ray's subtitles are made of: a display list per
+        // subtitle rather than a packet per statement, which is a grouping
+        // to respect rather than a reason to leave them behind. Carried, and
+        // put back together at both ends of a cut; see [`crate::pgs`].
+        0x90 => ("subtitle", "PGS".to_string(), lang(1), true),
+        // The menus, which are the same kind of graphics doing a different
+        // job: a button has a state and a target, and neither means anything
+        // once the timeline it pointed into has been cut up. See
+        // [`Track::carried`].
+        0x91 => ("menu", "IGS".to_string(), lang(1), false),
+        // A text subtitle's character set comes first, and then the
+        // language.
+        0x92 => ("subtitle", "TextST".to_string(), lang(2), false),
+        // Anything else, which on a Japanese recording is the broadcast's own
+        // private streams -- the captions among them. Named by its number
+        // rather than described, because what a private stream holds is not
+        // something the disc's index says.
+        c => ("other", format!("stream type 0x{c:02x}"), None, true),
+    };
+    Some(Track {
+        kind,
+        pid,
+        detail,
+        language,
+        coding,
+        carried,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reads_the_index_of_a_disc() {
+        let mut raw = vec![0u8; 356];
+        raw[..8].copy_from_slice(b"BDAV0100");
+        raw[8..12].copy_from_slice(&320u32.to_be_bytes());
+        raw[320..324].copy_from_slice(&32u32.to_be_bytes());
+        raw[324..326].copy_from_slice(&3u16.to_be_bytes());
+        for (i, name) in ["00001.rpls", "00002.rpls", "00003.rpls"]
+            .iter()
+            .enumerate()
+        {
+            raw[326 + i * 10..336 + i * 10].copy_from_slice(name.as_bytes());
+        }
+        assert_eq!(
+            table_of_playlists(&raw),
+            ["00001.rpls", "00002.rpls", "00003.rpls"]
+        );
+    }
+
+    /// What a pressed disc calls itself, with the references XML writes for
+    /// the characters it reserves put back.
+    #[test]
+    fn a_disc_name_reads_through_its_references() {
+        let xml = "<di:title><di:name>A &amp; B &lt;3&gt; &#x41;&#66; &bogus; R&D</di:name></di:title>";
+        assert_eq!(disc_name(xml).as_deref(), Some("A & B <3> AB &bogus; R&D"));
+        assert_eq!(xml_text("&#0;&#x1b;"), "&#0;&#x1b;");
+        // A disc left unnamed: the closing tag is not a second opening, and
+        // what follows it is not the name.
+        let empty = "<di:title><di:name></di:name>\n<di:numSets>1</di:numSets></di:title>";
+        assert_eq!(disc_name(empty), None);
+        let blank = "<di:name>&#32;</di:name><di:x>y</di:x><name>Z</name>";
+        assert_eq!(disc_name(blank).as_deref(), Some("Z"));
+    }
+
+    /// A name file built to be searched over and over: openings with no
+    /// closing tag, and a name of nothing but `&` with its `;` at the end.
+    /// Both used to scan to the end of the file once per mark, and a few
+    /// megabytes of either took hours. And the name that does come back is
+    /// one a row's label can carry.
+    #[test]
+    fn a_disc_name_built_to_be_rescanned_reads_at_once() {
+        let opened = "<name>".repeat(1 << 20);
+        assert_eq!(disc_name(&opened), None);
+        let started = std::time::Instant::now();
+        let name = disc_name(&format!("<name>{};</name>", "&".repeat(4 << 20))).unwrap();
+        assert!(started.elapsed().as_secs() < 10);
+        assert_eq!(name.chars().count(), 255);
+    }
+
+    #[test]
+    fn a_programme_name_becomes_a_file_name() {
+        assert_eq!(
+            filename("#09「わたしのラッキーアイテム?」"),
+            "#09「わたしのラッキーアイテム？」"
+        );
+        assert_eq!(filename("a/b:c*d"), "a／b：c＊d");
+        assert_eq!(filename("  "), "recording");
+        // Cut on a character boundary, never through one.
+        let long = "あ".repeat(200);
+        let cut = filename(&long);
+        assert!(cut.len() <= 180 && cut.chars().all(|c| c == 'あ'));
+    }
+
+    #[test]
+    fn a_date_that_is_not_one_is_left_out() {
+        let mut raw = vec![0u8; 100];
+        assert_eq!(app_info_made(&raw), None);
+        raw[50..57].copy_from_slice(&[0x20, 0x26, 0x09, 0x04, 0x18, 0x33, 0x57]);
+        assert_eq!(
+            app_info_made(&raw).map(|m| m.to_string()).as_deref(),
+            Some("2026-09-04 18:33:57")
+        );
+        // A month of 19 is a field read from the wrong place.
+        raw[52] = 0x19;
+        assert_eq!(app_info_made(&raw), None);
+    }
+
+    /// A clip index's sequence table: one entry per sequence, saying where
+    /// its packets begin and the first and last moment it presents.
+    fn clpi_timed(sequences: &[(u8, u32, u32, u32)]) -> Vec<u8> {
+        let mut raw = vec![0u8; 40];
+        raw[..4].copy_from_slice(b"M2TS");
+        raw[4..8].copy_from_slice(b"0100");
+        raw[8..12].copy_from_slice(&40u32.to_be_bytes());
+        // The entry-point map lives at 16, and this index carries none: the
+        // four bytes it points at are a length of zero.
+        raw[16..20].copy_from_slice(&36u32.to_be_bytes());
+        let mut table = vec![0u8; 4];
+        table.push(0); // reserved
+        table.push(sequences.len() as u8);
+        for (id, at, from, to) in sequences {
+            table.extend_from_slice(&0u32.to_be_bytes()); // where the arrivals start
+            table.push(1); // one presentation sequence inside it
+            table.push(*id);
+            table.extend_from_slice(&0x1001u16.to_be_bytes());
+            table.extend_from_slice(&at.to_be_bytes());
+            table.extend_from_slice(&from.to_be_bytes());
+            table.extend_from_slice(&to.to_be_bytes());
+        }
+        raw.extend_from_slice(&table);
+        raw
+    }
+
+    /// The same, for the tests that care only about where sequences begin.
+    fn clpi_with(sequences: &[(u8, u32)]) -> Vec<u8> {
+        let timed: Vec<(u8, u32, u32, u32)> =
+            sequences.iter().map(|(id, at)| (*id, *at, 0, 0)).collect();
+        clpi_timed(&timed)
+    }
+
+    /// A sequence as the table states it, for comparing against.
+    fn seq(id: u8, at: u64, start: f64, end: f64) -> Sequence {
+        Sequence {
+            id,
+            at,
+            start,
+            end,
+        }
+    }
+
+    /// A recorder writes several sequences into one clip, and the table says
+    /// where each begins.
+    #[test]
+    fn the_sequences_of_a_clip_are_read() {
+        let raw = clpi_timed(&[(0, 0, 45_000, 90_000), (1, 8960, 0, 45_000)]);
+        assert_eq!(
+            sequence_starts(&raw),
+            vec![seq(0, 0, 1.0, 2.0), seq(1, 8960, 0.0, 1.0)]
+        );
+        // A clip with one sequence reads as one, which is a clip named whole.
+        assert_eq!(sequence_starts(&clpi_with(&[(0, 0)])).len(), 1);
+        assert!(sequence_starts(b"not a clip index").is_empty());
+    }
+
+    /// What a play item is opened as: the clip whole where there is one
+    /// sequence, and that sequence's packets where there are several.
+    #[test]
+    fn a_sequence_is_named_by_the_packets_it_holds() {
+        let path = "/d/BDAV/STREAM/00001.m2ts";
+        let bytes = 14_238_784 * 192;
+        let starts = [
+            seq(0, 0, 0.0, 0.0),
+            seq(1, 8960, 0.0, 0.0),
+            seq(2, 4_605_952, 0.0, 0.0),
+        ];
+        assert_eq!(stretch(path, &starts[..1], 0, bytes), path);
+        assert_eq!(stretch(path, &starts, 0, bytes), format!("{path}@0-8959"));
+        assert_eq!(
+            stretch(path, &starts, 1, bytes),
+            format!("{path}@8960-4605951")
+        );
+        // The last sequence runs to the end of the file.
+        assert_eq!(
+            stretch(path, &starts, 2, bytes),
+            format!("{path}@4605952-14238783")
+        );
+        // A sequence the playlist names and the index does not have, a table
+        // that does not begin at the front of the clip, one that goes
+        // backwards, and one that runs past the end: all named whole rather
+        // than guessed at.
+        assert_eq!(stretch(path, &starts, 9, bytes), path);
+        assert_eq!(
+            stretch(path, &[seq(0, 64, 0.0, 0.0), seq(1, 8960, 0.0, 0.0)], 0, bytes),
+            path
+        );
+        assert_eq!(
+            stretch(path, &[seq(0, 0, 0.0, 0.0), seq(1, 0, 0.0, 0.0)], 0, bytes),
+            path
+        );
+        assert_eq!(stretch(path, &starts, 1, 1024 * 192), path);
+        assert_eq!(stretch(path, &starts, 1, 0), path);
+    }
+
+    /// A clip of three stretches: the first presents from 1 to 11 seconds,
+    /// and the two after it start their clocks again. Three thousand source
+    /// packets, a thousand to each.
+    fn three_stretches() -> Vec<u8> {
+        clpi_timed(&[
+            (0, 0, 45_000, 495_000),
+            (1, 1_000, 45_000, 90_000),
+            (2, 2_000, 450_000, 900_000),
+        ])
+    }
+
+    fn item(stc: u8, start: f64, end: f64, marks: &[f64]) -> Clip {
+        Clip {
+            name: "00001".to_string(),
+            path: "/d/BDAV/STREAM/00001.m2ts".to_string(),
+            start,
+            end,
+            stc,
+            marks: marks.to_vec(),
+        }
+    }
+
+    /// Each stretch is put where the one before it ended, and the first is
+    /// left where it is.
+    #[test]
+    fn the_stretches_of_a_clip_are_laid_end_to_end() {
+        let table = joined(&three_stretches(), 3_000).unwrap();
+        let moved = |packet: u64| table.seconds_at(packet * SOURCE_PACKET);
+        assert!((moved(0) - 0.0).abs() < 1e-9);
+        // The second presents from 1 second and is wanted at 11.
+        assert!((moved(1_000) - 10.0).abs() < 1e-9);
+        // The third presents from 10 and is wanted at 12, which is where the
+        // second -- one second long -- left off.
+        assert!((moved(2_000) - 2.0).abs() < 1e-9);
+        // And a byte inside a stretch is corrected like the stretch.
+        assert_eq!(moved(1_500), moved(1_000));
+        let joins = table.seams();
+        assert_eq!(joins.len(), 2);
+        assert!((joins[0].time - 11.0).abs() < 1e-9);
+        assert!((joins[1].time - 12.0).abs() < 1e-9);
+        // And each says where in the file the stretch after it begins, which
+        // is what tells a packet of one stretch from a packet of another.
+        assert_eq!(joins[0].at, 1_000 * SOURCE_PACKET);
+        assert_eq!(joins[1].at, 2_000 * SOURCE_PACKET);
+        // A clip of one stretch has nothing to join.
+        assert!(joined(&clpi_timed(&[(0, 0, 45_000, 495_000)]), 3_000).is_none());
+        // Nor has a table that does not read as one.
+        assert!(joined(&clpi_timed(&[(0, 64, 0, 45_000), (1, 1_000, 0, 45_000)]), 3_000).is_none());
+    }
+
+    /// A playlist that plays every stretch of a clip, in the order the file
+    /// holds them, is one recording.
+    #[test]
+    fn a_playlist_that_covers_a_clip_is_one_row() {
+        let raw = three_stretches();
+        let starts = sequence_starts(&raw);
+        let bytes = 3_000 * SOURCE_PACKET;
+        let run = [
+            item(0, 1.0, 11.0, &[0.0, 5.0]),
+            item(1, 1.0, 2.0, &[]),
+            item(2, 10.0, 20.0, &[1.0]),
+        ];
+        let row = whole_clip(&run, Shape::Bdav, &starts, &raw, bytes).unwrap();
+        assert_eq!(row.clip, "00001");
+        // Named whole: the packet range is what a name says when only part of
+        // a clip is played.
+        assert_eq!(row.path, "/d/BDAV/STREAM/00001.m2ts");
+        assert!((row.start - 1.0).abs() < 1e-9);
+        assert!((row.end - 22.0).abs() < 1e-9);
+        // Every mark on the joined clock, counted from the row's own start.
+        assert_eq!(row.marks.len(), 3);
+        assert!((row.marks[0] - 0.0).abs() < 1e-9);
+        assert!((row.marks[1] - 5.0).abs() < 1e-9);
+        assert!((row.marks[2] - 12.0).abs() < 1e-9);
+    }
+
+    /// What a playlist steps over is what a cut with no ranges of its own
+    /// leaves out: the head, the stretch between two items, and the tail.
+    #[test]
+    fn what_a_playlist_leaves_out_is_cut() {
+        let plays = [(101.0, 111.0), (112.0, 120.0)];
+        let cuts = unplayed(&plays, 100.5, 0.2, 21.0, UNPLAYED_LEAST);
+        assert_eq!(cuts.len(), 3);
+        assert!((cuts[0].0 - 0.0).abs() < 1e-9 && (cuts[0].1 - 0.5).abs() < 1e-9);
+        assert!((cuts[1].0 - 10.5).abs() < 1e-9 && (cuts[1].1 - 11.5).abs() < 1e-9);
+        assert!((cuts[2].0 - 19.5).abs() < 1e-9 && (cuts[2].1 - 21.0).abs() < 1e-9);
+        // In any order the items come in.
+        let back = [plays[1], plays[0]];
+        assert_eq!(unplayed(&back, 100.5, 0.2, 21.0, UNPLAYED_LEAST), cuts);
+        // A playlist written to the pictures, within a millisecond of either
+        // end: nothing.
+        assert!(unplayed(&[(100.5, 121.5004)], 100.5, 0.0, 21.0, UNPLAYED_LEAST).is_empty());
+        assert!(unplayed(&[(100.4996, 121.5)], 100.5, 0.0, 21.0, UNPLAYED_LEAST).is_empty());
+        // An IN no further in than the first picture is no head to cut.
+        assert!(unplayed(&[(100.9, 121.5)], 100.5, 0.45, 21.0, UNPLAYED_LEAST).is_empty());
+        // Items that overlap or touch leave nothing between them.
+        assert!(unplayed(&[(100.5, 111.0), (110.0, 121.5)], 100.5, 0.0, 21.0, UNPLAYED_LEAST)
+            .is_empty());
+        // And nothing at all said is nothing cut.
+        assert!(unplayed(&[], 100.5, 0.0, 21.0, UNPLAYED_LEAST).is_empty());
+    }
+
+    /// The ends of what a playlist leaves out go onto pictures, counted from
+    /// the entry points of the stretch each end lies in: past a seam the
+    /// pictures are on a phase of their own.
+    #[test]
+    fn what_a_playlist_leaves_out_ends_on_pictures() {
+        let fd = 0.04;
+        // Entry points every second from 0.5; a seam at 10.013, whose
+        // stretch's first entry point is 10.03 and whose pictures are 10.03
+        // + n * fd from there -- off the first stretch's grid by a quarter.
+        let points = [0.5, 1.5, 2.5, 10.03, 11.03];
+        let near = |got: &[(f64, f64)], want: &[(f64, f64)]| {
+            got.len() == want.len()
+                && got
+                    .iter()
+                    .zip(want)
+                    .all(|(g, w)| (g.0 - w.0).abs() < 1e-9 && (g.1 - w.1).abs() < 1e-9)
+        };
+        // A cut's start between two pictures: the next one. Its end between
+        // two: the one on screen there, which the cut leaves. On a picture,
+        // give or take a tick of 90 kHz: that one. The recording's own ends
+        // stay.
+        let got = onto_pictures(
+            &[(0.0, 1.51), (2.5 - 1.0 / 90_000.0, 3.0), (12.0, 20.0)],
+            &points,
+            &[10.013],
+            fd,
+            20.0,
+        );
+        assert!(near(&got, &[(0.0, 1.5), (2.5, 2.98), (12.03, 20.0)]), "{got:?}");
+        // Before the seam, on the first stretch's phase; after it, on the
+        // second's -- not on a grid laid from the first picture, which has
+        // a picture at 10.5.
+        let got = onto_pictures(&[(9.99, 10.5)], &points, &[10.013], fd, 20.0);
+        assert!(near(&got, &[(10.02, 10.47)]), "{got:?}");
+        // After the seam but ahead of its stretch's first entry point: that
+        // entry point, which is where anything after the seam is written from.
+        let got = onto_pictures(&[(5.0, 10.015)], &points, &[10.013], fd, 20.0);
+        assert!(near(&got, &[(5.02, 10.03)]), "{got:?}");
+        // Two that meet once on the pictures are one; one that holds no
+        // whole picture is none.
+        let got = onto_pictures(&[(3.0, 3.1), (3.09, 4.0), (6.001, 6.03)], &points, &[], fd, 20.0);
+        assert!(near(&got, &[(3.02, 3.98)]), "{got:?}");
+        // An entry point stated 3 ms early, as a disc's map states them:
+        // the picture three frames on is at 0.62, and an end a tick before
+        // it is on it (put on the stated grid, no later than the picture).
+        // A start half a frame past it goes on to the next. A start ahead of
+        // the first entry point goes to it.
+        let got = onto_pictures(&[(0.3, 0.62 - 1.0 / 90_000.0), (0.64, 1.0)], &[0.497], &[], fd, 20.0);
+        assert!(near(&got, &[(0.497, 0.617), (0.657, 0.977)]), "{got:?}");
+    }
+
+    /// And anything less than the whole clip is left as it was: a row per
+    /// item, each naming the packets it plays.
+    #[test]
+    fn a_playlist_that_covers_part_of_a_clip_is_not() {
+        let raw = three_stretches();
+        let starts = sequence_starts(&raw);
+        let bytes = 3_000 * SOURCE_PACKET;
+        let run = [
+            item(0, 1.0, 11.0, &[]),
+            item(1, 1.0, 2.0, &[]),
+            item(2, 10.0, 20.0, &[]),
+        ];
+        // Two items for three stretches.
+        assert!(whole_clip(&run[..2], Shape::Bdav, &starts, &raw, bytes).is_none());
+        // One item, which is the ordinary clip and the ordinary name.
+        assert!(whole_clip(&run[..1], Shape::Bdav, &starts, &raw, bytes).is_none());
+        // A pressed disc, whose "play all" is not one recording however many
+        // clips it names.
+        assert!(whole_clip(&run, Shape::Bdmv, &starts, &raw, bytes).is_none());
+        // Items that do not name the stretches the file holds, in that order.
+        let jumbled = [
+            item(0, 1.0, 11.0, &[]),
+            item(2, 10.0, 20.0, &[]),
+            item(1, 1.0, 2.0, &[]),
+        ];
+        assert!(whole_clip(&jumbled, Shape::Bdav, &starts, &raw, bytes).is_none());
+    }
+
+    /// An index file on a folder disc is read only when it is a file, and
+    /// only as far as an index file goes.
+    #[cfg(unix)]
+    #[test]
+    fn an_index_that_is_not_a_file_is_not_read() {
+        assert!(read_index(Path::new("/dev/zero")).is_err());
+        assert!(read_index(&std::env::temp_dir()).is_err());
+        let at = std::env::temp_dir().join("smartcut-disc-read-index.clpi");
+        std::fs::write(&at, b"M2TS0100").unwrap();
+        assert_eq!(read_index(&at).unwrap(), b"M2TS0100");
+        let _ = std::fs::remove_file(&at);
+    }
+
+    /// A name that plays one sequence of a clip presents from that
+    /// sequence's start: the window counts source packets, as the table does.
+    #[test]
+    fn a_windowed_name_presents_from_its_own_sequence() {
+        let root = std::env::temp_dir().join("smartcut-disc-presentation-start");
+        let _ = std::fs::remove_dir_all(&root);
+        for dir in ["PLAYLIST", "CLIPINF", "STREAM"] {
+            std::fs::create_dir_all(root.join("BDAV").join(dir)).unwrap();
+        }
+        let raw = clpi_timed(&[(0, 0, 450_000, 900_000), (1, 1_000, 225_000, 270_000)]);
+        std::fs::write(root.join("BDAV/CLIPINF/00001.clpi"), raw).unwrap();
+        let clip = root.join("BDAV/STREAM/00001.m2ts");
+        let clip = clip.to_string_lossy();
+        assert_eq!(clip_presentation_start(&clip), Some(10.0));
+        assert_eq!(clip_presentation_start(&format!("{clip}@0-999")), Some(10.0));
+        assert_eq!(clip_presentation_start(&format!("{clip}@1000-1999")), Some(5.0));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Two playlists that each play one sequence of the same clip: a name
+    /// that opens the second sequence is the second programme's.
+    #[test]
+    fn a_windowed_name_is_listed_by_its_own_playlist() {
+        let root = std::env::temp_dir().join("smartcut-disc-listing-window");
+        let _ = std::fs::remove_dir_all(&root);
+        for dir in ["PLAYLIST", "CLIPINF", "STREAM"] {
+            std::fs::create_dir_all(root.join("BDAV").join(dir)).unwrap();
+        }
+        let raw = clpi_timed(&[(0, 0, 450_000, 900_000), (1, 1_000, 225_000, 270_000)]);
+        std::fs::write(root.join("BDAV/CLIPINF/00001.clpi"), raw).unwrap();
+        let rpls = |stc: u8, name: &str| {
+            let list_at = 400usize;
+            let mut raw = vec![0u8; list_at];
+            raw[..8].copy_from_slice(b"PLST0100");
+            raw[8..12].copy_from_slice(&(list_at as u32).to_be_bytes());
+            raw[12..16].copy_from_slice(&u32::MAX.to_be_bytes());
+            let text = crate::arib::encode(name);
+            raw[88] = text.len() as u8;
+            raw[89..89 + text.len()].copy_from_slice(&text);
+            raw.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0, 1, 0, 0]);
+            let mut body = b"00001M2TS\0\0".to_vec();
+            body.push(stc);
+            body.extend_from_slice(&0u32.to_be_bytes());
+            body.extend_from_slice(&900_000u32.to_be_bytes());
+            raw.extend_from_slice(&(body.len() as u16).to_be_bytes());
+            raw.extend_from_slice(&body);
+            raw
+        };
+        std::fs::write(root.join("BDAV/PLAYLIST/01001.rpls"), rpls(0, "一")).unwrap();
+        std::fs::write(root.join("BDAV/PLAYLIST/01002.rpls"), rpls(1, "二")).unwrap();
+        let clip = root.join("BDAV/STREAM/00001.m2ts");
+        let clip = clip.to_string_lossy();
+        let name = |p: &str| listing_of(p).and_then(|l| l.name);
+        assert_eq!(name(&clip).as_deref(), Some("一"));
+        assert_eq!(name(&format!("{clip}@0-999")).as_deref(), Some("一"));
+        assert_eq!(name(&format!("{clip}@1000-1999")).as_deref(), Some("二"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A disc that carries AACS says so beside `BDAV`, not inside it.
+    #[test]
+    fn a_disc_that_encrypts_its_streams_is_known_by_its_directory() {
+        let root = std::env::temp_dir().join("smartcut-disc-aacs");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("BDAV/STREAM")).unwrap();
+        // Enough of a disc to be opened as one: the dialect is read off what
+        // the playlists are called.
+        std::fs::create_dir_all(root.join("BDAV/PLAYLIST")).unwrap();
+        std::fs::write(root.join("BDAV/PLAYLIST/00001.rpls"), []).unwrap();
+        let clip = format!("{}/BDAV/STREAM/00001.m2ts", root.to_string_lossy());
+        assert!(!encrypted(&clip));
+        std::fs::create_dir_all(root.join("AACS/AACS_av")).unwrap();
+        assert!(encrypted(&clip));
+        // The tools that decrypt a disc by moving its streams out put the
+        // directory somewhere of their own, and that is not this one.
+        let _ = std::fs::remove_dir_all(root.join("AACS"));
+        std::fs::create_dir_all(root.join("MAKEMKV/AACS")).unwrap();
+        assert!(!encrypted(&clip));
+        // A recording that is not on a disc at all is not asked about.
+        assert!(!encrypted("/rec/yesterday.ts"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A name that plays one sequence still names its disc and its clip.
+    #[test]
+    fn a_windowed_name_is_still_a_clip_on_a_disc() {
+        assert_eq!(
+            clip_on_a_disc("/d/BDAV/STREAM/00001.m2ts@8960-4605951"),
+            Some(("/d/BDAV", "00001"))
+        );
+        assert_eq!(
+            clip_on_a_disc("/d/BDAV/STREAM/00001.m2ts"),
+            Some(("/d/BDAV", "00001"))
+        );
+    }
+
+    fn clip(start: f64, end: f64) -> Clip {
+        Clip {
+            name: "00001".into(),
+            path: "/x/00001.m2ts".into(),
+            stc: 0,
+            start,
+            end,
+            marks: Vec::new(),
+        }
+    }
+
+    /// A mark section: one entry of `stride` bytes each, carrying the play
+    /// item it belongs to at `item_at` and its time at `time_at`.
+    fn mark_section(
+        stride: usize,
+        entries: &[(u16, u32)],
+        item_at: usize,
+        time_at: usize,
+    ) -> Vec<u8> {
+        let mut raw = vec![0u8; 6 + entries.len() * stride];
+        raw[..4].copy_from_slice(&((2 + entries.len() * stride) as u32).to_be_bytes());
+        raw[4..6].copy_from_slice(&(entries.len() as u16).to_be_bytes());
+        for (i, (item, ticks)) in entries.iter().enumerate() {
+            let at = 6 + i * stride;
+            raw[at + item_at..at + item_at + 2].copy_from_slice(&item.to_be_bytes());
+            raw[at + time_at..at + time_at + 4].copy_from_slice(&ticks.to_be_bytes());
+        }
+        raw
+    }
+
+    #[test]
+    fn takes_the_marks_that_land_inside_the_title() {
+        // Two marks, 46 bytes each, with the time six bytes in: what a
+        // recorder writes.
+        let raw = mark_section(46, &[(0, 20_842), (0, 22_876_605)], 2, 6);
+        let marks = play_marks(&raw, 0, &[clip(20_842.0 / TICK, 22_971_270.0 / TICK)]);
+        assert_eq!(marks.len(), 1);
+        assert_eq!(marks[0].len(), 2);
+        assert!(marks[0][0].abs() < 0.001);
+        assert!((marks[0][1] - 507.905).abs() < 0.01);
+    }
+
+    #[test]
+    fn takes_the_fourteen_byte_marks_a_pressed_disc_writes() {
+        // BDMV: fourteen bytes an entry, the play item two in and the time
+        // four in.
+        let raw = mark_section(14, &[(0, 524_280), (0, 10_000_000), (0, 30_000_000)], 2, 4);
+        let marks = play_marks(&raw, 0, &[clip(524_280.0 / TICK, 32_565_437.0 / TICK)]);
+        assert_eq!(marks[0].len(), 3);
+        assert!(marks[0][0].abs() < 0.001);
+        assert!((marks[0][1] - (10_000_000.0 - 524_280.0) / TICK).abs() < 0.001);
+    }
+
+    #[test]
+    fn offers_the_part_of_a_pressed_disc_that_is_the_film() {
+        // Twelve minutes is an episode; ten seconds is the transition
+        // between two menus.
+        let disc = [10.0, 712.0, 10.0, 712.0, 47.0];
+        assert_eq!(
+            worth_ticking(Shape::Bdmv, &disc),
+            [false, true, false, true, false]
+        );
+        // A disc of recordings is all of it.
+        assert_eq!(worth_ticking(Shape::Bdav, &disc), [true; 5]);
+        // And a disc that is all short clips is not a disc holding nothing.
+        assert_eq!(
+            worth_ticking(Shape::Bdmv, &[10.0, 47.0, 3.0]),
+            [false, true, false]
+        );
+        assert!(worth_ticking(Shape::Bdmv, &[]).is_empty());
+    }
+
+    #[test]
+    fn a_mark_lands_on_the_clip_it_belongs_to() {
+        // What a "play all" is: three episodes, each on its own clock, each
+        // starting where a Blu-ray always starts. A mark in the third
+        // episode is a small number, not a number near three hours.
+        let clips: Vec<Clip> = (0..3).map(|_| clip(11.651, 723.695)).collect();
+        let ticks = |seconds: f64| (seconds * TICK) as u32;
+        let raw = mark_section(
+            14,
+            &[
+                (0, ticks(11.651)),
+                (0, ticks(100.0)),
+                (1, ticks(11.651)),
+                (2, ticks(11.651)),
+                (2, ticks(600.0)),
+            ],
+            2,
+            4,
+        );
+        let marks = play_marks(&raw, 0, &clips);
+        assert_eq!(marks.len(), 3);
+        assert_eq!(marks[0].len(), 2);
+        assert_eq!(marks[1].len(), 1);
+        assert_eq!(marks[2].len(), 2);
+        assert!((marks[2][1] - (600.0 - 11.651)).abs() < 0.01);
+    }
+
+    /// The same thing again in the dialect a recorder writes: forty-six
+    /// bytes, the maker two in and the play item four in. Reading the maker
+    /// as the play item is what kept this from placing a mark on any disc a
+    /// recorder wrote with more than one recording in a playlist.
+    #[test]
+    fn a_mark_lands_on_the_clip_it_belongs_to_in_a_recorder_s_playlist() {
+        let clips: Vec<Clip> = (0..3).map(|_| clip(11.651, 723.695)).collect();
+        let ticks = |seconds: f64| (seconds * TICK) as u32;
+        let mut raw = mark_section(
+            46,
+            &[(0, ticks(11.651)), (1, ticks(100.0)), (2, ticks(600.0))],
+            4,
+            6,
+        );
+        // The maker who wrote them, which is what sits in front of the play
+        // item and what this used to read as one.
+        for i in 0..3 {
+            raw[6 + i * 46 + 2..6 + i * 46 + 4].copy_from_slice(&0x0212u16.to_be_bytes());
+        }
+        let marks = play_marks(&raw, 0, &clips);
+        assert_eq!(marks[0].len(), 1);
+        assert_eq!(marks[1].len(), 1);
+        assert_eq!(marks[2].len(), 1);
+        assert!((marks[2][0] - (600.0 - 11.651)).abs() < 0.01);
+    }
+
+    /// What two recorders here write: chapters of kind 0x04, and one mark
+    /// of kind 0x01 -- the title's picture in the recorder's own list --
+    /// which is not a chapter. A playlist holding nothing else has no
+    /// chapters at all.
+    #[test]
+    fn a_recorder_s_title_picture_is_not_a_chapter() {
+        let clips = [clip(7.0, 2700.0)];
+        let ticks = |seconds: f64| (seconds * TICK) as u32;
+        let mut raw = mark_section(
+            46,
+            &[(0, ticks(7.0)), (0, ticks(66.1)), (0, ticks(367.0))],
+            4,
+            6,
+        );
+        for (i, kind) in [0x04u8, 0x01, 0x04].into_iter().enumerate() {
+            raw[6 + i * 46] = kind;
+            raw[6 + i * 46 + 2..6 + i * 46 + 4].copy_from_slice(&0x0108u16.to_be_bytes());
+        }
+        let marks = play_marks(&raw, 0, &clips);
+        assert_eq!(marks[0].len(), 2, "{marks:?}");
+        assert!((marks[0][1] - 360.0).abs() < 0.01);
+        // Resume and skip points are not chapters either.
+        for kind in [0x02u8, 0x03, 0x06] {
+            raw[6 + 46] = kind;
+            assert_eq!(play_marks(&raw, 0, &clips)[0].len(), 2);
+        }
+        // An authoring tool's chapters are kind 0x05.
+        raw[6 + 46] = 0x05;
+        assert_eq!(play_marks(&raw, 0, &clips)[0].len(), 3);
+        let only = mark_section(46, &[(0, ticks(66.1))], 4, 6);
+        let mut only = only;
+        only[6] = 0x01;
+        assert!(play_marks(&only, 0, &clips).iter().all(Vec::is_empty));
+    }
+
+    #[test]
+    fn leaves_a_multi_clip_playlist_unmarked_rather_than_marked_wrongly() {
+        // A layout with no play item number in it says nothing about which of
+        // three clips a mark is on, and putting all three episodes' chapter
+        // points on episode one would be worse than putting down none.
+        let clips: Vec<Clip> = (0..3).map(|_| clip(11.651, 723.695)).collect();
+        // 46 byte entries with the time six in, and something where the play
+        // item sits that is not a play item of this playlist -- so the
+        // layout that reads one there is rejected as well, and what is left
+        // cannot say which clip it meant.
+        let raw = mark_section(46, &[(40_000, 524_280), (40_000, 10_000_000)], 4, 6);
+        assert!(play_marks(&raw, 0, &clips).iter().all(Vec::is_empty));
+    }
+
+    #[test]
+    fn leaves_out_marks_it_cannot_place() {
+        // Times that fall nowhere near the title, at every candidate offset.
+        let raw = mark_section(46, &[(0, 900_000_000), (0, 900_000_000)], 2, 6);
+        assert!(play_marks(&raw, 0, &[clip(0.4, 510.0)])
+            .iter()
+            .all(Vec::is_empty));
+    }
+
+    /// One `.clpi`, with the stream list of an episode off a pressed disc:
+    /// H.264 1080p 23.976, two TrueHD tracks, a subtitle and a menu.
+    fn clpi() -> Vec<u8> {
+        let streams: Vec<(u16, Vec<u8>)> = vec![
+            (0x1011, vec![0x1B, 0x61, 0x20, 0x00]),
+            (0x1100, vec![0x83, 0x61, b'e', b'n', b'g']),
+            (0x1101, vec![0x83, 0x31, b'j', b'p', b'n']),
+            (0x1200, vec![0x90, b'e', b'n', b'g']),
+            (0x1400, vec![0x91, b'e', b'n', b'g']),
+        ];
+        let at = 40usize;
+        let mut raw = vec![0u8; at];
+        raw[..8].copy_from_slice(b"HDMV0200");
+        raw[12..16].copy_from_slice(&(at as u32).to_be_bytes());
+        raw.extend_from_slice(&0u32.to_be_bytes()); // length, unread
+        raw.push(0); // reserved
+        raw.push(1); // one program sequence
+        raw.extend_from_slice(&0u32.to_be_bytes()); // SPN of its start
+        raw.extend_from_slice(&0x0100u16.to_be_bytes()); // program map PID
+        raw.push(streams.len() as u8);
+        raw.push(0); // reserved
+        for (pid, attr) in &streams {
+            raw.extend_from_slice(&pid.to_be_bytes());
+            raw.push(attr.len() as u8);
+            raw.extend_from_slice(attr);
+        }
+        raw
+    }
+
+    #[test]
+    fn reads_what_a_clip_carries() {
+        let found = tracks(&clpi());
+        assert_eq!(found.len(), 5);
+        assert_eq!(found[0].kind, "video");
+        assert_eq!(found[0].pid, 0x1011);
+        assert_eq!(found[0].detail, "H.264 1080p 23.976fps");
+        assert_eq!(found[1].kind, "audio");
+        assert_eq!(found[1].detail, "TrueHD multi 48kHz");
+        assert_eq!(found[1].language.as_deref(), Some("eng"));
+        assert_eq!(found[2].detail, "TrueHD stereo 48kHz");
+        assert_eq!(found[2].language.as_deref(), Some("jpn"));
+        // The subtitles travel; the menu is listed to say it does not.
+        assert_eq!(found[3].kind, "subtitle");
+        assert!(found[3].carried);
+        assert_eq!(found[4].kind, "menu");
+        assert!(!found[4].carried);
+        assert!(found[..4].iter().all(|t| t.carried));
+        // And the disc's own number for each travels with it, which is what
+        // says whether a demuxer's answer about that PID is worth having.
+        assert_eq!(
+            found.iter().map(|t| t.coding).collect::<Vec<_>>(),
+            [0x1B, 0x83, 0x83, 0x90, 0x91]
+        );
+    }
+
+    /// The two a demuxer cannot name, and everything else it can.
+    #[test]
+    fn the_index_names_what_a_probe_cannot() {
+        assert_eq!(unreadable(0x91), Some("menu"));
+        assert_eq!(unreadable(0x92), Some("text subtitles"));
+        for known in [0x1B, 0x24, 0x80, 0x83, 0x90, 0xEA] {
+            assert_eq!(unreadable(known), None, "0x{known:02x} is not a guess");
+        }
+    }
+
+    #[test]
+    fn says_nothing_about_a_clip_index_it_cannot_read() {
+        assert!(tracks(b"not a clpi").is_empty());
+        assert!(tracks(&[]).is_empty());
+    }
+
+    /// A `.clpi` carrying an entry-point map for one picture stream.
+    ///
+    /// `coarse` is a list of (first fine entry, top of the timestamp, top of
+    /// the packet number) and `fine` a list of (bottom of the timestamp,
+    /// bottom of the packet number), which is how the two tables divide a
+    /// point between them.
+    fn clpi_with_ep_map(coarse: &[(u32, u64, u64)], fine: &[(u64, u64)]) -> Vec<u8> {
+        // The map for the stream: its own fine table's offset, then the two
+        // tables end to end.
+        let mut one = Vec::new();
+        one.extend_from_slice(&((4 + coarse.len() * 8) as u32).to_be_bytes());
+        for &(first, pts, spn) in coarse {
+            one.extend_from_slice(&((first << 14) | pts as u32).to_be_bytes());
+            one.extend_from_slice(&(spn as u32).to_be_bytes());
+        }
+        for &(pts, spn) in fine {
+            one.extend_from_slice(&(((pts as u32) << 17) | spn as u32).to_be_bytes());
+        }
+        // The map itself: a reserved byte, one stream, and where that
+        // stream's own map sits from the start of this.
+        let mut map = vec![0u8, 1];
+        map.extend_from_slice(&0x1011u16.to_be_bytes());
+        // Ten reserved bits, four of stream type, sixteen of coarse count and
+        // eighteen of fine count, packed into six bytes.
+        let packed: u64 = (1 << 34) | ((coarse.len() as u64) << 18) | fine.len() as u64;
+        map.extend_from_slice(&packed.to_be_bytes()[2..]);
+        map.extend_from_slice(&(map.len() as u32 + 4).to_be_bytes());
+        map.extend_from_slice(&one);
+
+        let mut raw = vec![0u8; 40];
+        raw[..8].copy_from_slice(b"HDMV0300");
+        raw[16..20].copy_from_slice(&40u32.to_be_bytes()); // the CPI starts here
+        raw.extend_from_slice(&((map.len() + 2) as u32).to_be_bytes()); // its length
+        raw.extend_from_slice(&1u16.to_be_bytes()); // reserved, then type 1
+        raw.extend_from_slice(&map);
+        raw
+    }
+
+    #[test]
+    fn reads_the_entry_points_a_disc_recorded() {
+        // Two coarse entries, four fine ones between them. The second coarse
+        // entry carries the next step of the timestamp, which is what makes a
+        // point more than its own fine entry.
+        let raw = clpi_with_ep_map(
+            &[(0, 0, 0), (2, 1, 150)],
+            &[(0, 0), (90, 100), (0, 150), (90, 190)],
+        );
+        let found = entry_points(&raw, Clock::File);
+        assert_eq!(found.len(), 4);
+        // The fine entry holds bits 19..9 of the timestamp: 90 << 9 is 46080
+        // ticks of 90 kHz, which is 0.512s.
+        assert_eq!(found[0], (0.0, 0));
+        assert_eq!(found[1], (46080.0 / 90_000.0, 100 * 192));
+        // And the coarse entry holds everything above that: 1 << 19 ticks.
+        assert_eq!(found[2], (524_288.0 / 90_000.0, 150 * 192));
+        assert_eq!(found[3], ((524_288.0 + 46080.0) / 90_000.0, 190 * 192));
+    }
+
+    /// A coarse entry that states a position behind the one before it is one
+    /// turn of the fine entry's seventeen bits out of step, which is what one
+    /// recorder's discs do. The points are places in a file and a file goes
+    /// one way, so it is carried forward rather than believed.
+    #[test]
+    fn an_entry_point_never_goes_backwards() {
+        let raw = clpi_with_ep_map(
+            &[(0, 0, 0), (2, 1, 0)],
+            &[(0, 0), (90, 100), (0, 7), (90, 9)],
+        );
+        let found = entry_points(&raw, Clock::File);
+        assert_eq!(found.len(), 4);
+        assert_eq!(found[1].1, 100 * 192);
+        // Seven packets in would be behind the hundred already given out, so
+        // the whole turn is added: 131072 of them.
+        assert_eq!(found[2].1, (7 + 131_072) * 192);
+        assert_eq!(found[3].1, (9 + 131_072) * 192);
+        // And every position still climbs.
+        assert!(found.windows(2).all(|w| w[0].1 < w[1].1));
+    }
+
+    /// And the same coarse entry states a stale top in its other field, so
+    /// the time is carried forward the same way -- but only inside one
+    /// stretch, because a clip written in several goes starts its clock again
+    /// at every seam.
+    #[test]
+    fn an_entry_point_time_never_goes_backwards_inside_a_stretch() {
+        // Two coarse entries at the same top, the second of which should have
+        // been stepped on: one turn of the fine time field is 2^20 ticks,
+        // which is two of the coarse entry's own steps.
+        let raw = clpi_with_ep_map(
+            &[(0, 4, 0), (2, 4, 200)],
+            &[(0, 0), (2000, 100), (100, 200)],
+        );
+        let found = entry_points(&raw, Clock::File);
+        assert_eq!(found.len(), 3);
+        let ticks = |t: f64| (t * 90_000.0).round() as u64;
+        assert_eq!(ticks(found[0].0), 4 << 19);
+        assert_eq!(ticks(found[1].0), (4 << 19) | (2000 << 9));
+        // Stated as (4 << 19) | (100 << 9), which is behind the one before
+        // it. A whole turn is added, which is what the coarse entry should
+        // have said.
+        assert_eq!(ticks(found[2].0), (6 << 19) | (100 << 9));
+        // And every time still climbs.
+        assert!(found.windows(2).all(|w| w[0].0 < w[1].0));
+    }
+
+    /// A clip whose clock passes 2^33, unwrapped as libavformat unwraps the
+    /// stream: its first timestamp less a minute is the line.
+    #[test]
+    fn a_clock_that_wraps_is_unwrapped_as_libavformat_does() {
+        let ticks = |t: f64| (t * 90_000.0).round() as i64;
+        // Ninety seconds short of the wrap: what comes after it is moved up
+        // a turn.
+        let raw = clpi_with_ep_map(&[(0, 0x3FF0, 0), (1, 1, 200)], &[(0, 0), (0, 200)]);
+        let found = entry_points(&raw, Clock::File);
+        assert_eq!(ticks(found[0].0), 0x3FF0 << 19);
+        assert_eq!(ticks(found[1].0), (1 << 19) + (1 << 33));
+        // Eleven seconds short of it, inside the minute: libavformat takes
+        // the turn off what comes before instead, so the first entry point
+        // is below nought and the one after the wrap is left as it reads.
+        let raw = clpi_with_ep_map(&[(0, 0x3FFE, 0), (1, 1, 200)], &[(0, 0), (0, 200)]);
+        let found = entry_points(&raw, Clock::File);
+        assert_eq!(ticks(found[0].0), (0x3FFE << 19) - (1 << 33));
+        assert_eq!(ticks(found[1].0), 1 << 19);
+    }
+
+    /// Three stretches of a clip whose later clocks start again below the
+    /// first by more than libavformat's minute: the first presents from 100
+    /// seconds, the second from 5 and the third from 10. A thousand source
+    /// packets to each, and two entry points a second apart in each.
+    fn stretches_starting_low() -> Vec<u8> {
+        // (coarse top, fine) for 100, 101, 5, 6, 10 and 11 seconds.
+        let mut raw = clpi_with_ep_map(
+            &[(0, 17, 0), (2, 0, 0), (4, 1, 0)],
+            &[(170, 0), (345, 500), (878, 1_000), (1_054, 1_500), (733, 2_000), (909, 2_500)],
+        );
+        let at = raw.len() as u32;
+        raw[8..12].copy_from_slice(&at.to_be_bytes());
+        let table = clpi_timed(&[
+            (0, 0, 4_500_000, 4_545_000),
+            (1, 1_000, 225_000, 270_000),
+            (2, 2_000, 450_000, 495_000),
+        ]);
+        raw.extend_from_slice(&table[40..]);
+        raw
+    }
+
+    /// libavformat's reference is the first timestamp of what it opens, and
+    /// what it opens is one stretch, or the stretches already laid end to
+    /// end: never the raw file with its clocks going backwards. Unwrapped
+    /// against the file's first timestamp, the second stretch here was a day
+    /// late, and so was everything the join laid after it.
+    #[test]
+    fn a_stretch_that_starts_low_is_not_a_day_late() {
+        let raw = stretches_starting_low();
+        assert_eq!(sequence_starts(&raw).len(), 3);
+        let table = joined(&raw, 3_000).unwrap();
+        let seams = table.seams();
+        assert_eq!(seams.len(), 2);
+        assert!(seams[0].time > 100.0 && seams[0].time < 110.0, "{seams:?}");
+        assert!(seams[1].time > seams[0].time && seams[1].time < 120.0, "{seams:?}");
+        // On the joined clock the points climb from the first stretch's
+        // clock straight through the seams.
+        let points: Vec<(f64, u64)> = entry_points(&raw, Clock::Joined)
+            .into_iter()
+            .map(|(t, p)| (t + table.seconds_at(p), p))
+            .collect();
+        assert_eq!(points.len(), 6);
+        assert!(points.windows(2).all(|w| w[0].0 < w[1].0), "{points:?}");
+        assert!(points[5].0 < 120.0, "{points:?}");
+        // And a stretch opened on its own is on its own clock.
+        let alone = entry_points(&raw, Clock::Stretch);
+        assert!((alone[2].0 - 5.0).abs() < 0.01, "{alone:?}");
+        assert!((alone[4].0 - 10.0).abs() < 0.01, "{alone:?}");
+        // The file read whole is libavformat's to unwrap, and it does move
+        // them up a turn.
+        let whole = entry_points(&raw, Clock::File);
+        assert!(whole[2].0 > 95_000.0, "{whole:?}");
+    }
+
+    /// A pressed disc's clip of several sequences is read unjoined -- see
+    /// [`clip_restamp`] -- so its map has to come back on the file's clock and
+    /// not on the joined one.
+    #[test]
+    fn a_pressed_disc_s_clip_is_indexed_on_the_clock_it_is_read_on() {
+        let root = std::env::temp_dir().join("smartcut-disc-bdmv-clock");
+        let _ = std::fs::remove_dir_all(&root);
+        for dir in ["PLAYLIST", "CLIPINF", "STREAM"] {
+            std::fs::create_dir_all(root.join("BDMV").join(dir)).unwrap();
+        }
+        std::fs::write(root.join("BDMV/PLAYLIST/00001.mpls"), []).unwrap();
+        let raw = stretches_starting_low();
+        std::fs::write(root.join("BDMV/CLIPINF/00001.clpi"), &raw).unwrap();
+        std::fs::write(root.join("BDMV/STREAM/00001.m2ts"), vec![0u8; 3_000 * 192]).unwrap();
+        let clip = root.join("BDMV/STREAM/00001.m2ts");
+        let clip = clip.to_string_lossy();
+        assert!(clip_restamp(&clip).is_none());
+        assert_eq!(clip_entry_points(&clip), Some(entry_points(&raw, Clock::File)));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn says_nothing_about_an_entry_point_map_it_cannot_read() {
+        assert!(entry_points(b"not a clpi", Clock::File).is_empty());
+        assert!(entry_points(&[], Clock::File).is_empty());
+        // The stream list on its own: a clip index with no CPI section at all.
+        assert!(entry_points(&clpi(), Clock::File).is_empty());
+        // A map whose tables run past the end of the file is a map that is
+        // not read at all, rather than one read as far as it goes.
+        let mut truncated = clpi_with_ep_map(&[(0, 0, 0)], &[(0, 0), (90, 100)]);
+        truncated.truncate(truncated.len() - 4);
+        assert!(entry_points(&truncated, Clock::File).is_empty());
+    }
+
+    #[test]
+    fn names_the_clip_a_path_on_a_disc_points_at() {
+        assert_eq!(
+            clip_on_a_disc("/rec/Anime.iso/BDMV/STREAM/00014.m2ts"),
+            Some(("/rec/Anime.iso/BDMV", "00014"))
+        );
+        assert_eq!(
+            clip_on_a_disc("/rec/copied/BDAV/STREAM/00001.m2ts"),
+            Some(("/rec/copied/BDAV", "00001"))
+        );
+        // Anything that is not a clip on a disc is not one.
+        assert_eq!(clip_on_a_disc("/rec/programme.ts"), None);
+        assert_eq!(clip_on_a_disc("/rec/Anime.iso/BDMV/STREAM/00014.mp4"), None);
+        assert_eq!(clip_on_a_disc("/rec/BDMV/STREAM/"), None);
+        // Windows: the folder as named, the rest as the volume joined it.
+        assert_eq!(
+            clip_on_a_disc(r"D:\rec\disc\BDAV\STREAM/00001.m2ts"),
+            Some((r"D:\rec\disc\BDAV", "00001"))
+        );
+        assert_eq!(
+            clip_on_a_disc(r"D:\rec\disc\bdmv\stream\00014.M2TS"),
+            Some((r"D:\rec\disc\bdmv", "00014"))
+        );
+        // A folder that is not called either is not a disc on its name alone,
+        // nor on its shape where it is neither a folder nor inside an image.
+        assert_eq!(clip_on_a_disc("/no/such/place/STREAM/00001.m2ts"), None);
+        assert_eq!(clip_on_a_disc("http://h/x/STREAM/00001.m2ts"), None);
+        assert_eq!(clip_on_a_disc("/no/such/place/STREAM/clip.m2ts"), None);
+    }
+
+    /// A disc copied under a name of its own, and a folder holding a disc of
+    /// each dialect: the clip's disc is the directory the clip is in.
+    #[test]
+    fn a_clip_belongs_to_the_directory_it_is_in() {
+        let root = std::env::temp_dir().join("smartcut-disc-own-name");
+        let _ = std::fs::remove_dir_all(&root);
+        let clpi = |pid: u16| clip_index(b"M2TS0100", &[(pid, vec![0x0F, 0x31, b'j', b'p', b'n'])]);
+        for (dir, list) in [
+            ("Anime 2026-08-17", "00001.rpls"),
+            ("both/BDAV", "00001.rpls"),
+            ("both/BDMV", "00001.mpls"),
+        ] {
+            for sub in ["PLAYLIST", "CLIPINF", "STREAM"] {
+                std::fs::create_dir_all(root.join(dir).join(sub)).unwrap();
+            }
+            std::fs::write(root.join(dir).join("PLAYLIST").join(list), []).unwrap();
+        }
+        std::fs::write(root.join("Anime 2026-08-17/CLIPINF/00001.clpi"), clpi(0x1100)).unwrap();
+        std::fs::write(root.join("both/BDAV/CLIPINF/00001.clpi"), clpi(0x1101)).unwrap();
+        std::fs::write(root.join("both/BDMV/CLIPINF/00001.clpi"), clpi(0x1102)).unwrap();
+        let pids = |clip: &str| -> Vec<i32> {
+            let (root, clip) = clip_on_a_disc(clip).expect("a clip on a disc");
+            let mut vol = Volume::open(Path::new(root)).unwrap();
+            vol.tracks(clip).iter().map(|t| t.pid).collect()
+        };
+        let at = |rel: &str| root.join(rel).to_string_lossy().into_owned();
+        assert_eq!(pids(&at("Anime 2026-08-17/STREAM/00001.m2ts")), vec![0x1100]);
+        assert_eq!(pids(&at("both/BDAV/STREAM/00001.m2ts")), vec![0x1101]);
+        assert_eq!(pids(&at("both/BDMV/STREAM/00001.m2ts")), vec![0x1102]);
+        // A folder of that shape with no playlists beside it is not a disc.
+        std::fs::create_dir_all(root.join("camera/STREAM")).unwrap();
+        assert_eq!(clip_on_a_disc(&at("camera/STREAM/00001.m2ts")), None);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A recorder's clip index, holding these streams: the header, the
+    /// address the programme information sits at, and one entry per stream.
+    fn clip_index(magic: &[u8; 8], streams: &[(u16, Vec<u8>)]) -> Vec<u8> {
+        let mut raw = vec![0u8; 40];
+        raw[..8].copy_from_slice(magic);
+        raw[12..16].copy_from_slice(&40u32.to_be_bytes());
+        raw.extend_from_slice(&26u32.to_be_bytes());
+        raw.extend_from_slice(&[0, 1]);
+        raw.extend_from_slice(&0u32.to_be_bytes());
+        raw.extend_from_slice(&0x0100u16.to_be_bytes());
+        raw.extend_from_slice(&[streams.len() as u8, 0]);
+        for (pid, attr) in streams {
+            raw.extend_from_slice(&pid.to_be_bytes());
+            raw.push(attr.len() as u8);
+            raw.extend_from_slice(attr);
+        }
+        raw
+    }
+
+    /// What a recorder writes, read off a real disc: a different magic, three
+    /// streams, a language field cut short, and a private stream that says
+    /// nothing about itself.
+    #[test]
+    fn reads_what_a_recorder_wrote() {
+        let raw = clip_index(
+            b"M2TS0100",
+            &[
+                (0x1100u16, vec![0x02u8, 0x44, 0x30]),
+                (0x1101, vec![0x0F, 0x31, 0x00]),
+                (0x1102, vec![0x06]),
+            ],
+        );
+        let found = tracks(&raw);
+        assert_eq!(found.len(), 3);
+        assert_eq!(
+            (found[0].kind, found[0].detail.as_str()),
+            ("video", "MPEG-2 1080i 29.97fps")
+        );
+        assert_eq!(
+            (found[1].kind, found[1].detail.as_str()),
+            ("audio", "MPEG-2 AAC stereo 48kHz")
+        );
+        // Three bytes of attributes leave no room for a language, and a
+        // language guessed at is worse than none.
+        assert_eq!(found[1].language, None);
+        // A broadcast's private stream -- the captions, on this disc. The
+        // index does not say what is in one, so neither does this.
+        assert_eq!(
+            (found[2].kind, found[2].detail.as_str()),
+            ("other", "stream type 0x06")
+        );
+        assert!(found.iter().all(|t| t.carried));
+    }
+
+    /// The same, off a 4K recorder's index: HEVC at 2160p, MPEG-4 AAC, and a
+    /// sampling frequency the disc declines to name.
+    #[test]
+    fn reads_what_a_4k_clip_holds() {
+        let found = tracks(&clip_index(
+            b"M2TS0200",
+            &[
+                (0x1011u16, vec![0x24u8, 0x87, 0x30, 0x20, 0x30]),
+                (0x1100, vec![0x11, 0x3F, 0x02]),
+                (0x1C00, vec![0x06]),
+            ],
+        ));
+        assert_eq!(
+            (found[0].kind, found[0].detail.as_str()),
+            ("video", "HEVC 2160p 59.94fps")
+        );
+        // Stereo, at a rate the index writes as 15 -- which is not one of
+        // the rates it can name, so it names none.
+        assert_eq!(
+            (found[1].kind, found[1].detail.as_str()),
+            ("audio", "MPEG-4 AAC stereo")
+        );
+    }
+
+    /// What a recorder writes into a playlist about the recording rather
+    /// than about the stream, at the offsets read off its own disc: the
+    /// channel and its number, the programme's name, when it was recorded,
+    /// and what the broadcaster said it was about.
+    #[test]
+    fn reads_what_a_playlist_says_about_the_programme() {
+        let list_at = 1546;
+        let mut raw = vec![0u8; list_at];
+        raw[..8].copy_from_slice(b"PLST0100");
+        raw[50..57].copy_from_slice(&[0x20, 0x10, 0x01, 0x31, 0x00, 0x30, 0x00]);
+        raw[64..66].copy_from_slice(&161u16.to_be_bytes());
+        let channel = crate::arib::encode("衛星第一");
+        raw[67] = channel.len() as u8;
+        raw[68..68 + channel.len()].copy_from_slice(&channel);
+        let name = crate::arib::encode("アニメ 第03話");
+        raw[88] = name.len() as u8;
+        raw[89..89 + name.len()].copy_from_slice(&name);
+        let about = crate::arib::encode("美術科に入学した主人公が、ひとり暮らしを始める。");
+        raw[344..346].copy_from_slice(&(about.len() as u16).to_be_bytes());
+        raw[346..346 + about.len()].copy_from_slice(&about);
+
+        let said = app_info(&raw, list_at);
+        assert_eq!(said.name.as_deref(), Some("アニメ 第03話"));
+        assert_eq!(said.channel.as_deref(), Some("衛星第一"));
+        assert_eq!(said.channel_number, 161);
+        assert_eq!(
+            said.description.as_deref(),
+            Some("美術科に入学した主人公が、ひとり暮らしを始める。")
+        );
+        assert_eq!(
+            said.made.map(|m| m.to_string()).as_deref(),
+            Some("2010-01-31 00:30:00")
+        );
+
+        // A playlist that says none of it -- which is what an authoring tool
+        // writes -- says none of it rather than saying something empty.
+        let bare = vec![0u8; list_at];
+        let said = app_info(&bare, list_at);
+        assert!(said.name.is_none() && said.channel.is_none() && said.description.is_none());
+        assert_eq!(said.channel_number, 0);
+
+        // And a length that would run past the play items is a field this
+        // has misread, so it is not read at all.
+        let mut wild = raw.clone();
+        wild[88] = 255;
+        assert!(app_info(&wild, 100).name.is_none());
+    }
+
+    /// The same fields on a 4K recorder's disc, where the text is UTF-8 and
+    /// the file says so by being version 2.00. The bytes are the ones a
+    /// Panasonic recorder wrote: the symbols a broadcast sends as characters
+    /// of its own arrive as the Unicode ones, `🆞` here.
+    #[test]
+    fn reads_a_4k_playlist_written_in_utf8() {
+        let list_at = 1546;
+        let mut raw = vec![0u8; list_at];
+        raw[..8].copy_from_slice(b"PLST0200");
+        raw[64..66].copy_from_slice(&101u16.to_be_bytes());
+        let channel = "ＮＨＫ　ＢＳ".as_bytes();
+        raw[67] = channel.len() as u8;
+        raw[68..68 + channel.len()].copy_from_slice(channel);
+        let name = "🆞ドラマ".as_bytes();
+        raw[88] = name.len() as u8;
+        raw[89..89 + name.len()].copy_from_slice(name);
+
+        let said = app_info(&raw, list_at);
+        // One line, so the ideographic space between the two halves of the
+        // channel's name arrives as an ordinary one.
+        assert_eq!(said.channel.as_deref(), Some("ＮＨＫ ＢＳ"));
+        assert_eq!(said.name.as_deref(), Some("🆞ドラマ"));
+    }
+
+    /// Which encoding a name is in is asked of the bytes as well as of the
+    /// version, because `info.bdav` stays at 1.00 on a disc whose playlists
+    /// are 2.00.
+    #[test]
+    fn tells_the_two_encodings_apart() {
+        // Kanji with the shift in front of it taken away: ARIB starts in
+        // the kanji set, so these bytes are still a name in it -- and they
+        // are valid UTF-8 as well, which is the case the version has to
+        // settle. Every encoder met so far writes the shift, this one
+        // included, so the bytes are cut by hand to make the awkward one.
+        let kanji = crate::arib::encode("衛星第一")[2..].to_vec();
+        assert!(kanji.iter().all(|b| *b < 0x80));
+        assert_eq!(recorded_text(b"BDAV0100", &kanji), "衛星第一");
+        assert_eq!(recorded_text(b"PLST0200", "衛星第一".as_bytes()), "衛星第一");
+        // The same bytes on a 2.00 disc are the UTF-8 they look like.
+        assert_ne!(recorded_text(b"PLST0200", &kanji), "衛星第一");
+        // A shift into the alphanumeric set and back is ARIB whatever the
+        // version says, since no UTF-8 text holds those bytes.
+        let mixed = crate::arib::encode("NHK総合");
+        assert!(mixed.iter().any(|b| *b < 0x20));
+        assert_eq!(recorded_text(b"PLST0200", &mixed), "NHK総合");
+        // And UTF-8 is read out of a 1.00 file too where the bytes could
+        // only have been written that way.
+        assert_eq!(recorded_text(b"BDAV0100", "星降る夜".as_bytes()), "星降る夜");
+        // A description runs to several lines in both encodings, so the
+        // line break in the middle of one settles nothing and is not read
+        // as a shift.
+        let lines = "ある日届いた依頼の手紙。
+おしらせ
+
+番組内容";
+        assert_eq!(recorded_text(b"PLST0200", lines.as_bytes()), lines);
+    }
+
+    #[test]
+    fn takes_the_disc_its_own_name() {
+        let xml = r#"<disclib xmlns="urn:BDA:bdmv;disclib">
+          <di:discinfo xmlns:di="urn:BDA:bdmv;discinfo">
+            <di:title><di:name>Anime Box Season 1</di:name></di:title>
+            <di:description><di:tableOfContents>
+              <di:titleName titleNumber="1">T01 Feature</di:titleName>
+            </di:tableOfContents></di:description>
+          </di:discinfo></disclib>"#;
+        assert_eq!(disc_name(xml).as_deref(), Some("Anime Box Season 1"));
+        // A table of contents on its own is not a name for the disc.
+        assert_eq!(disc_name("<di:titleName>T01 Feature</di:titleName>"), None);
+        assert_eq!(disc_name(""), None);
+    }
+}

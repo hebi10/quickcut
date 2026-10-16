@@ -15,15 +15,17 @@ check(releaseCredentials.all { it.isNullOrBlank() } || releaseCredentials.all { 
 android {
     namespace = "com.hebi.quickcut"
     compileSdk = 36
+    ndkVersion = "27.3.13750724"
 
     defaultConfig {
         applicationId = "com.hebi.quickcut"
         minSdk = 29
         targetSdk = 36
         // The override is only for the emulator's older-version installation fixture.
-        versionCode = providers.gradleProperty("quickcutTestVersionCode").orNull?.toInt() ?: 9
-        versionName = "0.4.4"
+        versionCode = providers.gradleProperty("quickcutTestVersionCode").orNull?.toInt() ?: 10
+        versionName = "0.4.5"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
     }
 
     signingConfigs {
@@ -49,6 +51,13 @@ android {
         compose = true
     }
 
+    sourceSets.getByName("main") {
+        assets.srcDir(rootProject.layout.buildDirectory.dir("generated/licenseAssets"))
+        assets.srcDir(rootProject.layout.buildDirectory.dir("generated/smartcutAssets"))
+        jniLibs.srcDir(layout.buildDirectory.dir("generated/nativeLibs"))
+    }
+    packaging.jniLibs.useLegacyPackaging = false
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -57,6 +66,32 @@ android {
         unitTests.isReturnDefaultValues = true
     }
 }
+
+// The reproducible script is run before Gradle by CI and documented local builds.
+// Never produce a release that silently omitted the requested native engine.
+val prepareLicenseAssets by tasks.registering(Sync::class) {
+    from(rootProject.file("third_party")) { include("licenses/**") }
+    into(rootProject.layout.buildDirectory.dir("generated/licenseAssets"))
+}
+val verifyNativeSmartCut by tasks.registering {
+    doLast {
+        listOf("arm64-v8a", "x86_64").forEach { abi ->
+            val library = layout.buildDirectory.file(
+                "generated/nativeLibs/$abi/libquickcut_smartcut.so"
+            ).get().asFile
+            check(library.isFile && library.length() > 0L) {
+                "Missing $abi smart-cut engine. Run bash scripts/build-native-smartcut.sh before Gradle."
+            }
+        }
+        val notices = rootProject.layout.buildDirectory.file(
+            "generated/smartcutAssets/licenses/NATIVE-DEPENDENCIES.txt"
+        ).get().asFile
+        check(notices.isFile && notices.length() > 0L) {
+            "Native dependency notices are missing. Re-run scripts/build-native-smartcut.sh."
+        }
+    }
+}
+tasks.named("preBuild").configure { dependsOn(verifyNativeSmartCut, prepareLicenseAssets) }
 
 dependencies {
     val media3Version = "1.11.1"

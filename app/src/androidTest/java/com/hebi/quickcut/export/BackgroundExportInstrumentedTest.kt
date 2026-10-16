@@ -26,6 +26,7 @@ import com.hebi.quickcut.editor.EditorSessionStore
 import com.hebi.quickcut.editor.EditorViewModel
 import com.hebi.quickcut.editor.QuickCutPage
 import com.hebi.quickcut.media.ExportMode
+import com.hebi.quickcut.media.ExportMethod
 import com.hebi.quickcut.media.MediaReader
 import com.hebi.quickcut.media.SaveDateMode
 import com.hebi.quickcut.settings.BatchDraftSettings
@@ -159,6 +160,10 @@ class BackgroundExportInstrumentedTest {
         }
         assertEquals("Background completion must publish the MediaStore row", 0, pending)
         assertNotNull(model.completedExportReport)
+        assertEquals("The native partial encoder must finish with the display off",
+            ExportMethod.PARTIAL_REENCODE, model.completedExportReport?.method)
+        assertEquals("The offscreen fixture must exercise native processing", null,
+            model.completedExportReport?.optimizationResult)
 
         wakeAndBringTaskToFront()
         activityRule.scenario.recreate()
@@ -223,6 +228,10 @@ class BackgroundExportInstrumentedTest {
             }
             assertEquals(0, pending)
             assertNotNull(row.exportReport)
+            assertEquals("Both sequential files must use native partial encoding offscreen",
+                ExportMethod.PARTIAL_REENCODE, row.exportReport?.method)
+            assertEquals("The offscreen batch fixture must exercise native processing", null,
+                row.exportReport?.optimizationResult)
             output
         }
         assertEquals("Each source needs its own completed output", 2, outputs.distinct().size)

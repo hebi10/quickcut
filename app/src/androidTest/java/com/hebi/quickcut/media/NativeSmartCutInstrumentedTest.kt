@@ -1,6 +1,7 @@
 package com.hebi.quickcut.media
 
 import android.content.Context
+import android.content.ContentValues
 import android.graphics.Color
 import android.media.AudioFormat
 import android.media.MediaCodec
@@ -18,8 +19,13 @@ import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.security.MessageDigest
+import java.util.UUID
 import kotlin.math.abs
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -81,6 +87,58 @@ class NativeSmartCutInstrumentedTest {
     }
 
     @Test
+    fun reorderedBFramesKeepTheirCopiedMiddleAndDecodeAcrossBothJoins() = runBlocking {
+        withSource("quickcut_bframes.mp4") { context, source, original ->
+            val requested = original.copy(startMs = 3_000L, endMs = 7_500L)
+            withExport(context, EditTimeline(listOf(requested))) { saved, report ->
+                assertEquals(ExportMethod.PARTIAL_REENCODE, report.method)
+                assertEquals("This external B-frame input must use the native engine", null,
+                    report.optimizationResult)
+                assertMiddleCopied(context, source, saved, 4_000_000L, 6_000_000L,
+                    requestedStartUs = 3_000_000L, timestampToleranceUs = 1_000L)
+                listOf(0L, 1_000_000L, 2_966_667L, 3_000_000L, 4_466_667L).forEach { timeUs ->
+                    assertTrue("Reordered pictures must decode at the requested moment: $timeUs",
+                        meanDifference(frame(context, source, timeUs + 3_000_000L),
+                            frame(context, saved, timeUs)) < 10.0)
+                }
+                assertDurationAndAudio(context, saved, 4_500L)
+            }
+        }
+    }
+
+    @Test
+    fun mediaStoreContentUriUsesNativePartialProcessing() = runBlocking {
+        withSource("quickcut_keyframes.mp4") { context, source, original ->
+            val resolver = context.contentResolver
+            val values = ContentValues().apply {
+                put(MediaStore.Video.Media.DISPLAY_NAME, "quickcut_native_source_${System.nanoTime()}.mp4")
+                put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+                put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/QuickCut")
+                put(MediaStore.Video.Media.IS_PENDING, 1)
+            }
+            val imported = checkNotNull(resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values))
+            try {
+                checkNotNull(resolver.openInputStream(source)).use { input ->
+                    checkNotNull(resolver.openOutputStream(imported)).use { input.copyTo(it) }
+                }
+                resolver.update(imported, ContentValues().apply {
+                    put(MediaStore.Video.Media.IS_PENDING, 0)
+                }, null, null)
+                val requested = original.copy(uri = imported.toString(), startMs = 3_000L, endMs = 7_500L)
+                withExport(context, EditTimeline(listOf(requested))) { saved, report ->
+                    assertEquals(ExportMethod.PARTIAL_REENCODE, report.method)
+                    assertEquals(null, report.optimizationResult)
+                    assertMiddleCopied(context, imported, saved, 4_000_000L, 6_000_000L,
+                        requestedStartUs = 3_000_000L, timestampToleranceUs = 1_000L)
+                    assertDurationAndAudio(context, saved, 4_500L)
+                }
+            } finally {
+                resolver.delete(imported, null, null)
+            }
+        }
+    }
+
+    @Test
     fun startsImmediatelyBeforeAndAfterAKeyframeKeepTheRequestedTimeline() = runBlocking {
         withSource("quickcut_exact_boundary.mp4") { context, source, original ->
             for (startMs in listOf(1_980L, 2_010L)) {
@@ -118,6 +176,51 @@ class NativeSmartCutInstrumentedTest {
                 assertEquals("Unsupported compositions must retain the normal full fallback",
                     ExportMethod.VIDEO_REENCODE, report.method)
                 assertEquals(unchanged, timeline)
+            }
+        }
+    }
+
+    @Test
+    fun mutedNativePartialExportKeepsTheCopiedMiddleAndRemovesTheAudioTrack() = runBlocking {
+        withSource("quickcut_keyframes.mp4") { context, source, original ->
+            val requested = original.copy(startMs = 3_000L, endMs = 7_500L, muted = true)
+            withExport(context, EditTimeline(listOf(requested))) { saved, report ->
+                val metadata = MediaReader.validateExport(context, saved, 4_500L, expectAudio = false)
+                assertTrue(abs(metadata.durationMs - 4_500L) <= 34L)
+                assertFalse("Mute must remove the source AAC track, not retain silent metadata", metadata.hasAudio)
+                assertEquals(ExportMethod.PARTIAL_REENCODE, report.method)
+                assertEquals("This fixture must exercise native partial encoding", null, report.optimizationResult)
+                assertMiddleCopied(context, source, saved, 4_000_000L, 6_000_000L,
+                    requestedStartUs = 3_000_000L, timestampToleranceUs = 1_000L)
+                assertTrue("Muted output must keep the chosen first video frame",
+                    meanDifference(frame(context, source, 3_000_000L), frame(context, saved, 0L)) < 10.0)
+                assertTrue(requested.muted)
+            }
+        }
+    }
+
+    @Test
+    fun cancelledJobAtJniEntryReturnsCancellationWithoutCreatingAnOutput() = runBlocking {
+        withSource("quickcut_keyframes.mp4") { context, source, _ ->
+            // This deliberately tests the packaged JNI/coroutine cancellation
+            // boundary, not in-flight progress timing on a short test fixture.
+            System.loadLibrary("quickcut_smartcut")
+            val destination = File(context.cacheDir, "smartcut_precancel_${UUID.randomUUID()}.mp4")
+            val job = Job().apply { cancel() }
+            val callbacks = NativeSmartCutCallbacks(job) {
+                throw AssertionError("An already cancelled native request must not deliver progress")
+            }
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    NativeSmartCutBridge.cut(source.path!!, destination.absolutePath,
+                        3_000_000L, 7_500_000L, false, callbacks)
+                }
+                assertArrayEquals("JNI must distinguish cancellation from an unsupported-input fallback",
+                    longArrayOf(-1L, 0L, 0L), result)
+                assertFalse("An already cancelled request must not leave a staged output", destination.exists())
+            } finally {
+                callbacks.close()
+                destination.delete()
             }
         }
     }

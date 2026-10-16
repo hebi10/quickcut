@@ -12,9 +12,9 @@ trap on_failure EXIT
 
 # An older version-code fixture uses this runner's same debug key. This checks
 # Android's update/data retention path, not compatibility with old distributed APKs.
-gradle --no-daemon -PquickcutTestVersionCode=8 :app:assembleDebug
+gradle --no-daemon -PquickcutTestVersionCode=9 :app:assembleDebug
 adb install -r -d app/build/outputs/apk/debug/app-debug.apk
-if [[ ! $(adb shell dumpsys package com.hebi.quickcut) =~ versionCode=8[[:space:]] ]]; then
+if [[ ! $(adb shell dumpsys package com.hebi.quickcut) =~ versionCode=9[[:space:]] ]]; then
   echo "::error::Older-version update fixture was not installed"
   exit 1
 fi
@@ -22,7 +22,7 @@ adb shell run-as com.hebi.quickcut mkdir -p files
 printf 'quickcut-update-data' | adb shell run-as com.hebi.quickcut sh -c '"cat > files/update-sentinel"'
 gradle --no-daemon :app:assembleDebug
 adb install -r app/build/outputs/apk/debug/app-debug.apk
-if [[ ! $(adb shell dumpsys package com.hebi.quickcut) =~ versionCode=9[[:space:]] ]]; then
+if [[ ! $(adb shell dumpsys package com.hebi.quickcut) =~ versionCode=10[[:space:]] ]]; then
   echo "::error::Update candidate was not installed"
   exit 1
 fi
@@ -31,7 +31,7 @@ if [ "$(adb shell run-as com.hebi.quickcut cat files/update-sentinel | tr -d '\r
   exit 1
 fi
 adb shell run-as com.hebi.quickcut rm files/update-sentinel
-echo "Same-signature version-code 8 to 9 update retained application data"
+echo "Same-signature version-code 9 to 10 update retained application data"
 adb shell am force-stop com.google.android.apps.nexuslauncher
 adb shell am start -W -n com.hebi.quickcut/.MainActivity
 sleep 3

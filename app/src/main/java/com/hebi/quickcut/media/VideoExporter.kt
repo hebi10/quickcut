@@ -116,15 +116,42 @@ class VideoExporter(private val context: Context) {
             val estimate = ExportStorage.estimateOutputBytes(context, timeline, directWrite = false)
             ExportStorage.requireSpace(context, estimate, directWrite = false)
         }
-        val optimizeTrim = timeline.clips.singleOrNull()?.let { clip ->
-            withContext(Dispatchers.IO) { ExactTrimOptimization.canOptimize(context, clip) }
-        } ?: false
         // Merely choose a unique path here. Creating a temp file in a cancellable
         // withContext can lose the cleanup handle while dispatching back to Main.
         val temporary = File(context.cacheDir, "quickcut_" + UUID.randomUUID().toString() + ".mp4")
         try {
-            val result = withContext(Dispatchers.Main.immediate) {
-                transform(timeline, temporary, onProgress, outputTimestampMs, optimizeTrim)
+            val nativeResult = if (saveDateMode == SaveDateMode.CURRENT && timeline.clips.size == 1) {
+                try {
+                    NativeSmartCutTrimmer.tryExport(context, timeline.clips.single(), temporary, onProgress)
+                        ?.also {
+                            withContext(Dispatchers.IO) {
+                                MediaReader.validateExport(temporary, expectedDurationMs, expectAudio)
+                            }
+                        }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (invalidOutput: IOException) {
+                    Log.w("QuickCutExport", "Native output validation failed; using exact Media3 export",
+                        invalidOutput)
+                    null
+                }
+            } else null
+            val media3Result = if (nativeResult == null) {
+                withContext(Dispatchers.IO) {
+                    if (temporary.exists() && !temporary.delete()) {
+                        throw IOException("이전 저장 시도의 임시 파일을 정리할 수 없습니다.")
+                    }
+                }
+                val optimizeTrim = timeline.clips.singleOrNull()?.let { clip ->
+                    withContext(Dispatchers.IO) { ExactTrimOptimization.canOptimize(context, clip) }
+                } ?: false
+                withContext(Dispatchers.Main.immediate) {
+                    transform(timeline, temporary, onProgress, outputTimestampMs, optimizeTrim)
+                }
+            } else {
+                Log.i("QuickCutExport", "method=native_smart_cut copiedVideoPackets=" +
+                    nativeResult.copiedPackets + " encodedVideoPackets=" + nativeResult.encodedPackets)
+                null
             }
             withContext(Dispatchers.IO) {
                 MediaReader.validateExport(temporary, expectedDurationMs, expectAudio, originalDate?.epochMs)
@@ -141,9 +168,13 @@ class VideoExporter(private val context: Context) {
             )
             reportPublished(
                 ExportReport(
-                    ExportReportMapper.method(result.videoConversionProcess, result.audioConversionProcess),
+                    if (nativeResult != null) ExportMethod.PARTIAL_REENCODE
+                    else ExportReportMapper.method(
+                        checkNotNull(media3Result).videoConversionProcess,
+                        media3Result.audioConversionProcess,
+                    ),
                     SystemClock.elapsedRealtime() - startedAt,
-                    result.optimizationResult,
+                    media3Result?.optimizationResult,
                 ),
                 onReport,
             )

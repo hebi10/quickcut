@@ -91,8 +91,8 @@ class ExactTrimInstrumentedTest {
                 abs(savedMetadata.durationMs - clip.durationMs) <= 34L)
             assertTrue("The original audio track must survive", savedMetadata.hasAudio)
             assertEquals("Export must not move or mutate the original requested clip", originalClip, clip)
-            assertEquals("PC-encoded AVC requires a full fallback, which must be reported honestly",
-                ExportMethod.VIDEO_REENCODE, report?.method)
+            assertEquals("Imported AVC must keep the exact start while copying its eligible middle",
+                ExportMethod.PARTIAL_REENCODE, report?.method)
         } finally {
             output?.let { context.contentResolver.delete(it, null, null) }
             source.delete()
@@ -163,8 +163,8 @@ class ExactTrimInstrumentedTest {
 
     @Test
     fun sameDeviceEncodedSourceUsesPartialEncodingWithoutMovingTheRequestedStart() = runBlocking {
-        // Matching the device encoder's CSD is deliberately part of this positive
-        // fixture. It does not assert optimization for arbitrary imported files.
+        // Matching the device encoder's CSD still permits the existing Media3
+        // optimization when the native path declines this device's bitstream.
         assumeTrue("The known encoder-matching fixture runs on SDK 33+ emulators",
             Build.VERSION.SDK_INT >= 33 && Util.isRunningOnEmulator())
         withFixture { context, _, clip ->
@@ -190,9 +190,10 @@ class ExactTrimInstrumentedTest {
                         onReport = { report = it },
                     )
                     output = saved
-                    assertEquals("The optimized path must actually run, not silently fully reencode",
-                        ExportResult.OPTIMIZATION_SUCCEEDED, report?.optimizationResult)
                     assertEquals(ExportMethod.PARTIAL_REENCODE, report?.method)
+                    assertTrue("A native partial result has no Media3 status; a Media3 partial result must succeed",
+                        report?.optimizationResult == null ||
+                            report?.optimizationResult == ExportResult.OPTIMIZATION_SUCCEEDED)
                     assertRed(centerColor(context, saved, 0L), "Partial encoding must retain the chosen red start")
                     val result = MediaReader.validateExport(context, saved, requested.durationMs, true)
                     assertTrue(abs(result.durationMs - requested.durationMs) <= 34L)

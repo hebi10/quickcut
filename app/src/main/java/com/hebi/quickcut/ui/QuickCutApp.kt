@@ -101,6 +101,7 @@ fun QuickCutApp(
     val coroutineScope = rememberCoroutineScope()
     var showBatch by rememberSaveable { mutableStateOf(false) }
     var showLastSettings by rememberSaveable { mutableStateOf(false) }
+    var showLicenses by rememberSaveable { mutableStateOf(false) }
     var exportReview by remember { mutableStateOf<ExportReview?>(null) }
     var inspectingExport by remember { mutableStateOf(false) }
     var showExportCancelConfirmation by rememberSaveable { mutableStateOf(false) }
@@ -291,6 +292,7 @@ fun QuickCutApp(
                 quickSettings = settings.loadQuick(),
                 dateMode = selectedSaveDateMode,
                 onPreferences = { showLastSettings = true },
+                onLicenses = { showLicenses = true },
             )
             QuickCutPage.IMPORTING -> CenterStatus("영상 불러오는 중", "선택한 파일을 확인하고 있습니다.", null)
             QuickCutPage.EDITOR -> {
@@ -353,6 +355,8 @@ fun QuickCutApp(
         }
     }
 
+
+    if (showLicenses) OpenSourceLicensesDialog(onDismiss = { showLicenses = false })
 
     if (showSaveOptions && model.page == QuickCutPage.EDITOR) {
         SaveOptionsDialog(
@@ -541,6 +545,7 @@ private fun StartScreen(
     quickSettings: QuickTrimSettings,
     dateMode: SaveDateMode,
     onPreferences: () -> Unit,
+    onLicenses: () -> Unit,
 ) {
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
@@ -610,6 +615,9 @@ private fun StartScreen(
                     modifier = Modifier.fillMaxWidth().height(52.dp),
                     shape = RoundedCornerShape(4.dp),
                 ) { Text("이전 편집 이어서 진행") }
+            }
+            TextButton(onClick = onLicenses, shape = CutShape) {
+                Text("오픈소스 라이선스", color = CutColors.secondaryText)
             }
         }
     }

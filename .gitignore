@@ -4,6 +4,8 @@
 local.properties
 build/
 **/build/
+**/target/
+__pycache__/
 captures/
 .externalNativeBuild/
 .cxx/

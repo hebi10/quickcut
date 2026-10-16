@@ -1,0 +1,2100 @@
+//! Writing a UDF image around a folder of files.
+//!
+//! The other direction from [`crate::udf`], and for the same reason
+//! [`crate::bdav`] exists: a disc of recordings is not finished as a folder.
+//! What a burner wants is an image, and what an image is here is a UDF 2.50
+//! or 2.60 filesystem with the `BDAV` directory inside it -- the shape a
+//! Blu-ray recorder writes, and the shape ImgBurn produces when it is handed
+//! the folder.
+//!
+//! ## Written against two real images
+//!
+//! There is no specification in this project. Every offset, every constant
+//! and every field this fills in was read off two images written by real
+//! tools -- the same two discs [`crate::bdav`] was written against -- and the
+//! writer's output is read back by [`crate::udf`], which is the reader those
+//! discs are already opened with. Where the two images agree, this writes
+//! what they have; where they differ, this writes what the newer one has.
+//!
+//! ## What the image is made of
+//!
+//! ```text
+//!   0..15   nothing: the system area an ISO9660 volume would use
+//!  16..18   BEA01, NSR03, TEA01 -- "there is a UDF volume in here"
+//!  32..47   the volume descriptors: primary, implementation use, partition,
+//!           logical volume, unallocated space, terminating
+//!  64..65   the logical volume integrity descriptor, and a terminator
+//!     256   the anchor, which is the one descriptor at a fixed place
+//!     288   the partition:
+//!             +0    the metadata file's own entry
+//!             +32   the metadata partition itself -- every file entry, every
+//!                   directory, and the file set descriptor
+//!             ...   the files, each starting on a 32 block boundary
+//!             end   the mirror's entry, then a second copy of the metadata
+//!                   partition a cluster behind it
+//!    then   the reserve copy of the volume descriptors, and a second anchor
+//!           in the last sector
+//! ```
+//!
+//! ## The metadata partition
+//!
+//! UDF 2.50 put the file entries somewhere of their own: a *metadata
+//! partition*, whose blocks are the contents of an ordinary file on the
+//! partition beside it. A player reading a disc then finds the directory
+//! tree in one place on the disc rather than spread through it, and the file
+//! data stays where a burner laid it down. Both reference images use one, and
+//! [`crate::udf`] already reads through it -- see its module documentation.
+//!
+//! It is what decides how a file entry names its data. A short allocation
+//! descriptor means "the partition this descriptor is recorded on", which for
+//! an entry living in the metadata partition is the metadata partition -- so
+//! a directory, whose contents are there too, uses short descriptors, and a
+//! file, whose contents are on the partition beside it, uses long ones and
+//! names that partition. Both reference images do exactly this.
+
+use anyhow::{bail, Context, Result};
+use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
+use std::path::{Path, PathBuf};
+
+/// A UDF logical block, which is 2048 bytes on every disc that carries video.
+const SECTOR: usize = 2048;
+
+/// Where the anchor is required to be, and where the partition begins. Both
+/// are what the reference images use.
+const ANCHOR: u64 = 256;
+const PARTITION: u64 = 288;
+
+/// The volume descriptors, and the integrity descriptor after them.
+const MAIN_VDS: u64 = 32;
+const VDS_BLOCKS: u64 = 16;
+const INTEGRITY: u64 = 64;
+const INTEGRITY_BLOCKS: u64 = 2;
+/// A recorder's disc keeps 32 blocks for the integrity sequence, which it
+/// goes on writing to each time it changes the disc.
+const INTEGRITY_BLOCKS_RECORDER: u64 = 32;
+
+/// How many sectors a BD-RE holds: single layer, and dual. The first is
+/// what every recorder disc measured here is, to the sector; the second is
+/// twice it.
+const BD_RE_SECTORS: [u64; 2] = [11_826_176, 23_652_352];
+
+/// Where a recorder's image puts what an overwritable one needs, in blocks of
+/// its partition. The metadata partition is 4096 blocks from block 32, the
+/// space bitmap follows it, and the files begin at 32768; the mirror stands
+/// this far short of the partition's end.
+const RECORDER_META_BLOCKS: u64 = 4096;
+const RECORDER_FILES_AT: u64 = 32768;
+const RECORDER_MIRROR_GAP: u64 = 11_968;
+
+/// Where the two entries that describe the metadata partition sit, in blocks
+/// from the start of the partition. The first two blocks of it, which is
+/// where the reference images have the first of them.
+const METADATA_FILE_ENTRY: u32 = 0;
+
+/// How the metadata partition and the file data are aligned inside the
+/// partition, in blocks. 32 blocks is 64 KB, which is what both reference
+/// images use and what the partition map then has to declare.
+const ALIGN: u64 = 32;
+
+/// The largest a single allocation descriptor may describe: its length field
+/// is 30 bits, and a length that is not the last of a file has to be a whole
+/// number of blocks.
+///
+/// **Rounded down to a whole number of clusters, not of blocks.** A gigabyte
+/// less one block is 524,287 blocks, which is what a burner writes and what
+/// this wrote -- and which is odd. A four gigabyte recording then came out as
+/// five extents of which only the first began on a 64 kB error-correction
+/// block, the unit a Blu-ray is read and written in. A recorder's own image
+/// uses 524,256 blocks, which is 16,383 clusters exactly, and every extent on
+/// all eight of its recordings begins and ends on one.
+///
+/// The other half of this is the stream file's own length; see
+/// [`crate::bdav`], which rounds a recording up to the same 64 kB.
+const EXTENT_MAX: u64 = ((1u64 << 30) - 1) & !(ALIGN * SECTOR as u64 - 1);
+
+// Descriptor tags, from ECMA-167 parts 3 and 4.
+const TAG_PRIMARY: u16 = 1;
+const TAG_ANCHOR: u16 = 2;
+const TAG_IMPL_USE: u16 = 4;
+const TAG_PARTITION: u16 = 5;
+const TAG_LOGICAL_VOLUME: u16 = 6;
+const TAG_UNALLOCATED: u16 = 7;
+const TAG_TERMINATING: u16 = 8;
+const TAG_INTEGRITY: u16 = 9;
+const TAG_FILE_SET: u16 = 256;
+const TAG_FILE_ID: u16 = 257;
+const TAG_EXTENDED_FILE_ENTRY: u16 = 266;
+const TAG_SPACE_BITMAP: u16 = 264;
+
+/// The kinds of file an entry can be. 250 and 251 are the metadata file and
+/// its mirror, which is how a reader tells them from the files a person put
+/// on the disc.
+const FILE_DIRECTORY: u8 = 4;
+const FILE_ORDINARY: u8 = 5;
+const FILE_METADATA: u8 = 250;
+const FILE_METADATA_MIRROR: u8 = 251;
+const FILE_METADATA_BITMAP: u8 = 252;
+
+/// Which revision of UDF the image says it is.
+///
+/// The two differ in one number written into half a dozen places, and in
+/// nothing else this writes: 2.60 adds a way of rewriting a disc that has
+/// already been written once, which an image on a hard disk has no use for.
+/// Both are offered because a burner and a player may each be happier with
+/// one of them, and neither is more work than the other.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Revision {
+    V250,
+    V260,
+}
+
+impl Revision {
+    /// The number as UDF writes it: 0x0250 for 2.50.
+    fn number(self) -> u16 {
+        match self {
+            Revision::V250 => 0x0250,
+            Revision::V260 => 0x0260,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Revision::V250 => "2.50",
+            Revision::V260 => "2.60",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Revision> {
+        match s.trim() {
+            "2.50" | "2.5" | "250" => Some(Revision::V250),
+            "2.60" | "2.6" | "260" => Some(Revision::V260),
+            _ => None,
+        }
+    }
+}
+
+/// What the image says may be done to the disc it is burned onto.
+///
+/// One number in the partition descriptor, and it is a statement about the
+/// medium rather than about the files. An image is written once and burned;
+/// what happens to the disc afterwards is the question this answers, and the
+/// answer depends on what it is burned to.
+///
+/// **Read-only is the default and is what a burned disc should say.** It is
+/// what every image written from a folder says -- this one and everybody
+/// else's -- and it is the truth about a disc nothing is going to write to
+/// again.
+///
+/// **Overwritable is what a recorder writes on a BD-RE**, and it is what a
+/// recorder wants to see before it will add a recording to a disc or take one
+/// off. A disc burned from a read-only image plays on the recorder and cannot
+/// be edited on it. So the choice is offered: the image is the same either
+/// way apart from this number and the write-protect flags on the domain
+/// (which a recorder's disc leaves clear), and only the person burning it
+/// knows which disc it is going on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Access {
+    /// Nothing will be written to this disc again.
+    #[default]
+    ReadOnly,
+    /// A rewritable disc a recorder may go on managing.
+    Overwritable,
+}
+
+impl Access {
+    /// The number the partition descriptor carries. 1 is read-only, 2
+    /// write-once, 3 rewritable, 4 overwritable.
+    fn number(self) -> u32 {
+        match self {
+            Access::ReadOnly => 1,
+            Access::Overwritable => 4,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Access::ReadOnly => "read-only",
+            Access::Overwritable => "overwritable",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Access> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "read-only" | "readonly" | "ro" => Some(Access::ReadOnly),
+            "overwritable" | "rewritable" | "rw" => Some(Access::Overwritable),
+            _ => None,
+        }
+    }
+}
+
+/// One node of the tree being written.
+struct Node {
+    name: String,
+    /// Where the file's bytes are read from. `None` for a directory.
+    source: Option<PathBuf>,
+    size: u64,
+    children: Vec<usize>,
+    /// Block of this node's file entry, in the metadata partition.
+    entry: u32,
+    /// Block of its contents: in the metadata partition for a directory,
+    /// in the partition beside it for a file.
+    data: u32,
+    /// How many blocks those contents take.
+    blocks: u64,
+    /// The number this file is known by on the volume. Nought is the root
+    /// and the first fifteen are reserved, so everything else counts from
+    /// sixteen -- which is where the reference images start too.
+    unique: u32,
+}
+
+impl Node {
+    fn is_dir(&self) -> bool {
+        self.source.is_none()
+    }
+}
+
+/// Write the disc in the folder at `from` into a UDF image at `to`.
+///
+/// The disc is `from/BDAV`, and the image's root holds that and nothing
+/// else, as a recorder's disc does. `from` is whatever folder the disc was
+/// written into, and that can be somebody's own -- `--bdav ~/Videos` put the
+/// recording it was cut from and every other file there into the image,
+/// gigabytes a player never looks at, and an overwritable image of them could
+/// outgrow the disc. [`crate::bdav::remove_disc`] takes `BDAV` away and
+/// leaves the rest for the same reason: the disc is that folder, and the
+/// image and the removal agree on it.
+///
+/// `label` is what the volume is called -- what a machine that mounts the
+/// image shows. `on` is told how far through the copy it is, because a disc
+/// of recordings is twenty gigabytes of file data.
+///
+/// Written under a name of its own and put in place once it is whole. A copy
+/// that failed part way -- a full disk, a file that would not read -- left a
+/// short image under the finished name, which looks like a disc and burns
+/// like one.
+pub fn write(
+    from: &Path,
+    to: &Path,
+    revision: Revision,
+    access: Access,
+    label: &str,
+    on: Option<&(dyn Fn(f64) + Sync)>,
+) -> Result<u64> {
+    // Never inside the folder it is an image of. Both callers name the image
+    // `<folder>.iso`, and a folder given with a separator at the end made
+    // that `<folder>/.iso`: a hidden image in the disc it holds, left there
+    // when the folder is taken away afterwards.
+    let inside = |dir: &Path| {
+        let (Ok(from), Ok(dir)) = (std::fs::canonicalize(from), std::fs::canonicalize(dir)) else {
+            return false;
+        };
+        dir.starts_with(from)
+    };
+    if to.parent().is_some_and(|p| inside(if p.as_os_str().is_empty() { Path::new(".") } else { p })) {
+        bail!(
+            "{}: the image would be inside {}, the folder it is made of",
+            to.display(),
+            from.display()
+        );
+    }
+    // Nor over an image of another disc, or over anything that is not an
+    // image of this one. A disc is added to, but a disc whose folder
+    // `--iso-only` took away lives on only in its image: the next run into a
+    // folder of that name -- the series name, which is what the window calls
+    // it -- started a disc afresh at 00001 and wrote its image over the last
+    // one, and every recording that was on it went. A file there that is no
+    // disc of recordings at all -- another disc's image, somebody's own file
+    // that happens to have the name -- is not this program's to replace
+    // either.
+    if let Some(why) = not_this_disc(from, to) {
+        bail!(
+            "{} is already there and {why}: written over, it would be lost. Move it away, or \
+             write the disc into another folder",
+            to.display()
+        );
+    }
+    let mut part = to.as_os_str().to_owned();
+    part.push(".part");
+    let part = PathBuf::from(part);
+    let mut made = false;
+    match write_to(from, &part, revision, access, label, on, &mut made) {
+        Ok((size, held)) => {
+            // A rename that fails -- `to` is a folder, or cannot be replaced
+            // -- leaves a whole image under the `.part` name, which is the
+            // same gigabytes on the disk and nothing any run will clear up.
+            // Renamed while the file is still open and locked, so that what
+            // is moved into place is this run's image and nobody else's.
+            let moved = std::fs::rename(&part, to);
+            if moved.is_err() {
+                let _ = std::fs::remove_file(&part);
+            }
+            drop(held);
+            moved.with_context(|| format!("cannot write {}", to.display()))?;
+            Ok(size)
+        }
+        Err(e) => {
+            // Only what this run made: a `.part` another run is still
+            // writing is that run's to finish.
+            if made {
+                let _ = std::fs::remove_file(&part);
+            }
+            Err(e)
+        }
+    }
+}
+
+/// Why what is already at `to` is not an image of the disc in `from` as it
+/// is now -- grown since or not -- if it is not.
+///
+/// A recording is its stream and its clip index, and neither changes once
+/// the disc has it: an image made again of a disc that has grown holds every
+/// one of them as the folder does, and an image of some other disc -- or of
+/// this folder before it was taken away and started again -- does not. The
+/// clip index is compared byte for byte, because two streams of different
+/// recordings can come to the same whole number of the unit a stream is
+/// rounded to. What is not a UDF image, or holds nothing of a disc of
+/// recordings, is not one either.
+///
+/// **What an image holds outside `BDAV` is not asked about.** An image
+/// written before images held the disc alone took the whole folder the disc
+/// was written into -- the recordings it was cut from, notes, whatever was
+/// there -- and those come and go in the folder as they always did. Held to
+/// them, growing such a disc was refused, after the cut, for every file
+/// somebody had since changed or deleted beside it, though the disc itself
+/// had lost nothing; and they were never the disc.
+///
+/// Nothing there, a link to nothing, or a folder (the rename refuses that
+/// itself) is `None`.
+fn not_this_disc(from: &Path, to: &Path) -> Option<String> {
+    // A link that leads nowhere is replaced, not followed: nothing is lost.
+    if std::fs::metadata(to).ok()?.is_dir() {
+        return None;
+    }
+    let what = || "is not an image of a disc of recordings".to_string();
+    // A file that cannot be opened is not known to be anything; saying it was
+    // no disc's image sent somebody looking for the wrong fault.
+    if let Err(e) = std::fs::File::open(to) {
+        return Some(format!("cannot be read ({e})"));
+    }
+    let Ok(mut old) = crate::udf::Image::open(to) else {
+        return Some(what());
+    };
+    let in_bdav = |path: &str| path.to_ascii_uppercase().starts_with("BDAV/");
+    if !old.files().iter().any(|e| in_bdav(&e.path)) {
+        return Some(what());
+    }
+    // A stream the image holds without its clip index is not a recording of
+    // that disc: it is a number another run had reserved, or was still
+    // cutting into, when the image was made (the image takes the folder as
+    // it finds it). Held to it, the run that then finished that recording was
+    // refused its own image -- the old one "held" an empty 00003.m2ts the
+    // disc no longer had at that length -- after its cut, every time two
+    // runs shared a disc, until somebody moved the image away by hand. What
+    // such a stream was is in the folder now, whole or given back.
+    let indexed: Vec<String> = old
+        .files()
+        .iter()
+        .filter_map(|e| {
+            let up = e.path.to_ascii_uppercase();
+            up.strip_prefix("BDAV/CLIPINF/")
+                .and_then(|n| n.strip_suffix(".CLPI"))
+                .map(str::to_string)
+        })
+        .collect();
+    let mut held: Vec<crate::udf::Entry> = old
+        .files()
+        .iter()
+        .filter(|e| {
+            let up = e.path.to_ascii_uppercase();
+            match up.strip_prefix("BDAV/STREAM/") {
+                Some(name) => name
+                    .strip_suffix(".M2TS")
+                    .is_some_and(|stem| indexed.iter().any(|i| i == stem)),
+                None => up.starts_with("BDAV/CLIPINF/"),
+            }
+        })
+        .cloned()
+        .collect();
+    // A stream named first where one differs: it is the recording.
+    held.sort_by_key(|e| !e.path.to_ascii_uppercase().starts_with("BDAV/STREAM/"));
+    for e in held {
+        let here = e.path.split('/').fold(from.to_path_buf(), |at, part| at.join(part));
+        let same = match std::fs::metadata(&here) {
+            Ok(m) if m.is_file() && m.len() == e.size => {
+                !e.path.to_ascii_uppercase().starts_with("BDAV/CLIPINF/")
+                    || old
+                        .read(&e)
+                        .ok()
+                        .is_some_and(|was| std::fs::read(&here).is_ok_and(|now| was == now))
+            }
+            _ => false,
+        };
+        if !same {
+            return Some(format!(
+                "holds {}, which the disc in {} does not have as it is now",
+                e.path,
+                from.display()
+            ));
+        }
+    }
+    None
+}
+
+fn write_to(
+    from: &Path,
+    to: &Path,
+    revision: Revision,
+    access: Access,
+    label: &str,
+    on: Option<&(dyn Fn(f64) + Sync)>,
+    made: &mut bool,
+) -> Result<(u64, std::fs::File)> {
+    let mut left_out = Vec::new();
+    let mut tree = read_disc(from, &mut left_out)?;
+    say_what_was_left_out(from, &left_out);
+    if tree.len() < 2 {
+        bail!("{}: there is nothing here to put on a disc", from.display());
+    }
+    let now = Stamp::now();
+    let plan = lay_out(&mut tree, access)?;
+    let meta = metadata_image(&tree, &plan, revision, access, &now, label)?;
+
+    // Not while another run is writing an image of this disc. Two runs into
+    // one disc is what `bdav::prepare` reserves numbers for, and both may
+    // ask for the image: the second took the first's `.part` away (see
+    // below) and made its own under the name, the first then renamed
+    // the second's half-written file into place and said the image was
+    // done -- and with `--iso-only` took the folder away on the word of an
+    // image whose file data was still being copied out of it. The run
+    // writing holds a lock on its `.part` until it is renamed; one left by
+    // a run that was killed holds none, and is cleared as it always was.
+    if std::fs::symlink_metadata(to).is_ok_and(|m| m.is_file()) {
+        if let Ok(held) = std::fs::File::open(to) {
+            if let Err(std::fs::TryLockError::WouldBlock) = held.try_lock() {
+                bail!(
+                    "{}: another run is writing an image of this disc there now; make the \
+                     image again once it has finished",
+                    to.display()
+                );
+            }
+        }
+    }
+    // Made afresh rather than opened through whatever has the name: a
+    // `<image>.part` that was a link into the folder truncated the file it
+    // pointed at -- one of the disc's own streams -- before it was read.
+    let _ = std::fs::remove_file(to);
+    let dst = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(to)
+        .with_context(|| format!("cannot write {}", to.display()))?;
+    *made = true;
+    // Held until the caller has renamed it into place; see [`write`]. A
+    // filesystem that cannot lock is not a reason to stop.
+    let _ = dst.try_lock();
+    make_sparse(&dst);
+    let mut out = Writer {
+        to: BufWriter::with_capacity(1 << 20, dst),
+        at: 0,
+    };
+
+    // Everything in front of the partition: the recognition sequence that
+    // says there is a volume here at all, the descriptors that describe it,
+    // and the anchor that points at them.
+    out.pad_to(16)?;
+    for name in [b"BEA01", b"NSR03", b"TEA01"] {
+        // A structure type of nought, the identifier, and version 1. What is
+        // being said is only that a volume of this kind begins here.
+        let mut sec = vec![0u8; SECTOR];
+        sec[1..6].copy_from_slice(name);
+        sec[6] = 1;
+        out.sector(&sec)?;
+    }
+    out.pad_to(MAIN_VDS)?;
+    for d in volume_descriptors(&plan, revision, access, &now, label, MAIN_VDS) {
+        out.sector(&sized(&d)?)?;
+    }
+    out.pad_to(INTEGRITY)?;
+    out.sector(&sized(&integrity(&plan, revision, &now))?)?;
+    out.sector(&sized(&terminating(INTEGRITY + 1))?)?;
+    out.pad_to(ANCHOR)?;
+    out.sector(&sized(&anchor(&plan, ANCHOR))?)?;
+
+    // The partition. The two entries that describe the metadata partition
+    // come first, then the metadata partition itself, then the files.
+    out.pad_to(PARTITION)?;
+    out.sector(&sized(&metadata_entry(
+        FILE_METADATA,
+        plan.meta_at,
+        plan.meta_blocks,
+        METADATA_FILE_ENTRY,
+        &now,
+    ))?)?;
+    // The metadata partition's own bitmap, where a recorder's is: its entry
+    // in the block after the metadata file's, and the bitmap after that.
+    if plan.room.is_some() {
+        let map = space_bitmap(plan.meta_blocks, &[(0, plan.meta_used)], 2);
+        out.sector(&sized(&bitmap_entry(map.len() as u64, 2, 1, &now))?)?;
+        out.sector(&map)?;
+    }
+    out.pad_to(PARTITION + plan.meta_at as u64)?;
+    out.write_all(&meta)?;
+    if let Some(room) = &plan.room {
+        out.pad_to(PARTITION + room.bitmap_at)?;
+        out.write_all(&space_bitmap(plan.partition_blocks, &room.used, room.bitmap_at))?;
+        out.align()?;
+    }
+
+    let total: u64 = tree.iter().map(|n| n.size).sum();
+    let mut done = 0u64;
+    // Not on every megabyte, which on a disc's worth of recordings was
+    // twenty thousand messages for a bar with a hundred steps. See
+    // [`crate::Told`].
+    let mut told = crate::Told::new();
+    for node in tree.iter().filter(|n| !n.is_dir()) {
+        out.pad_to(PARTITION + node.data as u64)?;
+        let path = node.source.as_ref().expect("a file has a path");
+        let mut src =
+            std::fs::File::open(path).with_context(|| format!("cannot read {}", path.display()))?;
+        let mut buf = vec![0u8; 1 << 20];
+        let mut left = node.size;
+        while left > 0 {
+            let want = buf.len().min(left as usize);
+            src.read_exact(&mut buf[..want])
+                .with_context(|| format!("reading {}", path.display()))?;
+            out.write_all(&buf[..want])?;
+            left -= want as u64;
+            done += want as u64;
+            told.at(on, done as f64 / total.max(1) as f64);
+        }
+        out.align()?;
+    }
+
+    // The second copy of the metadata partition, the entry that describes it
+    // a cluster in front, and then everything that has to be at the end: the
+    // reserve descriptors and the second anchor.
+    out.pad_to(PARTITION + plan.mirror_entry as u64)?;
+    out.sector(&sized(&metadata_entry(
+        FILE_METADATA_MIRROR,
+        plan.mirror_at,
+        plan.meta_blocks,
+        plan.mirror_entry,
+        &now,
+    ))?)?;
+    out.pad_to(PARTITION + plan.mirror_at as u64)?;
+    out.write_all(&meta)?;
+    // The third anchor, 256 sectors back from the last one and immediately
+    // in front of the reserve descriptors, which is where a recorder's own
+    // image has it. A burner writes two and a reader needs only one of the
+    // three; the third costs a sector and is one more place a disc with an
+    // unreadable end can still be opened from. See [`lay_out`].
+    out.pad_to(plan.reserve_vds - 1)?;
+    out.sector(&sized(&anchor(&plan, plan.reserve_vds - 1))?)?;
+    for d in volume_descriptors(&plan, revision, access, &now, label, plan.reserve_vds) {
+        out.sector(&sized(&d)?)?;
+    }
+    out.pad_to(plan.sectors - 1)?;
+    out.sector(&sized(&anchor(&plan, plan.sectors - 1))?)?;
+    let dst = out.to.into_inner().map_err(|e| e.into_error())?;
+    Ok((plan.sectors * SECTOR as u64, dst))
+}
+
+/// What under `from` an image of it would not carry, by path.
+///
+/// Asked before a folder is taken away because an image holds it: a file
+/// the image left out would go with the folder and be in neither.
+pub fn left_out(from: &Path) -> Result<Vec<String>> {
+    let mut out = Vec::new();
+    read_tree(from, &mut out)?;
+    Ok(out)
+}
+
+/// Name what could not go on the volume.
+///
+/// A folder is whatever the caller named, and an image quietly missing a file
+/// out of one is worse than an image that was not made: nothing downstream
+/// will ever say which file, or that there was one.
+fn say_what_was_left_out(from: &Path, left_out: &[String]) {
+    // Dot-files are left out of every image by design, and not worth a note.
+    let left_out: Vec<&String> = left_out
+        .iter()
+        .filter(|p| !Path::new(p).file_name().is_some_and(|n| n.to_string_lossy().starts_with('.')))
+        .collect();
+    // Named the way the folder names them, rather than by the path this
+    // program happens to have been handed.
+    let named = |files: &[&String]| -> String {
+        files
+            .iter()
+            .take(4)
+            .map(|p| {
+                Path::new(p.as_str())
+                    .strip_prefix(from)
+                    .unwrap_or(Path::new(p.as_str()))
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .chain((files.len() > 4).then(|| "...".to_string()))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    // Not every file left out is left out for its name: a run's unfinished
+    // `.ats` or `.part`, a link to a folder and a pipe are left out under
+    // names a disc could have. Told it was their names, somebody with a
+    // stamp pass's leftover in the disc went looking for a name to change.
+    let (misnamed, other): (Vec<&String>, Vec<&String>) = left_out.into_iter().partition(|p| {
+        Path::new(p.as_str())
+            .file_name()
+            .map(|n| n.to_string_lossy())
+            .is_some_and(|n| !n.is_ascii() || n.len() > 200)
+    });
+    if !misnamed.is_empty() {
+        crate::say!(
+            "note: {} file(s) under {} are not named the way a disc names its files -- a UDF \
+             volume written here carries plain ASCII names of 200 characters or fewer -- and are \
+             not in the image: {}",
+            misnamed.len(),
+            from.display(),
+            named(&misnamed),
+        );
+    }
+    if !other.is_empty() {
+        crate::say!(
+            "note: {} file(s) under {} are not in the image: a file another run has not \
+             finished writing (.ats, .part), a link to a folder, or not a file at all: {}",
+            other.len(),
+            from.display(),
+            named(&other),
+        );
+    }
+}
+
+/// Where everything goes, in blocks.
+struct Plan {
+    /// Blocks of the metadata partition, and where its two copies sit in the
+    /// partition beside it.
+    meta_blocks: u64,
+    meta_at: u32,
+    mirror_at: u32,
+    mirror_entry: u32,
+    /// How long the partition is, and where the reserve descriptors and the
+    /// end of the image are.
+    partition_blocks: u64,
+    reserve_vds: u64,
+    sectors: u64,
+    files: u32,
+    directories: u32,
+    /// The number the next file written onto this volume would take.
+    next_unique: u32,
+    /// Blocks of the metadata partition in use: the file set, every entry
+    /// and every directory.
+    meta_used: u64,
+    /// Blocks of the integrity sequence.
+    integrity_blocks: u64,
+    /// What an overwritable image adds. See [`Room`].
+    room: Option<Room>,
+}
+
+/// What a disc a recorder may go on writing to has to say about the space it
+/// has left.
+///
+/// **Measured on four discs a recorder wrote, which agree in everything but
+/// the counts.** The partition covers the whole disc, not the part in use; a
+/// bitmap of it, one bit a block and set where the block is free, says what
+/// is in use -- every file rounded out to 32 blocks, and the structures
+/// between; the metadata partition is 4096 blocks with a bitmap of its own;
+/// and the integrity descriptor counts what both bitmaps leave free. An image
+/// without them, as this wrote until 0.8.4, said the disc was full: access
+/// type 4 and nowhere to put a recording.
+struct Room {
+    /// Where the partition's bitmap is, and how many blocks it takes.
+    bitmap_at: u64,
+    bitmap_blocks: u64,
+    /// The blocks in use, as runs of the partition.
+    used: Vec<(u64, u64)>,
+    /// How many of the partition's blocks are free.
+    free: u64,
+}
+
+/// Read the folder into the tree that will be written.
+///
+/// Sorted case-insensitively, which is the order both reference images list
+/// a directory in -- and the order a person reading `CLIPINF`, `info.bdav`,
+/// `PLAYLIST`, `STREAM` expects.
+///
+/// `left_out` collects what could not go on the volume, so the caller can
+/// say so. A disc of recordings has none of it -- the files on one are
+/// `00001.m2ts` and `info.bdav` -- but the folder handed over is whatever
+/// the caller named, and an image quietly missing a file is worse than one
+/// that was not made.
+fn read_tree(from: &Path, left_out: &mut Vec<String>) -> Result<Vec<Node>> {
+    let mut tree = vec![Node {
+        name: String::new(),
+        source: None,
+        size: 0,
+        children: Vec::new(),
+        entry: 0,
+        data: 0,
+        blocks: 0,
+        unique: 0,
+    }];
+    fill(from, 0, &mut tree, left_out)?;
+    Ok(tree)
+}
+
+/// Read the disc under `from` -- its `BDAV` folder -- into the tree that will
+/// be written, with the root holding only that.
+///
+/// A `BDAV` that is a link is left out as [`fill`] leaves out any linked
+/// folder, and then there is no disc here: the same answer an image of the
+/// whole folder gave it.
+fn read_disc(from: &Path, left_out: &mut Vec<String>) -> Result<Vec<Node>> {
+    let mut tree = vec![Node {
+        name: String::new(),
+        source: None,
+        size: 0,
+        children: Vec::new(),
+        entry: 0,
+        data: 0,
+        blocks: 0,
+        unique: 0,
+    }];
+    let disc = from.join("BDAV");
+    let is_dir = std::fs::symlink_metadata(&disc).is_ok_and(|m| m.is_dir());
+    if !is_dir {
+        bail!("{}: there is no BDAV folder here to put on a disc", from.display());
+    }
+    tree.push(Node {
+        name: "BDAV".to_string(),
+        source: None,
+        size: 0,
+        children: Vec::new(),
+        entry: 0,
+        data: 0,
+        blocks: 0,
+        unique: 0,
+    });
+    tree[0].children.push(1);
+    fill(&disc, 1, &mut tree, left_out)?;
+    Ok(tree)
+}
+
+fn fill(dir: &Path, parent: usize, tree: &mut Vec<Node>, left_out: &mut Vec<String>) -> Result<()> {
+    let mut entries: Vec<(String, PathBuf, bool, u64)> = Vec::new();
+    for e in std::fs::read_dir(dir).with_context(|| format!("reading {}", dir.display()))? {
+        let e = e?;
+        let name = e.file_name().to_string_lossy().into_owned();
+        // A name that is not plain ASCII is not something a disc of
+        // recordings has: the files on one are `00001.m2ts` and `info.bdav`.
+        // A dot-file is not on one either. Both are noted rather than simply
+        // skipped -- see `left_out`.
+        // A dot-file is collected all the same, and only the note leaves it
+        // unsaid: `bdav::remove_disc` asks this what the image lacks before it
+        // takes the folder away, and a dot-file left off that list was in
+        // neither the image nor the folder afterwards.
+        if name.starts_with('.') || !name.is_ascii() || name.len() > 200 {
+            left_out.push(dir.join(&name).to_string_lossy().into_owned());
+            continue;
+        }
+        // A link is followed to a file, for its real length -- the entry's
+        // own metadata is the link's, and the image got a file cut down to
+        // the length of a path. A link to a folder is left out: one that
+        // pointed back up the tree never ended.
+        // A link that leads nowhere is named with the error: bare, it was
+        // "No such file or directory" and no file.
+        let meta = std::fs::metadata(e.path())
+            .with_context(|| format!("reading {}", e.path().display()))?;
+        let linked = e.file_type().is_ok_and(|t| t.is_symlink());
+        // What a run that stopped part way leaves behind: a stream being
+        // stamped, an image being written.
+        let unfinished = name.ends_with(".ats") || name.ends_with(".part");
+        // Neither a file nor a folder -- a pipe, a socket, a device -- has no
+        // length to copy, and opening a pipe to read it waits for a writer
+        // that never comes: the image hung rather than failed.
+        let special = !meta.is_dir() && !meta.is_file();
+        if (linked && meta.is_dir()) || unfinished || special {
+            left_out.push(dir.join(&name).to_string_lossy().into_owned());
+            continue;
+        }
+        entries.push((name, e.path(), meta.is_dir(), meta.len()));
+    }
+    entries.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
+    for (name, path, is_dir, size) in entries {
+        let at = tree.len();
+        tree.push(Node {
+            name,
+            source: (!is_dir).then(|| path.clone()),
+            size: if is_dir { 0 } else { size },
+            children: Vec::new(),
+            entry: 0,
+            data: 0,
+            blocks: 0,
+            unique: 0,
+        });
+        tree[parent].children.push(at);
+        if is_dir {
+            fill(&path, at, tree, left_out)?;
+        }
+    }
+    Ok(())
+}
+
+/// Give every node its blocks, and the image its length.
+fn lay_out(tree: &mut [Node], access: Access) -> Result<Plan> {
+    // What a directory's contents come to: the entry for its parent, and one
+    // for each thing in it.
+    for i in 0..tree.len() {
+        if !tree[i].is_dir() {
+            continue;
+        }
+        let mut len = fid_len(0);
+        for c in tree[i].children.clone() {
+            len += fid_len(tree[c].name.len());
+        }
+        tree[i].size = len as u64;
+        tree[i].blocks = blocks(len as u64);
+    }
+
+    // Every file is numbered as the tree is walked, the root being nought.
+    for (i, node) in tree.iter_mut().enumerate() {
+        node.unique = if i == 0 { 0 } else { 15 + i as u32 };
+    }
+
+    // The metadata partition: the file set descriptor and a terminator, then
+    // every entry and every directory, depth first.
+    let mut next = 2u32;
+    let mut order = vec![0usize];
+    while let Some(i) = order.pop() {
+        tree[i].entry = next;
+        next += 1;
+        if tree[i].is_dir() {
+            tree[i].data = next;
+            next += tree[i].blocks as u32;
+            // Reversed, so that the tree is walked in the order the entries
+            // were read rather than backwards.
+            for c in tree[i].children.clone().into_iter().rev() {
+                order.push(c);
+            }
+        }
+    }
+    let meta_used = next as u64;
+    if access == Access::Overwritable {
+        return recorder_layout(tree, meta_used);
+    }
+    let meta_blocks = align(next as u64);
+
+    // The partition: the two entries that describe the metadata partition,
+    // then the metadata partition, then the files, then its second copy.
+    let meta_at = align(2) as u32;
+    let mut at = align(meta_at as u64 + meta_blocks);
+    for i in 0..tree.len() {
+        if tree[i].is_dir() {
+            continue;
+        }
+        tree[i].data = at as u32;
+        tree[i].blocks = blocks(tree[i].size);
+        at = align(at + tree[i].blocks);
+    }
+    // The mirror is there to survive a cluster the drive cannot read, and an
+    // entry for it written beside the metadata file's own would be lost to
+    // the same one. So it goes with the copy it describes: a cluster in front
+    // of it, which is where every reference image -- a recorder's and a
+    // burner's alike -- puts theirs.
+    let mirror_entry = at as u32;
+    at += ALIGN;
+    let mirror_at = at as u32;
+    let partition_blocks = at + meta_blocks;
+    // A cluster of room between the end of the partition and the reserve
+    // descriptors. It is what the third anchor sits in -- the sector
+    // immediately in front of them, which is where being 256 back from the
+    // last sector puts it. A recorder's own image has exactly this gap: a
+    // partition ending at 11,825,888 and its reserve sequence at
+    // 11,825,920.
+    let reserve_vds = PARTITION + partition_blocks + ALIGN;
+
+    Ok(Plan {
+        meta_used,
+        integrity_blocks: INTEGRITY_BLOCKS,
+        room: None,
+        meta_blocks,
+        meta_at,
+        mirror_at,
+        mirror_entry,
+        partition_blocks,
+        reserve_vds,
+        // Room for the last two anchors, and a whole 64 KB cluster either
+        // way: the unit a Blu-ray is written in, and what every reference
+        // image comes to.
+        //
+        // An anchor is allowed in three places and a reader may look in any
+        // of them: 256, the last sector, and 256 back from the last. A
+        // burner writes the first two; a recorder writes all three, and puts
+        // the middle one in the sector immediately in front of the reserve
+        // descriptors -- which is what fixes the size of the image, since
+        // the middle anchor and the last are 256 apart by definition. Its
+        // own disc is 11,826,176 sectors to a reserve sequence at
+        // 11,825,920, which is exactly this.
+        sectors: reserve_vds + ANCHOR,
+        files: tree.iter().filter(|n| !n.is_dir()).count() as u32,
+        directories: tree.iter().filter(|n| n.is_dir()).count() as u32,
+        next_unique: 15 + tree.len() as u32,
+    })
+}
+
+/// The layout a recorder writes on a BD-RE, for an image to be burned to
+/// one and then written to by a recorder. See [`Room`].
+///
+/// The image is the whole disc -- the partition, the last two anchors and
+/// the reserve descriptors are placed from its end -- so it is as long as
+/// the disc is. What is not written is left as a hole where the filesystem
+/// has them, and costs nothing there.
+fn recorder_layout(tree: &mut [Node], meta_used: u64) -> Result<Plan> {
+    let meta_blocks = align(meta_used).max(RECORDER_META_BLOCKS);
+    let meta_at = ALIGN;
+    let bitmap_at = meta_at + meta_blocks;
+    for &sectors in &BD_RE_SECTORS {
+        let partition_blocks = sectors - 2 * ANCHOR - 2 * ALIGN;
+        let bitmap_bytes = 24 + partition_blocks.div_ceil(8);
+        let bitmap_blocks = blocks(bitmap_bytes);
+        let mut at = align(bitmap_at + bitmap_blocks).max(RECORDER_FILES_AT);
+        for node in tree.iter_mut().filter(|n| !n.is_dir()) {
+            node.data = at as u32;
+            node.blocks = blocks(node.size);
+            at = align(at + node.blocks);
+        }
+        let Some(mirror_entry) =
+            partition_blocks.checked_sub(RECORDER_MIRROR_GAP + meta_blocks + ALIGN)
+        else {
+            continue;
+        };
+        if at > mirror_entry {
+            continue;
+        }
+        let mirror_at = mirror_entry + ALIGN;
+        let mut used = vec![
+            (0, ALIGN),
+            (meta_at, meta_blocks),
+            (bitmap_at, align(bitmap_blocks)),
+        ];
+        for node in tree.iter().filter(|n| !n.is_dir()) {
+            if node.blocks > 0 {
+                used.push((node.data as u64, align(node.blocks)));
+            }
+        }
+        used.push((mirror_entry, ALIGN));
+        used.push((mirror_at, meta_blocks));
+        let free = partition_blocks - used.iter().map(|&(_, n)| n).sum::<u64>();
+        return Ok(Plan {
+            meta_blocks,
+            meta_at: meta_at as u32,
+            mirror_at: mirror_at as u32,
+            mirror_entry: mirror_entry as u32,
+            partition_blocks,
+            // In front of the reserve descriptors, the second anchor; and
+            // they are 256 back from the last sector, where the third is.
+            reserve_vds: sectors - ANCHOR,
+            sectors,
+            files: tree.iter().filter(|n| !n.is_dir()).count() as u32,
+            directories: tree.iter().filter(|n| n.is_dir()).count() as u32,
+            next_unique: 15 + tree.len() as u32,
+            meta_used,
+            integrity_blocks: INTEGRITY_BLOCKS_RECORDER,
+            room: Some(Room { bitmap_at, bitmap_blocks, used, free }),
+        });
+    }
+    bail!("this is more than a dual-layer BD-RE holds, so it cannot be written as an overwritable disc")
+}
+
+/// Ask for the holes the writer leaves to take no room.
+///
+/// A Unix filesystem does that by itself. NTFS does not: a file written at
+/// a place past its end is filled with zeros up to there, and an overwritable
+/// image is the whole of a disc -- 24 GB for a few hundred megabytes of
+/// recording -- unless the file is marked sparse first.
+#[cfg(windows)]
+fn make_sparse(file: &std::fs::File) {
+    use std::ffi::{c_int, c_void};
+    use std::os::windows::io::AsRawHandle;
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn DeviceIoControl(
+            device: *mut c_void,
+            code: u32,
+            in_buf: *mut c_void,
+            in_len: u32,
+            out_buf: *mut c_void,
+            out_len: u32,
+            returned: *mut u32,
+            overlapped: *mut c_void,
+        ) -> c_int;
+    }
+    const FSCTL_SET_SPARSE: u32 = 0x0009_00C4;
+    let mut returned = 0u32;
+    // A filesystem that cannot is not a reason to stop: the image is the
+    // same, only larger on the disk it is written to.
+    unsafe {
+        DeviceIoControl(
+            file.as_raw_handle() as *mut c_void,
+            FSCTL_SET_SPARSE,
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null_mut(),
+            0,
+            &mut returned,
+            std::ptr::null_mut(),
+        )
+    };
+}
+
+#[cfg(not(windows))]
+fn make_sparse(_file: &std::fs::File) {}
+
+/// A space bitmap descriptor: one bit a block, set where the block is free.
+///
+/// Its checksum covers nothing past the tag, which is what a recorder's own
+/// writes -- the descriptor is megabytes long, and the length a tag can
+/// state is sixteen bits.
+fn space_bitmap(bits: u64, used: &[(u64, u64)], location: u64) -> Vec<u8> {
+    let bytes = bits.div_ceil(8) as usize;
+    let mut d = vec![0u8; 24 + bytes];
+    le32(&mut d, 16, bits as u32);
+    le32(&mut d, 20, bytes as u32);
+    let map = &mut d[24..];
+    map.fill(0xFF);
+    // Past the last block there is nothing to be free.
+    let spare = bytes as u64 * 8 - bits;
+    if spare > 0 {
+        map[bytes - 1] &= 0xFF >> spare;
+    }
+    for &(from, len) in used {
+        for b in from..(from + len).min(bits) {
+            map[(b / 8) as usize] &= !(1 << (b % 8));
+        }
+    }
+    tag_with(&mut d, TAG_SPACE_BITMAP, location, 0);
+    d
+}
+
+fn blocks(bytes: u64) -> u64 {
+    bytes.div_ceil(SECTOR as u64)
+}
+
+fn align(blocks: u64) -> u64 {
+    blocks.div_ceil(ALIGN) * ALIGN
+}
+
+/// How long a file identifier descriptor is, name and padding included.
+fn fid_len(name: usize) -> usize {
+    let len = 38 + if name == 0 { 0 } else { name + 1 };
+    (len + 3) & !3
+}
+
+// --- the metadata partition ---------------------------------------------
+
+/// Everything that lives inside the metadata file: the file set descriptor,
+/// every file entry, and every directory's contents.
+fn metadata_image(
+    tree: &[Node],
+    plan: &Plan,
+    rev: Revision,
+    access: Access,
+    now: &Stamp,
+    label: &str,
+) -> Result<Vec<u8>> {
+    let mut out = vec![0u8; (plan.meta_blocks * SECTOR as u64) as usize];
+    let put = |out: &mut Vec<u8>, block: u32, bytes: &[u8]| {
+        let at = block as usize * SECTOR;
+        out[at..at + bytes.len()].copy_from_slice(bytes);
+    };
+
+    put(
+        &mut out,
+        0,
+        &sized(&file_set(tree[0].entry, rev, access, now, label))?,
+    );
+    put(&mut out, 1, &sized(&terminating(1))?);
+
+    for (i, node) in tree.iter().enumerate() {
+        put(&mut out, node.entry, &sized(&file_entry(node, now))?);
+        if node.is_dir() {
+            let mut dir = Vec::with_capacity(node.size as usize);
+            // The parent comes first and has no name.
+            // The root's parent is the root, which is what a filesystem
+            // says when it has run out of upwards.
+            let parent = tree
+                .iter()
+                .find(|n| n.children.contains(&i))
+                .unwrap_or(&tree[0])
+                .entry;
+            dir.extend_from_slice(&file_id("", true, true, parent, 0, dir.len(), node.data));
+            for &c in &node.children {
+                let child = &tree[c];
+                dir.extend_from_slice(&file_id(
+                    &child.name,
+                    child.is_dir(),
+                    false,
+                    child.entry,
+                    child.unique,
+                    dir.len(),
+                    node.data,
+                ));
+            }
+            put(&mut out, node.data, &dir);
+        }
+    }
+    Ok(out)
+}
+
+/// One entry in a directory.
+///
+/// `at` is how far into the directory it is being written, because the
+/// descriptor records the block it is recorded in and a long directory
+/// crosses several.
+fn file_id(
+    name: &str,
+    directory: bool,
+    parent: bool,
+    icb: u32,
+    unique: u32,
+    at: usize,
+    first_block: u32,
+) -> Vec<u8> {
+    let mut d = vec![0u8; fid_len(if parent { 0 } else { name.len() })];
+    le16(&mut d, 16, 1); // file version
+    d[18] = if parent {
+        0x08 | 0x02
+    } else if directory {
+        0x02
+    } else {
+        0x00
+    };
+    d[19] = if parent { 0 } else { name.len() as u8 + 1 };
+    long_ad(&mut d, 20, SECTOR as u32, icb, METADATA_PART);
+    // What the six bytes a long descriptor keeps for the implementation are
+    // used for here: the number the file it points at is known by, which its
+    // own entry carries too. Both reference images write it.
+    le32(&mut d, 32, unique);
+    if !parent {
+        // Eight-bit OSTA compressed unicode: the marker, and then the name.
+        d[38] = 8;
+        d[39..39 + name.len()].copy_from_slice(name.as_bytes());
+    }
+    let block = first_block + (at / SECTOR) as u32;
+    tag(&mut d, TAG_FILE_ID, block as u64);
+    d
+}
+
+/// Which partition reference means which. The physical partition is the
+/// first map in the logical volume and the metadata partition the second, so
+/// a file's data is named as partition 0 and everything in the metadata
+/// partition as partition 1.
+const PHYSICAL_PART: u16 = 0;
+const METADATA_PART: u16 = 1;
+
+/// The entry for one file or directory.
+fn file_entry(node: &Node, now: &Stamp) -> Vec<u8> {
+    let mut d = vec![0u8; 216];
+    let dir = node.is_dir();
+    icb(
+        &mut d,
+        if dir { FILE_DIRECTORY } else { FILE_ORDINARY },
+        // A directory's contents are on the metadata partition, which is the
+        // partition its own entry is recorded on, so a short descriptor says
+        // it. A file's are not, so its entry has to name the partition.
+        if dir { 0 } else { 1 },
+    );
+    le32(&mut d, 36, 0xFFFF_FFFF); // no owner
+    le32(&mut d, 40, 0xFFFF_FFFF); // and no group
+    le32(&mut d, 44, 0x14A5); // read and execute for everybody: a read-only disc
+    le16(&mut d, 48, if dir { 2 } else { 1 });
+    le64(&mut d, 56, node.size);
+    le64(&mut d, 64, node.size); // object size: the same, there being no streams
+    le64(&mut d, 72, node.blocks);
+    d[80..92].copy_from_slice(&now.bytes());
+    d[92..104].copy_from_slice(&now.bytes());
+    d[104..116].copy_from_slice(&now.bytes());
+    d[116..128].copy_from_slice(&now.bytes());
+    le32(&mut d, 128, 1); // checkpoint
+    d[168..200].copy_from_slice(&regid(0, "*SmartCut", &[]));
+    le64(&mut d, 200, node.unique as u64);
+    le32(&mut d, 208, 0); // no extended attributes
+
+    // The allocation descriptors. A file longer than an extent can describe
+    // is written as several, each a whole number of blocks but the last.
+    let mut ads = Vec::new();
+    let mut left = node.size;
+    let mut block = node.data as u64;
+    while left > 0 || ads.is_empty() {
+        let take = left.min(EXTENT_MAX);
+        let mut ad = vec![0u8; if dir { 8 } else { 16 }];
+        le32(&mut ad, 0, take as u32);
+        if dir {
+            le32(&mut ad, 4, block as u32);
+        } else {
+            le32(&mut ad, 4, block as u32);
+            le16(&mut ad, 8, PHYSICAL_PART);
+        }
+        ads.extend_from_slice(&ad);
+        block += blocks(take);
+        left -= take;
+        if left == 0 {
+            break;
+        }
+    }
+    le32(&mut d, 212, ads.len() as u32);
+    d.extend_from_slice(&ads);
+    tag(&mut d, TAG_EXTENDED_FILE_ENTRY, node.entry as u64);
+    d
+}
+
+/// The entry for the metadata file itself, or for its mirror.
+///
+/// It lives on the partition beside the one it describes, so its own
+/// descriptors are short ones and mean that partition.
+fn metadata_entry(kind: u8, at: u32, blocks: u64, entry_at: u32, now: &Stamp) -> Vec<u8> {
+    let mut d = vec![0u8; 216];
+    icb(&mut d, kind, 0);
+    le32(&mut d, 36, 0xFFFF_FFFF);
+    le32(&mut d, 40, 0xFFFF_FFFF);
+    le32(&mut d, 44, 0x14A5);
+    le16(&mut d, 48, 1);
+    let size = blocks * SECTOR as u64;
+    le64(&mut d, 56, size);
+    le64(&mut d, 64, size);
+    le64(&mut d, 72, blocks);
+    for at in [80, 92, 104, 116] {
+        d[at..at + 12].copy_from_slice(&now.bytes());
+    }
+    le32(&mut d, 128, 1);
+    d[168..200].copy_from_slice(&regid(0, "*SmartCut", &[]));
+    le64(&mut d, 200, 0);
+    le32(&mut d, 208, 0);
+    let mut ad = vec![0u8; 8];
+    le32(&mut ad, 0, size as u32);
+    le32(&mut ad, 4, at);
+    le32(&mut d, 212, ad.len() as u32);
+    d.extend_from_slice(&ad);
+    tag(&mut d, TAG_EXTENDED_FILE_ENTRY, entry_at as u64);
+    d
+}
+
+/// The entry for the metadata partition's bitmap, which is a file on the
+/// partition beside it like the metadata file is.
+fn bitmap_entry(bytes: u64, at: u32, entry_at: u32, now: &Stamp) -> Vec<u8> {
+    let mut d = vec![0u8; 216];
+    icb(&mut d, FILE_METADATA_BITMAP, 0);
+    le32(&mut d, 36, 0xFFFF_FFFF);
+    le32(&mut d, 40, 0xFFFF_FFFF);
+    le32(&mut d, 44, 0x14A5);
+    le16(&mut d, 48, 1);
+    le64(&mut d, 56, bytes);
+    le64(&mut d, 64, bytes);
+    le64(&mut d, 72, blocks(bytes));
+    for at in [80, 92, 104, 116] {
+        d[at..at + 12].copy_from_slice(&now.bytes());
+    }
+    le32(&mut d, 128, 1);
+    d[168..200].copy_from_slice(&regid(0, "*SmartCut", &[]));
+    let mut ad = vec![0u8; 8];
+    le32(&mut ad, 0, bytes as u32);
+    le32(&mut ad, 4, at);
+    le32(&mut d, 212, ad.len() as u32);
+    d.extend_from_slice(&ad);
+    tag(&mut d, TAG_EXTENDED_FILE_ENTRY, entry_at as u64);
+    d
+}
+
+/// The file set: which directory is the root of it.
+fn file_set(root: u32, rev: Revision, access: Access, now: &Stamp, label: &str) -> Vec<u8> {
+    let mut d = vec![0u8; 512];
+    d[16..28].copy_from_slice(&now.bytes());
+    le16(&mut d, 28, 3); // interchange level
+    le16(&mut d, 30, 3);
+    le32(&mut d, 32, 1); // one character set
+    le32(&mut d, 36, 1);
+    charspec(&mut d, 48);
+    dstring(&mut d, 112, 128, label);
+    charspec(&mut d, 240);
+    dstring(&mut d, 304, 32, label);
+    long_ad(&mut d, 400, SECTOR as u32, root, METADATA_PART);
+    d[416..448].copy_from_slice(&regid(0, "*OSTA UDF Compliant", &domain_suffix(rev, access)));
+    tag(&mut d, TAG_FILE_SET, 0);
+    d
+}
+
+// --- the volume ----------------------------------------------------------
+
+/// The six descriptors that describe the volume, written twice: once where
+/// the anchor's main extent points and once where its reserve does. `at` is
+/// the block the first of them is written at, because each records its own.
+fn volume_descriptors(
+    plan: &Plan,
+    rev: Revision,
+    access: Access,
+    now: &Stamp,
+    label: &str,
+    at: u64,
+) -> Vec<Vec<u8>> {
+    vec![
+        primary(now, label, at),
+        implementation_use(rev, label, at + 1),
+        partition(plan, access, at + 2),
+        logical_volume(plan, rev, access, label, at + 3),
+        unallocated(at + 4),
+        terminating(at + 5),
+    ]
+}
+
+fn primary(now: &Stamp, label: &str, at: u64) -> Vec<u8> {
+    let mut d = vec![0u8; 512];
+    // Every descriptor of the sequence is numbered, in the order they are
+    // written: a reader takes the highest-numbered of any it sees twice.
+    le32(&mut d, 16, 0);
+    le32(&mut d, 20, 0);
+    dstring(&mut d, 24, 32, label);
+    le16(&mut d, 56, 1); // one volume in the set
+    le16(&mut d, 58, 1);
+    le16(&mut d, 60, 2); // interchange level: one volume, one file set
+    le16(&mut d, 62, 2);
+    le32(&mut d, 64, 1);
+    le32(&mut d, 68, 1);
+    // The volume set is named after when it was made, which is what a tool
+    // with nothing else to go on does: it only has to be unique.
+    dstring(&mut d, 72, 128, &now.set_id());
+    charspec(&mut d, 200);
+    charspec(&mut d, 264);
+    d[344..376].copy_from_slice(&regid(0, "*SmartCut", &[]));
+    d[376..388].copy_from_slice(&now.bytes());
+    d[388..420].copy_from_slice(&regid(0, "*SmartCut", &[]));
+    tag(&mut d, TAG_PRIMARY, at);
+    d
+}
+
+fn implementation_use(rev: Revision, label: &str, at: u64) -> Vec<u8> {
+    let mut d = vec![0u8; 512];
+    le32(&mut d, 16, 1);
+    d[20..52].copy_from_slice(&regid(0, "*UDF LV Info", &udf_suffix(rev)));
+    charspec(&mut d, 52);
+    dstring(&mut d, 116, 128, label);
+    dstring(&mut d, 244, 36, "");
+    dstring(&mut d, 280, 36, "");
+    dstring(&mut d, 316, 36, "");
+    d[352..384].copy_from_slice(&regid(0, "*SmartCut", &[]));
+    tag(&mut d, TAG_IMPL_USE, at);
+    d
+}
+
+fn partition(plan: &Plan, access: Access, at: u64) -> Vec<u8> {
+    let mut d = vec![0u8; 512];
+    le32(&mut d, 16, 2);
+    le16(&mut d, 20, 1); // allocated
+    le16(&mut d, 22, 0); // partition number
+    d[24..56].copy_from_slice(&regid(0, "+NSR03", &[]));
+    // The partition header: where the bitmap of the free blocks is, for a
+    // disc that is to be written to again.
+    if let Some(room) = &plan.room {
+        le32(&mut d, 56 + 8, (room.bitmap_blocks * SECTOR as u64) as u32);
+        le32(&mut d, 56 + 12, room.bitmap_at as u32);
+    }
+    le32(&mut d, 184, access.number()); // what may be done to the disc
+    le32(&mut d, 188, PARTITION as u32);
+    le32(&mut d, 192, plan.partition_blocks as u32);
+    d[196..228].copy_from_slice(&regid(0, "*SmartCut", &[]));
+    tag(&mut d, TAG_PARTITION, at);
+    d
+}
+
+fn logical_volume(plan: &Plan, rev: Revision, access: Access, label: &str, at: u64) -> Vec<u8> {
+    let mut d = vec![0u8; 512];
+    le32(&mut d, 16, 3);
+    charspec(&mut d, 20);
+    dstring(&mut d, 84, 128, label);
+    le32(&mut d, 212, SECTOR as u32);
+    d[216..248].copy_from_slice(&regid(0, "*OSTA UDF Compliant", &domain_suffix(rev, access)));
+    // Where the file set is: the first two blocks of the metadata partition.
+    long_ad(&mut d, 248, 2 * SECTOR as u32, 0, METADATA_PART);
+    le32(&mut d, 264, 6 + 64); // the two maps below
+    le32(&mut d, 268, 2);
+    d[272..304].copy_from_slice(&regid(0, "*SmartCut", &[]));
+    le32(&mut d, 432, (plan.integrity_blocks * SECTOR as u64) as u32);
+    le32(&mut d, 436, INTEGRITY as u32);
+
+    // The physical partition, and the metadata partition whose blocks are
+    // the contents of a file on it.
+    d[440] = 1;
+    d[441] = 6;
+    le16(&mut d, 442, 1); // volume sequence number
+    le16(&mut d, 444, 0); // partition number
+    let m = 446;
+    d[m] = 2;
+    d[m + 1] = 64;
+    d[m + 4..m + 36].copy_from_slice(&regid(0, "*UDF Metadata Partition", &udf_suffix(rev)));
+    le16(&mut d, m + 36, 1);
+    le16(&mut d, m + 38, 0);
+    // Where the two *entries* are, not where their contents are: a reader
+    // finds the metadata partition by reading the file that holds it, and a
+    // file is found by its entry. One is at the front of the partition and
+    // the other at the back, each beside the copy it describes.
+    le32(&mut d, m + 40, METADATA_FILE_ENTRY);
+    le32(&mut d, m + 44, plan.mirror_entry);
+    // The metadata partition's bitmap, where there is one: nothing is
+    // allocated later on a disc written once.
+    le32(&mut d, m + 48, if plan.room.is_some() { 1 } else { 0xFFFF_FFFF });
+    le32(&mut d, m + 52, ALIGN as u32);
+    le16(&mut d, m + 56, ALIGN as u16);
+    d[m + 58] = 1; // the mirror is a copy of the metadata, not a spare
+    tag(&mut d, TAG_LOGICAL_VOLUME, at);
+    d
+}
+
+fn unallocated(at: u64) -> Vec<u8> {
+    let mut d = vec![0u8; 512];
+    le32(&mut d, 16, 4);
+    le32(&mut d, 20, 0); // nothing is unallocated: the image is written once
+    tag(&mut d, TAG_UNALLOCATED, at);
+    d
+}
+
+/// The descriptor that says a sequence has ended. Like every other one, it
+/// records the block it is written in: a reader that finds a descriptor
+/// claiming to be somewhere else is right to stop.
+fn terminating(at: u64) -> Vec<u8> {
+    let mut d = vec![0u8; 512];
+    tag(&mut d, TAG_TERMINATING, at);
+    d
+}
+
+fn anchor(plan: &Plan, at: u64) -> Vec<u8> {
+    let mut d = vec![0u8; 512];
+    le32(&mut d, 16, (VDS_BLOCKS * SECTOR as u64) as u32);
+    le32(&mut d, 20, MAIN_VDS as u32);
+    le32(&mut d, 24, (VDS_BLOCKS * SECTOR as u64) as u32);
+    le32(&mut d, 28, plan.reserve_vds as u32);
+    tag(&mut d, TAG_ANCHOR, at);
+    d
+}
+
+/// What the volume says about itself once it is finished: that it is closed,
+/// how much of it is free, and how many files are on it.
+fn integrity(plan: &Plan, rev: Revision, now: &Stamp) -> Vec<u8> {
+    let mut d = vec![0u8; 512];
+    d[16..28].copy_from_slice(&now.bytes());
+    le32(&mut d, 28, 1); // closed
+    le64(&mut d, 40, plan.next_unique as u64);
+    le32(&mut d, 72, 2); // two partitions
+    le32(&mut d, 76, 46); // the implementation use below
+    // Free on the physical partition and on the metadata partition: what
+    // the two bitmaps leave set, where there are bitmaps.
+    let (free, meta_free) = match &plan.room {
+        Some(room) => (room.free, plan.meta_blocks - plan.meta_used),
+        None => (0, 0),
+    };
+    le32(&mut d, 80, free as u32);
+    le32(&mut d, 84, meta_free as u32);
+    le32(&mut d, 88, plan.partition_blocks as u32);
+    le32(&mut d, 92, plan.meta_blocks as u32);
+    let iu = 96;
+    d[iu..iu + 32].copy_from_slice(&regid(0, "*SmartCut", &[]));
+    le32(&mut d, iu + 32, plan.files);
+    le32(&mut d, iu + 36, plan.directories);
+    // What a reader has to understand to read this, and what a writer would
+    // have to understand to add to it. 2.60 is readable by a 2.50 reader,
+    // which is what both reference images say of themselves.
+    le16(&mut d, iu + 40, 0x0250);
+    le16(&mut d, iu + 42, rev.number());
+    le16(&mut d, iu + 44, rev.number());
+    tag(&mut d, TAG_INTEGRITY, INTEGRITY);
+    d
+}
+
+// --- the pieces every descriptor is made of ------------------------------
+
+/// Fill in the tag: its identifier, where it is recorded, and the two sums
+/// that say it arrived intact.
+fn tag(d: &mut [u8], id: u16, location: u64) {
+    let crc_len = d.len() - 16;
+    tag_with(d, id, location, crc_len);
+}
+
+/// As [`tag`], with the checksum over only `crc_len` bytes past the tag.
+fn tag_with(d: &mut [u8], id: u16, location: u64, crc_len: usize) {
+    le16(d, 0, id);
+    le16(d, 2, 3); // descriptor version, 3 for UDF 2.00 and later
+    le16(d, 6, 1); // tag serial number
+    le16(d, 8, crc16(&d[16..16 + crc_len]));
+    le16(d, 10, crc_len as u16);
+    le32(d, 12, location as u32);
+    // The checksum is of the tag itself, and of every byte of it but its own.
+    let sum: u8 = d[..16]
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i != 4)
+        .map(|(_, b)| *b)
+        .fold(0, u8::wrapping_add);
+    d[4] = sum;
+}
+
+/// The 16 bit cyclic redundancy check ECMA-167 specifies, which is CCITT's
+/// with no initial value and no final inversion.
+fn crc16(data: &[u8]) -> u16 {
+    let mut crc = 0u16;
+    for b in data {
+        crc ^= (*b as u16) << 8;
+        for _ in 0..8 {
+            crc = if crc & 0x8000 != 0 {
+                (crc << 1) ^ 0x1021
+            } else {
+                crc << 1
+            };
+        }
+    }
+    crc
+}
+
+/// An ICB tag: what kind of thing this entry is, and how its contents are
+/// described.
+fn icb(d: &mut [u8], file_type: u8, ad_type: u16) {
+    le16(d, 16 + 4, 4); // strategy 4: one entry, no continuation
+    le16(d, 16 + 8, 1); // and that is the whole of it
+    d[16 + 11] = file_type;
+    // The archive bit, which every tool sets on a file it has just written,
+    // and the low bits that say short or long allocation descriptors.
+    le16(d, 16 + 18, 0x0020 | ad_type);
+}
+
+/// A long allocation descriptor: how much, where, and on which partition.
+fn long_ad(d: &mut [u8], at: usize, len: u32, block: u32, part: u16) {
+    le32(d, at, len);
+    le32(d, at + 4, block);
+    le16(d, at + 8, part);
+}
+
+/// The character set every string in a UDF volume is written in.
+fn charspec(d: &mut [u8], at: usize) {
+    d[at] = 0; // CS0
+    let name = b"OSTA Compressed Unicode";
+    d[at + 1..at + 1 + name.len()].copy_from_slice(name);
+}
+
+/// A name, as a volume descriptor holds one: the compression marker, the
+/// characters, and the length in the last byte of the field.
+fn dstring(d: &mut [u8], at: usize, len: usize, text: &str) {
+    let field = &mut d[at..at + len];
+    field.fill(0);
+    if text.is_empty() {
+        return;
+    }
+    // Eight bits a character where the name is Latin-1, which is what a disc
+    // label written by a burner is, and sixteen where it is not.
+    let wide = text.chars().any(|c| c as u32 > 0xFF);
+    // What does not fit is left out, a whole character at a time: a
+    // character outside the basic plane is written as two units, and half of
+    // one is not a shorter name but a broken one. The marker stays either
+    // way, and the last byte of the field is the length.
+    let room = len - 1;
+    let mut out = Vec::with_capacity(len);
+    out.push(if wide { 16 } else { 8 });
+    let mut buf = [0u16; 2];
+    for c in text.chars() {
+        let piece: Vec<u8> = if wide {
+            c.encode_utf16(&mut buf)
+                .iter()
+                .flat_map(|u| u.to_be_bytes())
+                .collect()
+        } else {
+            vec![c as u8]
+        };
+        if out.len() + piece.len() > room {
+            break;
+        }
+        out.extend_from_slice(&piece);
+    }
+    field[..out.len()].copy_from_slice(&out);
+    field[len - 1] = out.len() as u8;
+}
+
+/// An entity identifier: who wrote this, or what standard it follows.
+fn regid(flags: u8, id: &str, suffix: &[u8]) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    out[0] = flags;
+    let id = id.as_bytes();
+    let take = id.len().min(23);
+    out[1..1 + take].copy_from_slice(&id[..take]);
+    let take = suffix.len().min(8);
+    out[24..24 + take].copy_from_slice(&suffix[..take]);
+    out
+}
+
+/// The suffix on the identifiers that name UDF itself: which revision the
+/// image is written to, and -- on the two that name the *domain* -- whether
+/// the volume is to be written to again. Both reference images say it is
+/// not, which is what an image of a disc is; a recorder's own BD-RE says
+/// nothing of the kind, and an overwritable image says what it says.
+fn udf_suffix(rev: Revision) -> [u8; 8] {
+    let mut out = [0u8; 8];
+    out[..2].copy_from_slice(&rev.number().to_le_bytes());
+    out
+}
+
+fn domain_suffix(rev: Revision, access: Access) -> [u8; 8] {
+    let mut out = udf_suffix(rev);
+    if access == Access::ReadOnly {
+        out[2] = 0x03; // hard and soft write protected
+    }
+    out
+}
+
+fn le16(d: &mut [u8], at: usize, v: u16) {
+    d[at..at + 2].copy_from_slice(&v.to_le_bytes());
+}
+
+fn le32(d: &mut [u8], at: usize, v: u32) {
+    d[at..at + 4].copy_from_slice(&v.to_le_bytes());
+}
+
+fn le64(d: &mut [u8], at: usize, v: u64) {
+    d[at..at + 8].copy_from_slice(&v.to_le_bytes());
+}
+
+/// A descriptor padded out to the block it is written in.
+///
+/// One that does not fit is refused rather than cut down. `resize` shortens
+/// as readily as it lengthens, so a file entry with more allocation
+/// descriptors than a block holds -- which takes a single file of about
+/// 114 GB, an extent being a gigabyte and a long descriptor sixteen bytes --
+/// used to be silently truncated and written as though it were whole. An
+/// image that says it is finished and is not is the worst of the answers
+/// available here.
+fn sized(d: &[u8]) -> Result<Vec<u8>> {
+    if d.len() > SECTOR {
+        bail!(
+            "a descriptor of {} bytes does not fit in a {SECTOR} byte block: this folder holds \
+             a file too large to describe in one entry",
+            d.len()
+        );
+    }
+    let mut out = d.to_vec();
+    out.resize(SECTOR, 0);
+    Ok(out)
+}
+
+// --- when ---------------------------------------------------------------
+
+/// The moment the image was made, in the fields a UDF timestamp has.
+struct Stamp {
+    /// Seconds since 1970, which is what the fields below were worked out
+    /// from and what names the volume set.
+    stamp: i64,
+    year: u16,
+    month: u8,
+    day: u8,
+    hour: u8,
+    minute: u8,
+    second: u8,
+}
+
+impl Stamp {
+    fn now() -> Stamp {
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        // Days since 1970, and the civil date they come to. The arithmetic
+        // is the usual one -- shift the year to start in March so that the
+        // leap day is the last day of it -- and is exact for every date this
+        // will ever be handed.
+        let days = secs.div_euclid(86_400);
+        let rem = secs.rem_euclid(86_400);
+        let z = days + 719_468;
+        let era = z.div_euclid(146_097);
+        let doe = z.rem_euclid(146_097);
+        let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+        let y = yoe + era * 400;
+        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        let mp = (5 * doy + 2) / 153;
+        let d = doy - (153 * mp + 2) / 5 + 1;
+        let m = if mp < 10 { mp + 3 } else { mp - 9 };
+        Stamp {
+            stamp: secs,
+            year: (y + i64::from(m <= 2)) as u16,
+            month: m as u8,
+            day: d as u8,
+            hour: (rem / 3600) as u8,
+            minute: (rem % 3600 / 60) as u8,
+            second: (rem % 60) as u8,
+        }
+    }
+
+    /// The twelve bytes a descriptor carries. Written as coordinated
+    /// universal time, which is what an image made on one machine and read on
+    /// another should say.
+    fn bytes(&self) -> [u8; 12] {
+        let mut out = [0u8; 12];
+        // Type 1 -- local time -- with an offset of zero.
+        out[..2].copy_from_slice(&0x1000u16.to_le_bytes());
+        out[2..4].copy_from_slice(&self.year.to_le_bytes());
+        out[4] = self.month;
+        out[5] = self.day;
+        out[6] = self.hour;
+        out[7] = self.minute;
+        out[8] = self.second;
+        out
+    }
+
+    /// What the volume set is called.
+    ///
+    /// Sixteen hexadecimal digits, the first eight of which UDF asks to be
+    /// unique among the sets a machine writes -- so they are the second the
+    /// image was made in. A burner writes the same shape for the same
+    /// reason: there is nothing else to tell one set from another by.
+    fn set_id(&self) -> String {
+        let day = (self.year as u64) << 32
+            | (self.month as u64) << 24
+            | (self.day as u64) << 16
+            | (self.hour as u64) << 8
+            | self.minute as u64;
+        format!(
+            "{:08X}{:08X}",
+            self.stamp as u32,
+            (day ^ self.stamp as u64) as u32
+        )
+    }
+}
+
+// --- writing it out ------------------------------------------------------
+
+/// A file being written sector by sector, which knows how far in it is.
+struct Writer {
+    to: BufWriter<std::fs::File>,
+    at: u64,
+}
+
+impl Writer {
+    fn write_all(&mut self, bytes: &[u8]) -> Result<()> {
+        self.to.write_all(bytes)?;
+        self.at += bytes.len() as u64;
+        Ok(())
+    }
+
+    fn sector(&mut self, bytes: &[u8]) -> Result<()> {
+        self.write_all(bytes)?;
+        self.align()
+    }
+
+    /// Zeros up to the next block boundary.
+    fn align(&mut self) -> Result<()> {
+        let over = self.at % SECTOR as u64;
+        if over != 0 {
+            let pad = vec![0u8; (SECTOR as u64 - over) as usize];
+            self.write_all(&pad)?;
+        }
+        Ok(())
+    }
+
+    /// Zeros up to a block, which is how everything between the descriptors
+    /// is written.
+    fn pad_to(&mut self, block: u64) -> Result<()> {
+        let want = block * SECTOR as u64;
+        if self.at > want {
+            bail!("the image is already past block {block}");
+        }
+        // A run of zeros can be a gigabyte where a file was aligned, so it is
+        // written as a hole rather than as bytes.
+        if want > self.at {
+            self.to.flush()?;
+            self.to.get_mut().seek(SeekFrom::Start(want))?;
+            // The last sector is written for real, so the file is the length
+            // it claims even where nothing follows.
+            self.at = want;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    /// A descriptor larger than the block it goes in is refused, not cut
+    /// down. `resize` shortens as readily as it lengthens, and an image
+    /// written from a truncated file entry is one that says it is finished
+    /// and is not.
+    #[test]
+    fn a_space_bitmap_marks_what_is_used() {
+        // Ten blocks, of which 2..5 are in use: set means free.
+        let d = space_bitmap(10, &[(2, 3)], 7);
+        assert_eq!(u16::from_le_bytes([d[0], d[1]]), TAG_SPACE_BITMAP);
+        assert_eq!(u32::from_le_bytes([d[12], d[13], d[14], d[15]]), 7);
+        assert_eq!(u16::from_le_bytes([d[10], d[11]]), 0); // no checksum past the tag
+        assert_eq!(u32::from_le_bytes([d[16], d[17], d[18], d[19]]), 10);
+        assert_eq!(u32::from_le_bytes([d[20], d[21], d[22], d[23]]), 2);
+        assert_eq!(d[24], 0b1110_0011);
+        // And the six bits past the last block are not free space.
+        assert_eq!(d[25], 0b0000_0011);
+    }
+
+    /// Laid out as a recorder lays out a BD-RE: the whole disc, the bitmap
+    /// after the metadata, the files from 32768 and the mirror where its is.
+    #[test]
+    fn an_overwritable_image_is_the_whole_disc() {
+        let mut tree = vec![
+            Node { name: String::new(), source: None, size: 0, children: vec![1], entry: 0, data: 0, blocks: 0, unique: 0 },
+            Node { name: "a".into(), source: Some("a".into()), size: 5 << 20, children: vec![], entry: 0, data: 0, blocks: 0, unique: 0 },
+        ];
+        let plan = lay_out(&mut tree, Access::Overwritable).unwrap();
+        assert_eq!(plan.sectors, 11_826_176);
+        assert_eq!(plan.partition_blocks, 11_825_600);
+        assert_eq!(plan.reserve_vds, 11_825_920);
+        assert_eq!(plan.mirror_entry, 11_809_504);
+        assert_eq!(plan.meta_blocks, 4096);
+        assert_eq!(tree[1].data, 32_768);
+        let room = plan.room.as_ref().unwrap();
+        assert_eq!(room.bitmap_at, 4128);
+        assert_eq!(room.bitmap_blocks, 722);
+        // 32 + 4096 + 736 + the file's 2560 + 32 + 4096 in use.
+        assert_eq!(room.free, 11_825_600 - (32 + 4096 + 736 + 2560 + 32 + 4096));
+        // A read-only image is only as long as what is in it.
+        let plan = lay_out(&mut tree, Access::ReadOnly).unwrap();
+        assert!(plan.room.is_none() && plan.sectors < 20_000);
+    }
+
+    /// An image is never written into the folder it is an image of: a
+    /// folder named with a separator at the end is `disc/` and `disc/.iso`.
+    #[test]
+    fn an_image_inside_its_own_folder_is_refused() {
+        let at = std::env::temp_dir().join(format!("udfw-inside-{}", std::process::id()));
+        std::fs::create_dir_all(at.join("BDAV")).unwrap();
+        std::fs::write(at.join("BDAV").join("info.bdav"), b"x").unwrap();
+        let image = PathBuf::from(format!("{}/.iso", at.display()));
+        let e = write(&at, &image, Revision::V250, Access::ReadOnly, "x", None).unwrap_err();
+        assert!(e.to_string().contains("inside"), "{e}");
+        assert!(!image.exists());
+        // Beside it, as ever.
+        let beside = PathBuf::from(format!("{}.iso", at.display()));
+        assert!(write(&at, &beside, Revision::V250, Access::ReadOnly, "x", None).is_ok());
+        let _ = std::fs::remove_file(&beside);
+        let _ = std::fs::remove_dir_all(&at);
+    }
+
+    /// The image holds the disc and not the folder it was written into: a
+    /// disc written into somebody's own folder of videos put every one of
+    /// them into the image. A folder with no disc in it has no image.
+    #[test]
+    fn an_image_holds_only_the_disc() {
+        let at = std::env::temp_dir().join(format!("udfw-only-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&at);
+        std::fs::create_dir_all(at.join("BDAV").join("PLAYLIST")).unwrap();
+        std::fs::create_dir_all(at.join("other")).unwrap();
+        std::fs::write(at.join("BDAV").join("info.bdav"), b"x").unwrap();
+        std::fs::write(at.join("BDAV").join("PLAYLIST").join("00001.rpls"), b"xy").unwrap();
+        std::fs::write(at.join("rec.ts"), b"not the disc").unwrap();
+        std::fs::write(at.join("other").join("notes.txt"), b"not the disc").unwrap();
+        let image = PathBuf::from(format!("{}.iso", at.display()));
+        write(&at, &image, Revision::V250, Access::ReadOnly, "x", None).unwrap();
+        let held = crate::udf::Image::open(&image).unwrap();
+        let mut paths: Vec<&str> = held.files().iter().map(|e| e.path.as_str()).collect();
+        paths.sort();
+        assert_eq!(paths, ["BDAV/PLAYLIST/00001.rpls", "BDAV/info.bdav"]);
+        let _ = std::fs::remove_file(&image);
+        std::fs::remove_dir_all(at.join("BDAV")).unwrap();
+        assert!(write(&at, &image, Revision::V250, Access::ReadOnly, "x", None).is_err());
+        assert!(!image.exists());
+        let _ = std::fs::remove_dir_all(&at);
+    }
+
+    /// An image is made again of a disc that has grown, and never written
+    /// over with a disc that lacks what it held: `--iso-only` twice into one
+    /// folder replaced the first disc's only copy with the second's.
+    #[test]
+    fn an_image_of_another_disc_is_not_written_over() {
+        let at = std::env::temp_dir().join(format!("udfw-over-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&at);
+        let disc = |clips: &[(&str, &[u8])]| {
+            let _ = std::fs::remove_dir_all(&at);
+            for dir in ["STREAM", "CLIPINF"] {
+                std::fs::create_dir_all(at.join("BDAV").join(dir)).unwrap();
+            }
+            std::fs::write(at.join("BDAV").join("info.bdav"), b"x").unwrap();
+            for (clip, index) in clips {
+                std::fs::write(at.join("BDAV/STREAM").join(format!("{clip}.m2ts")), [0u8; 192]).unwrap();
+                std::fs::write(at.join("BDAV/CLIPINF").join(format!("{clip}.clpi")), index).unwrap();
+            }
+        };
+        let image = PathBuf::from(format!("{}.iso", at.display()));
+        let _ = std::fs::remove_file(&image);
+        disc(&[("00001", b"first")]);
+        write(&at, &image, Revision::V250, Access::ReadOnly, "x", None).unwrap();
+        // The same disc with a second recording on it: made again.
+        std::fs::write(at.join("BDAV/STREAM/00002.m2ts"), [0u8; 192]).unwrap();
+        std::fs::write(at.join("BDAV/CLIPINF/00002.clpi"), b"second").unwrap();
+        std::fs::write(at.join("BDAV").join("info.bdav"), b"xy").unwrap();
+        write(&at, &image, Revision::V250, Access::ReadOnly, "x", None).unwrap();
+        // The folder started again, its first recording as long as the old
+        // one: refused, and the image is what it was.
+        disc(&[("00001", b"third")]);
+        let e = write(&at, &image, Revision::V250, Access::ReadOnly, "x", None).unwrap_err();
+        assert!(e.to_string().contains("BDAV/STREAM/00002.m2ts"), "{e}");
+        let held = crate::udf::Image::open(&image).unwrap();
+        assert!(held.find("BDAV/STREAM/00002.m2ts").is_some());
+        // And where only the clip index tells the two recordings apart.
+        disc(&[("00001", b"first")]);
+        let _ = std::fs::remove_file(&image);
+        write(&at, &image, Revision::V250, Access::ReadOnly, "x", None).unwrap();
+        disc(&[("00001", b"fifth")]);
+        let e = write(&at, &image, Revision::V250, Access::ReadOnly, "x", None).unwrap_err();
+        assert!(e.to_string().contains("BDAV/CLIPINF/00001.clpi"), "{e}");
+        // And nothing that is not an image of a disc of recordings at all:
+        // somebody's own file, kept as it was.
+        std::fs::write(&image, b"not a disc").unwrap();
+        let e = write(&at, &image, Revision::V250, Access::ReadOnly, "x", None).unwrap_err();
+        assert!(e.to_string().contains("not an image of a disc"), "{e}");
+        assert_eq!(std::fs::read(&image).unwrap(), b"not a disc");
+        // An image of a disc with no recording on it yet (BDAV/info.bdav
+        // alone) has nothing to lose: written over.
+        let other = at.with_file_name(format!("udfw-over-other-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&other);
+        std::fs::create_dir_all(other.join("BDAV")).unwrap();
+        std::fs::write(other.join("BDAV").join("info.bdav"), b"x").unwrap();
+        let _ = std::fs::remove_file(&image);
+        write(&other, &image, Revision::V250, Access::ReadOnly, "x", None).unwrap();
+        let _ = std::fs::remove_dir_all(&other);
+        write(&at, &image, Revision::V250, Access::ReadOnly, "x", None).unwrap();
+        let _ = std::fs::remove_file(&image);
+        let _ = std::fs::remove_dir_all(&at);
+    }
+
+    /// An image made while another run was still cutting into the disc holds
+    /// that run's stream as it was then -- empty, with no clip index -- and
+    /// is no reason to refuse the image made once that recording is whole.
+    #[test]
+    fn a_stream_still_being_cut_does_not_hold_the_image_back() {
+        let at = std::env::temp_dir().join(format!("udfw-reserved-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&at);
+        for dir in ["STREAM", "CLIPINF"] {
+            std::fs::create_dir_all(at.join("BDAV").join(dir)).unwrap();
+        }
+        std::fs::write(at.join("BDAV/info.bdav"), b"x").unwrap();
+        std::fs::write(at.join("BDAV/STREAM/00001.m2ts"), [0u8; 192]).unwrap();
+        std::fs::write(at.join("BDAV/CLIPINF/00001.clpi"), b"first").unwrap();
+        std::fs::write(at.join("BDAV/STREAM/00002.m2ts"), b"").unwrap();
+        let image = PathBuf::from(format!("{}.iso", at.display()));
+        let _ = std::fs::remove_file(&image);
+        write(&at, &image, Revision::V250, Access::ReadOnly, "x", None).unwrap();
+        // The other run finishes its recording.
+        std::fs::write(at.join("BDAV/STREAM/00002.m2ts"), [0u8; 384]).unwrap();
+        std::fs::write(at.join("BDAV/CLIPINF/00002.clpi"), b"second").unwrap();
+        write(&at, &image, Revision::V250, Access::ReadOnly, "x", None).unwrap();
+        let held = crate::udf::Image::open(&image).unwrap();
+        assert_eq!(held.find("BDAV/STREAM/00002.m2ts").unwrap().size, 384);
+        // A recording the image holds whole is still held to.
+        std::fs::write(at.join("BDAV/STREAM/00002.m2ts"), [0u8; 192]).unwrap();
+        let e = write(&at, &image, Revision::V250, Access::ReadOnly, "x", None).unwrap_err();
+        assert!(e.to_string().contains("BDAV/STREAM/00002.m2ts"), "{e}");
+        let _ = std::fs::remove_file(&image);
+        let _ = std::fs::remove_dir_all(&at);
+    }
+
+    /// A `.part` another run is still writing is neither taken away nor
+    /// renamed into place; one nobody holds is cleared as before.
+    #[test]
+    fn an_image_being_written_by_another_run_is_left_to_it() {
+        let at = std::env::temp_dir().join(format!("udfw-busy-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&at);
+        std::fs::create_dir_all(at.join("BDAV/STREAM")).unwrap();
+        std::fs::write(at.join("BDAV/info.bdav"), b"x").unwrap();
+        std::fs::write(at.join("BDAV/STREAM/00001.m2ts"), [0u8; 192]).unwrap();
+        let image = PathBuf::from(format!("{}.iso", at.display()));
+        let part = PathBuf::from(format!("{}.iso.part", at.display()));
+        let _ = std::fs::remove_file(&image);
+        std::fs::write(&part, b"the other run's").unwrap();
+        let other = std::fs::File::open(&part).unwrap();
+        other.lock().unwrap();
+        let e = write(&at, &image, Revision::V250, Access::ReadOnly, "x", None).unwrap_err();
+        assert!(e.to_string().contains("another run"), "{e}");
+        assert_eq!(std::fs::read(&part).unwrap(), b"the other run's");
+        assert!(!image.exists());
+        drop(other);
+        write(&at, &image, Revision::V250, Access::ReadOnly, "x", None).unwrap();
+        assert!(!part.exists());
+        assert!(crate::udf::Image::open(&image).unwrap().find("BDAV/STREAM/00001.m2ts").is_some());
+        let _ = std::fs::remove_file(&image);
+        let _ = std::fs::remove_dir_all(&at);
+    }
+
+    #[test]
+    fn a_descriptor_too_large_for_its_block_is_refused() {
+        assert!(sized(&vec![0u8; 216]).is_ok());
+        assert!(sized(&vec![0u8; SECTOR]).is_ok());
+        assert!(sized(&vec![0u8; SECTOR + 1]).is_err());
+    }
+    use super::*;
+
+    /// The check sums in a descriptor tag, against a tag read off a real
+    /// image: the file identifier for `BDAV` in the root of a disc an
+    /// authoring tool wrote.
+    #[test]
+    fn the_sums_are_the_ones_a_real_image_has() {
+        let mut d = file_id("BDAV", true, false, 4, 16, 40, 3);
+        assert_eq!(d.len(), 44);
+        tag(&mut d, TAG_FILE_ID, 3);
+        // Tag, version, checksum, reserved, serial, CRC, CRC length, block.
+        assert_eq!(d[0..2], [0x01, 0x01]);
+        assert_eq!(d[2..4], [0x03, 0x00]);
+        assert_eq!(d[4], 0x22);
+        assert_eq!(d[8..10], [0xf1, 0x0c]);
+        assert_eq!(d[10..12], [0x1c, 0x00]);
+        assert_eq!(d[12..16], [0x03, 0x00, 0x00, 0x00]);
+        // The name, with the marker that says how it is compressed.
+        assert_eq!(&d[38..43], b"\x08BDAV");
+    }
+
+    #[test]
+    fn a_name_is_cut_at_a_character() {
+        let mut d = vec![0u8; 32];
+        dstring(&mut d, 0, 32, "テストディスク");
+        // Sixteen bits a character, so the marker and fifteen characters fit.
+        assert_eq!(d[0], 16);
+        assert_eq!(d[31], 15);
+        assert_eq!(&d[1..3], &[0x30, 0xc6]); // テ
+        let mut d = vec![0u8; 8];
+        dstring(&mut d, 0, 8, "ABCDEFGHIJ");
+        assert_eq!(d[0], 8);
+        assert_eq!(&d[1..7], b"ABCDEF");
+        assert_eq!(d[7], 7);
+        // A character outside the basic plane is two units, and the field
+        // stops in front of it rather than keeping half of one.
+        let mut d = vec![0u8; 8];
+        dstring(&mut d, 0, 8, "アい\u{1F600}");
+        assert_eq!(d[0], 16);
+        assert_eq!(d[7], 5);
+        assert_eq!(&d[1..5], &[0x30, 0xa2, 0x30, 0x44]);
+        assert_eq!(&d[5..7], &[0, 0]);
+    }
+
+    /// A file longer than an extent can describe is written as several, and
+    /// all but the last are a whole number of blocks.
+    #[test]
+    fn a_long_file_is_split_where_the_field_runs_out() {
+        let node = Node {
+            name: "00001.m2ts".into(),
+            source: Some(PathBuf::from("/x")),
+            size: EXTENT_MAX + 12345,
+            children: Vec::new(),
+            entry: 9,
+            data: 64,
+            blocks: blocks(EXTENT_MAX + 12345),
+            unique: 16,
+        };
+        let d = file_entry(&node, &Stamp::now());
+        let len = u32::from_le_bytes(d[212..216].try_into().unwrap()) as usize;
+        assert_eq!(len, 32); // two long descriptors
+        let first = u32::from_le_bytes(d[216..220].try_into().unwrap()) as u64;
+        let second = u32::from_le_bytes(d[232..236].try_into().unwrap()) as u64;
+        assert_eq!(first, EXTENT_MAX);
+        assert_eq!(second, 12345);
+        assert_eq!(first % SECTOR as u64, 0);
+        // The second extent picks up where the first left off.
+        assert_eq!(
+            u32::from_le_bytes(d[236..240].try_into().unwrap()) as u64,
+            64 + EXTENT_MAX / SECTOR as u64
+        );
+    }
+}

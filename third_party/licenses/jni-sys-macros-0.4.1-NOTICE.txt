@@ -1,0 +1,16 @@
+jni-sys-macros 0.4.1 declares "MIT OR Apache-2.0" in Cargo.toml.
+Its published crate omits its workspace's license files. The original files
+are retained here as jni-sys-MIT.txt and jni-sys-Apache-2.0.txt.
+
+Repository: https://github.com/jni-rs/jni-sys
+Package commit: 64d77b7a5f119d7b55b4e2c169a4668067ff59e6
+Package path: jni-sys-macros
+Original files at that commit:
+  LICENSE-MIT
+    Git blob: 2008402b8a1299cf118ea38e02116bfcc72e53c3
+    SHA256: 1d85bd754b04ceec93e98e890edd1fa3c6a22e81bcb32135806beeccefa51cd1
+  LICENSE-APACHE
+    Git blob: 8f71f43fee3f78649d238238cbde51e6d7055c82
+    SHA256: c6596eb7be8581c18be736c846fb9173b69eccf6ef94c5135893ec56bd92ba08
+
+The jni-sys 0.4.1 crate contains byte-identical copies of these files.

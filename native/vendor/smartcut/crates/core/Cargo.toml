@@ -1,0 +1,16 @@
+[package]
+name = "smartcut-core"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+smartcut-vc1 = { path = "../vc1" }
+smartcut-mpeg2 = { path = "../mpeg2" }
+ffmpeg-next.workspace = true
+anyhow.workspace = true
+cpal = { workspace = true, optional = true }
+encoding_rs.workspace = true
+
+[features]
+default = ["playback"]
+playback = ["dep:cpal"]

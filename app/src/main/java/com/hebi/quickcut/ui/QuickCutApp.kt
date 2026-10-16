@@ -321,7 +321,7 @@ fun QuickCutApp(
                     "결과물을 확인하고 갤러리에 등록하고 있습니다. 완료 단계에서는 취소할 수 없습니다."
                 else if (model.requestedExportMode == ExportMode.FAST_ONLY)
                     "압축된 영상 데이터를 복사하고 있습니다. 다른 앱을 사용하거나 화면을 꺼도 저장은 계속됩니다."
-                else "요청한 구간을 유지하며 저장합니다. 복사·최적화가 안 되면 재인코딩하며, 처리 시간은 영상과 기기에 따라 달라집니다.",
+                else "요청한 구간을 유지하며 저장합니다. 복사·최적화가 안 되면 재인코딩하며, 처리 시간은 영상과 기기에 따라 달라집니다. 다른 앱을 사용하거나 화면을 꺼도 저장은 계속됩니다.",
                 progress = if (model.isFinalizing) null else model.progressPercent,
                 onCancel = if (model.isFinalizing) null
                     else { { showExportCancelConfirmation = true } },

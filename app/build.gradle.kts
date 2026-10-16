@@ -21,8 +21,8 @@ android {
         minSdk = 29
         targetSdk = 36
         // The override is only for the emulator's older-version installation fixture.
-        versionCode = providers.gradleProperty("quickcutTestVersionCode").orNull?.toInt() ?: 8
-        versionName = "0.4.3"
+        versionCode = providers.gradleProperty("quickcutTestVersionCode").orNull?.toInt() ?: 9
+        versionName = "0.4.4"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

@@ -78,7 +78,8 @@ jobs:
           sudo apt-get install -y nasm pkg-config
           sdkmanager --install "ndk;27.3.13750724"
       - name: Restore native build cache
-        uses: actions/cache@v4
+        id: native_cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             build/native-smartcut
@@ -87,6 +88,15 @@ jobs:
           key: native-smartcut-${{ runner.os }}-${{ hashFiles('scripts/build-native-smartcut.sh', 'scripts/native-smartcut-sources.json', 'native/**') }}
       - name: Build native smart-cut engine
         run: bash scripts/build-native-smartcut.sh
+      - name: Save native build cache
+        if: success() && steps.native_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            build/native-smartcut
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ steps.native_cache.outputs.cache-primary-key }}
       - name: Enable KVM for Android emulator
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules

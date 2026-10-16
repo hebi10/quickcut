@@ -52,9 +52,9 @@ android {
     }
 
     sourceSets.getByName("main") {
-        assets.srcDir(rootProject.layout.buildDirectory.dir("generated/licenseAssets"))
-        assets.srcDir(rootProject.layout.buildDirectory.dir("generated/smartcutAssets"))
-        jniLibs.srcDir(layout.buildDirectory.dir("generated/nativeLibs"))
+        assets.srcDir(rootProject.layout.buildDirectory.dir("generated/licenseAssets").get().asFile)
+        assets.srcDir(rootProject.layout.buildDirectory.dir("generated/smartcutAssets").get().asFile)
+        jniLibs.srcDir(layout.buildDirectory.dir("generated/nativeLibs").get().asFile)
     }
     packaging.jniLibs.useLegacyPackaging = false
 

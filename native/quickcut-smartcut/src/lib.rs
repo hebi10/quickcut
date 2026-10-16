@@ -9,6 +9,7 @@ use std::{cmp::Reverse, collections::BinaryHeap};
 
 mod android;
 mod avc1;
+mod duration;
 
 pub trait Callbacks: Send + Sync {
     fn is_cancelled(&self) -> bool;
@@ -128,7 +129,12 @@ fn check_source(source: &Source, end_us: i64) -> Result<()> {
         && video.shape.primaries != 9 && ![9, 10].contains(&video.shape.matrix), "HDR or wide-gamut video");
     ensure!(source.audios.len() <= 1 && source.audios.iter().all(|a| a.codec == "aac" && (1..=2).contains(&a.channels)), "unsupported audio tracks");
     ensure!(source.captions.is_empty() && source.graphics.is_empty() && source.subpictures.is_empty() && source.dropped.is_empty(), "additional tracks");
-    ensure!(source.duration.is_finite() && end_us <= micros(source.duration) + 1, "range exceeds source duration");
+    ensure!(source.duration.is_finite(), "invalid source duration");
+    // Android's MP4 extractor reports raw media-header lengths, including AAC
+    // priming that FFmpeg removes using the edit list. Recognize that exact
+    // whole-file selection without clamping the caller's requested boundary.
+    ensure!(end_us <= micros(source.duration) + 1
+        || duration::is_android_aac_eof(source, end_us)?, "range exceeds source duration");
     Ok(())
 }
 

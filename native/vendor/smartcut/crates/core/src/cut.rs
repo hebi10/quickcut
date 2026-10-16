@@ -4626,6 +4626,16 @@ fn open_encoder_as(
         );
         (*e).color_range = (*p).color_range;
         (*e).profile = (*p).profile;
+        // FFmpeg 7.1's libx264 wrapper applies the Baseline restrictions for
+        // profile 66, but its switch does not handle Constrained Baseline
+        // (66 | 512). Passing 578 through therefore silently selects High
+        // with CABAC, creating an avoidable profile transition at the splice.
+        // x264's Baseline profile itself emits Constrained Baseline here.
+        if codec.name() == "libx264"
+            && (*p).profile == ff::ffi::AV_PROFILE_H264_CONSTRAINED_BASELINE as i32
+        {
+            (*e).profile = ff::ffi::AV_PROFILE_H264_BASELINE as i32;
+        }
         // **A level is not one number across codecs, and two of these count
         // it differently at each end.** What a decoder puts in `level` for
         // AV1 is the stream's own `seq_level_idx`, 0 for 2.0 and counting

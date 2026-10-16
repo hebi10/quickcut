@@ -92,6 +92,10 @@ fn configuration(input: &ff::format::context::Input, video: usize) -> Result<(us
     Ok((width, smartcut_core::bitstream::parameter_sets("h264", bytes)))
 }
 
+fn supported_sps_profile(nal: &[u8]) -> bool {
+    nal.len() >= 4 && matches!(nal[1], 66 | 77 | 100)
+}
+
 pub fn unused_ids(path: &str, count: usize) -> Result<Vec<u8>> {
     let input = smartcut_core::input::open_local(path)?;
     let video = input.streams().best(ff::media::Type::Video).context("missing video")?.index();
@@ -99,6 +103,8 @@ pub fn unused_ids(path: &str, count: usize) -> Result<Vec<u8>> {
     ensure!(sets.iter().filter(|s| s[0] & 31 == 7).count() == 1
         && sets.iter().filter(|s| s[0] & 31 == 8).count() == 1,
         "multiple source AVC configurations require the exact fallback");
+    ensure!(sets.iter().filter(|s| s[0] & 31 == 7).all(|s| supported_sps_profile(s)),
+        "unsupported source AVC profile requires the exact fallback");
     let mut used = BTreeSet::new();
     let mut sps_count = 0;
     for set in sets {
@@ -132,7 +138,7 @@ impl Sets {
         // All pictures are 8-bit 4:2:0. Declare the highest actual profile and
         // level, with only constraint flags common to every supplied SPS.
         let mut ordered: Vec<&Vec<u8>> = self.sps.values().collect();
-        ensure!(ordered.iter().all(|s| s.len() >= 4 && matches!(s[1], 66 | 77 | 88 | 100)), "unsupported AVC profile");
+        ensure!(ordered.iter().all(|s| supported_sps_profile(s)), "unsupported AVC profile");
         ordered.sort_by_key(|s| std::cmp::Reverse(s[1]));
         let profile = ordered[0][1];
         let compatibility = ordered.iter().fold(255, |flags, s| flags & s[2]);
@@ -245,6 +251,18 @@ pub fn remux(input_path: &str, output_path: &str, callbacks: &dyn Callbacks) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn extended_profile_is_declined_instead_of_changing_to_high() {
+        // Ordinary baseline-compatible syntax is valid under Extended as
+        // well; change only profile_idc in the fixture's real SPS.
+        let sps = [0x67, 88, 0xc0, 0x0d, 0xda, 0x05, 0x07, 0xec, 0x04, 0x40,
+            0, 0, 3, 0, 0x40, 0, 0, 0x0f, 3, 0xc5, 0x0a, 0xa8];
+        let pps = [0x68, 0xce, 0x0f, 0xc8];
+        let mut sets = Sets::default();
+        sets.add(&sps).unwrap(); sets.add(&pps).unwrap();
+        assert!(!supported_sps_profile(&sps), "the same profile must be rejected before encoding");
+        assert!(sets.avcc().is_err(), "libx264 cannot preserve Extended profile");
+    }
     #[test]
     fn conflicting_parameter_sets_and_unknown_references_are_rejected() {
         let mut sets = Sets::default();

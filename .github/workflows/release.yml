@@ -33,7 +33,20 @@ jobs:
             build/native-smartcut
             ~/.cargo/registry
             ~/.cargo/git
-          key: native-smartcut-${{ runner.os }}-${{ hashFiles('scripts/build-native-smartcut.sh', 'scripts/native-smartcut-sources.json', 'native/**') }}
+          key: native-smartcut-${{ runner.os }}-${{ hashFiles('scripts/build-native-smartcut.sh', 'scripts/native-smartcut-sources.json') }}-${{ hashFiles('native/**') }}
+          restore-keys: |
+            native-smartcut-${{ runner.os }}-${{ hashFiles('scripts/build-native-smartcut.sh', 'scripts/native-smartcut-sources.json') }}-
+            native-smartcut-${{ runner.os }}-
+      - name: Reset Rust outputs from a different native dependency cache
+        env:
+          NATIVE_CACHE_MATCHED_KEY: ${{ steps.native_cache.outputs.cache-matched-key }}
+          NATIVE_CACHE_DEPENDENCY_PREFIX: native-smartcut-${{ runner.os }}-${{ hashFiles('scripts/build-native-smartcut.sh', 'scripts/native-smartcut-sources.json') }}-
+        run: |
+          # Legacy/cross-dependency caches may retain C builds, validated by .build-key.
+          # Rebuild Rust from scratch so stale external static libraries cannot be linked.
+          if [[ -n "$NATIVE_CACHE_MATCHED_KEY" && "$NATIVE_CACHE_MATCHED_KEY" != "$NATIVE_CACHE_DEPENDENCY_PREFIX"* ]]; then
+            rm -rf build/native-smartcut/cargo-target
+          fi
       - name: Build native smart-cut engine
         run: bash scripts/build-native-smartcut.sh
       - name: Save native build cache

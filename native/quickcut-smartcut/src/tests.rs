@@ -179,3 +179,63 @@ fn vcl_packets(path: &str) -> Vec<Vec<u8>> {
     }
     packets
 }
+
+#[test]
+fn android_aac_media_duration_keeps_the_full_requested_eof_range() {
+    use std::process::Command;
+    let directory = std::env::temp_dir().join(format!("quickcut-android-eof-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let input = directory.join("source.mp4");
+    assert!(Command::new("ffmpeg").args(["-hide_banner", "-loglevel", "error", "-y",
+        "-f", "lavfi", "-i", "color=c=red:size=320x240:rate=30",
+        "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100",
+        "-vf", "drawbox=x=0:y=0:w=iw:h=ih:color=blue:t=fill:enable='gte(t,2)'",
+        "-t", "6", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+        "-bf", "0", "-g", "60", "-keyint_min", "60", "-sc_threshold", "0",
+        "-c:a", "aac", "-b:a", "64k", "-shortest"]).arg(&input).status().unwrap().success());
+    let source = smartcut_core::scan(input.to_str().unwrap()).unwrap();
+    assert_eq!(micros(source.duration), 6_000_000);
+    // Android takes the longest mdhd duration: 265624 / 44100 seconds,
+    // rounded to milliseconds. FFmpeg instead applies the 1024-sample AAC
+    // priming edit and reports the 6-second presentation/movie duration.
+    let requested_end = 6_023_000;
+    let output = directory.join("cut.mp4");
+    let _ = std::fs::remove_file(&output);
+    let report = cut(input.to_str().unwrap(), output.to_str().unwrap(), 1_950_000,
+        requested_end, false, Arc::new(Observer::default())).unwrap();
+    assert_eq!(report.copied_video_packets, 120);
+    assert_eq!(report.encoded_video_packets, 1);
+    let mut result = ff::format::input(&output).unwrap();
+    assert!((result.duration() - (requested_end - 1_950_000)).abs() <= 34_000,
+        "output must retain the Android-selected EOF interval without broad duration tolerance");
+    let audio = result.streams().best(ff::media::Type::Audio).unwrap().index();
+    let mut last_audio_end = 0;
+    for (stream, packet) in result.packets() {
+        if stream.index() == audio {
+            let end = packet.pts().unwrap() + packet.duration();
+            last_audio_end = last_audio_end.max(micros(end as f64 * f64::from(stream.time_base())));
+        }
+    }
+    assert!(last_audio_end >= 4_040_000, "the source audio tail must survive the full-EOF cut");
+    #[cfg(unix)]
+    {
+        use std::io::{Seek, SeekFrom};
+        use std::os::fd::AsRawFd;
+        let mut descriptor = std::fs::File::open(&input).unwrap();
+        descriptor.seek(SeekFrom::Start(123)).unwrap();
+        let fd_path = format!("/proc/self/fd/{}", descriptor.as_raw_fd());
+        let fd_output = directory.join("descriptor-eof.mp4");
+        let fd_report = cut(&fd_path, fd_output.to_str().unwrap(), 1_950_000,
+            requested_end, false, Arc::new(Observer::default())).unwrap();
+        assert_eq!(fd_report, report);
+        assert_eq!(descriptor.stream_position().unwrap(), 123,
+            "the raw metadata probe must preserve the granted descriptor's offset");
+    }
+    for beyond in [6_024_000, 6_030_000, 6_300_000] {
+        let rejected = directory.join(format!("beyond-{beyond}.mp4"));
+        assert!(cut(input.to_str().unwrap(), rejected.to_str().unwrap(), 1_950_000,
+            beyond, false, Arc::new(Observer::default())).is_err());
+        assert!(!rejected.exists());
+    }
+    std::fs::remove_dir_all(directory).unwrap();
+}

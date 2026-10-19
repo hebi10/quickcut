@@ -150,7 +150,7 @@ fun BatchScreen(
                 Column(Modifier.weight(1f).padding(16.dp)) {
                     BatchFileHeader(model)
                     LazyColumn(
-                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                        modifier = Modifier.weight(1f).fillMaxWidth().testTag("batch-file-list"),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         items(model.files, key = { it.uri }) { file ->
@@ -167,7 +167,8 @@ fun BatchScreen(
         } else {
             Column(Modifier.fillMaxSize()) {
             LazyColumn(
-                modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 12.dp),
+                modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 12.dp)
+                    .testTag("batch-file-list"),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 item { BatchHeader(guardedBack) }

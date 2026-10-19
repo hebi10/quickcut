@@ -10,8 +10,10 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
 import androidx.lifecycle.ViewModelStore
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -175,10 +177,8 @@ class ExactBatchExportInstrumentedTest {
         assertTrue("The source audio must remain present", actual.hasAudio)
         assertEquals(requestedDuration,
             sessionStore.load()!!.files.single().outputExpectedDurationMs)
-        composeRule.onNodeWithText(formatTime(row.durationMs) + " → " +
-            formatTime(requestedDuration)).performScrollTo().assertExists()
-        composeRule.onNodeWithText("처리 방식:", substring = true)
-            .performScrollTo().assertExists()
+        assertFileText(formatTime(row.durationMs) + " → " + formatTime(requestedDuration))
+        assertFileText("처리 방식:", substring = true)
         assertNotNull("A successful export must report its actual method", row.exportReport)
         assertEquals(row.exportReport, sessionStore.load()!!.files.single().exportReport)
         composeRule.runOnUiThread {
@@ -197,7 +197,7 @@ class ExactBatchExportInstrumentedTest {
         restorePublishedJournal { it.remove("exportReport") }
         assertNull(model.files.single().exportReport)
         showScreen()
-        composeRule.onNodeWithText("처리 방식: 확인할 수 없음").performScrollTo().assertExists()
+        assertFileText("처리 방식: 확인할 수 없음")
     }
 
     @Test
@@ -211,8 +211,7 @@ class ExactBatchExportInstrumentedTest {
         assertEquals(ExportMethod.UNKNOWN, model.files.single().exportReport?.method)
         assertEquals(123L, model.files.single().exportReport?.elapsedMs)
         showScreen()
-        composeRule.onNodeWithText("처리 방식: 확인할 수 없음", substring = true)
-            .performScrollTo().assertExists()
+        assertFileText("처리 방식: 확인할 수 없음", substring = true)
     }
 
     private fun restorePublishedJournal(changeReport: (JSONObject) -> Unit) {
@@ -249,5 +248,13 @@ class ExactBatchExportInstrumentedTest {
         composeRule.setContent {
             QuickCutTheme { BatchScreen(model, {}, {}, { _, _, _ -> }) }
         }
+    }
+
+    private fun assertFileText(text: String, substring: Boolean = false) {
+        val matcher = hasText(text, substring = substring)
+        // Rows below the taller duration editor are not composed until scrolled
+        // into the LazyColumn viewport. Scroll the list before querying a row.
+        composeRule.onNodeWithTag("batch-file-list").performScrollToNode(matcher)
+        composeRule.onNode(matcher).assertExists()
     }
 }

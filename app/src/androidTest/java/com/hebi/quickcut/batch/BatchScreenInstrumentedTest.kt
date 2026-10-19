@@ -10,6 +10,7 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextReplacement
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.hebi.quickcut.MainActivity
+import com.hebi.quickcut.QuickCutApplication
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -21,22 +22,34 @@ class BatchScreenInstrumentedTest {
 
     @Test
     fun minuteSecondInputExplainsTheRemovedDurationAndRejectsInvalidSeconds() {
-        composeRule.onNodeWithText("일괄 편집 · 여러 영상").performClick()
-        composeRule.onNodeWithText("앞뒤 구간 삭제").performScrollTo().performClick()
-        composeRule.onNodeWithTag("batch-leading-minutes").performScrollTo()
-            .performTextReplacement("1")
-        composeRule.onNodeWithTag("batch-leading-seconds").performScrollTo()
-            .performTextReplacement("5.5")
-        composeRule.onNodeWithTag("batch-trailing-minutes").performScrollTo()
-            .performTextReplacement("0")
-        composeRule.onNodeWithTag("batch-trailing-seconds").performScrollTo()
-            .performTextReplacement("3")
-        composeRule.onNodeWithText("각 영상의 앞 1분 5.5초와 뒤 3초를 삭제합니다.")
-            .performScrollTo().assertExists()
-        composeRule.onNodeWithTag("batch-leading-seconds").performScrollTo()
-            .performTextReplacement("60")
-        composeRule.onNodeWithText("초는 0~59.999로 입력해 주세요.")
-            .performScrollTo().assertExists()
+        val model = (composeRule.activity.application as QuickCutApplication).batchModel
+        val previous = composeRule.runOnIdle {
+            Triple(model.draftMode, model.draftLeadingSeconds, model.draftTrailingSeconds)
+        }
+        try {
+            composeRule.onNodeWithText("일괄 편집 · 여러 영상").performClick()
+            composeRule.onNodeWithText("앞뒤 구간 삭제").performScrollTo().performClick()
+            composeRule.onNodeWithTag("batch-leading-minutes").performScrollTo()
+                .performTextReplacement("1")
+            composeRule.onNodeWithTag("batch-leading-seconds").performScrollTo()
+                .performTextReplacement("5.5")
+            composeRule.onNodeWithTag("batch-trailing-minutes").performScrollTo()
+                .performTextReplacement("0")
+            composeRule.onNodeWithTag("batch-trailing-seconds").performScrollTo()
+                .performTextReplacement("3")
+            composeRule.onNodeWithText("각 영상의 앞 1분 5.5초와 뒤 3초를 삭제합니다.")
+                .performScrollTo().assertExists()
+            composeRule.onNodeWithTag("batch-leading-seconds").performScrollTo()
+                .performTextReplacement("60")
+            composeRule.onNodeWithText("초는 0~59.999로 입력해 주세요.")
+                .performScrollTo().assertExists()
+        } finally {
+            composeRule.runOnIdle {
+                model.draftMode = previous.first
+                model.draftLeadingSeconds = previous.second
+                model.draftTrailingSeconds = previous.third
+            }
+        }
     }
 
     @Test

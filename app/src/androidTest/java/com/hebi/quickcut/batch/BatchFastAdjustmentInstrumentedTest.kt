@@ -7,6 +7,9 @@ import android.net.Uri
 import android.os.Build
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isDialog
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -122,7 +125,8 @@ class BatchFastAdjustmentInstrumentedTest {
     @Test
     fun automaticReviewExplainsTheExactCutAndCanReturnToSettings() {
         openReview()
-        composeRule.onNodeWithText("각 영상의 앞 3초와 뒤 0초를 삭제합니다.").assertExists()
+        composeRule.onNode(hasText("각 영상의 앞 3초와 뒤 0초를 삭제합니다.") and
+            hasAnyAncestor(isDialog())).assertExists()
         composeRule.runOnIdle {
             assertFalse(model.isRunning)
             assertEquals("3", model.draftLeadingSeconds)

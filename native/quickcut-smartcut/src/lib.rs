@@ -166,6 +166,12 @@ fn inspect_packets(source: &Source, plans: &[RangePlan], callbacks: &dyn Callbac
     let mut needed: Vec<i64> = plans.iter().flat_map(|p| &p.segments).filter(|s| s.kind == SegmentKind::Copy)
         .flat_map(|s| std::iter::once(micros(s.start)).chain(s.copy_until.map(micros))).collect();
     needed.sort_unstable(); needed.dedup();
+    let splice_starts: Vec<i64> = plans.iter().enumerate().flat_map(|(plan_index, plan)| {
+        plan.segments.iter().enumerate().filter_map(move |(segment_index, segment)| {
+            (segment.kind == SegmentKind::Copy && (plan_index > 0 || segment_index > 0))
+                .then(|| micros(segment.start))
+        })
+    }).collect();
     let mut count = 0u64;
     let mut packets = 0u64;
     let mut clock = PictureClock::new(source.video.frame_rate, source.video.time_base);
@@ -199,6 +205,16 @@ fn inspect_packets(source: &Source, plans: &[RangePlan], callbacks: &dyn Callbac
         count += plans.iter().filter(|p| at_us >= micros(p.t_in) && at_us < micros(p.t_out)).count() as u64;
         if needed.contains(&at_us) {
             ensure!(idr, "copy boundary is not an IDR picture");
+            if is_hevc && splice_starts.contains(&at_us) {
+                // An IDR may legally discard prior pictures at the source's
+                // beginning. Reusing it after another output segment would
+                // silently drop that segment's delayed B pictures. Keep copied
+                // VCL bytes unchanged and let the exact exporter handle it.
+                for nal in nals.iter().filter(|nal| matches!(kind(nal), 19 | 20)) {
+                    ensure!(nal.len() >= 3, "truncated HEVC IDR slice header");
+                    ensure!(nal[2] & 0x40 == 0, "HEVC splice IDR would discard prior pictures");
+                }
+            }
             needed.retain(|&t| t != at_us);
         }
     }

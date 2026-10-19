@@ -84,6 +84,15 @@ fn main_hevc_b_frames_copy_the_middle_and_decode_every_retained_picture() {
         "-show_entries", "stream=nb_read_frames", "-of", "csv=p=0"]).arg(&flagged).output().unwrap();
     assert!(source_count.status.success());
     assert_eq!(String::from_utf8(source_count.stdout).unwrap().trim(), "240", "the source is valid");
+    let opening_output = directory.join("safe-opening.mp4");
+    let opening = cut(flagged.to_str().unwrap(), opening_output.to_str().unwrap(),
+        0, 2_000_000, false, Arc::new(Observer)).unwrap();
+    assert_eq!((opening.copied_video_packets, opening.encoded_video_packets), (60, 0),
+        "the same IDR is safe when no earlier output pictures exist");
+    let opening_count = Command::new("ffprobe").args(["-v", "error", "-select_streams", "v:0", "-count_frames",
+        "-show_entries", "stream=nb_read_frames", "-of", "csv=p=0"]).arg(&opening_output).output().unwrap();
+    assert!(opening_count.status.success());
+    assert_eq!(String::from_utf8(opening_count.stdout).unwrap().trim(), "60");
     let unsafe_output = directory.join("unsafe-join.mp4");
     let result = cut_ranges(flagged.to_str().unwrap(), unsafe_output.to_str().unwrap(),
         &[(6_000_000, 8_000_000), (0, 3_000_000)], false, Arc::new(Observer));

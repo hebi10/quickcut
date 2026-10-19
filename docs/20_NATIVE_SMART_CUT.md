@@ -58,6 +58,10 @@ HEVC는 `hev1`으로 출력하며 닫힌 IDR GOP의 설정을 각 구간과 함�
 Main/8-bit/4:2:0 SDR, 고정 프레임률과 안정적인 단일 VPS/SPS/PPS를 확인한다.
 자른 경계는 x265로 처리하고 완전한 중간 GOP의 압축 영상 데이터는 복사한다.
 10-bit/HDR, 열린 GOP의 CRA 경계 및 다중 레이어는 이 경로에 포함되지 않는다.
+복사 연결의 IDR이 `no_output_of_prior_pics_flag`로 앞 구간의 지연 프레임을
+버리도록 지시하는 경우에는 일반 저장을 사용한다. 이 플래그가 출력 첫 장면에만
+쓰이는 경우에는 이전 프레임이 없으므로 허용한다. 검사 때문에 복사할 영상의
+압축 데이터를 수정하지 않는다.
 x265의 입력 소스는 4.1로 고정하고 Android 정적 C++ runtime을 사용한다.
 경계 처리의 스레드 수를 제한하며 전체 영상 디코딩/재인코딩은 수행하지 않는다.
 이 조건의 지원 여부와 실제 저장 시간은 별개이며 전체 사용자 영상의 지원 비율은
@@ -151,7 +155,7 @@ archive는 보존한다. 개인키·keystore·비밀번호·환경 파일·전�
 
 Linux x86_64에서 JDK 17, Gradle 9.4.1, Android SDK platform 36,
 Build Tools 36.0.0 및 `scripts/native-smartcut-sources.json`에 기록된 NDK와
-Rust 버전을 사용한다. Python 3.12 이상, make, nasm, pkg-config, C/C++ 빌드
+Rust 버전을 사용한다. Python 3.12 이상, cmake, make, nasm, pkg-config, C/C++ 빌드
 도구 및 rustup도 필요하다. host 검사를 실행하면 fixture 생성용 FFmpeg CLI도 필요하다.
 `ANDROID_HOME`과 선택적으로 `ANDROID_NDK_HOME`을 해당 도구의 경로로 설정한다.
 

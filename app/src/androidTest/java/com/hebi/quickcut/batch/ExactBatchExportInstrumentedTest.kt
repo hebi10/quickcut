@@ -26,6 +26,8 @@ import com.hebi.quickcut.ui.QuickCutTheme
 import java.io.File
 import kotlin.math.abs
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -49,6 +51,7 @@ class ExactBatchExportInstrumentedTest {
     private lateinit var sessionStore: BatchSessionStore
     private var previousSession: BatchSessionSnapshot? = null
     private val generatedOutputs = mutableListOf<Uri>()
+    private val extraSources = mutableListOf<File>()
 
     @Before
     fun importThreeSecondCutBetweenKeyframes() {
@@ -110,6 +113,39 @@ class ExactBatchExportInstrumentedTest {
             settings.saveSaveDate(previousDate)
         }
         if (::source.isInitialized) source.delete()
+        extraSources.forEach(File::delete)
+    }
+
+    @Test
+    fun automaticBatchSavesPartialAndFullEncodingFilesWithoutSkipping() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val additional = File(context.cacheDir, "quickcut_batch_short_gop.mp4")
+        extraSources += additional
+        instrumentation.context.assets.open("quickcut_fixture.mp4").use { input ->
+            additional.outputStream().use { input.copyTo(it) }
+        }
+        composeRule.runOnUiThread {
+            model.draftLeadingSeconds = "0:0.5"
+            model.draftTrailingSeconds = "0:0.5"
+            model.addVideos(context, listOf(Uri.fromFile(additional)))
+        }
+        composeRule.waitUntil(30_000L) { !model.isImporting && model.files.size == 2 }
+        val review = runBlocking { withContext(Dispatchers.Main) { model.inspectExport(context, false) } }
+        assertEquals(2, review.ready)
+        composeRule.runOnUiThread { model.startReviewed(context, review, false) }
+        composeRule.waitUntil(120_000L) { model.runState == BatchRunState.FINISHED }
+        assertEquals(2, model.successes)
+        assertEquals(0, model.failures)
+        assertEquals(0, model.skips)
+        assertEquals(ExportMethod.PARTIAL_REENCODE, model.files.first().exportReport?.method)
+        assertEquals(ExportMethod.VIDEO_REENCODE, model.files.last().exportReport?.method)
+        model.files.forEach { row ->
+            assertEquals(row.durationMs - 1_000L, row.outputExpectedDurationMs)
+            val actual = MediaReader.metadata(context, Uri.parse(row.savedOutputUri!!))
+            assertTrue(abs(actual.durationMs - row.outputExpectedDurationMs!!) <= 100L)
+            assertTrue(actual.hasAudio)
+        }
     }
 
     @Test

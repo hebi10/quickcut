@@ -60,11 +60,11 @@ class BatchScreenInstrumentedTest {
         leading.assertIsEnabled()
         trailing.assertIsEnabled()
 
-        composeRule.onNodeWithText("처음 N초만 추출").performScrollTo().performClick()
+        composeRule.onNodeWithText("처음 구간만 남기기").performScrollTo().performClick()
         leading.assertIsEnabled()
         trailing.assertIsNotEnabled()
 
-        composeRule.onNodeWithText("마지막 N초만 추출").performScrollTo().performClick()
+        composeRule.onNodeWithText("마지막 구간만 남기기").performScrollTo().performClick()
         leading.assertIsNotEnabled()
         trailing.assertIsEnabled()
 

@@ -1,5 +1,5 @@
-use crate::{cut, Callbacks};
-use jni::{JNIEnv, JavaVM, objects::{GlobalRef, JClass, JObject, JString, JThrowable, JValue}, sys::{jboolean, jlong, jlongArray}};
+use crate::{cut_ranges, Callbacks};
+use jni::{JNIEnv, JavaVM, objects::{GlobalRef, JClass, JLongArray, JObject, JString, JThrowable, JValue}, sys::{jboolean, jlong, jlongArray}};
 use std::{panic::{catch_unwind, AssertUnwindSafe}, ptr, sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}}};
 
 #[cfg(target_os = "android")]
@@ -75,17 +75,47 @@ impl Callbacks for JavaCallbacks {
 
 #[no_mangle]
 pub extern "system" fn Java_com_hebi_quickcut_media_NativeSmartCutBridge_cut(
-    mut env: JNIEnv, _class: JClass, input: JString, output: JString,
+    env: JNIEnv, _class: JClass, input: JString, output: JString,
     start_us: jlong, end_us: jlong, muted: jboolean, callbacks: JObject,
+) -> jlongArray {
+    run_cut(env, input, output, Ranges::Single(start_us, end_us), muted, callbacks)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_hebi_quickcut_media_NativeSmartCutBridge_cutRanges(
+    env: JNIEnv, _class: JClass, input: JString, output: JString,
+    ranges: JLongArray, muted: jboolean, callbacks: JObject,
+) -> jlongArray {
+    run_cut(env, input, output, Ranges::Multiple(ranges), muted, callbacks)
+}
+
+enum Ranges<'a> { Single(i64, i64), Multiple(JLongArray<'a>) }
+
+fn run_cut(
+    mut env: JNIEnv, input: JString, output: JString,
+    ranges: Ranges, muted: jboolean, callbacks: JObject,
 ) -> jlongArray {
     let operation = catch_unwind(AssertUnwindSafe(|| -> jni::errors::Result<jlongArray> {
         let input: String = env.get_string(&input)?.into();
         let output: String = env.get_string(&output)?.into();
+        let ranges = match ranges {
+            Ranges::Single(start, end) => vec![(start, end)],
+            Ranges::Multiple(array) => {
+                let length = env.get_array_length(&array)?;
+                if !(2..=512).contains(&length) || length % 2 != 0 {
+                    env.throw_new("java/lang/IllegalArgumentException", "Expected 1 to 256 start/end pairs")?;
+                    return Ok(ptr::null_mut());
+                }
+                let mut values = vec![0i64; length as usize];
+                env.get_long_array_region(&array, 0, &mut values)?;
+                values.chunks_exact(2).map(|pair| (pair[0], pair[1])).collect()
+            },
+        };
         let callback = Arc::new(JavaCallbacks {
             vm: env.get_java_vm()?, object: env.new_global_ref(callbacks)?,
             failure: Mutex::new(None), cancelled: AtomicBool::new(false),
         });
-        let result = cut(&input, &output, start_us, end_us, muted != 0, callback.clone());
+        let result = cut_ranges(&input, &output, &ranges, muted != 0, callback.clone());
         let failure = callback.failure.lock().unwrap_or_else(|p| p.into_inner()).take();
         if let Some(failure) = failure {
             match failure {

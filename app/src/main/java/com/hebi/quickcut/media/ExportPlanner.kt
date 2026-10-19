@@ -30,7 +30,7 @@ object ExportPlanner {
         val assessment = when {
             timeline.isEmpty -> ExportAssessment(false, "편집할 영상이 없습니다.")
             timeline.clips.size > 1 -> ExportAssessment(
-                false, "여러 클립 연결 및 분할 결과에는 전체 영상 처리가 필요할 수 있습니다."
+                false, "구간 연결도 자동 저장할 수 있습니다. 같은 원본의 구간은 부분 처리를 우선 시도하며, 필요하면 전체 처리로 이어집니다."
             )
             dateMode == SaveDateMode.ORIGINAL -> ExportAssessment(
                 false, "현재 원본 날짜 유지 방식은 고속 복사를 지원하지 않습니다."

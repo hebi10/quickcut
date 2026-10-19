@@ -181,6 +181,68 @@ fn vcl_packets(path: &str) -> Vec<Vec<u8>> {
 }
 
 #[test]
+fn multiple_ranges_keep_order_repeated_pictures_and_original_gops() {
+    use std::process::Command;
+    let directory = std::env::temp_dir().join(format!("quickcut-multi-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let input = directory.join("source.mp4");
+    assert!(Command::new("ffmpeg").args(["-hide_banner", "-loglevel", "error", "-y",
+        "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=30:duration=8",
+        "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=8",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-g", "60", "-keyint_min", "60",
+        "-sc_threshold", "0", "-bf", "2", "-x264-params", "open-gop=0", "-c:a", "aac"])
+        .arg(&input).status().unwrap().success());
+    let before = std::fs::read(&input).unwrap();
+    let source_vcl = vcl_packets(input.to_str().unwrap());
+    for (name, ranges, copied, encoded) in [
+        ("join", vec![(0, 3_000_000), (4_500_000, 8_000_000)], 120, 75),
+        ("repeated", vec![(4_500_000, 8_000_000), (0, 3_000_000), (4_500_000, 8_000_000)], 180, 120),
+    ] {
+        let output = directory.join(format!("{name}.mp4"));
+        let _ = std::fs::remove_file(&output);
+        let muted = name == "repeated";
+        let report = cut_ranges(input.to_str().unwrap(), output.to_str().unwrap(), &ranges,
+            muted, Arc::new(Observer::default())).unwrap();
+        assert_eq!(report.copied_video_packets, copied);
+        assert_eq!(report.encoded_video_packets, encoded);
+        assert_eq!(ff::format::input(&output).unwrap().nb_streams(), if muted { 1 } else { 2 });
+        assert!(Command::new("ffmpeg").args(["-v", "error", "-xerror", "-i"]).arg(&output)
+            .args(["-f", "null", "-"]).status().unwrap().success());
+        let result = vcl_packets(output.to_str().unwrap());
+        assert_eq!(result.len(), (copied + encoded) as usize);
+        if name == "join" {
+            assert_eq!(result[..60], source_vcl[..60]);
+            assert_eq!(result[135..195], source_vcl[180..240]);
+        } else {
+            assert_eq!(result[45..105], source_vcl[180..240]);
+            assert_eq!(result[105..165], source_vcl[..60]);
+            assert_eq!(result[240..300], source_vcl[180..240]);
+        }
+    }
+    for ranges in [vec![(4_500_000, 8_000_000), (0, 3_000_000)],
+        vec![(0, 3_000_000), (2_500_000, 7_500_000)]] {
+        let output = directory.join("unsafe-audio.mp4");
+        let error = cut_ranges(input.to_str().unwrap(), output.to_str().unwrap(), &ranges,
+            false, Arc::new(Observer::default())).unwrap_err();
+        assert!(error.to_string().contains("overlapping audio"));
+        assert!(!output.exists(), "audio must never silently disappear from revisited ranges");
+    }
+    let cancelled_output = directory.join("cancelled.mp4");
+    let cancelled = Arc::new(CancelDuringWrite { output: cancelled_output.clone(), fired: AtomicBool::new(false) });
+    assert!(cut_ranges(input.to_str().unwrap(), cancelled_output.to_str().unwrap(),
+        &[(0, 3_000_000), (4_500_000, 8_000_000)], false, cancelled.clone()).is_err());
+    assert!(cancelled.fired.load(Ordering::Relaxed));
+    assert!(!cancelled_output.exists());
+    assert!(!std::path::Path::new(&format!("{}.smartcut.mp4", cancelled_output.display())).exists());
+    let rejected = directory.join("shifted-second-range.mp4");
+    assert!(cut_ranges(input.to_str().unwrap(), rejected.to_str().unwrap(),
+        &[(0, 3_000_000), (1_980_000, 5_500_000)], true, Arc::new(Observer::default())).is_err());
+    assert!(!rejected.exists(), "every range must preserve its exact requested coordinates");
+    assert_eq!(std::fs::read(&input).unwrap(), before);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 fn android_aac_media_duration_keeps_the_full_requested_eof_range() {
     use std::process::Command;
     let directory = std::env::temp_dir().join(format!("quickcut-android-eof-{}", std::process::id()));

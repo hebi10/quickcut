@@ -36,6 +36,24 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class NativeSmartCutInstrumentedTest {
     @Test
+    fun reorderedAudibleRangesFallBackAndKeepAudioAfterTheJoin() = runBlocking {
+        withSource("quickcut_bframes.mp4") { context, source, original ->
+            val timeline = EditTimeline(listOf(
+                original.copy(startMs = 4_500L, endMs = 8_000L),
+                original.copy(id = 2L, startMs = 0L, endMs = 3_000L),
+            ))
+            withExport(context, timeline) { saved, report ->
+                assertEquals(ExportMethod.VIDEO_REENCODE, report.method)
+                assertDurationAndAudio(context, saved, 6_500L)
+                assertTrue(meanDifference(frame(context, source, 4_500_000L),
+                    frame(context, saved, 0L)) < 10.0)
+                assertTrue(meanDifference(frame(context, source, 0L),
+                    frame(context, saved, 3_500_000L)) < 10.0)
+            }
+        }
+    }
+
+    @Test
     fun joinedRangesKeepBothCutsAndCopyGopsAcrossTheJoin() = runBlocking {
         withSource("quickcut_bframes.mp4") { context, source, original ->
             val timeline = EditTimeline(listOf(

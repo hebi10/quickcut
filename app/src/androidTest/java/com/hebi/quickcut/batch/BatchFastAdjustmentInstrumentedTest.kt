@@ -112,20 +112,17 @@ class BatchFastAdjustmentInstrumentedTest {
     }
 
     @Test
-    fun nonKeyframeBatchOffersAnEnabledAdjustedFastSave() {
+    fun nonKeyframeBatchOffersAutomaticSaveWithoutSkippingOrShifting() {
         openReview()
-        // The existing engine can move this 3s cut to its next 4s keyframe.
-        // Losing that suggestion in the batch planner must not strand the user.
-        composeRule.onNodeWithText("위치 조정 후 고속 저장").assertIsEnabled()
+        composeRule.onNodeWithText("전체 자동 저장").assertIsEnabled()
+        composeRule.onNodeWithText("고속 저장 가능한 영상만").assertDoesNotExist()
+        composeRule.onNodeWithText("위치 조정 후 고속 저장").assertDoesNotExist()
     }
 
     @Test
-    fun confirmationExportsTheAdjustedDurationWithoutChangingTheDraftAndRecoversIt() {
+    fun automaticReviewExplainsTheExactCutAndCanReturnToSettings() {
         openReview()
-        composeRule.onNodeWithText("위치 조정 후 고속 저장").performClick()
-        composeRule.onNodeWithText("자르기 위치 조정 확인").assertExists()
-        composeRule.onNodeWithText("고속 저장 총 1개 = 기존 고속 0개 + 위치 조정 1개").assertExists()
-        composeRule.onNodeWithText("3초 → 4초 · 추가 1초 삭제").assertExists()
+        composeRule.onNodeWithText("각 영상의 앞 3초와 뒤 0초를 삭제합니다.").assertExists()
         composeRule.runOnIdle {
             assertFalse(model.isRunning)
             assertEquals("3", model.draftLeadingSeconds)
@@ -137,28 +134,10 @@ class BatchFastAdjustmentInstrumentedTest {
             }
             bitmap.recycle()
         }
-        composeRule.onNodeWithText("조정에 동의하고 고속 저장").performClick()
-        composeRule.waitUntil(120_000L) { model.runState == BatchRunState.FINISHED }
-        val row = model.files.single()
-        assertEquals(BatchFileStatus.SAVED, row.status)
-        assertEquals(row.durationMs - 4_000L, row.outputExpectedDurationMs)
-        assertEquals("3", model.draftLeadingSeconds)
+        composeRule.onNodeWithText("설정으로 돌아가기").performClick()
+        composeRule.onNodeWithText("자동 저장 확인").assertDoesNotExist()
+        assertFalse(model.isRunning)
         assertEquals(3_000L, model.previewTemplate()!!.leadingMs)
-        val actual = MediaReader.metadata(context, Uri.parse(row.savedOutputUri!!))
-        assertTrue(kotlin.math.abs(actual.durationMs - (row.durationMs - 4_000L)) <= 250L)
-        composeRule.onNodeWithText(formatTime(row.durationMs) + " → " +
-            formatTime(row.durationMs - 4_000L)).performScrollTo().assertExists()
-        assertEquals(row.durationMs - 4_000L,
-            sessionStore.load()!!.files.single().outputExpectedDurationMs)
-        composeRule.runOnUiThread {
-            ViewModelStore().apply { put("batch", model) }.clear()
-            model = BatchViewModel(context.applicationContext as Application)
-        }
-        composeRule.waitUntil(30_000L) { !model.isRecovering }
-        assertEquals(BatchFileStatus.SAVED, model.files.single().status)
-        assertEquals(row.savedOutputUri, model.files.single().savedOutputUri)
-        assertEquals(row.durationMs - 4_000L, model.files.single().outputExpectedDurationMs)
-        assertEquals("3", model.draftLeadingSeconds)
     }
 
     @Test
@@ -281,7 +260,7 @@ class BatchFastAdjustmentInstrumentedTest {
     private fun openReview() {
         composeRule.onNodeWithText("일괄 편집 및 저장 시작").performClick()
         composeRule.waitUntil(30_000L) {
-            composeRule.onAllNodes(androidx.compose.ui.test.hasText("저장 방식 선택"))
+            composeRule.onAllNodes(androidx.compose.ui.test.hasText("자동 저장 확인"))
                 .fetchSemanticsNodes().isNotEmpty()
         }
     }

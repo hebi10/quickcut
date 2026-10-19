@@ -198,7 +198,7 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
         context: Context,
         overview: BatchExportOverview,
         retryOnly: Boolean,
-        exportMode: ExportMode,
+        exportMode: ExportMode = ExportMode.ALLOW_REENCODE,
         adjustStarts: Boolean = false,
     ) {
         val review = pendingReview
@@ -335,11 +335,7 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
         draftMute = selected.muteAudio
     }
 
-    private fun parseMillis(text: String): Long? {
-        val number = text.replace(',', '.').toDoubleOrNull()
-        if (number == null || !number.isFinite() || number !in 0.0..7200.0) return null
-        return (number * 1_000.0).toLong()
-    }
+    private fun parseMillis(text: String): Long? = BatchTimeInput.parse(text)
 
     private fun currentDraft(): BatchTemplate? {
         // Disabled inputs must never block validation or alter the saved template.
@@ -362,12 +358,22 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
 
     fun previewTemplate(): BatchTemplate? = currentDraft()?.takeIf { it.checkValidity() == null }
 
+    fun draftError(): String? {
+        if (draftMode.usesLeading && parseMillis(draftLeadingSeconds) == null) {
+            return "앞부분 시간을 확인해 주세요."
+        }
+        if (draftMode.usesTrailing && parseMillis(draftTrailingSeconds) == null) {
+            return "뒷부분 시간을 확인해 주세요."
+        }
+        return currentDraft()?.checkValidity()
+    }
+
     fun saveTemplate(context: Context) {
         if (isRunning || isRecovering) return
         invalidateReview()
         val proposed = currentDraft()
         if (proposed == null) {
-            notification = "시간은 0~7,200초 사이의 숫자로 입력해 주세요."
+            notification = "시간은 분과 초로 나누어 최대 120분까지 입력해 주세요."
             return
         }
         proposed.checkValidity()?.let {

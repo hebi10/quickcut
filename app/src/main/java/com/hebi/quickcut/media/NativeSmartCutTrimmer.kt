@@ -9,6 +9,7 @@ import android.system.Os
 import android.system.OsConstants
 import android.util.Log
 import androidx.annotation.Keep
+import com.hebi.quickcut.editor.EditTimeline
 import com.hebi.quickcut.editor.VideoClip
 import java.io.File
 import kotlinx.coroutines.CancellationException
@@ -38,9 +39,18 @@ internal object NativeSmartCutTrimmer {
         clip: VideoClip,
         destination: File,
         onProgress: (Int?) -> Unit,
+    ): NativeSmartCutResult? = tryExport(context, EditTimeline(listOf(clip)), destination, onProgress)
+
+    suspend fun tryExport(
+        context: Context,
+        timeline: EditTimeline,
+        destination: File,
+        onProgress: (Int?) -> Unit,
     ): NativeSmartCutResult? = withContext(Dispatchers.IO) {
         val jobContext = currentCoroutineContext()
         jobContext.ensureActive()
+        val ranges = NativeSmartCutPlan.rangesUs(timeline) ?: return@withContext null
+        val clip = timeline.clips.first()
         if (!available) return@withContext null
         try {
             // Keep this handle alive until the blocking native call returns. Native
@@ -57,9 +67,9 @@ internal object NativeSmartCutTrimmer {
                 jobContext.ensureActive()
                 val callbacks = NativeSmartCutCallbacks(jobContext, onProgress)
                 val result = try {
-                    NativeSmartCutBridge.cut(
+                    NativeSmartCutBridge.cutRanges(
                         "/proc/self/fd/${descriptor.fd}", destination.absolutePath,
-                        clip.startMs * 1_000L, clip.endMs * 1_000L, clip.muted, callbacks,
+                        ranges, clip.muted, callbacks,
                     )
                 } finally {
                     callbacks.close()
@@ -86,6 +96,15 @@ internal object NativeSmartCutTrimmer {
 
 @Keep
 internal object NativeSmartCutBridge {
+    @JvmStatic
+    external fun cutRanges(
+        inputPath: String,
+        outputPath: String,
+        rangesUs: LongArray,
+        muted: Boolean,
+        callbacks: NativeSmartCutCallbacks,
+    ): LongArray
+
     @JvmStatic
     external fun cut(
         inputPath: String,

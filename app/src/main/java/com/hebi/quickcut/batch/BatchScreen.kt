@@ -58,6 +58,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.KeyboardType
@@ -87,7 +89,6 @@ fun BatchScreen(
     val activity = context as? Activity
     val scope = rememberCoroutineScope()
     var pendingOverview by remember { mutableStateOf<BatchExportOverview?>(null) }
-    var showAdjustmentConfirmation by remember { mutableStateOf(false) }
     var pendingRetry by remember { mutableStateOf(false) }
     var inspecting by remember { mutableStateOf(false) }
     var inspectedCount by remember { mutableIntStateOf(0) }
@@ -109,7 +110,6 @@ fun BatchScreen(
                     } else {
                         pendingOverview = checked
                         pendingRetry = retry
-                        showAdjustmentConfirmation = false
                     }
                 } catch (error: Exception) {
                     model.notifyUser(
@@ -208,132 +208,42 @@ fun BatchScreen(
         )
     }
 
-    pendingOverview?.takeUnless { showAdjustmentConfirmation }?.let { overview ->
+    pendingOverview?.let { overview ->
         AlertDialog(
             onDismissRequest = { pendingOverview = null },
-            title = { Text("저장 방식 선택") },
+            title = { Text("자동 저장 확인") },
             text = {
                 Column(
                     modifier = Modifier.heightIn(max = 360.dp)
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    Text("요청한 위치 그대로: 고속 저장 " + overview.fast + "개 · " +
-                        "재인코딩 가능성 " + overview.needsEncoding + "개 · " +
-                        "건너뜀 " + overview.skipped + "개")
-                    if (overview.adjustments.isNotEmpty()) {
-                        Text("위치 조정 후 고속 저장 가능 " + overview.adjustedFast + "개 · " +
-                            "건너뜀 " + overview.adjustedSkips + "개", fontWeight = FontWeight.SemiBold)
-                        Text("시작 위치를 뒤로 옮길 수 있는 영상 " + overview.adjustments.size +
-                            "개가 있습니다. 파일별 추가 삭제 시간을 확인한 뒤 선택할 수 있습니다.",
-                            color = secondary, style = MaterialTheme.typography.bodySmall)
-                    }
+                    Text("저장할 영상 ${overview.ready}개", fontWeight = FontWeight.SemiBold)
+                    model.previewTemplate()?.let { Text(BatchTimeInput.summary(it)) }
                     Text(
-                        "정확한 위치로 자동 저장은 요청한 구간을 유지합니다. 원본 데이터 복사와 " +
-                            "일부 구간 최적화를 우선 시도하고, 필요하면 전체 재인코딩을 허용합니다. " +
-                            "처리 시간은 영상과 기기에 따라 달라지며 완료 후 실제 처리 방식을 표시합니다.",
+                        "설정한 자르기 위치를 유지하며 가능한 가장 빠른 방식으로 저장합니다. " +
+                            "고속 처리가 어려운 영상도 자동으로 이어서 저장합니다. " +
+                            "영상과 기기에 따라 시간이 더 걸릴 수 있습니다.",
                         color = secondary, style = MaterialTheme.typography.bodySmall,
                     )
-                    if (overview.encodingFiles.isNotEmpty()) {
-                        Text("재인코딩이 필요할 수 있는 파일",
-                            fontWeight = FontWeight.SemiBold)
-                        overview.encodingFiles.take(5).forEach {
-                            Text("· " + it, color = secondary,
-                                style = MaterialTheme.typography.bodySmall)
-                        }
-                        if (overview.encodingFiles.size > 5) {
-                            Text("그 외 " + (overview.encodingFiles.size - 5) + "개",
-                                color = secondary)
-                        }
-                    }
                     if (overview.skippedFiles.isNotEmpty()) {
-                        Text("저장 대상에서 제외되는 파일",
+                        Text("저장할 수 없는 영상 ${overview.skipped}개",
                             fontWeight = FontWeight.SemiBold)
-                        overview.skippedFiles.take(3).forEach {
+                        overview.skippedFiles.forEach {
                             Text("· " + it, color = secondary,
                                 style = MaterialTheme.typography.bodySmall)
                         }
-                    }
-                }
-            },
-            confirmButton = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(
-                        onClick = {
-                            model.startReviewed(context, overview, pendingRetry, ExportMode.ALLOW_REENCODE)
-                            pendingOverview = null
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(4.dp),
-                    ) { Text("정확한 위치로 자동 저장") }
-                    if (overview.adjustments.isNotEmpty()) {
-                        Button(
-                            onClick = { showAdjustmentConfirmation = true },
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(4.dp),
-                        ) { Text("위치 조정 후 고속 저장") }
-                    }
-                    OutlinedButton(
-                        onClick = {
-                            model.startReviewed(context, overview, pendingRetry, ExportMode.FAST_ONLY)
-                            pendingOverview = null
-                        },
-                        enabled = overview.fast > 0,
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(4.dp),
-                    ) { Text("고속 저장 가능한 영상만") }
-                    TextButton(
-                        onClick = { pendingOverview = null },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) { Text("취소") }
-                }
-            },
-            containerColor = Color(0xFF202126),
-        )
-    }
-    pendingOverview?.takeIf { showAdjustmentConfirmation }?.let { overview ->
-        AlertDialog(
-            onDismissRequest = { showAdjustmentConfirmation = false },
-            title = { Text("자르기 위치 조정 확인") },
-            text = {
-                Column(
-                    modifier = Modifier.heightIn(max = 360.dp)
-                        .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    Text("고속 저장 총 " + overview.adjustedFast + "개 = 기존 고속 " +
-                        overview.fast + "개 + 위치 조정 " + overview.adjustments.size + "개")
-                    Text("건너뜀 " + overview.adjustedSkips + "개")
-                    Text("아래 영상은 시작 위치를 다음 키프레임으로 옮겨 앞부분을 더 삭제합니다. " +
-                        "끝 위치와 템플릿은 유지하며 재인코딩은 허용하지 않습니다.",
-                        color = secondary, style = MaterialTheme.typography.bodySmall)
-                    overview.adjustments.forEach { adjustment ->
-                        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                            Text(adjustment.displayName, fontWeight = FontWeight.SemiBold)
-                            Text(adjustmentSeconds(adjustment.requestedStartMs) + "초 → " +
-                                adjustmentSeconds(adjustment.suggestedStartMs) + "초 · 추가 " +
-                                adjustmentSeconds(adjustment.extraRemovedMs) + "초 삭제",
-                                color = secondary, style = MaterialTheme.typography.bodySmall)
-                        }
-                    }
-                    val excluded = overview.skippedFiles + overview.unadjustableFiles
-                    if (excluded.isNotEmpty()) {
-                        Text("고속 저장에서 건너뛸 파일", fontWeight = FontWeight.SemiBold)
-                        excluded.forEach { Text(it, color = secondary,
-                            style = MaterialTheme.typography.bodySmall) }
                     }
                 }
             },
             confirmButton = {
                 Button(onClick = {
-                    model.startReviewed(context, overview, pendingRetry, ExportMode.FAST_ONLY,
-                        adjustStarts = true)
+                    model.startReviewed(context, overview, pendingRetry, ExportMode.ALLOW_REENCODE)
                     pendingOverview = null
-                    showAdjustmentConfirmation = false
-                }) { Text("조정에 동의하고 고속 저장") }
+                }, shape = RoundedCornerShape(4.dp)) { Text("전체 자동 저장") }
             },
             dismissButton = {
-                TextButton(onClick = { showAdjustmentConfirmation = false }) { Text("돌아가기") }
+                TextButton(onClick = { pendingOverview = null }) { Text("설정으로 돌아가기") }
             },
             containerColor = Color(0xFF202126),
         )
@@ -341,10 +251,10 @@ fun BatchScreen(
     if (inspecting) {
         AlertDialog(
             onDismissRequest = {},
-            title = { Text("저장 방식 분석 중") },
+            title = { Text("저장할 영상 확인 중") },
             text = {
                 Text(
-                    "영상별 코덱과 자르기 위치를 확인하고 있습니다." +
+                    "영상과 자르기 설정을 확인하고 있습니다." +
                         if (inspectedTotal > 0) " ($inspectedCount / $inspectedTotal)" else ""
                 )
             },
@@ -444,8 +354,8 @@ private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
         Text("편집 방식", color = secondary, fontSize = 13.sp)
         listOf(
             BatchClipMode.REMOVE_EDGES to "앞뒤 구간 삭제",
-            BatchClipMode.KEEP_FIRST to "처음 N초만 추출",
-            BatchClipMode.KEEP_LAST to "마지막 N초만 추출",
+            BatchClipMode.KEEP_FIRST to "처음 구간만 남기기",
+            BatchClipMode.KEEP_LAST to "마지막 구간만 남기기",
             BatchClipMode.JOIN_EDGES to "처음 + 마지막 구간 연결",
         ).forEach { (mode, title) ->
             ChoiceOption(title, model.draftMode == mode, !disabled) {
@@ -454,26 +364,30 @@ private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
         }
         val useLeading = model.draftMode.usesLeading
         val useTrailing = model.draftMode.usesTrailing
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            OutlinedTextField(
-                value = if (useLeading) model.draftLeadingSeconds else "",
-                onValueChange = { model.draftLeadingSeconds = it.take(10) },
-                enabled = !disabled && useLeading,
-                label = { Text(if (useLeading) "앞부분 (초)" else "앞부분 (미사용)") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                modifier = Modifier.weight(1f).testTag("batch-leading-seconds"),
-                singleLine = true,
-            )
-            OutlinedTextField(
-                value = if (useTrailing) model.draftTrailingSeconds else "",
-                onValueChange = { model.draftTrailingSeconds = it.take(10) },
-                enabled = !disabled && useTrailing,
-                label = { Text(if (useTrailing) "뒷부분 (초)" else "뒷부분 (미사용)") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                modifier = Modifier.weight(1f).testTag("batch-trailing-seconds"),
-                singleLine = true,
-            )
-        }
+        val removing = model.draftMode == BatchClipMode.REMOVE_EDGES
+        BatchDurationField(
+            title = if (removing) "앞에서 삭제할 시간" else "처음부터 남길 시간",
+            value = model.draftLeadingSeconds,
+            onValueChange = { model.draftLeadingSeconds = it },
+            enabled = !disabled && useLeading,
+            used = useLeading,
+            tag = "batch-leading",
+        )
+        BatchDurationField(
+            title = if (removing) "뒤에서 삭제할 시간" else "끝에서 남길 시간",
+            value = model.draftTrailingSeconds,
+            onValueChange = { model.draftTrailingSeconds = it },
+            enabled = !disabled && useTrailing,
+            used = useTrailing,
+            tag = "batch-trailing",
+        )
+        val template = model.previewTemplate()
+        Text(
+            template?.let(BatchTimeInput::summary) ?: model.draftError().orEmpty(),
+            color = if (template != null) onSurface else MaterialTheme.colorScheme.error,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.testTag("batch-edit-summary"),
+        )
         Row(
             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
                 .clickable(enabled = !disabled) { model.draftMute = !model.draftMute },
@@ -582,6 +496,58 @@ private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
 }
 
 @Composable
+private fun BatchDurationField(
+    title: String,
+    value: String,
+    onValueChange: (String) -> Unit,
+    enabled: Boolean,
+    used: Boolean,
+    tag: String,
+) {
+    val parts = BatchTimeInput.parts(value)
+    val error = if (used) BatchTimeInput.error(parts) else null
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(title, color = if (used) onSurface else secondary,
+            fontWeight = FontWeight.Medium)
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            OutlinedTextField(
+                value = if (used) parts.minutes else "",
+                onValueChange = { onValueChange(it.take(16) + ":" + parts.seconds) },
+                enabled = enabled,
+                label = { Text("분") },
+                placeholder = { Text("0") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                isError = error != null,
+                modifier = Modifier.weight(1f).testTag("$tag-minutes")
+                    .semantics { contentDescription = "$title, 분" },
+                singleLine = true,
+            )
+            OutlinedTextField(
+                value = if (used) parts.seconds else "",
+                onValueChange = { onValueChange(parts.minutes + ":" + it.take(16)) },
+                enabled = enabled,
+                label = { Text("초") },
+                placeholder = { Text("0") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                isError = error != null,
+                modifier = Modifier.weight(1f).testTag("$tag-seconds")
+                    .semantics { contentDescription = "$title, 초" },
+                singleLine = true,
+            )
+        }
+        Text(
+            when {
+                !used -> "이 편집 방식에서는 사용하지 않습니다."
+                error != null -> error
+                else -> "예: 1분 5.5초 · 소수점 셋째 자리까지 입력 가능"
+            },
+            color = if (error != null) MaterialTheme.colorScheme.error else secondary,
+            style = MaterialTheme.typography.bodySmall,
+        )
+    }
+}
+
+@Composable
 private fun ChoiceOption(
     label: String,
     selected: Boolean,
@@ -611,7 +577,8 @@ private fun BatchActions(
             BatchRunState.SETUP -> {
                 Button(
                     onClick = { requestExport(false) },
-                    enabled = model.files.isNotEmpty() && !model.isImporting && !model.isRecovering && !inspecting,
+                    enabled = model.files.isNotEmpty() && model.previewTemplate() != null &&
+                        !model.isImporting && !model.isRecovering && !inspecting,
                     modifier = Modifier.fillMaxWidth().height(52.dp),
                     shape = RoundedCornerShape(4.dp),
                 ) { Text("일괄 편집 및 저장 시작") }
@@ -638,7 +605,8 @@ private fun BatchActions(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(
                         onClick = { requestExport(true) },
-                        enabled = !model.isRecovering && (model.failures > 0 || model.skips > 0),
+                        enabled = !model.isRecovering && !inspecting && model.previewTemplate() != null &&
+                            (model.failures > 0 || model.skips > 0),
                         shape = RoundedCornerShape(4.dp),
                     ) { Text("실패 작업 재시도") }
                     TextButton(enabled = !model.isRecovering, onClick = model::resetBatch) { Text("새 작업") }
@@ -651,7 +619,7 @@ private fun BatchActions(
 @Composable
 private fun BatchFileHeader(model: BatchViewModel) {
     Text(
-        "선택 영상 " + model.files.size + "개",
+        "선택 영상 " + model.files.size + "개 · 원본 길이 → 저장 후 길이",
         color = onSurface, fontWeight = FontWeight.SemiBold,
         modifier = Modifier.padding(vertical = 8.dp),
     )
@@ -729,9 +697,6 @@ private fun BatchFileRow(
         }
     }
 }
-
-private fun adjustmentSeconds(ms: Long): String =
-    java.math.BigDecimal.valueOf(ms, 3).stripTrailingZeros().toPlainString()
 
 @Composable
 private fun BatchProgress(model: BatchViewModel) {

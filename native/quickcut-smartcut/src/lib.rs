@@ -102,8 +102,6 @@ fn check_plan(plan: &RangePlan, start_us: i64, end_us: i64) -> Result<()> {
     let last = plan.segments.last().unwrap();
     ensure!(micros(first.start) == start_us && micros(last.end) == end_us,
         "segments would move the requested boundary");
-    ensure!(plan.segments.iter().any(|s| s.kind == SegmentKind::Copy), "no complete GOP to copy");
-    ensure!(plan.segments.iter().any(|s| s.kind == SegmentKind::Reencode), "native remux already handles complete copies");
     for segment in &plan.segments {
         ensure!(segment.start.is_finite() && segment.end.is_finite() && segment.end > segment.start,
             "invalid segment bounds");
@@ -141,7 +139,7 @@ fn check_source(source: &Source, end_us: i64) -> Result<()> {
 
 /// Inspect actual access-unit payloads, not the container keyframe flag. This
 /// also counts the pictures that must survive, catching silent packet loss.
-fn inspect_packets(source: &Source, plan: &RangePlan, callbacks: &dyn Callbacks) -> Result<u64> {
+fn inspect_packets(source: &Source, plans: &[RangePlan], callbacks: &dyn Callbacks) -> Result<u64> {
     let mut input = smartcut_core::input::open_local(&source.path)?;
     ensure!(input.format().name().split(',').any(|n| n == "mp4"), "input is not MP4");
     ensure!(input.nb_streams() as usize == 1 + source.audios.len(), "additional streams");
@@ -160,7 +158,7 @@ fn inspect_packets(source: &Source, plan: &RangePlan, callbacks: &dyn Callbacks)
         smartcut_core::bitstream::NalFraming::Length(width) => width,
         _ => anyhow::bail!("MP4 AVC length prefixes required"),
     };
-    let mut needed: Vec<i64> = plan.segments.iter().filter(|s| s.kind == SegmentKind::Copy)
+    let mut needed: Vec<i64> = plans.iter().flat_map(|p| &p.segments).filter(|s| s.kind == SegmentKind::Copy)
         .flat_map(|s| std::iter::once(micros(s.start)).chain(s.copy_until.map(micros))).collect();
     needed.sort_unstable(); needed.dedup();
     let mut count = 0u64;
@@ -187,7 +185,9 @@ fn inspect_packets(source: &Source, plan: &RangePlan, callbacks: &dyn Callbacks)
         let at = pts as f64 * source.video.time_base - source.start_time;
         clock.add(at)?;
         let at_us = micros(at);
-        if at_us >= micros(plan.t_in) && at_us < micros(plan.t_out) { count += 1; }
+        // Count every selected occurrence, including overlapping/repeated ranges.
+        // Validate the source clock once, independently of the output ordering.
+        count += plans.iter().filter(|p| at_us >= micros(p.t_in) && at_us < micros(p.t_out)).count() as u64;
         if needed.contains(&at_us) {
             ensure!(nals.iter().any(|nal| nal[0] & 31 == 5), "copy boundary is not an IDR picture");
             needed.retain(|&t| t != at_us);
@@ -201,8 +201,16 @@ fn inspect_packets(source: &Source, plan: &RangePlan, callbacks: &dyn Callbacks)
 
 pub fn cut(input: &str, output: &str, start_us: i64, end_us: i64, muted: bool,
     callbacks: Arc<dyn Callbacks>) -> Result<Report> {
+    cut_ranges(input, output, &[(start_us, end_us)], muted, callbacks)
+}
+
+/// Assemble exact ranges from one source in the caller's order. The source is
+/// indexed once; every encoded boundary gets its own AVC parameter-set ID.
+pub fn cut_ranges(input: &str, output: &str, ranges: &[(i64, i64)], muted: bool,
+    callbacks: Arc<dyn Callbacks>) -> Result<Report> {
     ensure!(Path::new(input).is_absolute() && Path::new(output).is_absolute(), "local absolute paths required");
-    ensure!(start_us >= 0 && end_us > start_us, "invalid trim range");
+    ensure!(!ranges.is_empty() && ranges.len() <= 256, "unsupported range count");
+    ensure!(ranges.iter().all(|&(start, end)| start >= 0 && end > start), "invalid trim range");
     ensure!(!Path::new(output).exists() || std::fs::metadata(output)?.len() == 0, "output must be a fresh staging file");
     ensure!(!callbacks.is_cancelled(), "cancelled");
     let mut staging = StagingFile { path: output, complete: false };
@@ -213,22 +221,34 @@ pub fn cut(input: &str, output: &str, start_us: i64, end_us: i64, muted: bool,
         let stopped = || callbacks.is_cancelled();
         let progress = |value: f64| callbacks.progress((value * 15.0).clamp(0.0, 15.0) as i32);
         let source = smartcut_core::scan_stoppable(input, &smartcut_core::index::PacketScan, Some(&progress), Some(&stopped))?;
-        check_source(&source, end_us)?;
+        // Upstream retains an audio decoder and its last decoded source PTS
+        // across ranges. Replaying earlier samples would silently deduplicate
+        // them. Decline before writing; muted/video-only reorderings are safe.
+        ensure!(muted || source.audios.is_empty() || ranges.windows(2).all(|pair| pair[1].0 >= pair[0].1),
+            "reordered or overlapping audio requires the exact transcoder");
+        for &(_, end) in ranges { check_source(&source, end)?; }
         let options = PlanOptions { allow_open_gop: false, ..Default::default() };
         // plan_on adjusts coarse-frame clocks. A single plain MP4 needs no join
         // handling, so use plan_range and verify its coordinates unchanged.
-        let plan = plan_range(&source.video, source.duration, &source.points,
-            start_us as f64 / 1_000_000.0, end_us as f64 / 1_000_000.0, &options);
-        check_plan(&plan, start_us, end_us)?;
-        let expected = inspect_packets(&source, &plan, callbacks.as_ref())?;
-        let encoded_segments = plan.segments.iter().filter(|s| s.kind == SegmentKind::Reencode).count();
+        let plans = ranges.iter().map(|&(start, end)| {
+            let plan = plan_range(&source.video, source.duration, &source.points,
+                start as f64 / 1_000_000.0, end as f64 / 1_000_000.0, &options);
+            check_plan(&plan, start, end)?;
+            Ok(plan)
+        }).collect::<Result<Vec<_>>>()?;
+        ensure!(plans.iter().flat_map(|p| &p.segments).any(|s| s.kind == SegmentKind::Copy),
+            "no complete GOP to copy");
+        let encoded_segments = plans.iter().flat_map(|p| &p.segments)
+            .filter(|s| s.kind == SegmentKind::Reencode).count();
+        ensure!(encoded_segments > 0, "complete copies use the remux fallback");
+        let expected = inspect_packets(&source, &plans, callbacks.as_ref())?;
         let (parameter_set_ids, reference_frames) = avc1::unused_ids(input, encoded_segments)?;
         ensure!(!callbacks.is_cancelled(), "cancelled");
         let intermediate_path = format!("{output}.smartcut.mp4");
         ensure!(!Path::new(&intermediate_path).exists(), "intermediate staging file already exists");
         let _intermediate = StagingFile { path: &intermediate_path, complete: false };
         let report_callback = Arc::clone(&callbacks);
-        let stats = smartcut_core::cut::cut_with_stats(&source, &[plan], &intermediate_path,
+        let stats = smartcut_core::cut::cut_with_stats(&source, &plans, &intermediate_path,
             &smartcut_core::cut::CutOptions {
                 strict: true,
                 h264_parameter_set_ids: parameter_set_ids,

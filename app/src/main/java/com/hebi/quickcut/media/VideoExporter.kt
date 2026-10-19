@@ -120,9 +120,9 @@ class VideoExporter(private val context: Context) {
         // withContext can lose the cleanup handle while dispatching back to Main.
         val temporary = File(context.cacheDir, "quickcut_" + UUID.randomUUID().toString() + ".mp4")
         try {
-            val nativeResult = if (saveDateMode == SaveDateMode.CURRENT && timeline.clips.size == 1) {
+            val nativeResult = if (saveDateMode == SaveDateMode.CURRENT) {
                 try {
-                    NativeSmartCutTrimmer.tryExport(context, timeline.clips.single(), temporary, onProgress)
+                    NativeSmartCutTrimmer.tryExport(context, timeline, temporary, onProgress)
                         ?.also {
                             withContext(Dispatchers.IO) {
                                 MediaReader.validateExport(temporary, expectedDurationMs, expectAudio)

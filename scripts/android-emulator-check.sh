@@ -110,6 +110,24 @@ ffmpeg -hide_banner -loglevel error -y \
   -x265-params pools=1:frame-threads=1:keyint=60:min-keyint=60:scenecut=0:open-gop=0:bframes=2:log-level=error \
   -tag:v hvc1 -c:a aac -b:a 64k -shortest \
   app/src/androidTest/assets/quickcut_hevc.mp4
+python3 - <<'PYHEVC'
+import json, pathlib, subprocess
+source = pathlib.Path('app/src/androidTest/assets/quickcut_hevc.mp4')
+data = bytearray(source.read_bytes())
+packet = json.loads(subprocess.check_output(['ffprobe', '-v', 'error', '-select_streams', 'v:0',
+    '-show_packets', '-show_entries', 'packet=pos,size', '-of', 'json', str(source)]))['packets'][0]
+at = int(packet['pos']); end = at + int(packet['size']); patched = False
+while at < end:
+    length = int.from_bytes(data[at:at + 4], 'big'); at += 4
+    assert length >= 2 and at + length <= end
+    if (data[at] >> 1) & 63 in (19, 20):
+        assert length >= 3 and data[at + 2] & 0x80
+        data[at + 2] |= 0x40
+        patched = True
+    at += length
+assert patched, 'HEVC fixture needs a first IDR'
+source.with_name('quickcut_hevc_no_output.mp4').write_bytes(data)
+PYHEVC
 
 # Leading B-frames after an open-GOP sync sample must not be silently discarded.
 ffmpeg -hide_banner -loglevel error -y \

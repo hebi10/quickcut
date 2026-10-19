@@ -134,6 +134,20 @@ class NativeSmartCutInstrumentedTest {
     }
 
     @Test
+    fun hevcDiscardPriorPicturesAtAJoinUsesCompleteExactFallback() = runBlocking {
+        withSource("quickcut_hevc_no_output.mp4") { context, source, original ->
+            assertDecodedPictures(context, source, 240)
+            val timeline = EditTimeline(listOf(original.copy(startMs = 6_000L, endMs = 8_000L),
+                original.copy(id = 2L, startMs = 0L, endMs = 3_000L)))
+            withExport(context, timeline) { saved, report ->
+                assertEquals(ExportMethod.VIDEO_REENCODE, report.method)
+                assertDecodedPictures(context, saved, 150)
+                assertDurationAndAudio(context, saved, 5_000L)
+            }
+        }
+    }
+
+    @Test
     fun copyableJoinedRangesEncodeOnlyAudio() = runBlocking {
         withSource("quickcut_bframes.mp4") { context, source, original ->
             val timeline = EditTimeline(listOf(original.copy(startMs = 0L, endMs = 2_000L),

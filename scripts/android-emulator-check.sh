@@ -5,9 +5,13 @@ on_failure() {
   local status="$?"
   if [ "$status" -ne 0 ]; then
     echo "::error::QuickCut emulator smoke test failed (exit $status)"
-    adb logcat -d -s AndroidRuntime:E | tail -100 || true
-    if ! adb pull /sdcard/Android/data/com.hebi.quickcut/files/native-diagnostics quickcut-native-diagnostics; then
-      echo "::warning::Native failure diagnostics were unavailable; the original failure is unchanged."
+    if [ "$(timeout --kill-after=2s 5s adb get-state 2>/dev/null)" = device ]; then
+      timeout --kill-after=2s 10s adb logcat -d -s AndroidRuntime:E | tail -100 || true
+      if ! timeout --kill-after=2s 10s adb pull /sdcard/Android/data/com.hebi.quickcut/files/native-diagnostics quickcut-native-diagnostics; then
+        echo "::warning::Native failure diagnostics were unavailable; the original failure is unchanged."
+      fi
+    else
+      echo "::warning::Emulator is unavailable; skipping device diagnostics and preserving the original failure."
     fi
   fi
   return "$status"

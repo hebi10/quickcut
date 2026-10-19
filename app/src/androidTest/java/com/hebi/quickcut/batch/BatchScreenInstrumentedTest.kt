@@ -7,6 +7,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTextReplacement
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.hebi.quickcut.MainActivity
 import org.junit.Rule
@@ -17,6 +18,26 @@ import org.junit.runner.RunWith
 class BatchScreenInstrumentedTest {
     @get:Rule
     val composeRule = createAndroidComposeRule<MainActivity>()
+
+    @Test
+    fun minuteSecondInputExplainsTheRemovedDurationAndRejectsInvalidSeconds() {
+        composeRule.onNodeWithText("일괄 편집 · 여러 영상").performClick()
+        composeRule.onNodeWithText("앞뒤 구간 삭제").performScrollTo().performClick()
+        composeRule.onNodeWithTag("batch-leading-minutes").performScrollTo()
+            .performTextReplacement("1")
+        composeRule.onNodeWithTag("batch-leading-seconds").performScrollTo()
+            .performTextReplacement("5.5")
+        composeRule.onNodeWithTag("batch-trailing-minutes").performScrollTo()
+            .performTextReplacement("0")
+        composeRule.onNodeWithTag("batch-trailing-seconds").performScrollTo()
+            .performTextReplacement("3")
+        composeRule.onNodeWithText("각 영상의 앞 1분 5.5초와 뒤 3초를 삭제합니다.")
+            .performScrollTo().assertExists()
+        composeRule.onNodeWithTag("batch-leading-seconds").performScrollTo()
+            .performTextReplacement("60")
+        composeRule.onNodeWithText("초는 0~59.999로 입력해 주세요.")
+            .performScrollTo().assertExists()
+    }
 
     @Test
     fun launchBatchEditorAndShowTimestampChoices() {

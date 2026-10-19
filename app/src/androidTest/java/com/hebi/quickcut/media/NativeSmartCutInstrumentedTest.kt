@@ -36,6 +36,33 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class NativeSmartCutInstrumentedTest {
     @Test
+    fun joinedRangesKeepBothCutsAndCopyGopsAcrossTheJoin() = runBlocking {
+        withSource("quickcut_bframes.mp4") { context, source, original ->
+            val timeline = EditTimeline(listOf(
+                original.copy(startMs = 0L, endMs = 3_000L),
+                original.copy(id = 2L, startMs = 4_500L, endMs = 8_000L),
+            ))
+            withExport(context, timeline) { saved, report ->
+                assertEquals("Joined ranges must use partial video processing",
+                    ExportMethod.PARTIAL_REENCODE, report.method)
+                assertEquals(null, report.optimizationResult)
+                assertDurationAndAudio(context, saved, 6_500L)
+                assertMiddleCopied(context, source, saved, 0L, 2_000_000L,
+                    requestedStartUs = 0L, timestampToleranceUs = 1_000L)
+                assertMiddleCopied(context, source, saved, 6_000_000L, 8_000_000L,
+                    requestedStartUs = 1_500_000L, timestampToleranceUs = 1_000L)
+                listOf(0L to 0L, 2_966_667L to 2_966_667L,
+                    3_000_000L to 4_500_000L, 4_500_000L to 6_000_000L,
+                    6_466_667L to 7_966_667L).forEach { (outputUs, sourceUs) ->
+                    assertTrue("Pictures on both sides of the removed middle must decode",
+                        meanDifference(frame(context, source, sourceUs),
+                            frame(context, saved, outputUs)) < 10.0)
+                }
+            }
+        }
+    }
+
+    @Test
     fun externalAvcKeepsRedBeforeTheKeyframeAndCopiesTheCompleteMiddleGop() = runBlocking {
         withSource("quickcut_exact_boundary.mp4") { context, source, original ->
             val requested = original.copy(startMs = 1_950L, endMs = 5_500L)

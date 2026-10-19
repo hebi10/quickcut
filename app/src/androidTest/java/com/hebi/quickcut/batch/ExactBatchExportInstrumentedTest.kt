@@ -117,11 +117,13 @@ class ExactBatchExportInstrumentedTest {
         showScreen()
         composeRule.onNodeWithText("일괄 편집 및 저장 시작").performClick()
         composeRule.waitUntil(30_000L) {
-            composeRule.onAllNodes(hasText("저장 방식 선택")).fetchSemanticsNodes().isNotEmpty()
+            composeRule.onAllNodes(hasText("자동 저장 확인")).fetchSemanticsNodes().isNotEmpty()
         }
         // This source has sync frames at 2s and 4s. Exact automatic save must
         // preserve the requested 3s boundary instead of choosing the 4s shortcut.
-        composeRule.onNodeWithText("정확한 위치로 자동 저장").assertIsEnabled().performClick()
+        composeRule.onNodeWithText("고속 저장 가능한 영상만").assertDoesNotExist()
+        composeRule.onNodeWithText("위치 조정 후 고속 저장").assertDoesNotExist()
+        composeRule.onNodeWithText("전체 자동 저장").assertIsEnabled().performClick()
         composeRule.waitUntil(120_000L) { model.runState == BatchRunState.FINISHED }
 
         val row = model.files.single()

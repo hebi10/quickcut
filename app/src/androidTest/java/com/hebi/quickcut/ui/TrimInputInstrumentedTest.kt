@@ -402,7 +402,12 @@ class TrimInputInstrumentedTest {
                 ExportMode.FAST_ONLY)
         }
         composeRule.waitUntil(25_000L) { model.needsReencodeConsent }
-        composeRule.onNodeWithText("정확한 위치로 자동 저장").performClick()
+        composeRule.waitUntil(25_000L) {
+            composeRule.onAllNodes(hasText("정확한 위치로 자동 저장"))
+                .fetchSemanticsNodes().size == 1
+        }
+        composeRule.onNodeWithText("정확한 위치로 자동 저장")
+            .assertIsDisplayed().assertIsEnabled().performClick()
         composeRule.runOnIdle {
             assertEquals("Retry must preserve the original handling approval choice",
                 OriginalAction.TRASH, model.originalAction)

@@ -90,6 +90,20 @@ ffmpeg -hide_banner -loglevel error -y \
   -c:a aac -b:a 64k -shortest \
   app/src/androidTest/assets/quickcut_bframes.mp4
 
+# Preserve a phone-style display transform without rotating encoded pixels.
+ffmpeg -hide_banner -loglevel error -y \
+  -i app/src/androidTest/assets/quickcut_bframes.mp4 -c copy -metadata:s:v:0 rotate=90 \
+  app/src/androidTest/assets/quickcut_rotated.mp4
+
+# SDR HEVC with closed GOPs and reordered frames, independently encoded by CLI.
+ffmpeg -hide_banner -loglevel error -y \
+  -f lavfi -i testsrc2=size=320x240:rate=30 \
+  -f lavfi -i sine=frequency=660:sample_rate=44100 \
+  -t 8 -c:v libx265 -preset fast -pix_fmt yuv420p \
+  -x265-params pools=1:frame-threads=1:keyint=60:min-keyint=60:scenecut=0:open-gop=0:bframes=2:log-level=error \
+  -tag:v hvc1 -c:a aac -b:a 64k -shortest \
+  app/src/androidTest/assets/quickcut_hevc.mp4
+
 # Leading B-frames after an open-GOP sync sample must not be silently discarded.
 ffmpeg -hide_banner -loglevel error -y \
   -f lavfi -i testsrc2=size=320x240:rate=30 \

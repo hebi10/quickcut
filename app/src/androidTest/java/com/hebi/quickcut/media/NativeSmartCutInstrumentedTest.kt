@@ -36,19 +36,80 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class NativeSmartCutInstrumentedTest {
     @Test
-    fun reorderedAudibleRangesFallBackAndKeepAudioAfterTheJoin() = runBlocking {
+    fun reorderedAudibleRangesUsePartialProcessingAndKeepAudioAfterTheJoin() = runBlocking {
         withSource("quickcut_bframes.mp4") { context, source, original ->
             val timeline = EditTimeline(listOf(
                 original.copy(startMs = 4_500L, endMs = 8_000L),
                 original.copy(id = 2L, startMs = 0L, endMs = 3_000L),
             ))
             withExport(context, timeline) { saved, report ->
-                assertEquals(ExportMethod.VIDEO_REENCODE, report.method)
+                assertEquals(ExportMethod.PARTIAL_REENCODE, report.method)
                 assertDurationAndAudio(context, saved, 6_500L)
                 assertTrue(meanDifference(frame(context, source, 4_500_000L),
                     frame(context, saved, 0L)) < 10.0)
                 assertTrue(meanDifference(frame(context, source, 0L),
                     frame(context, saved, 3_500_000L)) < 10.0)
+            }
+        }
+    }
+
+    @Test
+    fun originalDateDoesNotForceFullVideoEncoding() = runBlocking {
+        withSource("quickcut_bframes.mp4") { context, source, original ->
+            val date = OriginalTimestamp(1_609_459_200_000L, "fixture")
+            withExport(context, EditTimeline(listOf(original.copy(startMs = 3_000L, endMs = 7_500L))),
+                originalDate = date) { saved, report ->
+                assertEquals(ExportMethod.PARTIAL_REENCODE, report.method)
+                MediaReader.validateExport(context, saved, 4_500L, true, date.epochMs)
+                assertMiddleCopied(context, source, saved, 4_000_000L, 6_000_000L, 3_000_000L, 1_000L)
+                assertDurationAndAudio(context, saved, 4_500L)
+            }
+        }
+    }
+
+    @Test
+    fun rotatedSourceKeepsOrientationWithoutFullVideoEncoding() = runBlocking {
+        withSource("quickcut_rotated.mp4") { context, source, original ->
+            fun rotation(uri: Uri): String? = MediaMetadataRetriever().let { reader ->
+                try { reader.setDataSource(context, uri); reader.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION) }
+                finally { reader.release() }
+            }
+            assertEquals("90", rotation(source))
+            withExport(context, EditTimeline(listOf(original.copy(startMs = 3_000L, endMs = 7_500L)))) { saved, report ->
+                assertEquals(ExportMethod.PARTIAL_REENCODE, report.method)
+                assertEquals(rotation(source), rotation(saved))
+                assertMiddleCopied(context, source, saved, 4_000_000L, 6_000_000L, 3_000_000L, 1_000L)
+                assertDurationAndAudio(context, saved, 4_500L)
+            }
+        }
+    }
+
+    @Test
+    fun hevcBFramesKeepExactCutsAndCopyTheMiddle() = runBlocking {
+        withSource("quickcut_hevc.mp4") { context, source, original ->
+            withExport(context, EditTimeline(listOf(original.copy(startMs = 3_000L, endMs = 7_500L)))) { saved, report ->
+                assertEquals(ExportMethod.PARTIAL_REENCODE, report.method)
+                assertEquals(null, report.optimizationResult)
+                assertMiddleCopied(context, source, saved, 4_000_000L, 6_000_000L, 3_000_000L, 1_000L)
+                for (time in listOf(0L, 1_000_000L, 2_966_667L, 3_000_000L, 4_466_667L)) {
+                    assertTrue(meanDifference(frame(context, source, time + 3_000_000L), frame(context, saved, time)) < 12.0)
+                }
+                assertDurationAndAudio(context, saved, 4_500L)
+            }
+        }
+    }
+
+    @Test
+    fun copyableJoinedRangesEncodeOnlyAudio() = runBlocking {
+        withSource("quickcut_bframes.mp4") { context, source, original ->
+            val timeline = EditTimeline(listOf(original.copy(startMs = 0L, endMs = 2_000L),
+                original.copy(id = 2L, startMs = 4_000L, endMs = 6_000L)))
+            withExport(context, timeline) { saved, report ->
+                assertEquals(ExportMethod.AUDIO_REENCODE, report.method)
+                assertEquals(null, report.optimizationResult)
+                assertMiddleCopied(context, source, saved, 0L, 2_000_000L, 0L, 1_000L)
+                assertMiddleCopied(context, source, saved, 4_000_000L, 6_000_000L, 2_000_000L, 1_000L)
+                assertDurationAndAudio(context, saved, 4_000L)
             }
         }
     }
@@ -294,6 +355,7 @@ class NativeSmartCutInstrumentedTest {
     private suspend fun withExport(
         context: Context,
         timeline: EditTimeline,
+        originalDate: OriginalTimestamp? = null,
         block: suspend (Uri, ExportReport) -> Unit,
     ) {
         val outputs = mutableListOf<Uri>()
@@ -304,6 +366,8 @@ class NativeSmartCutInstrumentedTest {
         try {
             val saved = VideoExporter(context).export(
                 timeline, {}, {}, exportMode = ExportMode.ALLOW_REENCODE,
+                saveDateMode = if (originalDate == null) SaveDateMode.CURRENT else SaveDateMode.ORIGINAL,
+                resolvedOriginalDate = originalDate,
                 onOutputCreated = { outputs.add(it) },
                 onCommitted = { committed = it; commitCount++ },
                 onReport = {
@@ -344,15 +408,17 @@ class NativeSmartCutInstrumentedTest {
         try {
             extractor.setDataSource(context, uri, null)
             val track = (0 until extractor.trackCount).first {
-                extractor.getTrackFormat(it).getString(MediaFormat.KEY_MIME) == "video/avc"
+                extractor.getTrackFormat(it).getString(MediaFormat.KEY_MIME) in setOf("video/avc", "video/hevc")
             }
+            val hevc = extractor.getTrackFormat(track).getString(MediaFormat.KEY_MIME) == "video/hevc"
             extractor.selectTrack(track)
             return buildList {
                 while (extractor.sampleTrackIndex >= 0) {
                     val buffer = ByteBuffer.allocate(extractor.sampleSize.toInt())
                     assertEquals(buffer.capacity(), extractor.readSampleData(buffer, 0))
                     val hashes = nalUnits(buffer.array()).filter { nal ->
-                        (nal[0].toInt() and 0x1f) in 1..5
+                        if (hevc) ((nal[0].toInt() ushr 1) and 0x3f) <= 31
+                        else (nal[0].toInt() and 0x1f) in 1..5
                     }.map { nal ->
                         MessageDigest.getInstance("SHA-256").digest(nal)
                             .joinToString("") { "%02x".format(it.toInt() and 0xff) }

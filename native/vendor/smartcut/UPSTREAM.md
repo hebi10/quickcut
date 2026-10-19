@@ -11,3 +11,12 @@ Local changes (2026-10-16): optional desktop playback feature; opt-in strict dec
 Android's platform MP4 extractor recognizes `avc1`, while upstream smart cuts use `avc3` with in-band parameter changes. QuickCut gives each encoded boundary unused SPS/PPS IDs before encoding, then performs a packet-only remux with every parameter set in a fixed `avcC` and no in-band SPS/PPS. Coded picture bytes are not rewritten. This adds a metadata scan and one read/write pass over the intermediate output. At most the intermediate and final staging files coexist; the intermediate is deleted before publication, including on cancellation or failure.
 
 Android libavc rejects multiple SPS entries with different decoder-buffer configurations in one static configuration. QuickCut preserves the source reference count through the encoder and validates profile, level, buffer/reorder sizes, dimensions, crop, progressive structure, and colour signalling across all output SPS entries. An unsupported or mismatched configuration uses the existing exact fallback instead of publishing an incompletely decodable smart cut.
+
+## 2026-10-19 fast-export coverage
+
+QuickCut restarts the input audio decoder for overlapping/backward ranges while
+retaining the output AAC encoder and timeline. This prevents source-PTS deduplication
+from erasing repeated sound. HEVC boundary encodes use the fast preset, two worker
+threads and one frame thread; only the adapter's checked SDR Main/8-bit inputs are
+enabled. Codec/rotation/date validation and final MP4 remuxing live in the JNI adapter
+and Kotlin exporter rather than changing upstream's general input promises.

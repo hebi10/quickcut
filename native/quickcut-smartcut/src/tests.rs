@@ -196,6 +196,7 @@ fn multiple_ranges_keep_order_repeated_pictures_and_original_gops() {
     let source_vcl = vcl_packets(input.to_str().unwrap());
     for (name, ranges, copied, encoded) in [
         ("join", vec![(0, 3_000_000), (4_500_000, 8_000_000)], 120, 75),
+        ("copy", vec![(0, 2_000_000), (4_000_000, 6_000_000)], 120, 0),
         ("repeated", vec![(4_500_000, 8_000_000), (0, 3_000_000), (4_500_000, 8_000_000)], 180, 120),
     ] {
         let output = directory.join(format!("{name}.mp4"));
@@ -213,6 +214,9 @@ fn multiple_ranges_keep_order_repeated_pictures_and_original_gops() {
         if name == "join" {
             assert_eq!(result[..60], source_vcl[..60]);
             assert_eq!(result[135..195], source_vcl[180..240]);
+        } else if name == "copy" {
+            assert_eq!(result[..60], source_vcl[..60]);
+            assert_eq!(result[60..120], source_vcl[120..180]);
         } else {
             assert_eq!(result[45..105], source_vcl[180..240]);
             assert_eq!(result[105..165], source_vcl[..60]);
@@ -221,11 +225,20 @@ fn multiple_ranges_keep_order_repeated_pictures_and_original_gops() {
     }
     for ranges in [vec![(4_500_000, 8_000_000), (0, 3_000_000)],
         vec![(0, 3_000_000), (2_500_000, 7_500_000)]] {
-        let output = directory.join("unsafe-audio.mp4");
-        let error = cut_ranges(input.to_str().unwrap(), output.to_str().unwrap(), &ranges,
-            false, Arc::new(Observer::default())).unwrap_err();
-        assert!(error.to_string().contains("overlapping audio"));
-        assert!(!output.exists(), "audio must never silently disappear from revisited ranges");
+        let output = directory.join("revisited-audio.mp4");
+        let _ = std::fs::remove_file(&output);
+        cut_ranges(input.to_str().unwrap(), output.to_str().unwrap(), &ranges,
+            false, Arc::new(Observer::default())).unwrap();
+        let audio = Command::new("ffmpeg").args(["-v", "error", "-xerror", "-i"]).arg(&output)
+            .args(["-vn", "-ac", "1", "-ar", "48000", "-f", "s16le", "-"]).output().unwrap();
+        assert!(audio.status.success());
+        let samples: Vec<i16> = audio.stdout.chunks_exact(2).map(|b| i16::from_le_bytes(b.try_into().unwrap())).collect();
+        let expected_us: i64 = ranges.iter().map(|(a, b)| b - a).sum();
+        assert!(((samples.len() as i64 * 1_000_000 / 48000) - expected_us).abs() < 80_000);
+        for window in samples.chunks_exact(12000) {
+            let amplitude: f64 = window.iter().map(|s| f64::from(*s).abs()).sum::<f64>() / window.len() as f64;
+            assert!(amplitude > 100.0, "revisited source audio must remain audible: {amplitude}");
+        }
     }
     let cancelled_output = directory.join("cancelled.mp4");
     let cancelled = Arc::new(CancelDuringWrite { output: cancelled_output.clone(), fired: AtomicBool::new(false) });

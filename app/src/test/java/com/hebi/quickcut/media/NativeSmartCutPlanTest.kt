@@ -9,11 +9,12 @@ import org.junit.Test
 class NativeSmartCutPlanTest {
     private val source = VideoClip(1L, "content://video/1", 10_000L)
 
-    @Test fun audibleReorderedOrOverlappingRangesUseTheAudioSafeFallback() {
+    @Test fun audibleReorderedOrOverlappingRangesPreserveRequestedCoordinates() {
         val later = source.copy(startMs = 4_500L, endMs = 8_000L)
         listOf(source.copy(id = 2L, startMs = 0L, endMs = 3_000L),
             source.copy(id = 2L, startMs = 7_000L, endMs = 9_000L)).forEach { next ->
-                assertNull(NativeSmartCutPlan.rangesUs(EditTimeline(listOf(later, next))))
+                assertArrayEquals(longArrayOf(4_500_000L, 8_000_000L, next.startMs * 1_000L, next.endMs * 1_000L),
+                    NativeSmartCutPlan.rangesUs(EditTimeline(listOf(later, next))))
             }
     }
 

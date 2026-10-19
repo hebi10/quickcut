@@ -178,7 +178,7 @@ fn append_set(out: &mut Vec<u8>, set: &[u8]) -> Result<()> {
     Ok(())
 }
 
-pub fn remux(input_path: &str, output_path: &str, callbacks: &dyn Callbacks) -> Result<u64> {
+pub fn remux(input_path: &str, output_path: &str, display: &crate::display::Display, callbacks: &dyn Callbacks) -> Result<u64> {
     let mut input = smartcut_core::input::open_local(input_path)?;
     let video = input.streams().best(ff::media::Type::Video).context("missing video")?.index();
     let (width, original_sets) = configuration(&input, video)?;
@@ -207,6 +207,7 @@ pub fn remux(input_path: &str, output_path: &str, callbacks: &dyn Callbacks) -> 
         out.set_parameters(stream.parameters());
         out.set_time_base(stream.time_base());
         out.set_metadata(stream.metadata().to_owned());
+        if stream.index() == video { display.apply(&mut out)?; }
         unsafe {
             let p = out.parameters().as_mut_ptr();
             (*p).codec_tag = 0;

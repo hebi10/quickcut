@@ -13,7 +13,7 @@ elif [[ $# -ne 0 ]]; then
   echo "Usage: $0 [--host-tests]" >&2
   exit 2
 fi
-for tool in python3 make nasm pkg-config rustup cargo; do
+for tool in python3 make cmake nasm pkg-config rustup cargo; do
   command -v "$tool" >/dev/null || { echo "Missing build tool: $tool" >&2; exit 1; }
 done
 [[ -f "$CRATE" && -f "${CRATE%/*}/Cargo.lock" ]] || { echo "Native crate and locked dependencies are required" >&2; exit 1; }
@@ -34,7 +34,7 @@ mkdir -p "$CACHE/downloads" "$CACHE/sources" "$CACHE/logs"
 python3 - "$MANIFEST" "$CACHE" <<'PYCODE'
 import hashlib, json, pathlib, tarfile, urllib.request, sys
 manifest=json.load(open(sys.argv[1])); cache=pathlib.Path(sys.argv[2])
-for key in ('ffmpeg', 'x264'):
+for key in ('ffmpeg', 'x264', 'x265'):
     item=manifest[key]; archive=cache/'downloads'/item['archive']
     if not archive.exists():
         temporary=archive.with_suffix(archive.suffix+'.partial')
@@ -55,6 +55,7 @@ for key in ('ffmpeg', 'x264'):
 PYCODE
 FFMPEG_SOURCE="$CACHE/sources/ffmpeg-7.1.5"
 X264_SOURCE="$CACHE/sources/x264-b35605ace3ddf7c1a5d67a2eb553f034aef41d55"
+X265_SOURCE="$CACHE/sources/x265_4.1"
 BUILD_KEY="$(cat "$0" "$MANIFEST" | sha256sum | cut -d' ' -f1)"
 JOBS="${QUICKCUT_NATIVE_JOBS:-4}"
 export CARGO_TARGET_DIR="$CACHE/cargo-target"
@@ -67,15 +68,17 @@ build_dependencies() (
     return
   fi
   rm -rf "$build" "$prefix"
-  mkdir -p "$build/x264" "$build/ffmpeg" "$prefix"
+  mkdir -p "$build/x264" "$build/x265" "$build/ffmpeg" "$prefix"
   export PKG_CONFIG_PATH="$prefix/lib/pkgconfig" PKG_CONFIG_LIBDIR="$prefix/lib/pkgconfig" PKG_CONFIG_SYSROOT_DIR=""
-  local cross_x264=() cross_ffmpeg=()
+  local cross_x264=() cross_ffmpeg=() cross_x265=()
   if [[ "$abi" == host ]]; then
     export CC=gcc CXX=g++ AR=ar RANLIB=ranlib STRIP=strip
     cross_ffmpeg=(--target-os=linux --arch=x86_64)
   else
     export CC="$TOOLCHAIN/bin/${target}${API}-clang" CXX="$TOOLCHAIN/bin/${target}${API}-clang++"
     export AR="$TOOLCHAIN/bin/llvm-ar" RANLIB="$TOOLCHAIN/bin/llvm-ranlib" STRIP="$TOOLCHAIN/bin/llvm-strip"
+    cross_x265=(-DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake"
+      -DANDROID_ABI="$abi" -DANDROID_PLATFORM="android-$API" -DANDROID_STL=c++_static)
     cross_x264=(--host="$target" --sysroot="$TOOLCHAIN/sysroot")
     cross_ffmpeg=(--target-os=android --arch="$arch" --enable-cross-compile --sysroot="$TOOLCHAIN/sysroot")
   fi
@@ -87,15 +90,26 @@ build_dependencies() (
     --extra-ldflags="-Wl,-z,max-page-size=16384"
   make -j"$JOBS"
   make install
+  cmake -S "$X265_SOURCE/source" -B "$build/x265" "${cross_x265[@]}" \
+    -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$prefix" \
+    -DENABLE_SHARED=OFF -DENABLE_CLI=OFF -DENABLE_LIBNUMA=OFF -DENABLE_PIC=ON \
+    -DENABLE_ASSEMBLY=OFF -DHIGH_BIT_DEPTH=OFF -DEXPORT_C_API=ON
+  cmake --build "$build/x265" --parallel "$JOBS"
+  cmake --install "$build/x265"
+  if [[ "$abi" != host ]]; then
+    # x265 is C++; Rust links through clang, so include the NDK's static C++
+    # runtime explicitly. No host libstdc++ or external libc++_shared.so dependency.
+    sed -i 's/^Libs.private:.*/Libs.private: -lc++_static -lc++abi -lunwind -lm -ldl/' "$prefix/lib/pkgconfig/x265.pc"
+  fi
   cd "$build/ffmpeg"
   "$FFMPEG_SOURCE/configure" --prefix="$prefix" "${cross_ffmpeg[@]}" \
     --cc="$CC" --cxx="$CXX" --ar="$AR" --ranlib="$RANLIB" --strip="$STRIP" \
     --pkg-config="$(command -v pkg-config)" --pkg-config-flags=--static \
     --enable-static --disable-shared --enable-pic --disable-programs --disable-doc --disable-debug \
-    --disable-network --disable-autodetect --disable-everything --enable-gpl --enable-libx264 \
+    --disable-network --disable-autodetect --disable-everything --enable-gpl --enable-libx264 --enable-libx265 \
     --enable-protocol=file,pipe --enable-demuxer=mov --enable-muxer=mp4,mov \
-    --enable-decoder=h264,aac --enable-encoder=libx264,aac --enable-parser=h264,aac \
-    --enable-bsf=h264_mp4toannexb,aac_adtstoasc,extract_extradata --enable-filter=anull,aresample \
+    --enable-decoder=h264,hevc,aac --enable-encoder=libx264,libx265,aac --enable-parser=h264,hevc,aac \
+    --enable-bsf=h264_mp4toannexb,hevc_mp4toannexb,aac_adtstoasc,extract_extradata --enable-filter=anull,aresample \
     --extra-cflags="-O2 -ffunction-sections -fdata-sections -I$prefix/include" \
     --extra-ldflags="-L$prefix/lib -Wl,-z,max-page-size=16384"
   make -j"$JOBS"

@@ -12,11 +12,6 @@ internal object NativeSmartCutPlan {
                     it.muted != first.muted || it.hasAudio != first.hasAudio ||
                     it.endMs > Long.MAX_VALUE / 1_000L
             }) return null
-        // The native audio reencoder deduplicates source PTS across ranges.
-        // Revisited audio must use Media3 rather than silently losing samples.
-        if (first.hasAudio && !first.muted && timeline.clips.zipWithNext().any {
-                (previous, next) -> next.startMs < previous.endMs
-            }) return null
         return timeline.clips.flatMap { listOf(it.startMs * 1_000L, it.endMs * 1_000L) }.toLongArray()
     }
 }

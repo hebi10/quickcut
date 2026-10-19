@@ -41,12 +41,21 @@ def append(name, declared, files):
         seen.add(digest)
         sections.append("\n--- " + path.name + " ---\n" + data.decode("utf-8", errors="replace") + "\n")
 
-for component in ("ffmpeg", "x264"):
+for component in ("ffmpeg", "x264", "x265"):
     source = cache / "sources" / pins[component]["directory"]
     if not source.is_dir():
         raise RuntimeError("Native source directory is missing: " + str(source))
     append(component + " " + pins[component].get("version", pins[component].get("commit", "")),
            "GPL-compatible build; see original component texts", notice_files(source))
+
+# x265 links the NDK's static libc++/libc++abi/unwind runtime into the APK.
+# Retain the notices shipped with the exact pinned NDK, not host C++ notices.
+sdk = Path(os.environ.get("ANDROID_HOME", os.environ.get("ANDROID_SDK_ROOT", "")))
+ndk = Path(os.environ.get("ANDROID_NDK_HOME", sdk / "ndk" / pins["toolchains"]["ndk"]))
+ndk_notices = [ndk / "NOTICE", ndk / "NOTICE.toolchain"]
+if any(not path.is_file() for path in ndk_notices):
+    raise RuntimeError("Pinned NDK runtime notices are missing")
+append("Android NDK " + pins["toolchains"]["ndk"] + " C++ runtime", "see original runtime notices", ndk_notices)
 
 resolved = {node["id"] for node in metadata["resolve"]["nodes"]}
 for package in sorted(metadata["packages"], key=lambda p: (p["name"], p["version"])):

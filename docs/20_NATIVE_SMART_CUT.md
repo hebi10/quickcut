@@ -9,16 +9,20 @@
 
 - 기존 무재인코딩 `FastMp4Trimmer`를 먼저 시도한다. `FAST_ONLY`의 의미는
   바뀌지 않는다. 네이티브 부분 재인코딩은 `ALLOW_REENCODE`에서만 사용한다.
-- 현재 날짜로 저장하는 단일 MP4/H.264 클립과 같은 원본의 여러 구간을 지원한다.
+- MP4의 H.264 및 HEVC Main 8-bit SDR 클립과 같은 원본의 여러 구간을 대상으로 한다.
   여러 구간은 원본 URI·길이·음소거 정책이 같을 때 한 번 인덱싱하고 요청 순서대로
-  처리한다. 구간마다 정확한 경계를 검사하고 전체 결과에 복사·인코딩 패킷이 모두
-  있어야 부분 처리로 인정한다. 소리가 있는 구간을 역순·중복·겹치게 연결하면
-  오디오 누락을 방지하기 위해 일반 저장으로 넘긴다. 음소거 또는 소리 없는 영상의
-  순서 변경은 부분 처리 후보가 된다. 서로 다른 원본이나 음소거 정책을 연결하면 기존
-  Media3 경로로 이어진다. 회전,
-  HDR/고비트 심도, 인터레이스, 추가 트랙, 지원하지 않는 오디오 및 불확실한
-  GOP 구조는 정확한 기존 경로로 넘긴다. FFmpeg를 연결했다고 모든 FFmpeg
-  형식을 앱이 지원한다고 간주하지 않는다.
+  처리한다. 역순·반복·겹치는 구간은 입력 오디오 디코더를 새로 시작하되 출력
+  인코더와 시계는 유지해 소리 누락을 방지한다. 모든 영상 패킷을 복사할 수 있는
+  연결도 허용하며, 소리만 처리했다면 `AUDIO_REENCODE`로 보고한다.
+- 현재 날짜와 원본 날짜 저장 모두 고속 경로를 시도한다. 원본 날짜는 완성된
+  비공개 MP4의 `mvhd/tkhd/mdhd`를 먼저 검사한 뒤 날짜 필드만 변경한다.
+  헤더 형식·버전·날짜 표현 범위가 불확실하면 일반 저장을 사용한다.
+  날짜를 유지하는 직접 복사는 날짜 검증을 위해 캐시 파일과 갤러리 복사가 필요하다.
+- 0/90/180/270도 순수 회전 행렬은 영상 픽셀을 변환하지 않고 최종 출력에 보존한다.
+  반사·확대·이동·동적 회전 정보는 부분 처리에서 거절한다.
+- 서로 다른 원본이나 음소거 정책, HDR/고비트 심도, 가변 프레임률,
+  인터레이스, 추가 트랙, AAC 이외 오디오, 불확실한 GOP 구조는 기존 Media3 경로로
+  이어진다. FFmpeg가 지원하는 모든 형식을 앱이 부분 처리하는 것은 아니다.
 - 원래 요청 시각과 네이티브 계획 시각이 달라지면 거절한다. 키프레임으로
   시작점을 옮기거나 MP4 edit list로 원치 않는 앞부분을 숨겨 성공 처리하지 않는다.
   실제 존재하는 프레임의 시간 해상도는 유지된다.
@@ -43,12 +47,21 @@ offset이 있는 asset, pipe, 크기/범위가 불명확한 provider는 네이�
 거절하고 기존 exporter에 넘긴다. 따라서 이 경로를 위해 대용량 원본 전체를
 캐시에 먼저 복사할 필요는 없다.
 
-Android 기본 MP4 extractor에서 읽을 수 있도록 최종 출력은 `avc1`이다. 경계마다
+Android 기본 MP4 extractor에서 읽을 수 있도록 AVC 최종 출력은 `avc1`이다. 경계마다
 겹치지 않는 SPS/PPS ID로 인코딩한 뒤 모든 설정을 고정 `avcC`에 넣는 추가 remux를
 수행한다. 이 과정에서 영상 압축 데이터는 다시 인코딩하지 않지만 중간 출력의
 추가 읽기·쓰기가 필요하다. 중간 출력과 최종 캐시 파일이 동시에 존재할 수 있으며,
 중간 출력은 갤러리 공개 전에 삭제한다. 프로세스가 종료되어 남은 중간 출력도 다음
 작업의 기존 캐시 정리 단계에서 제거한다.
+
+HEVC는 `hev1`으로 출력하며 닫힌 IDR GOP의 설정을 각 구간과 함께 전달한다.
+Main/8-bit/4:2:0 SDR, 고정 프레임률과 안정적인 단일 VPS/SPS/PPS를 확인한다.
+자른 경계는 x265로 처리하고 완전한 중간 GOP의 압축 영상 데이터는 복사한다.
+10-bit/HDR, 열린 GOP의 CRA 경계 및 다중 레이어는 이 경로에 포함되지 않는다.
+x265의 입력 소스는 4.1로 고정하고 Android 정적 C++ runtime을 사용한다.
+경계 처리의 스레드 수를 제한하며 전체 영상 디코딩/재인코딩은 수행하지 않는다.
+이 조건의 지원 여부와 실제 저장 시간은 별개이며 전체 사용자 영상의 지원 비율은
+측정하지 않았다.
 
 JNI는 IO 작업에서 실행한다. 취소 플래그는 native scan/cut 중 확인하며, 취소된
 coroutine이 descriptor나 출력 파일을 먼저 닫지 않도록 실제 native 종료까지
@@ -65,7 +78,7 @@ coroutine이 descriptor나 출력 파일을 먼저 닫지 않도록 실제 nativ
 ## 라이선스와 배포 범위
 
 SmartCut commit `510ee91614a29f9c7fd6a446b75e9767f0df3d8a`의 실제
-`LICENSE`와 README는 GPLv3를 지정한다. 이 코어와 GPL libx264를 연결한
+`LICENSE`와 README는 GPLv3를 지정한다. 이 코어와 GPL libx264/libx265를 연결한
 이번 QuickCut 결합 배포물은 GPLv3 조건으로 제공한다. JNI라는 기술 경계로
 앱 코드를 대응 소스에서 제외하지 않는다. 기존에 별도로 배포한 과거 릴리스의
 라이선스를 소급하여 바꾸는 선언은 아니다.
@@ -80,9 +93,9 @@ GPL 조건에 따라 수정·재배포할 수 있으므로 별도의 비밀유�
 
 `third_party/licenses/NOTICE.txt` 및 라이선스 본문은 APK의 오픈소스 화면에
 포함한다. `scripts/collect-native-licenses.py`는 빌드에 쓰인 Cargo 패키지와
-FFmpeg/x264 원본 고지를 모아 `build/generated/smartcutAssets/licenses/`에
+FFmpeg/x264/x265 원본 고지를 모아 `build/generated/smartcutAssets/licenses/`에
 생성한다. 구성 요소의 기존 저작권·라이선스는 보존한다. FFmpeg는 GPL 기능과
-libx264를 활성화하고 `--enable-nonfree`는 사용하지 않는다.
+libx264/libx265를 활성화하고 `--enable-nonfree`는 사용하지 않는다.
 
 근거 원문:
 
@@ -102,7 +115,7 @@ libx264를 활성화하고 `--enable-nonfree`는 사용하지 않는다.
 - QuickCut Kotlin·리소스·manifest·JNI 및 수정한 SmartCut Rust workspace,
   원저작물 고지와 수정 설명, Gradle/native 빌드·검사 스크립트
 - `scripts/native-smartcut-sources.json`으로 버전·SHA256을 고정한 FFmpeg와
-  x264 전체 원본 archive, 적용하는 변경과 구성 명령
+  x264/x265 전체 원본 archive, 적용하는 변경과 구성 명령
 - 고정한 Cargo.lock과 `cargo vendor --locked` 결과, 오프라인 Cargo 설정
 - `releaseRuntimeClasspath`에서 실제 선택된 AndroidX/Compose/Media3/Kotlin 등
   전이 의존성의 sources JAR와 배포 binary에 포함된 저작권·라이선스 고지,

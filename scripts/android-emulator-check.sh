@@ -84,7 +84,7 @@ ffmpeg -hide_banner -loglevel error -y \
 # Closed GOP B-frames reproduce downloaded videos with reordered timestamps.
 ffmpeg -hide_banner -loglevel error -y \
   -f lavfi -i testsrc2=size=320x240:rate=30 \
-  -f lavfi -i sine=frequency=660:sample_rate=44100 \
+  -f lavfi -i 'aevalsrc=0.1*sin(2*PI*(440+220*floor(t/2))*t):s=44100' \
   -t 8 -c:v libx264 -preset medium -pix_fmt yuv420p \
   -bf 2 -g 60 -keyint_min 60 -sc_threshold 0 -flags +cgop \
   -c:a aac -b:a 64k -shortest \
@@ -92,8 +92,15 @@ ffmpeg -hide_banner -loglevel error -y \
 
 # Preserve a phone-style display transform without rotating encoded pixels.
 ffmpeg -hide_banner -loglevel error -y \
-  -i app/src/androidTest/assets/quickcut_bframes.mp4 -c copy -metadata:s:v:0 rotate=90 \
+  -display_rotation:v:0 -90 -i app/src/androidTest/assets/quickcut_bframes.mp4 -c copy \
   app/src/androidTest/assets/quickcut_rotated.mp4
+python3 - <<'PYROTATION'
+import json, subprocess
+stream = json.loads(subprocess.check_output(['ffprobe', '-v', 'error', '-select_streams', 'v:0',
+    '-show_entries', 'stream_side_data', '-of', 'json',
+    'app/src/androidTest/assets/quickcut_rotated.mp4']))['streams'][0]
+assert any(data.get('rotation') == -90 for data in stream.get('side_data_list', [])), 'Rotated fixture needs an actual display matrix'
+PYROTATION
 
 # SDR HEVC with closed GOPs and reordered frames, independently encoded by CLI.
 ffmpeg -hide_banner -loglevel error -y \

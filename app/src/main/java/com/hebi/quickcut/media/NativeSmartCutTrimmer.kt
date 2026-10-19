@@ -80,7 +80,7 @@ internal object NativeSmartCutTrimmer {
                 when {
                     result.size != 3 -> null
                     result[0] == -1L -> throw CancellationException("Native smart cut cancelled")
-                    result[0] != 1L || result[1] <= 0L || result[2] <= 0L -> null
+                    result[0] != 1L || result[1] <= 0L || result[2] < 0L -> null
                     else -> NativeSmartCutResult(result[1], result[2])
                 }
             }

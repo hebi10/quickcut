@@ -32,9 +32,6 @@ object ExportPlanner {
             timeline.clips.size > 1 -> ExportAssessment(
                 false, "구간 연결도 자동 저장할 수 있습니다. 같은 원본의 구간은 부분 처리를 우선 시도하며, 필요하면 전체 처리로 이어집니다."
             )
-            dateMode == SaveDateMode.ORIGINAL -> ExportAssessment(
-                false, "현재 원본 날짜 유지 방식은 고속 복사를 지원하지 않습니다."
-            )
             else -> {
                 val clip = timeline.clips.single()
                 val inspection = FastMp4Trimmer.inspect(context, clip)
@@ -53,10 +50,10 @@ object ExportPlanner {
             }
         }
         if (timeline.isEmpty) return@withContext assessment
-        val estimatedBytes = ExportStorage.estimateOutputBytes(context, timeline, assessment.fastAvailable)
+        val estimatedBytes = ExportStorage.estimateOutputBytes(context, timeline, assessment.fastAvailable && dateMode != SaveDateMode.ORIGINAL)
         assessment.copy(
             explanation = assessment.explanation + "\n" +
-                ExportStorage.explanation(context, estimatedBytes, assessment.fastAvailable),
+                ExportStorage.explanation(context, estimatedBytes, assessment.fastAvailable && dateMode != SaveDateMode.ORIGINAL),
         )
     }
 

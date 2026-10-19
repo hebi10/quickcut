@@ -3,6 +3,7 @@ package com.hebi.quickcut.media
 import android.content.Context
 import android.net.Uri
 import android.os.Handler
+import android.os.ParcelFileDescriptor
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
@@ -58,15 +59,18 @@ class VideoExporter(private val context: Context) {
         val outputTimestampMs = originalDate?.epochMs ?: System.currentTimeMillis()
 
         // Fast path: a single unmodified MP4 clip with a safe sync-sample boundary.
-        // Keep the original-date export on Transformer to preserve embedded MP4 dates.
-        if (saveDateMode == SaveDateMode.CURRENT && timeline.clips.size == 1) {
+        // Original dates change MP4 headers, not compressed pictures.
+        if (timeline.clips.size == 1) {
             val clip = timeline.clips.first()
             val plan = withContext(Dispatchers.IO) {
                 FastMp4Trimmer.prepare(context, clip)
             }
             if (plan != null) {
                 val output = try {
-                    GalleryWriter(context).saveDirect(
+                    if (originalDate != null) {
+                        saveDatedCopy(timeline, plan, originalDate.epochMs, outputBaseName,
+                            onProgress, onFinalizing, onOutputCreated, onCommitted)
+                    } else GalleryWriter(context).saveDirect(
                         outputBaseName = outputBaseName,
                         expectedDurationMs = clip.durationMs,
                         expectAudio = !clip.muted && clip.hasAudio,
@@ -120,12 +124,12 @@ class VideoExporter(private val context: Context) {
         // withContext can lose the cleanup handle while dispatching back to Main.
         val temporary = File(context.cacheDir, "quickcut_" + UUID.randomUUID().toString() + ".mp4")
         try {
-            val nativeResult = if (saveDateMode == SaveDateMode.CURRENT) {
-                try {
+            val nativeResult = try {
                     NativeSmartCutTrimmer.tryExport(context, timeline, temporary, onProgress)
                         ?.also {
                             withContext(Dispatchers.IO) {
-                                MediaReader.validateExport(temporary, expectedDurationMs, expectAudio)
+                                originalDate?.let { Mp4HeaderDates.update(temporary, it.epochMs) }
+                                MediaReader.validateExport(temporary, expectedDurationMs, expectAudio, originalDate?.epochMs)
                             }
                         }
                 } catch (cancelled: CancellationException) {
@@ -135,7 +139,6 @@ class VideoExporter(private val context: Context) {
                         invalidOutput)
                     null
                 }
-            } else null
             val media3Result = if (nativeResult == null) {
                 withContext(Dispatchers.IO) {
                     if (temporary.exists() && !temporary.delete()) {
@@ -168,8 +171,13 @@ class VideoExporter(private val context: Context) {
             )
             reportPublished(
                 ExportReport(
-                    if (nativeResult != null) ExportMethod.PARTIAL_REENCODE
-                    else ExportReportMapper.method(
+                    if (nativeResult != null) {
+                        when {
+                            nativeResult.encodedPackets > 0 -> ExportMethod.PARTIAL_REENCODE
+                            expectAudio -> ExportMethod.AUDIO_REENCODE
+                            else -> ExportMethod.ORIGINAL_COPY
+                        }
+                    } else ExportReportMapper.method(
                         checkNotNull(media3Result).videoConversionProcess,
                         media3Result.audioConversionProcess,
                     ),
@@ -183,6 +191,42 @@ class VideoExporter(private val context: Context) {
             withContext(NonCancellable) {
                 withContext(Dispatchers.IO) { temporary.delete() }
             }
+        }
+    }
+
+    /** Stage dated copies privately: malformed headers can never reach the gallery. */
+    private suspend fun saveDatedCopy(
+        timeline: EditTimeline,
+        plan: FastMp4Trimmer.Plan,
+        timestampMs: Long,
+        outputBaseName: String?,
+        onProgress: (Int?) -> Unit,
+        onFinalizing: () -> Unit,
+        onOutputCreated: (Uri) -> Unit,
+        onCommitted: (Uri) -> Unit,
+    ): Uri {
+        val file = File(context.cacheDir, "quickcut_date_" + UUID.randomUUID() + ".mp4")
+        val expectAudio = timeline.clips.any { it.hasAudio && !it.muted }
+        try {
+            withContext(Dispatchers.IO) {
+                val estimate = ExportStorage.estimateOutputBytes(context, timeline, directWrite = false)
+                ExportStorage.requireSpace(context, estimate, directWrite = false)
+                ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_CREATE or
+                    ParcelFileDescriptor.MODE_TRUNCATE or ParcelFileDescriptor.MODE_READ_WRITE).use {
+                    FastMp4Trimmer.write(context, plan, it.fileDescriptor, onProgress)
+                }
+                try {
+                    Mp4HeaderDates.update(file, timestampMs)
+                    MediaReader.validateExport(file, timeline.totalDurationMs, expectAudio, timestampMs)
+                } catch (invalid: IOException) {
+                    throw FastTrimUnavailableException("Dated copy validation failed", invalid)
+                }
+            }
+            // Publication is outside the fallback-producing validation block.
+            return GalleryWriter(context).save(file, timestampMs, outputBaseName,
+                timeline.totalDurationMs, expectAudio, onFinalizing, onOutputCreated, onCommitted)
+        } finally {
+            withContext(NonCancellable + Dispatchers.IO) { file.delete() }
         }
     }
 

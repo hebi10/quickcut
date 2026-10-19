@@ -44,11 +44,40 @@ class NativeSmartCutInstrumentedTest {
             ))
             withExport(context, timeline) { saved, report ->
                 assertEquals(ExportMethod.PARTIAL_REENCODE, report.method)
-                assertDurationAndAudio(context, saved, 6_500L)
+                assertDurationAndAudio(context, saved, 6_500L, mapOf(1 to 880, 7 to 1100, 15 to 440, 24 to 660))
                 assertTrue(meanDifference(frame(context, source, 4_500_000L),
                     frame(context, saved, 0L)) < 10.0)
                 assertTrue(meanDifference(frame(context, source, 0L),
                     frame(context, saved, 3_500_000L)) < 10.0)
+            }
+        }
+    }
+
+    @Test
+    fun originalDateCopyRemainsAvailableInFastOnlyMode() = runBlocking {
+        withSource("quickcut_keyframes.mp4") { context, source, original ->
+            val date = OriginalTimestamp(1_609_459_200_000L, "fixture")
+            withExport(context, EditTimeline(listOf(original.copy(startMs = 0L, endMs = 4_000L))),
+                originalDate = date, exportMode = ExportMode.FAST_ONLY) { saved, report ->
+                assertEquals(ExportMethod.ORIGINAL_COPY, report.method)
+                MediaReader.validateExport(context, saved, 4_000L, true, date.epochMs)
+                assertMiddleCopied(context, source, saved, 0L, 2_000_000L, 0L, 1_000L)
+                assertDurationAndAudio(context, saved, 4_000L)
+            }
+        }
+    }
+
+    @Test
+    fun overlappingAudibleRangesKeepTheirOwnTonesAndPictures() = runBlocking {
+        withSource("quickcut_bframes.mp4") { context, source, original ->
+            val timeline = EditTimeline(listOf(original.copy(startMs = 6_000L, endMs = 8_000L),
+                original.copy(id = 2L, startMs = 5_000L, endMs = 8_000L)))
+            withExport(context, timeline) { saved, report ->
+                assertEquals(ExportMethod.PARTIAL_REENCODE, report.method)
+                assertDurationAndAudio(context, saved, 5_000L, mapOf(1 to 1100, 9 to 880, 14 to 1100))
+                assertTrue(meanDifference(frame(context, source, 5_000_000L),
+                    frame(context, saved, 2_000_000L)) < 10.0)
+                assertDecodedPictures(context, saved, 150)
             }
         }
     }
@@ -78,6 +107,10 @@ class NativeSmartCutInstrumentedTest {
             withExport(context, EditTimeline(listOf(original.copy(startMs = 3_000L, endMs = 7_500L)))) { saved, report ->
                 assertEquals(ExportMethod.PARTIAL_REENCODE, report.method)
                 assertEquals(rotation(source), rotation(saved))
+                for (time in listOf(0L, 1_000_000L, 3_000_000L)) {
+                    assertTrue(meanDifference(frame(context, source, time + 3_000_000L),
+                        frame(context, saved, time)) < 12.0)
+                }
                 assertMiddleCopied(context, source, saved, 4_000_000L, 6_000_000L, 3_000_000L, 1_000L)
                 assertDurationAndAudio(context, saved, 4_500L)
             }
@@ -95,6 +128,7 @@ class NativeSmartCutInstrumentedTest {
                     assertTrue(meanDifference(frame(context, source, time + 3_000_000L), frame(context, saved, time)) < 12.0)
                 }
                 assertDurationAndAudio(context, saved, 4_500L)
+                assertDecodedPictures(context, saved, 135)
             }
         }
     }
@@ -356,6 +390,7 @@ class NativeSmartCutInstrumentedTest {
         context: Context,
         timeline: EditTimeline,
         originalDate: OriginalTimestamp? = null,
+        exportMode: ExportMode = ExportMode.ALLOW_REENCODE,
         block: suspend (Uri, ExportReport) -> Unit,
     ) {
         val outputs = mutableListOf<Uri>()
@@ -365,9 +400,10 @@ class NativeSmartCutInstrumentedTest {
         var report: ExportReport? = null
         try {
             val saved = VideoExporter(context).export(
-                timeline, {}, {}, exportMode = ExportMode.ALLOW_REENCODE,
+                timeline, {}, {},
                 saveDateMode = if (originalDate == null) SaveDateMode.CURRENT else SaveDateMode.ORIGINAL,
                 resolvedOriginalDate = originalDate,
+                exportMode = exportMode,
                 onOutputCreated = { outputs.add(it) },
                 onCommitted = { committed = it; commitCount++ },
                 onReport = {
@@ -394,11 +430,11 @@ class NativeSmartCutInstrumentedTest {
         }
     }
 
-    private fun assertDurationAndAudio(context: Context, uri: Uri, expectedMs: Long) {
+    private fun assertDurationAndAudio(context: Context, uri: Uri, expectedMs: Long, tones: Map<Int, Int> = emptyMap()) {
         val metadata = MediaReader.validateExport(context, uri, expectedMs, expectAudio = true)
         assertTrue("Requested=${expectedMs}ms, actual=${metadata.durationMs}ms",
             abs(metadata.durationMs - expectedMs) <= 34L)
-        assertAudibleContinuousAudio(context, uri, expectedMs)
+        assertAudibleContinuousAudio(context, uri, expectedMs, tones)
     }
 
     private data class VideoSample(val timeUs: Long, val vcl: List<String>)
@@ -524,13 +560,16 @@ class NativeSmartCutInstrumentedTest {
         val retriever = MediaMetadataRetriever()
         try {
             retriever.setDataSource(context, uri)
+            val rotated = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION) in setOf("90", "270")
+            val width = if (rotated) 120 else 160
+            val height = if (rotated) 160 else 120
             val bitmap = retriever.getScaledFrameAtTime(timeUs,
-                MediaMetadataRetriever.OPTION_CLOSEST, 160, 120)
+                MediaMetadataRetriever.OPTION_CLOSEST, width, height)
                 ?: throw AssertionError("Frame at ${timeUs}us must decode")
             return try {
-                assertEquals(160, bitmap.width)
-                assertEquals(120, bitmap.height)
-                IntArray(160 * 120).also { bitmap.getPixels(it, 0, 160, 0, 0, 160, 120) }
+                assertEquals(width, bitmap.width)
+                assertEquals(height, bitmap.height)
+                IntArray(width * height).also { bitmap.getPixels(it, 0, width, 0, 0, width, height) }
             } finally {
                 bitmap.recycle()
             }
@@ -552,7 +591,61 @@ class NativeSmartCutInstrumentedTest {
             wanted > 150 && wanted > unwanted + 100)
     }
 
-    private fun assertAudibleContinuousAudio(context: Context, uri: Uri, expectedMs: Long) {
+    private fun assertDecodedPictures(context: Context, uri: Uri, expectedFrames: Int) {
+        val extractor = MediaExtractor()
+        var decoder: MediaCodec? = null
+        try {
+            extractor.setDataSource(context, uri, null)
+            val track = (0 until extractor.trackCount).first {
+                extractor.getTrackFormat(it).getString(MediaFormat.KEY_MIME)?.startsWith("video/") == true
+            }
+            val format = extractor.getTrackFormat(track)
+            extractor.selectTrack(track)
+            val codec = MediaCodec.createDecoderByType(format.getString(MediaFormat.KEY_MIME)!!)
+            decoder = codec
+            codec.configure(format, null, null, 0)
+            codec.start()
+            var inputEnded = false
+            var outputEnded = false
+            val times = mutableListOf<Long>()
+            val info = MediaCodec.BufferInfo()
+            val deadline = SystemClock.elapsedRealtime() + 30_000L
+            while (!outputEnded) {
+                assertTrue("Full video decode must terminate", SystemClock.elapsedRealtime() < deadline)
+                if (!inputEnded) {
+                    val index = codec.dequeueInputBuffer(10_000L)
+                    if (index >= 0) {
+                        val buffer = codec.getInputBuffer(index)!!
+                        buffer.clear()
+                        val size = extractor.readSampleData(buffer, 0)
+                        if (size < 0) {
+                            codec.queueInputBuffer(index, 0, 0, 0L, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                            inputEnded = true
+                        } else {
+                            codec.queueInputBuffer(index, 0, size, extractor.sampleTime, 0)
+                            extractor.advance()
+                        }
+                    }
+                }
+                val index = codec.dequeueOutputBuffer(info, 10_000L)
+                if (index >= 0) {
+                    if (info.size > 0 && info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG == 0) times.add(info.presentationTimeUs)
+                    outputEnded = info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
+                    codec.releaseOutputBuffer(index, false)
+                }
+            }
+            assertEquals("Every retained picture must actually decode", expectedFrames, times.size)
+            times.forEachIndexed { frame, time ->
+                assertTrue("Decoded picture $frame must retain its output timestamp: $time",
+                    abs(time - frame * 1_000_000L / 30L) <= 1_000L)
+            }
+        } finally {
+            decoder?.release()
+            extractor.release()
+        }
+    }
+
+    private fun assertAudibleContinuousAudio(context: Context, uri: Uri, expectedMs: Long, tones: Map<Int, Int>) {
         val extractor = MediaExtractor()
         var decoder: MediaCodec? = null
         try {
@@ -576,6 +669,9 @@ class NativeSmartCutInstrumentedTest {
             var windowSamples = 0L
             var windowAmplitude = 0L
             var windows = 0
+            var lastSample = 0
+            var crossings = 0
+            val checkedTones = mutableSetOf<Int>()
             var previousEndUs: Long? = null
             val deadline = SystemClock.elapsedRealtime() + 20_000L
             while (!outputEnded) {
@@ -616,12 +712,23 @@ class NativeSmartCutInstrumentedTest {
                             buffer.limit(info.offset + info.size)
                             val count = info.size / 2
                             repeat(count) {
-                                windowAmplitude += abs(buffer.short.toInt()).toLong()
+                                val sample = buffer.short.toInt()
+                                if ((sample >= 0) != (lastSample >= 0)) crossings++
+                                lastSample = sample
+                                windowAmplitude += abs(sample).toLong()
                                 windowSamples++
                                 if (windowSamples >= sampleRate.toLong() * channels / 4) {
                                     assertTrue("Each 250ms audio window must retain the audible fixture tone",
                                         windowAmplitude / windowSamples > 100L)
+                                    tones[windows]?.let { expected ->
+                                        assertEquals("Tone fixture is mono", 1, channels)
+                                        val actual = crossings.toDouble() * sampleRate / (2 * windowSamples)
+                                        assertTrue("Window $windows must contain the selected source tone: expected=$expected actual=$actual",
+                                            abs(actual - expected) <= 25.0)
+                                        checkedTones.add(windows)
+                                    }
                                     windows++
+                                    crossings = 0
                                     windowSamples = 0L
                                     windowAmplitude = 0L
                                 }
@@ -634,6 +741,7 @@ class NativeSmartCutInstrumentedTest {
                     }
                 }
             }
+            assertEquals("Every expected source tone must be checked", tones.keys, checkedTones)
             val decodedMs = samples * 1_000L / (sampleRate * channels)
             assertTrue("Decoded audio must span the requested clip: expected=${expectedMs}ms decoded=${decodedMs}ms",
                 abs(decodedMs - expectedMs) <= 80L)

@@ -11,6 +11,8 @@ mod android;
 mod avc1;
 mod avc_sps;
 mod duration;
+mod display;
+mod hevc;
 
 pub trait Callbacks: Send + Sync {
     fn is_cancelled(&self) -> bool;
@@ -117,7 +119,7 @@ fn check_source(source: &Source, end_us: i64) -> Result<()> {
     let video = &source.video;
     ensure!(source.read_whole && source.leading_known, "incomplete source index");
     ensure!(source.joins.is_empty() && source.input.range.is_none() && source.input.parts.is_empty(), "compound input");
-    ensure!(video.codec == "h264", "only H.264 is supported");
+    ensure!(matches!(video.codec.as_str(), "h264" | "hevc"), "only H.264/HEVC is supported");
     ensure!(video.shape.pix_fmt == ff::ffi::AVPixelFormat::AV_PIX_FMT_YUV420P as i32, "only 8-bit 4:2:0 video is supported");
     ensure!(video.field_order == ff::ffi::AVFieldOrder::AV_FIELD_PROGRESSIVE as i32
         && video.field_shape.is_none() && !video.pulldown, "interlaced or unknown picture structure");
@@ -145,14 +147,17 @@ fn inspect_packets(source: &Source, plans: &[RangePlan], callbacks: &dyn Callbac
     ensure!(input.nb_streams() as usize == 1 + source.audios.len(), "additional streams");
     let stream = input.stream(source.video.stream_index).context("missing video stream")?;
     ensure!(stream.metadata().get("rotate").is_none(), "rotation metadata");
-    ensure!(!stream.side_data().any(|d| unsupported_side_data(d.kind())), "unsupported video metadata or display transform");
+    ensure!(!stream.side_data().any(|d| d.kind() != ff::codec::packet::side_data::Type::DisplayMatrix
+        && unsupported_side_data(d.kind())), "unsupported video metadata");
     let parameters = stream.parameters();
     let extradata = unsafe {
         let raw = parameters.as_ptr();
         ensure!(!(*raw).extradata.is_null() && (*raw).extradata_size > 0, "missing AVC configuration");
         std::slice::from_raw_parts((*raw).extradata, (*raw).extradata_size as usize)
     };
-    let original_sets = smartcut_core::bitstream::parameter_sets("h264", extradata);
+    let is_hevc = source.video.codec == "hevc";
+    if is_hevc { hevc::validate_configuration(extradata)?; }
+    let original_sets = smartcut_core::bitstream::parameter_sets(&source.video.codec, extradata);
     ensure!(!original_sets.is_empty(), "missing AVC parameter sets");
     let length_width = match source.video.framing {
         smartcut_core::bitstream::NalFraming::Length(width) => width,
@@ -176,11 +181,15 @@ fn inspect_packets(source: &Source, plans: &[RangePlan], callbacks: &dyn Callbac
         ensure!(!packet.flags().contains(ff::codec::packet::Flags::CORRUPT), "corrupt source packet");
         ensure!(!packet.side_data().any(|d| unsupported_side_data(d.kind())), "changing codec configuration or unsupported packet metadata");
         if packet.stream() != source.video.stream_index { continue; }
-        let nals = avc_nals(packet.data().context("empty video packet")?, length_width)?;
-        ensure!(nals.iter().any(|nal| (1..=5).contains(&(nal[0] & 31))), "packet without an AVC picture");
-        if clock.origin.is_none() { ensure!(nals.iter().any(|nal| nal[0] & 31 == 5), "source does not begin at an IDR picture"); }
-        ensure!(nals.iter().filter(|nal| matches!(nal[0] & 31, 7 | 8)).all(|nal|
-            original_sets.iter().any(|original| original.as_slice() == *nal)), "AVC parameters change inside the source");
+        let bytes = packet.data().context("empty video packet")?;
+        let nals = if is_hevc { hevc::nals(bytes, length_width)? } else { avc_nals(bytes, length_width)? };
+        let kind = |nal: &[u8]| if is_hevc { (nal[0] >> 1) & 63 } else { nal[0] & 31 };
+        let idr = nals.iter().any(|nal| if is_hevc { matches!(kind(nal), 19 | 20) } else { kind(nal) == 5 });
+        ensure!(nals.iter().any(|nal| if is_hevc { kind(nal) <= 31 } else { (1..=5).contains(&kind(nal)) }),
+            "packet without a coded picture");
+        if clock.origin.is_none() { ensure!(idr, "source does not begin at an IDR picture"); }
+        ensure!(nals.iter().filter(|nal| if is_hevc { matches!(kind(nal), 32..=34) } else { matches!(kind(nal), 7 | 8) }).all(|nal|
+            original_sets.iter().any(|original| original.as_slice() == *nal)), "parameters change inside the source");
         let pts = packet.pts().context("video packet has no presentation timestamp")?;
         let at = pts as f64 * source.video.time_base - source.start_time;
         clock.add(at)?;
@@ -189,7 +198,7 @@ fn inspect_packets(source: &Source, plans: &[RangePlan], callbacks: &dyn Callbac
         // Validate the source clock once, independently of the output ordering.
         count += plans.iter().filter(|p| at_us >= micros(p.t_in) && at_us < micros(p.t_out)).count() as u64;
         if needed.contains(&at_us) {
-            ensure!(nals.iter().any(|nal| nal[0] & 31 == 5), "copy boundary is not an IDR picture");
+            ensure!(idr, "copy boundary is not an IDR picture");
             needed.retain(|&t| t != at_us);
         }
     }
@@ -221,11 +230,6 @@ pub fn cut_ranges(input: &str, output: &str, ranges: &[(i64, i64)], muted: bool,
         let stopped = || callbacks.is_cancelled();
         let progress = |value: f64| callbacks.progress((value * 15.0).clamp(0.0, 15.0) as i32);
         let source = smartcut_core::scan_stoppable(input, &smartcut_core::index::PacketScan, Some(&progress), Some(&stopped))?;
-        // Upstream retains an audio decoder and its last decoded source PTS
-        // across ranges. Replaying earlier samples would silently deduplicate
-        // them. Decline before writing; muted/video-only reorderings are safe.
-        ensure!(muted || source.audios.is_empty() || ranges.windows(2).all(|pair| pair[1].0 >= pair[0].1),
-            "reordered or overlapping audio requires the exact transcoder");
         for &(_, end) in ranges { check_source(&source, end)?; }
         let options = PlanOptions { allow_open_gop: false, ..Default::default() };
         // plan_on adjusts coarse-frame clocks. A single plain MP4 needs no join
@@ -240,9 +244,12 @@ pub fn cut_ranges(input: &str, output: &str, ranges: &[(i64, i64)], muted: bool,
             "no complete GOP to copy");
         let encoded_segments = plans.iter().flat_map(|p| &p.segments)
             .filter(|s| s.kind == SegmentKind::Reencode).count();
-        ensure!(encoded_segments > 0, "complete copies use the remux fallback");
         let expected = inspect_packets(&source, &plans, callbacks.as_ref())?;
-        let (parameter_set_ids, reference_frames) = avc1::unused_ids(input, encoded_segments)?;
+        let display = display::Display::read(input)?;
+        let (parameter_set_ids, reference_frames) = if source.video.codec == "h264" {
+            let (ids, refs) = avc1::unused_ids(input, encoded_segments)?;
+            (ids, Some(refs))
+        } else { (Vec::new(), None) };
         ensure!(!callbacks.is_cancelled(), "cancelled");
         let intermediate_path = format!("{output}.smartcut.mp4");
         ensure!(!Path::new(&intermediate_path).exists(), "intermediate staging file already exists");
@@ -252,15 +259,19 @@ pub fn cut_ranges(input: &str, output: &str, ranges: &[(i64, i64)], muted: bool,
             &smartcut_core::cut::CutOptions {
                 strict: true,
                 h264_parameter_set_ids: parameter_set_ids,
-                h264_reference_frames: Some(reference_frames),
+                h264_reference_frames: reference_frames,
                 audio_mode: smartcut_core::cut::AudioMode::Reencode,
                 drop_streams: if muted { source.audios.iter().map(|a| a.stream_index).collect() } else { Vec::new() },
                 ..Default::default()
             }, Some(Box::new(move |_, total, _| report_callback.progress(15 + (total * 65.0).clamp(0.0, 65.0) as i32))))?;
-        ensure!(stats.copied_video_packets > 0 && stats.encoded_video_packets > 0, "no actual mixed video output");
+        ensure!(stats.copied_video_packets > 0, "no actual copied video output");
         ensure!(stats.copied_video_packets + stats.encoded_video_packets == expected, "retained picture count changed");
-        let final_video_packets = avc1::remux(&intermediate_path, output, callbacks.as_ref())?;
-        ensure!(final_video_packets == expected, "AVC1 remux changed the retained picture count");
+        let final_video_packets = if source.video.codec == "hevc" {
+            hevc::remux(&intermediate_path, output, &display, callbacks.as_ref())?
+        } else {
+            avc1::remux(&intermediate_path, output, &display, callbacks.as_ref())?
+        };
+        ensure!(final_video_packets == expected, "final remux changed the retained picture count");
         ensure!(!smartcut_core::input::reads_failed(), "input read failed");
         ensure!(!smartcut_core::input::reads_stopped() && !callbacks.is_cancelled(), "cancelled");
         callbacks.progress(100);

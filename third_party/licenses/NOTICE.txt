@@ -10,7 +10,7 @@ GPL-3.0.txt에서 확인할 수 있습니다. 법이 허용하는 범위에서 �
 대응 소스는 APK와 같은 전달 위치에서 함께 제공되는
 quickcut-corresponding-source-<commit>.tar.gz 및
 UPSTREAM-SOURCE-LOCATIONS.md를 통해 제공합니다. archive에는 앱·JNI·수정한
-SmartCut Rust 전체 소스, 잠긴 Rust 의존성, FFmpeg/x264 원본 소스, Android
+SmartCut Rust 전체 소스, 잠긴 Rust 의존성, FFmpeg/x264/x265 원본 소스, Android
 runtime 의존성의 sources JAR, 빌드 스크립트 및 설치 설명을 포함합니다.
 runtime 의존성 프로젝트의 추가 리소스·manifest·빌드 파일은 함께 제공하는
 위치 안내에 기록된 공식 원본 소스에서 받을 수 있습니다. 모든 외부 프로젝트의
@@ -31,7 +31,7 @@ SmartCut
 FFmpeg
   https://ffmpeg.org/
   Version: 7.1.5
-  The selected build includes GPL components and libx264. It is not an
+  The selected build includes GPL components, libx264 and libx265. It is not an
   LGPL-only FFmpeg build. Original GPL/LGPL texts and component copyright
   notices are included in NATIVE-DEPENDENCIES.txt and the source bundle.
   No --enable-nonfree build is distributed.
@@ -41,6 +41,18 @@ x264
   Commit: b35605ace3ddf7c1a5d67a2eb553f034aef41d55
   License: GPL version 2 or later, compatible with this GPLv3 distribution.
   Original copyright notices are included in NATIVE-DEPENDENCIES.txt.
+
+x265
+  https://www.videolan.org/developers/x265.html
+  Version: 4.1; pinned archive and SHA-256 are in scripts/native-smartcut-sources.json.
+  Original COPYING and copyright notices are included in NATIVE-DEPENDENCIES.txt
+  and the complete pinned source archive accompanies the corresponding source.
+
+Android NDK C++ runtime (libc++, libc++abi and unwind)
+  NDK: 27.3.13750724 (r27d), statically linked for x265.
+  The pinned NDK's NOTICE and NOTICE.toolchain are retained in NATIVE-DEPENDENCIES.txt.
+  Sources and build directions: https://android.googlesource.com/platform/ndk/+/refs/tags/ndk-r27d/
+  Toolchain source revisions: clang_source_info.md in the pinned NDK toolchain.
 
 Rust dependencies
   Exact versions are recorded in native/quickcut-smartcut/Cargo.lock.

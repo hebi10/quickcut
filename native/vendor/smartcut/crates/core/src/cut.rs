@@ -4789,7 +4789,9 @@ fn open_encoder_as(
         _ => {}
     }
     if codec.name() == "libx265" {
-        let mut x265: Vec<String> = Vec::new();
+        // Short boundary encodes must not allocate a pool per phone CPU core.
+        let mut x265: Vec<String> = vec!["pools=2".into(), "frame-threads=1".into()];
+        eopts.set("preset", "fast");
         // x265 writes its banner and its statistics to the terminal itself,
         // rather than through libav's logging, so quietening libav does not
         // quieten it -- forty-odd lines about an encoder the person running
@@ -9610,6 +9612,21 @@ fn cut_into(
         // What this reel is written as: the plan it was given where it
         // matches the master, and one segment per range where it does not.
         for (plan_no, plan) in reel_plans[reel_no].iter().enumerate() {
+        // A repeated/overlapping range revisits source PTS. Restart only the
+        // input side, preserving the output encoder, its FIFO and clock; otherwise
+        // Reencoder::push deduplicates the revisited samples into silent gaps.
+        if plan_no > 0 && plan.t_in < reel_plans[reel_no][plan_no - 1].t_out
+            && writer.audio.iter().any(|t| t.reencoder.is_some()) {
+            let at = crate::input::demux(&rsrc.input.url)?;
+            for (k, track) in writer.audio.iter_mut().enumerate() {
+                if let (Some(re), Some(info)) = (track.reencoder.as_mut(), thread.audio[k].as_ref()) {
+                    let params = at.stream(info.stream_index)
+                        .ok_or_else(|| anyhow!("audio stream vanished at repeated range"))?.parameters();
+                    re.retune(params, info)?;
+                    track.prev = None;
+                }
+            }
+        }
         // Every range after the first drops a decoder that is already reading
         // into a stream from somewhere else. A TrueHD frame is read against
         // the last major sync seen, so one joined anywhere else is read

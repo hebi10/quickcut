@@ -70,7 +70,7 @@ with tempfile.TemporaryDirectory(prefix="quickcut-source-") as temporary:
     native_inputs = json.loads((stage / "scripts/native-smartcut-sources.json").read_text())
     rust_version = native_inputs["toolchains"]["rust"]
     pins = [(native_inputs[name]["archive"], native_inputs[name]["sha256"])
-            for name in ("ffmpeg", "x264")]
+            for name in ("ffmpeg", "x264", "x265")]
     native_downloads = stage / "build/native-smartcut/downloads"
     native_downloads.mkdir(parents=True)
     for filename, expected in pins:

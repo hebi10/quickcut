@@ -1,0 +1,22 @@
+name: Publish verified QuickCut 0.4.9
+on:
+  push:
+    branches: [codex/publish-v0.4.9-20261021]
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: publish-quickcut-v0.4.9
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify, upload and publish the exact signed files
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 release/v0.4.9/publish.py

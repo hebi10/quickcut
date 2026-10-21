@@ -1,0 +1,3 @@
+3d7797e8caed39bf5059bcc306591fa16683b427e8fd54edc1c166c9a7110586  QuickCut-v0.4.9-release.apk
+3a2f4bbb11f3dfd261ec71da2387c8682de51886d6bbed117253ec41832709c0  QuickCut-v0.4.9-source.tar.gz
+9a02be50bd30dfb7e50596c7581a4a07d782977ff1a4d61a76a978bdd6b83838  QuickCut-v0.4.9-source-guide.md

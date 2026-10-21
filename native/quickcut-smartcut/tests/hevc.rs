@@ -28,6 +28,14 @@ fn pictures(path: &std::path::Path) -> Vec<(i64, Vec<u8>)> {
     pictures
 }
 
+fn decoded_hashes(path: &std::path::Path) -> Vec<String> {
+    let result = Command::new("ffmpeg").args(["-v", "error", "-xerror", "-i"])
+        .arg(path).args(["-map", "0:v:0", "-f", "framemd5", "-"]).output().unwrap();
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    String::from_utf8(result.stdout).unwrap().lines().filter(|line| !line.starts_with('#'))
+        .map(|line| line.rsplit(',').next().unwrap().trim().to_owned()).collect()
+}
+
 #[test]
 fn main_hevc_b_frames_copy_the_middle_and_decode_every_retained_picture() {
     let directory = std::env::temp_dir().join(format!("quickcut-hevc-{}", std::process::id()));
@@ -93,17 +101,22 @@ fn main_hevc_b_frames_copy_the_middle_and_decode_every_retained_picture() {
         "-show_entries", "stream=nb_read_frames", "-of", "csv=p=0"]).arg(&opening_output).output().unwrap();
     assert!(opening_count.status.success());
     assert_eq!(String::from_utf8(opening_count.stdout).unwrap().trim(), "60");
-    let unsafe_output = directory.join("unsafe-join.mp4");
-    let result = cut_ranges(flagged.to_str().unwrap(), unsafe_output.to_str().unwrap(),
-        &[(6_000_000, 8_000_000), (0, 3_000_000)], false, Arc::new(Observer));
-    if result.is_ok() {
-        let decoded = Command::new("ffprobe").args(["-v", "error", "-select_streams", "v:0", "-count_frames",
-            "-show_entries", "stream=nb_read_frames", "-of", "csv=p=0"]).arg(&unsafe_output).output().unwrap();
-        assert_eq!(String::from_utf8(decoded.stdout).unwrap().trim(), "150",
-            "a copied splice IDR must never silently discard retained B pictures");
-    }
-    assert!(format!("{:#}", result.unwrap_err()).contains("discard prior pictures"));
-    assert!(!unsafe_output.exists(), "unsafe native output must stay unpublished");
+    let joined_output = directory.join("repaired-join.mp4");
+    let result = cut_ranges(flagged.to_str().unwrap(), joined_output.to_str().unwrap(),
+        &[(6_000_000, 8_000_000), (0, 3_000_000)], false, Arc::new(Observer)).unwrap();
+    assert!(result.copied_video_packets >= 120);
+    assert_eq!(result.copied_video_packets + result.encoded_video_packets, 150);
+    let joined = decoded_hashes(&joined_output);
+    assert_eq!(joined.len(), 150, "a splice must retain all delayed B pictures");
+    let original_pictures = decoded_hashes(&flagged);
+    let expected: Vec<_> = original_pictures[180..240].iter()
+        .chain(&original_pictures[..60]).cloned().collect();
+    assert_eq!(&joined[..120], expected.as_slice(), "copied pictures must decode identically across the repaired join");
+    let copy_output = directory.join("repaired-copy-only.mp4");
+    let copied = cut_ranges(flagged.to_str().unwrap(), copy_output.to_str().unwrap(),
+        &[(6_000_000, 8_000_000), (0, 2_000_000)], false, Arc::new(Observer)).unwrap();
+    assert_eq!((copied.copied_video_packets, copied.encoded_video_packets), (120, 0));
+    assert_eq!(decoded_hashes(&copy_output), expected);
     assert_eq!(std::fs::read(&source).unwrap(), original);
     std::fs::remove_dir_all(directory).unwrap();
 }

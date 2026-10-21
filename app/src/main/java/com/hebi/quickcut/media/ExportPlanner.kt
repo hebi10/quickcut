@@ -10,6 +10,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 enum class ExportMode {
+    /** Copy video only; the native path may convert audio after review. */
     FAST_ONLY,
     ALLOW_REENCODE,
 }

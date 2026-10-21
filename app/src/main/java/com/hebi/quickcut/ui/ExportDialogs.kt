@@ -187,18 +187,18 @@ internal fun exportReportText(report: ExportReport?): String {
 }
 
 @Composable
-internal fun ExportInspectionDialog() {
+internal fun ExportInspectionDialog(onCancel: () -> Unit) {
     AlertDialog(
-        onDismissRequest = {},
+        onDismissRequest = onCancel,
         title = { Text("저장 방식 분석 중") },
         text = {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 CircularProgressIndicator(modifier = Modifier.size(32.dp))
-                Text("코덱과 자르기 위치, 저장 공간을 확인하고 있습니다.",
+                Text("키프레임과 구간 연결, 저장 공간을 확인하고 있습니다. 긴 영상은 분석에 시간이 걸릴 수 있습니다.",
                     modifier = Modifier.padding(start = 12.dp))
             }
         },
-        confirmButton = {},
+        confirmButton = { TextButton(onClick = onCancel, shape = CutShape) { Text("분석 취소") } },
         containerColor = CutColors.panel,
         shape = CutShape,
     )

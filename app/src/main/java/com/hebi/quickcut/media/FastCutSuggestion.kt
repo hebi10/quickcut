@@ -17,7 +17,7 @@ class FastCutSuggestion private constructor(
                 val (start, end) = rangesMs[index]
                 // Only remove more. Never resurrect a deleted frame, silently drop a
                 // clip, change its audio, or apply one file's offset to another file.
-                if (start < clip.startMs || end > clip.endMs || end - start < 100L) return null
+                if (start < clip.startMs || end > clip.endMs || end < start || end - start < 100L) return null
                 clip.copy(startMs = start, endMs = end)
             }
             if (clips == requested.clips) return null

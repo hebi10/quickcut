@@ -104,6 +104,7 @@ fun QuickCutApp(
     var showLicenses by rememberSaveable { mutableStateOf(false) }
     var exportReview by remember { mutableStateOf<ExportReview?>(null) }
     var inspectingExport by remember { mutableStateOf(false) }
+    var inspectionJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     var showExportCancelConfirmation by rememberSaveable { mutableStateOf(false) }
     var showSaveOptions by rememberSaveable { mutableStateOf(false) }
     var selectedSaveAction by remember { mutableStateOf(OriginalAction.KEEP) }
@@ -134,7 +135,7 @@ fun QuickCutApp(
             val reviewedAction = selectedSaveAction
             val reviewedDate = selectedSaveDateMode
             inspectingExport = true
-            coroutineScope.launch {
+            inspectionJob = coroutineScope.launch {
                 try {
                     val assessment = ExportPlanner.analyze(
                         context.applicationContext, reviewedTimeline, reviewedDate
@@ -171,22 +172,13 @@ fun QuickCutApp(
             val reviewedTimeline = model.timeline
             val reviewedAction = model.originalAction
             val reviewedDate = model.savedDateMode
-            try {
-                val assessment = ExportPlanner.analyze(
-                    context.applicationContext, reviewedTimeline, reviewedDate
-                )
-                if (model.needsReencodeConsent && model.canStartExport &&
-                    model.timeline == reviewedTimeline) {
-                    exportReview = ExportReview(assessment, reviewedTimeline,
-                        reviewedAction, reviewedDate, retryingFastExport = true)
-                }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                model.reportError(
-                    "고속 저장을 완료하지 못했습니다. 정확한 위치로 자동 저장을 다시 선택해 주세요."
-                )
-            }
+            // A failed fast-only save already supplies its diagnostics. Do not
+            // rescan a long source to propose an action this retry cannot offer.
+            exportReview = ExportReview(
+                ExportAssessment(false, model.exportDiagnostics.explanation().ifBlank {
+                    "고속 저장을 완료하지 못했습니다. 정확한 위치로 자동 저장을 선택할 수 있습니다."
+                }), reviewedTimeline, reviewedAction, reviewedDate, retryingFastExport = true,
+            )
         }
     }
     LaunchedEffect(model.page) {
@@ -400,7 +392,7 @@ fun QuickCutApp(
         )
     }
 
-    if (inspectingExport) ExportInspectionDialog()
+    if (inspectingExport) ExportInspectionDialog(onCancel = { inspectionJob?.cancel() })
     exportReview?.takeIf {
         model.page == QuickCutPage.EDITOR && model.timeline == it.timeline
     }?.let { review ->

@@ -91,6 +91,7 @@ fun BatchScreen(
     var pendingOverview by remember { mutableStateOf<BatchExportOverview?>(null) }
     var pendingRetry by remember { mutableStateOf(false) }
     var inspecting by remember { mutableStateOf(false) }
+    var inspectionJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     var inspectedCount by remember { mutableIntStateOf(0) }
     var inspectedTotal by remember { mutableIntStateOf(0) }
     var showStopConfirmation by rememberSaveable { mutableStateOf(false) }
@@ -99,7 +100,7 @@ fun BatchScreen(
             inspecting = true
             inspectedCount = 0
             inspectedTotal = 0
-            scope.launch {
+            inspectionJob = scope.launch {
                 try {
                     val checked = model.inspectExport(context.applicationContext, retry) { done, total ->
                         inspectedCount = done
@@ -111,6 +112,8 @@ fun BatchScreen(
                         pendingOverview = checked
                         pendingRetry = retry
                     }
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
                 } catch (error: Exception) {
                     model.notifyUser(
                         "영상 분석에 실패했습니다. " +
@@ -274,15 +277,15 @@ fun BatchScreen(
     }
     if (inspecting) {
         AlertDialog(
-            onDismissRequest = {},
+            onDismissRequest = { inspectionJob?.cancel() },
             title = { Text("저장할 영상 확인 중") },
             text = {
                 Text(
-                    "영상과 자르기 설정을 확인하고 있습니다." +
+                    "키프레임과 자르기 설정을 확인하고 있습니다. 긴 영상은 분석에 시간이 걸릴 수 있습니다." +
                         if (inspectedTotal > 0) " ($inspectedCount / $inspectedTotal)" else ""
                 )
             },
-            confirmButton = {},
+            confirmButton = { TextButton(onClick = { inspectionJob?.cancel() }) { Text("분석 취소") } },
             containerColor = Color(0xFF202126),
         )
     }

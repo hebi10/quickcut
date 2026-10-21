@@ -142,6 +142,41 @@ class TrimInputInstrumentedTest {
     }
 
     @Test
+    fun acceptedRecommendationUsesRealEditorAndExporterWithoutChangingQuickDefaults() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        composeRule.runOnUiThread { model.discardEditing() }
+        InstrumentationRegistry.getInstrumentation().context.assets.open("quickcut_bframes.mp4").use { input ->
+            source.outputStream().use { input.copyTo(it) }
+        }
+        composeRule.runOnUiThread {
+            model.changeQuickMode(true)
+            model.importVideos(context, listOf(Uri.fromFile(source)))
+        }
+        composeRule.waitUntil(25_000L) { model.page == QuickCutPage.EDITOR }
+        composeRule.runOnUiThread { model.trimSelected(3_000L, 7_500L) }
+        showApp()
+        composeRule.onNodeWithText("영상 저장").performClick()
+        composeRule.waitUntil(60_000L) {
+            composeRule.onAllNodes(hasText("추천 위치로 고속 저장")).fetchSemanticsNodes().isNotEmpty()
+        }
+        val defaults = settings.loadQuick()
+        composeRule.runOnIdle {
+            assertEquals(3_000L, model.timeline.clips.single().startMs)
+            assertEquals(7_500L, model.timeline.clips.single().endMs)
+        }
+        composeRule.onNodeWithText("추천 위치로 고속 저장").performClick()
+        composeRule.waitUntil(120_000L) { model.page == QuickCutPage.COMPLETED }
+        composeRule.runOnIdle {
+            assertEquals(4_000L, model.timeline.clips.single().startMs)
+            assertEquals(6_000L, model.timeline.clips.single().endMs)
+            assertEquals(ExportMode.FAST_ONLY, model.requestedExportMode)
+            assertEquals(com.hebi.quickcut.media.ExportMethod.AUDIO_REENCODE, model.completedExportReport!!.method)
+            assertEquals(defaults, settings.loadQuick())
+        }
+        com.hebi.quickcut.media.MediaReader.validateExport(context, model.completedUri!!, 2_000L, true)
+    }
+
+    @Test
     fun deletingLastClipKeepsUndoAndRedoAccessible() {
         composeRule.runOnUiThread { model.changeQuickMode(false) }
         showApp()

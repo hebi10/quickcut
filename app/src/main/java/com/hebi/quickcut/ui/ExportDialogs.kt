@@ -65,8 +65,8 @@ internal fun SaveOptionsDialog(
                 }
                 if (dateMode == SaveDateMode.ORIGINAL) {
                     Text(
-                        "원본 날짜 유지에서는 직접 고속 복사를 지원하지 않습니다. " +
-                            "정확한 위치로 자동 저장하면서 날짜를 기록합니다.",
+                        "원본 날짜를 유지하면서 가능한 원본 복사·부분 처리를 우선 사용합니다. " +
+                            "날짜 기록을 위한 임시 저장 공간이 필요할 수 있습니다.",
                         color = CutColors.secondaryText,
                         style = MaterialTheme.typography.bodySmall,
                     )

@@ -411,7 +411,11 @@ fun QuickCutApp(
                 ?.takeIf { it.startMs > clip.startMs }
         } else null
         ExportModeDialog(
-            assessment = review.assessment,
+            assessment = if (review.retryingFastExport) review.assessment.copy(
+                explanation = model.exportDiagnostics.explanation().ifBlank {
+                    "고속 복사를 완료하지 못했습니다. 세부 원인은 확인할 수 없습니다."
+                },
+            ) else review.assessment,
             clip = clip,
             retryingFastExport = review.retryingFastExport,
             canSave = model.canStartExport,

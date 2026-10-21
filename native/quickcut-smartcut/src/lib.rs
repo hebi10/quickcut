@@ -137,7 +137,8 @@ fn check_source(source: &Source, end_us: i64) -> Result<()> {
     ensure_fast!(video.width > 0 && video.height > 0 && video.width <= 8192 && video.height <= 8192, Dimensions, "unsupported dimensions");
     ensure_fast!(![16, 18].contains(&video.shape.transfer)
         && video.shape.primaries != 9 && ![9, 10].contains(&video.shape.matrix), ColorFormat, "HDR or wide-gamut video");
-    ensure_fast!(source.audios.len() <= 1 && source.audios.iter().all(|a| a.codec == "aac" && (1..=2).contains(&a.channels)), AudioFormat, "unsupported audio tracks");
+    ensure_fast!(source.audios.len() <= 1, TrackLayout, "multiple audio tracks");
+    ensure_fast!(source.audios.iter().all(|a| a.codec == "aac" && (1..=2).contains(&a.channels)), AudioFormat, "unsupported audio tracks");
     ensure_fast!(source.captions.is_empty() && source.graphics.is_empty() && source.subpictures.is_empty() && source.dropped.is_empty(), TrackLayout, "additional tracks");
     ensure_fast!(source.duration.is_finite(), SourceDuration, "invalid source duration");
     // Android's MP4 extractor reports raw media-header lengths, including AAC

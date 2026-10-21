@@ -18,6 +18,24 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class EditorSessionInstrumentedTest {
     @Test
+    fun sessionRoundTripPreservesSubMillisecondRecommendedBounds() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val store = EditorSessionStore(context)
+        val previous = store.load()
+        try {
+            val clip = VideoClip(1L, "content://fixture/precise", 2_000L)
+                .withRangeUs(333_333L, 1_666_667L)
+            val snapshot = EditorSessionSnapshot(EditTimeline(listOf(clip)), 1L, 500L, true)
+            store.save(snapshot)
+            assertEquals(snapshot, store.load())
+            assertEquals(333_333L, store.load()!!.timeline.clips.single().startUs)
+            assertEquals(1_666_667L, store.load()!!.timeline.clips.single().endUs)
+        } finally {
+            previous?.let(store::save) ?: store.clear()
+        }
+    }
+
+    @Test
     fun sessionRoundTripPreservesMoreThan250SupportedClips() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val store = EditorSessionStore(context)

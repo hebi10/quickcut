@@ -41,6 +41,23 @@ fn actual_pts_accept_b_frames_but_reject_vfr_duplicate_and_missing_pictures() {
 }
 
 #[test]
+fn reusable_packet_facts_validate_every_copy_boundary_and_count_repeated_ranges() {
+    let facts = PacketFacts { picture_times_us: vec![0, 33_367, 66_733, 100_100,
+        133_467, 166_833, 200_200].into_boxed_slice(),
+        idr_times_us: vec![0, 100_100, 200_200].into_boxed_slice() };
+    let plan = RangePlan { t_in: 0.1001, t_out: 0.2002,
+        segments: vec![segment(SegmentKind::Copy, 0.1001, 0.2002)] };
+    assert_eq!(facts.check_plans(&[plan.clone(), plan]).unwrap(), 6,
+        "each occurrence retains all actual fractional timestamps");
+    let unsafe_plan = RangePlan { t_in: 0.033367, t_out: 0.2002,
+        segments: vec![segment(SegmentKind::Copy, 0.033367, 0.2002)] };
+    assert!(facts.check_plans(&[unsafe_plan]).is_err(), "a PTS alone never validates a splice");
+    let missing_end = RangePlan { t_in: 0.0, t_out: 0.166833,
+        segments: vec![segment(SegmentKind::Copy, 0.0, 0.166833)] };
+    assert!(facts.check_plans(&[missing_end]).is_err(), "the terminating copy boundary is checked too");
+}
+
+#[test]
 fn unknown_failure_does_not_invent_a_codec_or_frame_condition() {
     let error = anyhow::anyhow!("unexpected read failure at /private/source.mp4");
     assert_eq!(decline::code(&error), 0);

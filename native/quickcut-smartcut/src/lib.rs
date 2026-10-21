@@ -25,6 +25,8 @@ mod hevc;
 mod hevc_hdr;
 mod hevc_splice;
 mod decline;
+mod analysis_cache;
+mod candidates;
 use decline::{explain, Reason};
 
 pub trait Callbacks: Send + Sync {
@@ -162,9 +164,38 @@ fn check_source(source: &Source, end_us: i64, muted: bool) -> Result<()> {
     Ok(())
 }
 
-/// Inspect actual access-unit payloads, not the container keyframe flag. This
-/// also counts the pictures that must survive, catching silent packet loss.
-fn inspect_packets(source: &Source, plans: &[RangePlan], callbacks: &dyn Callbacks) -> Result<u64> {
+/// Facts from a complete successful payload/clock inspection. Retain actual
+/// timestamps so fractional frame rates and repeated ranges count precisely.
+struct PacketFacts {
+    picture_times_us: Box<[i64]>,
+    idr_times_us: Box<[i64]>,
+}
+impl PacketFacts {
+    fn retained_bytes(&self) -> usize {
+        (self.picture_times_us.len() + self.idr_times_us.len()) * std::mem::size_of::<i64>()
+    }
+
+    fn check_plans(&self, plans: &[RangePlan]) -> Result<u64> {
+        for boundary in plans.iter().flat_map(|p| &p.segments)
+            .filter(|s| s.kind == SegmentKind::Copy)
+            .flat_map(|s| std::iter::once(micros(s.start)).chain(s.copy_until.map(micros))) {
+            ensure_fast!(self.idr_times_us.binary_search(&boundary).is_ok(), UnsafeSplice,
+                "copy boundary is not a validated IDR picture");
+        }
+        let count = plans.iter().map(|plan| {
+            let start = self.picture_times_us.partition_point(|&t| t < micros(plan.t_in));
+            let end = self.picture_times_us.partition_point(|&t| t < micros(plan.t_out));
+            (end - start) as u64
+        }).sum();
+        ensure_fast!(count > 0, NoCopySegment, "no retained video pictures");
+        Ok(count)
+    }
+}
+
+/// Inspect every access-unit payload, HDR/parameter change and actual clock
+/// once, independently of requested ranges. Only complete scans are reusable.
+fn inspect_source_packets(source: &Source, callbacks: &dyn Callbacks,
+    progress: &(dyn Fn(f64) + Sync)) -> Result<PacketFacts> {
     let mut input = smartcut_core::input::open_local(&source.path)?;
     ensure_fast!(input.format().name().split(',').any(|n| n == "mp4"), Container, "input is not MP4");
     ensure_fast!(input.nb_streams() as usize == 1 + source.audios.len(), TrackLayout, "additional streams");
@@ -194,11 +225,10 @@ fn inspect_packets(source: &Source, plans: &[RangePlan], callbacks: &dyn Callbac
         smartcut_core::bitstream::NalFraming::Length(width) => width,
         _ => anyhow::bail!("MP4 AVC length prefixes required"),
     };
-    let mut needed: Vec<i64> = plans.iter().flat_map(|p| &p.segments).filter(|s| s.kind == SegmentKind::Copy)
-        .flat_map(|s| std::iter::once(micros(s.start)).chain(s.copy_until.map(micros))).collect();
-    needed.sort_unstable(); needed.dedup();
-    let mut count = 0u64;
+    let mut picture_times_us = Vec::new();
+    let mut idr_times_us = Vec::new();
     let mut packets = 0u64;
+    let mut last_progress = 0.0f64;
     let mut clock = PictureClock::new(source.video.frame_rate, source.video.time_base);
     loop {
         if packets % 64 == 0 { ensure!(!callbacks.is_cancelled(), "cancelled"); }
@@ -230,18 +260,20 @@ fn inspect_packets(source: &Source, plans: &[RangePlan], callbacks: &dyn Callbac
         let at = pts as f64 * source.video.time_base - source.start_time;
         clock.add(at)?;
         let at_us = micros(at);
-        // Count every selected occurrence, including overlapping/repeated ranges.
-        // Validate the source clock once, independently of the output ordering.
-        count += plans.iter().filter(|p| at_us >= micros(p.t_in) && at_us < micros(p.t_out)).count() as u64;
-        if needed.contains(&at_us) {
-            ensure_fast!(idr, UnsafeSplice, "copy boundary is not an IDR picture");
-            needed.retain(|&t| t != at_us);
+        picture_times_us.push(at_us);
+        if idr { idr_times_us.push(at_us); }
+        if packets % 64 == 0 && source.duration > 0.0 {
+            last_progress = last_progress.max((at / source.duration).clamp(0.0, 1.0));
+            progress(last_progress);
         }
     }
     clock.finish()?;
-    ensure_fast!(needed.is_empty(), UnsafeSplice, "copy boundary packet was not found");
-    ensure_fast!(count > 0, NoCopySegment, "no retained video pictures");
-    Ok(count)
+    ensure_fast!(!picture_times_us.is_empty(), NoCopySegment, "source has no video pictures");
+    ensure!(!callbacks.is_cancelled(), "cancelled");
+    picture_times_us.sort_unstable();
+    idr_times_us.sort_unstable();
+    Ok(PacketFacts { picture_times_us: picture_times_us.into_boxed_slice(),
+        idr_times_us: idr_times_us.into_boxed_slice() })
 }
 
 pub fn cut(input: &str, output: &str, start_us: i64, end_us: i64, muted: bool,
@@ -262,8 +294,8 @@ pub fn cut_ranges_copy_video(input: &str, output: &str, ranges: &[(i64, i64)], m
     cut_ranges_impl(input, output, ranges, muted, true, callbacks)
 }
 
-/// Return inward-only, millisecond-representable ranges. These are proposals;
-/// saving still validates the current input and cannot silently encode video.
+/// Return inward-only ranges at the actual microsecond boundaries. These are
+/// proposals: saving still verifies the current input and cannot encode video.
 pub fn suggest_copy_ranges(input: &str, ranges: &[(i64, i64)], source_end_us: i64, muted: bool,
     callbacks: Arc<dyn Callbacks>) -> Result<Vec<(i64, i64)>> {
     ensure!(Path::new(input).is_absolute(), "local absolute path required");
@@ -273,32 +305,39 @@ pub fn suggest_copy_ranges(input: &str, ranges: &[(i64, i64)], source_end_us: i6
     smartcut_core::init()?;
     let stop = Arc::clone(&callbacks);
     let _reads = smartcut_core::input::stop_reads_when(move || stop.is_cancelled());
-    let stopped = || callbacks.is_cancelled();
-    let source = smartcut_core::scan_stoppable(input, &smartcut_core::index::PacketScan,
-        None, Some(&stopped))?;
-    for &(_, end) in ranges { check_source(&source, end, muted)?; }
-    let points: Vec<i64> = source.points.iter().filter(|p| !p.open_gop() && p.measured)
-        .map(|p| micros(p.time)).filter(|t| *t >= 0 && t % 1_000 == 0).collect();
-    let proposed = ranges.iter().map(|&(start, end)| {
-        let next = points.iter().copied().filter(|&t| t >= start).min().context("no safe start")?;
-        let previous = if end == source_end_us { end } else {
-            points.iter().copied().filter(|&t| t <= end).max().context("no safe end")?
-        };
-        ensure!(previous - next >= 100_000, "adjustment would remove the entire clip");
-        Ok((next, previous))
-    }).collect::<Result<Vec<_>>>()?;
+    let progress = |percent| callbacks.progress(percent * 90 / 100);
+    let lease = analysis_cache::load(input, callbacks.as_ref(), &progress)?;
+    let source = &lease.source;
+    for &(_, end) in ranges { check_source(source, end, muted)?; }
+    let mut points = Vec::new();
+    for (index, point) in source.points.iter().enumerate() {
+        if index % 256 == 0 { ensure!(!callbacks.is_cancelled(), "cancelled"); }
+        let time = micros(point.time);
+        if !point.open_gop() && point.measured && time >= 0
+            && lease.analysis.packets.idr_times_us.binary_search(&time).is_ok() {
+            points.push(time);
+        }
+    }
+    points.sort_unstable();
+    points.dedup();
     let options = PlanOptions { allow_open_gop: false, ..Default::default() };
-    let plans = proposed.iter().map(|&(start, end)| {
-        let plan = plan_range(&source.video, source.duration, &source.points,
-            start as f64 / 1_000_000.0, end as f64 / 1_000_000.0, &options);
-        check_plan(&plan, start, end)?;
-        ensure!(plan.segments.iter().all(|s| s.kind == SegmentKind::Copy), "video encoding still required");
-        Ok(plan)
-    }).collect::<Result<Vec<_>>>()?;
-    inspect_packets(&source, &plans, callbacks.as_ref())?;
-    display::Display::read(input)?;
-    ensure!(!smartcut_core::input::reads_failed() && !smartcut_core::input::reads_stopped()
-        && !callbacks.is_cancelled(), "source read failed or cancelled");
+    let mut budget = candidates::MAX_TOTAL_CANDIDATE_PLANS;
+    let mut proposed = Vec::with_capacity(ranges.len());
+    for (index, &(start, end)) in ranges.iter().enumerate() {
+        let range = candidates::choose_range(&points, start, end, source_end_us,
+            callbacks.as_ref(), &mut budget, |from, to| {
+                let plan = plan_range(&source.video, source.duration, &source.points,
+                    from as f64 / 1_000_000.0, to as f64 / 1_000_000.0, &options);
+                check_plan(&plan, from, to).is_ok()
+                    && plan.segments.iter().all(|s| s.kind == SegmentKind::Copy)
+                    && lease.analysis.packets.check_plans(&[plan]).is_ok()
+            })?;
+        proposed.push(range);
+        callbacks.progress(90 + ((index + 1) * 9 / ranges.len()) as i32);
+    }
+    lease.verify(input, callbacks.as_ref())?;
+    callbacks.progress(100);
+    lease.verify(input, callbacks.as_ref())?;
     Ok(proposed)
 }
 
@@ -314,10 +353,10 @@ fn cut_ranges_impl(input: &str, output: &str, ranges: &[(i64, i64)], muted: bool
     let stop = Arc::clone(&callbacks);
     let _reads = smartcut_core::input::stop_reads_when(move || stop.is_cancelled());
     let result = (|| {
-        let stopped = || callbacks.is_cancelled();
-        let progress = |value: f64| callbacks.progress((value * 15.0).clamp(0.0, 15.0) as i32);
-        let source = explain(smartcut_core::scan_stoppable(input, &smartcut_core::index::PacketScan, Some(&progress), Some(&stopped)), Reason::SourceUnreadable)?;
-        for &(_, end) in ranges { check_source(&source, end, muted)?; }
+        let progress = |percent| callbacks.progress(percent * 15 / 100);
+        let lease = analysis_cache::load(input, callbacks.as_ref(), &progress)?;
+        let source = &lease.source;
+        for &(_, end) in ranges { check_source(source, end, muted)?; }
         let options = PlanOptions { allow_open_gop: false, ..Default::default() };
         // plan_on adjusts coarse-frame clocks. A single plain MP4 needs no join
         // handling, so use plan_range and verify its coordinates unchanged.
@@ -332,18 +371,18 @@ fn cut_ranges_impl(input: &str, output: &str, ranges: &[(i64, i64)], muted: bool
             .filter(|s| s.kind == SegmentKind::Reencode).count();
         ensure_fast!(!copy_video_only || encoded_segments == 0, ExactBoundary,
             "fast-only consent does not allow video encoding");
-        let expected = explain(inspect_packets(&source, &plans, callbacks.as_ref()), Reason::PacketStructure)?;
-        let display = explain(display::Display::read(input), Reason::Rotation)?;
+        let expected = explain(lease.analysis.packets.check_plans(&plans), Reason::PacketStructure)?;
+        let display = &lease.analysis.display;
         let (parameter_set_ids, reference_frames) = if source.video.codec == "h264" {
             let (ids, refs) = explain(avc1::unused_ids(input, encoded_segments), Reason::CodecConfiguration)?;
             (ids, Some(refs))
         } else { (Vec::new(), None) };
-        ensure!(!callbacks.is_cancelled(), "cancelled");
+        lease.verify(input, callbacks.as_ref())?;
         let intermediate_path = format!("{output}.smartcut.mp4");
         ensure!(!Path::new(&intermediate_path).exists(), "intermediate staging file already exists");
         let _intermediate = StagingFile { path: &intermediate_path, complete: false };
         let report_callback = Arc::clone(&callbacks);
-        let stats = explain(smartcut_core::cut::cut_with_stats(&source, &plans, &intermediate_path,
+        let stats = explain(smartcut_core::cut::cut_with_stats(source, &plans, &intermediate_path,
             &smartcut_core::cut::CutOptions {
                 strict: true,
                 h264_parameter_set_ids: parameter_set_ids,
@@ -358,17 +397,16 @@ fn cut_ranges_impl(input: &str, output: &str, ranges: &[(i64, i64)], muted: bool
             "fast-only output unexpectedly encoded video");
         ensure_fast!(stats.copied_video_packets + stats.encoded_video_packets == expected, OutputValidation, "retained picture count changed");
         let final_video_packets = if source.video.codec == "hevc" {
-            explain(hevc::remux(&intermediate_path, output, &display, callbacks.as_ref(),
+            explain(hevc::remux(&intermediate_path, output, display, callbacks.as_ref(),
                 &stats.copied_segment_starts_us, source.video.frame_rate), Reason::OutputValidation)?
         } else {
-            explain(avc1::remux(&intermediate_path, output, &display, callbacks.as_ref(),
+            explain(avc1::remux(&intermediate_path, output, display, callbacks.as_ref(),
                 source.video.frame_rate), Reason::OutputValidation)?
         };
         ensure_fast!(final_video_packets == expected, OutputValidation, "final remux changed the retained picture count");
-        ensure_fast!(!smartcut_core::input::reads_failed(), SourceUnreadable, "input read failed");
-        ensure!(!smartcut_core::input::reads_stopped() && !callbacks.is_cancelled(), "cancelled");
+        lease.verify(input, callbacks.as_ref())?;
         callbacks.progress(100);
-        ensure!(!callbacks.is_cancelled(), "cancelled");
+        lease.verify(input, callbacks.as_ref())?;
         Ok(Report { copied_video_packets: stats.copied_video_packets, encoded_video_packets: stats.encoded_video_packets })
     })();
     staging.complete = result.is_ok();

@@ -141,6 +141,34 @@ class TrimInputInstrumentedTest {
         }
     }
 
+    @Test fun savingUnchangedRoundedFieldsPreservesPreviouslyAcceptedPreciseTimes() {
+        composeRule.runOnUiThread {
+            val suggestion = com.hebi.quickcut.media.FastCutSuggestion.createUs(model.timeline,
+                listOf(1L to 2_999_999L))!!
+            assertTrue(model.applyFastCutSuggestion(suggestion))
+        }
+        var saved = false
+        showQuick { saved = true }
+        composeRule.onNodeWithText("영상 저장").performClick()
+        composeRule.runOnIdle {
+            assertTrue(saved)
+            assertEquals(1L, model.timeline.clips.single().startUs)
+            assertEquals(2_999_999L, model.timeline.clips.single().endUs)
+        }
+    }
+
+    @Test fun splitIsDisabledWhenPreciseRemainderIsUnderMinimumDespiteRoundedDisplay() {
+        composeRule.runOnUiThread {
+            assertTrue(model.applyFastCutSuggestion(com.hebi.quickcut.media.FastCutSuggestion.createUs(
+                model.timeline, listOf(0L to 333_333L))!!))
+            model.seek(234L)
+            org.junit.Assert.assertFalse(model.canSplitSelected)
+            val original = model.timeline
+            model.splitSelected()
+            assertEquals(original, model.timeline)
+        }
+    }
+
     @Test
     fun acceptedRecommendationUsesRealEditorAndExporterWithoutChangingQuickDefaults() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext

@@ -99,8 +99,8 @@ internal object FastMp4Trimmer {
                         MediaFormat.MIMETYPE_AUDIO_AAC)
             ) return unavailable(UnavailableReason.AUDIO_CODEC)
 
-            val requestedUs = clip.startMs * 1_000L
-            val endUs = clip.endMs * 1_000L
+            val requestedUs = clip.startUs
+            val endUs = clip.endUs
             extractor.selectTrack(videoTrack)
             extractor.seekTo(requestedUs, MediaExtractor.SEEK_TO_NEXT_SYNC)
             val syncUs = extractor.sampleTime
@@ -109,7 +109,7 @@ internal object FastMp4Trimmer {
                 !isAcceptableStart(requestedUs, syncUs, endUs)
             ) return unavailable(UnavailableReason.KEYFRAME)
 
-            val copyToEndOfSource = clip.endMs == clip.sourceDurationMs
+            val copyToEndOfSource = clip.endUs == clip.sourceDurationMs * 1_000L
             var previousTimeUs = syncUs
             repeat(12) {
                 if (extractor.advance()) {

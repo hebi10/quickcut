@@ -107,7 +107,11 @@ internal object NativeSmartCutTrimmer {
         }
     }
 
-    suspend fun suggestCopyRanges(context: Context, timeline: EditTimeline): List<Pair<Long, Long>>? =
+    suspend fun suggestCopyRangesUs(
+        context: Context,
+        timeline: EditTimeline,
+        onProgress: (Int?) -> Unit = {},
+    ): List<Pair<Long, Long>>? =
         withContext(Dispatchers.IO) {
             val ranges = NativeSmartCutPlan.rangesUs(timeline) ?: return@withContext null
             val clip = timeline.clips.first()
@@ -122,15 +126,15 @@ internal object NativeSmartCutTrimmer {
                     val position = Os.lseek(descriptor.fileDescriptor, 0L, OsConstants.SEEK_CUR)
                     Os.lseek(descriptor.fileDescriptor, position, OsConstants.SEEK_SET)
                     job.ensureActive()
-                    val callbacks = NativeSmartCutCallbacks(job) {}
+                    val callbacks = NativeSmartCutCallbacks(job, onProgress)
                     val result = try {
                         NativeSmartCutBridge.suggestCopyRanges("/proc/self/fd/${descriptor.fd}", ranges,
                             clip.sourceDurationMs * 1_000L, clip.muted, callbacks)
                     } finally { callbacks.close() }
                     job.ensureActive()
                     if (result.size != ranges.size + 1 || result[0] != 1L ||
-                        result.drop(1).any { it < 0L || it % 1_000L != 0L }) return@use null
-                    result.drop(1).chunked(2).map { it[0] / 1_000L to it[1] / 1_000L }
+                        result.drop(1).any { it < 0L }) return@use null
+                    result.drop(1).chunked(2).map { it[0] to it[1] }
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled

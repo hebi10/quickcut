@@ -13,7 +13,7 @@ use std::{
 };
 
 use ffmpeg_next as ff;
-use quickcut_smartcut::{cut, Callbacks};
+use quickcut_smartcut::{cut, cut_ranges_copy_video, suggest_copy_ranges, Callbacks};
 
 const START_US: i64 = 10_791_000_000;
 const END_US: i64 = 10_795_500_000;
@@ -175,4 +175,53 @@ fn three_hour_source_keeps_long_timestamps_and_smart_cuts_near_the_end() {
         "video duration changed: {video_duration_us} instead of {DURATION_US} us");
     assert!((movie_duration_us - DURATION_US).abs() <= 1_000,
         "movie duration changed: {movie_duration_us} instead of {DURATION_US} us");
+}
+
+/// A low-bitrate 1080p source and silent stereo AAC keep the three-hour fixture
+/// bounded while exercising audio seek/re-encode at a genuine long timestamp.
+/// This synthetic input does not establish physical-device compatibility.
+#[test]
+fn three_hour_1080p_aac_source_reuses_analysis_for_a_near_end_copy_cut() {
+    let directory = Directory::new();
+    let seed = directory.0.join("1080p-seed.mp4");
+    let source = directory.0.join("1080p-three-hours-aac.mp4");
+    let output = directory.0.join("1080p-near-end.mp4");
+    run(Command::new("ffmpeg").args(["-v", "error", "-y", "-f", "lavfi", "-i",
+        "color=c=navy:size=1920x1080:rate=10:duration=8", "-an", "-c:v", "libx264",
+        "-preset", "ultrafast", "-threads", "1", "-crf", "35", "-pix_fmt", "yuv420p",
+        "-g", "20", "-keyint_min", "20", "-sc_threshold", "0", "-bf", "0",
+        "-x264-params", "open-gop=0"]).arg(&seed));
+    run(Command::new("ffmpeg").args(["-v", "error", "-y", "-stream_loop", "1349", "-i"])
+        .arg(&seed).args(["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",
+            "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac", "-b:a", "32k",
+            "-threads", "1", "-t", "10800", "-movflags", "+faststart"]).arg(&source));
+    let original = fingerprint(&source);
+    assert!(original.0 < 64 * 1024 * 1024, "bounded 1080p/audio fixture exceeded 64 MiB");
+    let media = ff::format::input(&source).unwrap();
+    assert_eq!(media.duration(), 10_800_000_000);
+    assert_eq!(media.nb_streams(), 2);
+    drop(media);
+    let ranges = suggest_copy_ranges(source.to_str().unwrap(), &[(START_US, END_US)],
+        10_800_000_000, false, Arc::new(Observer)).unwrap();
+    assert_eq!(ranges, vec![(10_792_000_000, 10_794_000_000)]);
+    let report = cut_ranges_copy_video(source.to_str().unwrap(), output.to_str().unwrap(),
+        &ranges, false, Arc::new(Observer)).unwrap();
+    assert_eq!((report.copied_video_packets, report.encoded_video_packets), (20, 0));
+    assert_eq!(fingerprint(&source), original);
+    let media = ff::format::input(&output).unwrap();
+    assert_eq!(media.nb_streams(), 2);
+    let video = media.streams().best(ff::media::Type::Video).unwrap();
+    let decoder = ff::codec::context::Context::from_parameters(video.parameters()).unwrap().decoder().video().unwrap();
+    assert_eq!((decoder.width(), decoder.height()), (1920, 1080));
+    let video_us = (video.duration() as f64 * f64::from(video.time_base()) * 1_000_000.0).round() as i64;
+    assert!((video_us - 2_000_000).abs() <= 1);
+    let audio = media.streams().best(ff::media::Type::Audio).unwrap();
+    let audio_us = (audio.duration() as f64 * f64::from(audio.time_base()) * 1_000_000.0).round() as i64;
+    assert!((audio_us - 2_000_000).abs() < 50_000, "audio duration changed: {audio_us}");
+    drop(media);
+    run(Command::new("ffmpeg").args(["-v", "error", "-xerror", "-i"]).arg(&output)
+        .args(["-map", "0:v:0", "-map", "0:a:0", "-f", "null", "-"]));
+    assert_eq!(pictures_in(&source, ranges[0].0, ranges[0].1).iter().map(|(_, picture)| picture).collect::<Vec<_>>(),
+        pictures_in(&output, 0, 2_000_000).iter().map(|(_, picture)| picture).collect::<Vec<_>>(),
+        "every copied high-resolution access unit must match its long-timestamp source");
 }

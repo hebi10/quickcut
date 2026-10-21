@@ -1,21 +1,28 @@
 package com.hebi.quickcut.ui
 
-import com.hebi.quickcut.editor.TrimInput
 import com.hebi.quickcut.media.FastCutSuggestion
 import java.util.Locale
 
 internal fun fastCutSuggestionText(suggestion: FastCutSuggestion): String = buildString {
-    fun time(ms: Long) = String.format(Locale.US, "%02d:%02d:%02d.%03d",
-        ms / 3_600_000, (ms / 60_000) % 60, (ms / 1_000) % 60, ms % 1_000)
     suggestion.requested.clips.zip(suggestion.adjusted.clips).forEachIndexed { index, (before, after) ->
-        if (before.startMs != after.startMs) {
-            append("구간 ${index + 1} 시작\n요청 ${time(before.startMs)} → 추천 ${time(after.startMs)}\n")
-            append("앞에서 ${TrimInput.secondsText(after.startMs - before.startMs)}초 추가 삭제\n\n")
+        if (before.startUs != after.startUs) {
+            append("구간 ${index + 1} 시작\n요청 ${preciseTime(before.startUs)} → 추천 ${preciseTime(after.startUs)}\n")
+            append("앞에서 ${preciseSeconds(after.startUs - before.startUs)}초 추가 삭제\n\n")
         }
-        if (before.endMs != after.endMs) {
-            append("구간 ${index + 1} 끝\n요청 ${time(before.endMs)} → 추천 ${time(after.endMs)}\n")
-            append("뒤에서 ${TrimInput.secondsText(before.endMs - after.endMs)}초 추가 삭제\n\n")
+        if (before.endUs != after.endUs) {
+            append("구간 ${index + 1} 끝\n요청 ${preciseTime(before.endUs)} → 추천 ${preciseTime(after.endUs)}\n")
+            append("뒤에서 ${preciseSeconds(before.endUs - after.endUs)}초 추가 삭제\n\n")
         }
     }
-    append("총 ${TrimInput.secondsText(suggestion.extraRemovedMs)}초가 추가로 삭제됩니다.")
+    append("총 ${preciseSeconds(suggestion.extraRemovedUs)}초가 추가로 삭제됩니다.")
+}
+
+internal fun preciseSeconds(us: Long): String =
+    String.format(Locale.US, "%.6f", us / 1_000_000.0).trimEnd('0').trimEnd('.')
+
+internal fun preciseTime(us: Long): String {
+    val fractional = if (us % 1_000L == 0L) String.format(Locale.US, "%03d", us % 1_000_000 / 1_000)
+        else String.format(Locale.US, "%06d", us % 1_000_000)
+    return String.format(Locale.US, "%02d:%02d:%02d.%s", us / 3_600_000_000L,
+        (us / 60_000_000L) % 60, (us / 1_000_000L) % 60, fractional)
 }

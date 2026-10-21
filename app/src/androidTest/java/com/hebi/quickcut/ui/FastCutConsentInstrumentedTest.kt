@@ -4,6 +4,7 @@ import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import com.hebi.quickcut.editor.EditTimeline
 import com.hebi.quickcut.editor.VideoClip
 import com.hebi.quickcut.media.ExportAssessment
@@ -54,5 +55,19 @@ class FastCutConsentInstrumentedTest {
         open()
         compose.onNodeWithText("취소").performClick()
         compose.runOnIdle { assertTrue(dismissed); assertFalse(exact); assertEquals(requested, timeline) }
+    }
+
+    @Test fun unsupportedPreviewNeverAppliesOrApprovesTheRecommendation() {
+        open()
+        compose.onNodeWithText("미리보기 · 요청/추천 비교").performScrollTo().performClick()
+        compose.onNodeWithText("추천 재생").performScrollTo().performClick()
+        compose.runOnIdle {
+            assertEquals(requested, timeline)
+            assertFalse(exact)
+            assertFalse(dismissed)
+        }
+        compose.onNodeWithText("미리보기 닫기").performScrollTo().performClick()
+        compose.onNodeWithText("정확한 위치로 자동 저장").performClick()
+        compose.runOnIdle { assertTrue(exact); assertEquals(requested, timeline) }
     }
 }

@@ -6,7 +6,7 @@ import com.hebi.quickcut.editor.EditTimeline
 internal object NativeSmartCutPlan {
     fun rangesUs(timeline: EditTimeline): LongArray? {
         if (unavailableReason(timeline) != null) return null
-        return timeline.clips.flatMap { listOf(it.startMs * 1_000L, it.endMs * 1_000L) }.toLongArray()
+        return timeline.clips.flatMap { listOf(it.startUs, it.endUs) }.toLongArray()
     }
 
     fun unavailableReason(timeline: EditTimeline): FastExportReason? {

@@ -43,9 +43,53 @@ class VideoExporter(private val context: Context) {
         resolvedOriginalDate: OriginalTimestamp? = null,
         onReport: (ExportReport) -> Unit = {},
         onDiagnostics: (ExportDiagnostics) -> Unit = {},
+        onStage: (ExportStage) -> Unit = {},
+    ): Uri {
+        val diagnostic = ExportDiagnosticStore.begin(context, timeline)
+        val main = Handler(Looper.getMainLooper())
+        val stage: (ExportStage) -> Unit = { value ->
+            diagnostic.stage(value)
+            val update = Runnable { runCatching { onStage(value) } }
+            if (Looper.myLooper() == Looper.getMainLooper()) update.run() else main.post(update)
+        }
+        try {
+            stage(ExportStage.PREPARING)
+            try { diagnostic.inspect(timeline) }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { /* Optional diagnostics must not prevent an export. */ }
+            val output = exportInternal(timeline, onProgress,
+                onFinalizing = { stage(ExportStage.PUBLISHING); onFinalizing() },
+                saveDateMode, outputBaseName, exportMode, onOutputCreated, onCommitted, resolvedOriginalDate,
+                onReport = { diagnostic.report(it); onReport(it) },
+                onDiagnostics = { diagnostic.reasons(it); onDiagnostics(it) }, onStage = stage)
+            stage(ExportStage.COMPLETE)
+            diagnostic.finish("완료")
+            return output
+        } catch (cancelled: CancellationException) {
+            diagnostic.finish("취소", cancelled)
+            throw cancelled
+        } catch (error: Exception) {
+            diagnostic.finish("실패", error)
+            throw error
+        }
+    }
+
+    private suspend fun exportInternal(
+        timeline: EditTimeline,
+        onProgress: (Int?) -> Unit,
+        onFinalizing: () -> Unit,
+        saveDateMode: SaveDateMode,
+        outputBaseName: String?,
+        exportMode: ExportMode,
+        onOutputCreated: (Uri) -> Unit,
+        onCommitted: (Uri) -> Unit,
+        resolvedOriginalDate: OriginalTimestamp?,
+        onReport: (ExportReport) -> Unit,
+        onDiagnostics: (ExportDiagnostics) -> Unit,
+        onStage: (ExportStage) -> Unit,
     ): android.net.Uri {
         require(!timeline.isEmpty) { "편집할 영상이 없습니다." }
-        require(timeline.clips.all { it.durationMs >= 100L }) { "저장할 영상 구간은 0.1초 이상이어야 합니다." }
+        require(timeline.clips.all { it.durationUs >= 100_000L }) { "저장할 영상 구간은 0.1초 이상이어야 합니다." }
         val startedAt = SystemClock.elapsedRealtime()
         var diagnostics = ExportDiagnostics()
         suspend fun showDiagnostics() {
@@ -69,6 +113,7 @@ class VideoExporter(private val context: Context) {
 
         // Fast path: a single unmodified MP4 clip with a safe sync-sample boundary.
         // Original dates change MP4 headers, not compressed pictures.
+        onStage(ExportStage.ANALYZING)
         if (timeline.clips.size == 1) {
             val clip = timeline.clips.first()
             val inspection = withContext(Dispatchers.IO) {
@@ -81,10 +126,11 @@ class VideoExporter(private val context: Context) {
                 showDiagnostics()
             }
             if (plan != null) {
+                onStage(ExportStage.COPYING)
                 val output = try {
                     if (originalDate != null) {
                         saveDatedCopy(timeline, plan, originalDate.epochMs, outputBaseName,
-                            onProgress, onFinalizing, onOutputCreated, onCommitted)
+                            onProgress, onFinalizing, onOutputCreated, onCommitted, onStage)
                     } else GalleryWriter(context).saveDirect(
                         outputBaseName = outputBaseName,
                         expectedDurationMs = clip.durationMs,
@@ -98,6 +144,7 @@ class VideoExporter(private val context: Context) {
                         },
                         onOutputCreated = onOutputCreated,
                         onCommitted = onCommitted,
+                        onValidating = { onStage(ExportStage.VALIDATING) },
                     )
                 } catch (cancelled: CancellationException) {
                     throw cancelled
@@ -112,7 +159,7 @@ class VideoExporter(private val context: Context) {
                         "QuickCutExport",
                         "method=fast_remux elapsedMs=" +
                             (SystemClock.elapsedRealtime() - startedAt) +
-                            " startShiftUs=" + (plan.startUs - clip.startMs * 1_000L),
+                            " startShiftUs=" + (plan.startUs - clip.startUs),
                     )
                     // Publication already succeeded. Reporting must never enter the
                     // remux-fallback catch and start another export of the same clip.
@@ -137,11 +184,13 @@ class VideoExporter(private val context: Context) {
         val temporary = File(context.cacheDir, "quickcut_" + UUID.randomUUID().toString() + ".mp4")
         try {
             var nativeReason: FastExportReason? = null
+            onStage(ExportStage.PROCESSING)
             val nativeResult = try {
                     NativeSmartCutTrimmer.tryExport(context, timeline, temporary, onProgress,
                         onUnavailable = { nativeReason = it },
                         copyVideoOnly = exportMode == ExportMode.FAST_ONLY)
                         ?.also {
+                            onStage(ExportStage.VALIDATING)
                             withContext(Dispatchers.IO) {
                                 originalDate?.let { Mp4HeaderDates.update(temporary, it.epochMs) }
                                 MediaReader.validateExport(temporary, expectedDurationMs, expectAudio, originalDate?.epochMs)
@@ -170,6 +219,7 @@ class VideoExporter(private val context: Context) {
                 val optimizeTrim = timeline.clips.singleOrNull()?.let { clip ->
                     withContext(Dispatchers.IO) { ExactTrimOptimization.canOptimize(context, clip) }
                 } ?: false
+                onStage(ExportStage.PROCESSING)
                 withContext(Dispatchers.Main.immediate) {
                     transform(timeline, temporary, onProgress, outputTimestampMs, optimizeTrim)
                 }
@@ -178,9 +228,11 @@ class VideoExporter(private val context: Context) {
                     nativeResult.copiedPackets + " encodedVideoPackets=" + nativeResult.encodedPackets)
                 null
             }
+            onStage(ExportStage.VALIDATING)
             withContext(Dispatchers.IO) {
                 MediaReader.validateExport(temporary, expectedDurationMs, expectAudio, originalDate?.epochMs)
             }
+            onStage(ExportStage.SAVING)
             val output = GalleryWriter(context).save(
                 temporary,
                 originalTimestampMs = originalDate?.epochMs,
@@ -190,6 +242,7 @@ class VideoExporter(private val context: Context) {
                 onFinalizing = onFinalizing,
                 onOutputCreated = onOutputCreated,
                 onCommitted = onCommitted,
+                onValidating = { onStage(ExportStage.VALIDATING) },
             )
             reportPublished(
                 ExportReport(
@@ -227,6 +280,7 @@ class VideoExporter(private val context: Context) {
         onFinalizing: () -> Unit,
         onOutputCreated: (Uri) -> Unit,
         onCommitted: (Uri) -> Unit,
+        onStage: (ExportStage) -> Unit,
     ): Uri {
         val file = File(context.cacheDir, "quickcut_date_" + UUID.randomUUID() + ".mp4")
         val expectAudio = timeline.clips.any { it.hasAudio && !it.muted }
@@ -239,6 +293,7 @@ class VideoExporter(private val context: Context) {
                     FastMp4Trimmer.write(context, plan, it.fileDescriptor, onProgress)
                 }
                 try {
+                    onStage(ExportStage.VALIDATING)
                     Mp4HeaderDates.update(file, timestampMs)
                     MediaReader.validateExport(file, timeline.totalDurationMs, expectAudio, timestampMs)
                 } catch (invalid: IOException) {
@@ -246,8 +301,10 @@ class VideoExporter(private val context: Context) {
                 }
             }
             // Publication is outside the fallback-producing validation block.
+            onStage(ExportStage.SAVING)
             return GalleryWriter(context).save(file, timestampMs, outputBaseName,
-                timeline.totalDurationMs, expectAudio, onFinalizing, onOutputCreated, onCommitted)
+                timeline.totalDurationMs, expectAudio, onFinalizing, onOutputCreated, onCommitted,
+                onValidating = { onStage(ExportStage.VALIDATING) })
         } finally {
             withContext(NonCancellable + Dispatchers.IO) { file.delete() }
         }

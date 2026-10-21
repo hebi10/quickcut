@@ -10,11 +10,12 @@ data class BatchStartAdjustment(
     val requestedClip: VideoClip,
     val suggestedStartMs: Long,
     val suggestedEndMs: Long = requestedClip.endMs,
+    private val suggestionSnapshot: FastCutSuggestion? = null,
 ) {
     val uri: String get() = requestedClip.uri
     val requestedStartMs: Long get() = requestedClip.startMs
-    val extraRemovedMs: Long get() = suggestedStartMs - requestedStartMs + requestedClip.endMs - suggestedEndMs
-    val suggestion: FastCutSuggestion get() = checkNotNull(FastCutSuggestion.create(
+    val extraRemovedMs: Long get() = suggestion.extraRemovedMs
+    val suggestion: FastCutSuggestion get() = suggestionSnapshot ?: checkNotNull(FastCutSuggestion.create(
         EditTimeline(listOf(requestedClip)), listOf(suggestedStartMs to suggestedEndMs)))
 }
 
@@ -23,7 +24,7 @@ object BatchFastAdjustmentPolicy {
         suggestion ?: return null
         val requested = suggestion.requested.clips.singleOrNull() ?: return null
         val adjusted = suggestion.adjusted.clips.single()
-        return BatchStartAdjustment(displayName, requested, adjusted.startMs, adjusted.endMs)
+        return BatchStartAdjustment(displayName, requested, adjusted.startMs, adjusted.endMs, suggestion)
     }
 
     fun suggest(
@@ -33,14 +34,14 @@ object BatchFastAdjustmentPolicy {
     ): BatchStartAdjustment? {
         val clip = timeline.clips.singleOrNull() ?: return null
         val start = suggestedStartMs ?: return null
-        if (start <= clip.startMs ||
-            clip.endMs - start < 100L) return null
-        return BatchStartAdjustment(displayName, clip, start)
+        if (start <= clip.startMs || start > Long.MAX_VALUE / 1_000L) return null
+        val suggestion = FastCutSuggestion.createUs(timeline,
+            listOf(start * 1_000L to clip.endUs)) ?: return null
+        return fromSuggestion(displayName, suggestion)
     }
 
     fun apply(timeline: EditTimeline, adjustment: BatchStartAdjustment): EditTimeline? {
         if (timeline.clips.singleOrNull() != adjustment.requestedClip) return null
-        return FastCutSuggestion.create(timeline,
-            listOf(adjustment.suggestedStartMs to adjustment.suggestedEndMs))?.applyTo(timeline)
+        return runCatching { adjustment.suggestion.applyTo(timeline) }.getOrNull()
     }
 }

@@ -136,6 +136,7 @@ internal fun ExportModeDialog(
                 assessment.suggestion?.let { suggestion ->
                     Text("고속 저장 추천 위치", style = MaterialTheme.typography.titleSmall)
                     Text(fastCutSuggestionText(suggestion))
+                    FastCutPreview(suggestion)
                     Text("위 시간은 원본 영상 기준입니다. 키프레임 간격에 따라 차이가 날 수 있습니다. " +
                         "추천 위치에 동의하면 구간을 변경하고 영상 재인코딩 없이 저장합니다. 소리는 필요하면 변환합니다.",
                         color = CutColors.secondaryText, style = MaterialTheme.typography.bodySmall)
@@ -187,14 +188,15 @@ internal fun exportReportText(report: ExportReport?): String {
 }
 
 @Composable
-internal fun ExportInspectionDialog(onCancel: () -> Unit) {
+internal fun ExportInspectionDialog(progress: Int? = null, onCancel: () -> Unit) {
     AlertDialog(
         onDismissRequest = onCancel,
         title = { Text("저장 방식 분석 중") },
         text = {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 CircularProgressIndicator(modifier = Modifier.size(32.dp))
-                Text("키프레임과 구간 연결, 저장 공간을 확인하고 있습니다. 긴 영상은 분석에 시간이 걸릴 수 있습니다.",
+                Text((progress?.let { "원본 분석 ${it.coerceIn(0, 100)}%\n" } ?: "원본 분석 준비 중\n") +
+                    "키프레임과 구간 연결, 저장 공간을 확인하고 있습니다. 긴 영상은 분석에 시간이 걸릴 수 있습니다.",
                     modifier = Modifier.padding(start = 12.dp))
             }
         },

@@ -95,7 +95,7 @@ fun QuickTrimScreen(
         val loaded = loadedClip[0] ?: return
         val current = model.timeline.clips.singleOrNull() ?: return
         if (current.id == loaded.id && current.uri == loaded.uri &&
-            current.startMs == loaded.startMs && current.endMs == loaded.endMs
+            current.startUs == loaded.startUs && current.endUs == loaded.endUs
         ) {
             model.seek(player.currentPosition.coerceIn(0L, current.durationMs))
         }
@@ -140,7 +140,7 @@ fun QuickTrimScreen(
             if (player.isPlaying) syncPosition()
         }
     }
-    LaunchedEffect(clip.id, clip.uri, clip.startMs, clip.endMs) {
+    LaunchedEffect(clip.id, clip.uri, clip.startUs, clip.endUs) {
         delay(200L)
         val position = model.playPositionMs.coerceIn(0L, clip.durationMs)
         // Ignore reset/seek callbacks until the replacement media is configured.
@@ -189,7 +189,13 @@ fun QuickTrimScreen(
     SideEffect { model.setTrimInputValidity(valid) }
     val canSave = valid && model.canStartExport
     val saveValidated: (() -> Unit) -> Unit = { action ->
-        updateTrim(leadingText, trailingText)
+        val range = TrimInput.removedRange(leadingText, trailingText, clip.sourceDurationMs)
+        model.setTrimInputValidity(range != null)
+        // Valid edits already update the timeline. Saving an unchanged rounded
+        // display must preserve a previously reviewed precise boundary.
+        if (range != null && (range.startMs != clip.startMs || range.endMs != clip.endMs)) {
+            updateTrim(leadingText, trailingText)
+        }
         if (model.canStartExport) {
             player.pause()
             action()

@@ -30,6 +30,7 @@ class GalleryWriter(private val context: Context) {
         onFinalizing: () -> Unit = {},
         onOutputCreated: (Uri) -> Unit = {},
         onCommitted: (Uri) -> Unit = {},
+        onValidating: () -> Unit = {},
     ): Uri {
         withContext(Dispatchers.IO) {
             require(file.isFile && file.length() > 0L) { "저장할 영상 파일이 없습니다." }
@@ -62,6 +63,7 @@ class GalleryWriter(private val context: Context) {
             onFinalizing = onFinalizing,
             onOutputCreated = onOutputCreated,
             onCommitted = onCommitted,
+            onValidating = onValidating,
         )
     }
 
@@ -78,6 +80,7 @@ class GalleryWriter(private val context: Context) {
         estimatedOutputBytes: Long? = null,
         onOutputCreated: (Uri) -> Unit = {},
         onCommitted: (Uri) -> Unit = {},
+        onValidating: () -> Unit = {},
     ): Uri {
         withContext(Dispatchers.IO) {
             val estimate = estimatedOutputBytes ?: ExportStoragePolicy.estimateOutputBytes(
@@ -100,6 +103,7 @@ class GalleryWriter(private val context: Context) {
             onFinalizing = onFinalizing,
             onOutputCreated = onOutputCreated,
             onCommitted = onCommitted,
+            onValidating = onValidating,
         )
     }
 
@@ -113,6 +117,7 @@ class GalleryWriter(private val context: Context) {
         onFinalizing: () -> Unit,
         onOutputCreated: (Uri) -> Unit,
         onCommitted: (Uri) -> Unit,
+        onValidating: () -> Unit,
     ): Uri {
         val resolver = context.contentResolver
         var pendingUri: Uri? = null
@@ -138,6 +143,7 @@ class GalleryWriter(private val context: Context) {
                     }
                 }
                 try {
+                    runCallback(onValidating)
                     MediaReader.validateExport(context, created, expectedDurationMs, expectAudio, originalTimestampMs)
                 } catch (error: IOException) {
                     if (fastValidation) throw FastTrimUnavailableException("Fast output validation failed", error)

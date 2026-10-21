@@ -1031,6 +1031,17 @@ fn descriptor_path(path: &str) -> Option<c_int> {
     number.parse::<c_int>().ok().filter(|fd| *fd >= 0)
 }
 
+/// Read identity/change metadata through the same granted capability as the
+/// demuxer. A provider may allow fstat on its descriptor while denying /proc
+/// path traversal, so callers must not resolve that path to a private filename.
+pub fn local_metadata(path: &str) -> Result<std::fs::Metadata> {
+    #[cfg(unix)]
+    if let Some(fd) = descriptor_path(path) {
+        return Ok(DescriptorReader::new(fd)?.file.metadata()?);
+    }
+    Ok(std::fs::metadata(path)?)
+}
+
 #[cfg(unix)]
 struct DescriptorReader {
     file: File,

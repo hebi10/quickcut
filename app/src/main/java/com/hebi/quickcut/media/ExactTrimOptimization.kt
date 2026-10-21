@@ -72,7 +72,7 @@ internal object ExactTrimOptimization {
                 output.formats[output.audioIds.single()]?.sampleRate ?: return false
             }
             val seekMap = output.seekMap ?: return false
-            val requestedUs = clip.startMs * 1_000L
+            val requestedUs = clip.startUs
             val seekPoints = seekMap.getSeekPoints(requestedUs, videoId)
             val nextSyncUs = when {
                 seekPoints.first.timeUs == requestedUs -> seekPoints.first.timeUs
@@ -81,7 +81,7 @@ internal object ExactTrimOptimization {
             }
             return isSafeToOptimize(
                 requestedUs,
-                clip.endMs * 1_000L,
+                clip.endUs,
                 nextSyncUs,
                 extractor.getSampleTimestampsUs(videoId),
                 audioRate,

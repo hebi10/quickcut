@@ -34,6 +34,7 @@ object ExportPlanner {
         context: Context,
         timeline: EditTimeline,
         dateMode: SaveDateMode,
+        onProgress: (Int?) -> Unit = {},
     ): ExportAssessment = withContext(Dispatchers.IO) {
         var assessment = when {
             timeline.isEmpty -> ExportAssessment(false, "편집할 영상이 없습니다.")
@@ -52,7 +53,7 @@ object ExportPlanner {
                             ?: "현재 영상에서 고속 저장을 사용할 수 없습니다.",
                         suggestion = if (inspection.reason == FastMp4Trimmer.UnavailableReason.KEYFRAME) {
                             nearbyKeyframe(context, clip)?.let {
-                                FastCutSuggestion.create(timeline, listOf(it to clip.endMs))
+                                FastCutSuggestion.createUs(timeline, listOf(it to clip.endUs))
                             }
                         } else null,
                     )
@@ -61,12 +62,12 @@ object ExportPlanner {
         }
         if (timeline.isEmpty) return@withContext assessment
         if (!assessment.fastAvailable && assessment.suggestion == null) {
-            NativeSmartCutTrimmer.suggestCopyRanges(context, timeline)?.let { ranges ->
-                if (ranges == timeline.clips.map { it.startMs to it.endMs }) {
+            NativeSmartCutTrimmer.suggestCopyRangesUs(context, timeline, onProgress)?.let { ranges ->
+                if (ranges == timeline.clips.map { it.startUs to it.endUs }) {
                     assessment = ExportAssessment(true,
                         "현재 구간은 영상 재인코딩 없이 고속 저장할 수 있습니다. 소리는 필요하면 변환합니다.")
                 } else {
-                    assessment = assessment.copy(suggestion = FastCutSuggestion.create(timeline, ranges))
+                    assessment = assessment.copy(suggestion = FastCutSuggestion.createUs(timeline, ranges))
                 }
             }
         }
@@ -79,7 +80,7 @@ object ExportPlanner {
     }
 
     private fun nearbyKeyframe(context: Context, clip: VideoClip): Long? {
-        if (clip.startMs <= 0L) return null
+        if (clip.startUs <= 0L) return null
         val extractor = MediaExtractor()
         return try {
             extractor.setDataSource(context, Uri.parse(clip.uri), null)
@@ -88,17 +89,15 @@ object ExportPlanner {
                     ?.startsWith("video/") == true
             } ?: return null
             extractor.selectTrack(video)
-            extractor.seekTo(clip.startMs * 1_000L, MediaExtractor.SEEK_TO_NEXT_SYNC)
+            extractor.seekTo(clip.startUs, MediaExtractor.SEEK_TO_NEXT_SYNC)
             val candidateUs = extractor.sampleTime
-            if (candidateUs < clip.startMs * 1_000L ||
-                candidateUs >= (clip.endMs - 100L) * 1_000L
+            if (candidateUs < clip.startUs ||
+                candidateUs > clip.endUs - 100_000L
             ) return null
-            if (candidateUs % 1_000L != 0L) return null
-            val candidateMs = candidateUs / 1_000L
-            val candidate = clip.copy(startMs = candidateMs)
+            val candidate = clip.withRangeUs(candidateUs, clip.endUs)
             if (FastMp4Trimmer.prepare(context, candidate) != null &&
-                candidateMs != clip.startMs
-            ) candidateMs else null
+                candidateUs != clip.startUs
+            ) candidateUs else null
         } catch (_: Exception) {
             null
         } finally {

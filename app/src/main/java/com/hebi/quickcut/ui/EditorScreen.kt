@@ -210,7 +210,7 @@ fun EditorScreen(
         EditorHeader(
             onBack = model::requestExit,
             onAdd = addVideos,
-            onSave = { if (model.canStartExport) save() },
+            onSave = { if (model.canStartExport) { player.pause(); save() } },
             onUndo = model::undo,
             onRedo = model::redo,
             canUndo = model.canUndo,

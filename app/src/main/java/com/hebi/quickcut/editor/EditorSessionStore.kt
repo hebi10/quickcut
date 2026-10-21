@@ -1,6 +1,7 @@
 package com.hebi.quickcut.editor
 
 import android.content.Context
+import java.io.IOException
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -33,6 +34,8 @@ class EditorSessionStore(context: Context) {
                     endMs = clip.getLong("end"),
                     muted = clip.optBoolean("muted", false),
                     hasAudio = clip.optBoolean("hasAudio", true),
+                    preciseRange = if (clip.isNull("preciseStartUs") && clip.isNull("preciseEndUs")) null
+                        else PreciseClipRange(clip.getLong("preciseStartUs"), clip.getLong("preciseEndUs")),
                 )
             }
             require(clips.map { it.id }.distinct().size == clips.size)
@@ -61,20 +64,24 @@ class EditorSessionStore(context: Context) {
                 put("end", it.endMs)
                 put("muted", it.muted)
                 put("hasAudio", it.hasAudio)
+                put("preciseStartUs", it.preciseRange?.startUs ?: JSONObject.NULL)
+                put("preciseEndUs", it.preciseRange?.endUs ?: JSONObject.NULL)
             })
         }
         val data = JSONObject().apply {
-            put("schemaVersion", 1)
+            put("schemaVersion", 2)
             put("clips", array)
             put("selectedId", snapshot.selectedId ?: JSONObject.NULL)
             put("positionMs", snapshot.playPositionMs)
             put("quickMode", snapshot.quickMode)
         }
-        preferences.edit().putString("session", data.toString()).apply()
+        if (!preferences.edit().putString("session", data.toString()).commit())
+            throw IOException("편집 내용을 기록하지 못했습니다. 저장 공간을 확인해 주세요.")
     }
 
     fun clear() {
-        preferences.edit().remove("session").apply()
+        if (!preferences.edit().remove("session").commit())
+            throw IOException("완료된 편집 기록을 정리하지 못했습니다.")
     }
 }
 

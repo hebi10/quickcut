@@ -9,22 +9,26 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
@@ -41,11 +45,13 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
@@ -59,18 +65,24 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.hebi.quickcut.editor.OriginalAction
 import com.hebi.quickcut.editor.OriginalActionStatus
 import com.hebi.quickcut.editor.formatTime
 import com.hebi.quickcut.media.SaveDateMode
 import com.hebi.quickcut.media.ExportMode
 import com.hebi.quickcut.ui.exportReportText
+import com.hebi.quickcut.ui.FastCutPreview
+import com.hebi.quickcut.ui.ExportDiagnosticButton
+import com.hebi.quickcut.ui.fastCutSuggestionText
 import kotlinx.coroutines.launch
 
 private val onSurface = Color(0xFFF4F4F5)
@@ -94,24 +106,23 @@ fun BatchScreen(
     var inspectionJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     var inspectedCount by remember { mutableIntStateOf(0) }
     var inspectedTotal by remember { mutableIntStateOf(0) }
+    var inspectedPercent by remember { mutableStateOf<Int?>(null) }
     var showStopConfirmation by rememberSaveable { mutableStateOf(false) }
     val requestExport: (Boolean) -> Unit = { retry ->
         if (!inspecting && !model.isRunning && !model.isRecovering) {
             inspecting = true
             inspectedCount = 0
             inspectedTotal = 0
+            inspectedPercent = null
             inspectionJob = scope.launch {
                 try {
-                    val checked = model.inspectExport(context.applicationContext, retry) { done, total ->
+                    val checked = model.inspectExport(context.applicationContext, retry,
+                        onFileProgress = { inspectedPercent = it }) { done, total ->
                         inspectedCount = done
                         inspectedTotal = total
                     }
-                    if (checked.ready == 0) {
-                        model.notifyUser("저장할 수 있는 영상이 없습니다. 설정과 파일을 확인해 주세요.")
-                    } else {
-                        pendingOverview = checked
-                        pendingRetry = retry
-                    }
+                    pendingOverview = checked
+                    pendingRetry = retry
                 } catch (cancelled: kotlinx.coroutines.CancellationException) {
                     throw cancelled
                 } catch (error: Exception) {
@@ -213,66 +224,28 @@ fun BatchScreen(
     }
 
     pendingOverview?.let { overview ->
-        AlertDialog(
-            onDismissRequest = { pendingOverview = null },
-            title = { Text("자동 저장 확인") },
-            text = {
-                Column(
-                    modifier = Modifier.heightIn(max = 360.dp)
-                        .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    Text("저장할 영상 ${overview.ready}개", fontWeight = FontWeight.SemiBold)
-                    model.previewTemplate()?.let { Text(BatchTimeInput.summary(it)) }
-                    Text(
-                        "설정한 자르기 위치를 유지하며 가능한 가장 빠른 방식으로 저장합니다. " +
-                            "고속 처리가 어려운 영상도 자동으로 이어서 저장합니다. " +
-                            "영상과 기기에 따라 시간이 더 걸릴 수 있습니다.",
-                        color = secondary, style = MaterialTheme.typography.bodySmall,
-                    )
-                    if (overview.skippedFiles.isNotEmpty()) {
-                        Text("저장할 수 없는 영상 ${overview.skipped}개",
-                            fontWeight = FontWeight.SemiBold)
-                        overview.skippedFiles.forEach {
-                            Text("· " + it, color = secondary,
-                                style = MaterialTheme.typography.bodySmall)
-                        }
-                    }
-                    if (overview.adjustments.isNotEmpty()) {
-                        Text("고속 저장 추천 위치", fontWeight = FontWeight.SemiBold)
-                        overview.adjustments.forEach { adjustment ->
-                            Text(adjustment.displayName, fontWeight = FontWeight.SemiBold)
-                            Text(com.hebi.quickcut.ui.fastCutSuggestionText(adjustment.suggestion),
-                                color = secondary, style = MaterialTheme.typography.bodySmall)
-                        }
-                        Text("추천 위치로 저장하면 위 구간만 조정합니다. ${overview.adjustedFast}개를 고속 저장하고 " +
-                            "${overview.adjustedSkips}개는 건너뜁니다. 소리는 필요하면 변환합니다.",
-                            color = secondary, style = MaterialTheme.typography.bodySmall)
-                        overview.unadjustableFiles.forEach {
-                            Text("고속 저장 제외 · $it", color = secondary,
-                                style = MaterialTheme.typography.bodySmall)
-                        }
-                    }
-                }
+        LaunchedEffect(overview, model.reviewGeneration) {
+            if (!model.isReviewCurrent(overview, pendingRetry)) {
+                pendingOverview = null
+                model.notifyUser("설정이나 파일이 변경됐습니다. 저장 방식을 다시 분석해 주세요.")
+            }
+        }
+        BatchReviewDialog(
+            overview = overview,
+            templateSummary = model.previewTemplate()?.let(BatchTimeInput::summary),
+            onDismiss = { pendingOverview = null },
+            onSubmit = { choices ->
+                model.startReviewed(context, overview, pendingRetry, choices)
+                pendingOverview = null
             },
-            confirmButton = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = {
-                        model.startReviewed(context, overview, pendingRetry, ExportMode.ALLOW_REENCODE)
-                        pendingOverview = null
-                    }, shape = RoundedCornerShape(4.dp)) { Text("전체 자동 저장") }
-                    if (overview.adjustments.isNotEmpty()) {
-                        OutlinedButton(onClick = {
-                            model.startReviewed(context, overview, pendingRetry, ExportMode.FAST_ONLY, true)
-                            pendingOverview = null
-                        }, shape = RoundedCornerShape(4.dp)) { Text("추천 위치로 ${overview.adjustedFast}개 고속 저장") }
-                    }
-                }
+            onAutomatic = {
+                model.startReviewed(context, overview, pendingRetry, ExportMode.ALLOW_REENCODE)
+                pendingOverview = null
             },
-            dismissButton = {
-                TextButton(onClick = { pendingOverview = null }) { Text("설정으로 돌아가기") }
+            onRecommended = {
+                model.startReviewed(context, overview, pendingRetry, ExportMode.FAST_ONLY, true)
+                pendingOverview = null
             },
-            containerColor = Color(0xFF202126),
         )
     }
     if (inspecting) {
@@ -282,7 +255,8 @@ fun BatchScreen(
             text = {
                 Text(
                     "키프레임과 자르기 설정을 확인하고 있습니다. 긴 영상은 분석에 시간이 걸릴 수 있습니다." +
-                        if (inspectedTotal > 0) " ($inspectedCount / $inspectedTotal)" else ""
+                        (if (inspectedTotal > 0) " ($inspectedCount / $inspectedTotal)" else "") +
+                        (inspectedPercent?.let { " · 현재 영상 $it%" } ?: "")
                 )
             },
             confirmButton = { TextButton(onClick = { inspectionJob?.cancel() }) { Text("분석 취소") } },
@@ -344,6 +318,165 @@ fun BatchScreen(
             containerColor = Color(0xFF202126),
             shape = RoundedCornerShape(4.dp),
         )
+    }
+}
+
+@Composable
+private fun BatchReviewDialog(
+    overview: BatchExportOverview,
+    templateSummary: String?,
+    onDismiss: () -> Unit,
+    onSubmit: (Map<String, BatchExportChoice>) -> Unit,
+    onAutomatic: () -> Unit,
+    onRecommended: () -> Unit,
+) {
+    var choices by remember(overview) {
+        mutableStateOf(BatchExportChoicePolicy.defaults(overview.reviewedFiles))
+    }
+    val exactCount = choices.values.count { it == BatchExportChoice.EXACT }
+    val recommendedCount = choices.values.count { it == BatchExportChoice.RECOMMENDED }
+    val skippedCount = choices.values.count { it == BatchExportChoice.SKIP }
+    val saveCount = exactCount + recommendedCount
+    Dialog(onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                .widthIn(max = 680.dp).fillMaxWidth().fillMaxHeight(0.94f),
+            color = Color(0xFF202126), contentColor = onSurface,
+            shape = RoundedCornerShape(4.dp),
+        ) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("자동 저장 확인", style = MaterialTheme.typography.titleLarge)
+                Text("정확한 위치 $exactCount · 추천 위치 $recommendedCount · 제외 $skippedCount",
+                    style = MaterialTheme.typography.bodySmall, color = secondary)
+                LazyColumn(
+                    modifier = Modifier.weight(1f).fillMaxWidth().testTag("batch-review-list"),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    item {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            templateSummary?.let { Text(it) }
+                            Text("파일마다 저장할 위치를 선택해 주세요. 정확한 위치는 원래 구간을 유지하며 " +
+                                "필요하면 자동 변환합니다. 추천 위치는 표시된 구간으로 조정해 영상 변환 없이 저장합니다.",
+                                color = secondary, style = MaterialTheme.typography.bodySmall)
+                            Text("저장 가능한 영상 ${overview.ready}개 · 저장할 수 없는 영상 ${overview.skipped}개",
+                                style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                    items(overview.reviewedFiles, key = { it.uri }) { file ->
+                        BatchReviewFile(
+                            file = file,
+                            choice = choices.getValue(file.uri),
+                            onChoice = { choice -> choices = choices + (file.uri to choice) },
+                        )
+                    }
+                    item {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("전체 자동 저장은 위 선택과 관계없이 저장 가능한 모든 영상을 정확한 위치로 저장합니다.",
+                                color = secondary, style = MaterialTheme.typography.bodySmall)
+                            OutlinedButton(onClick = onAutomatic, enabled = overview.ready > 0,
+                                modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(4.dp)) {
+                                Text("전체 자동 저장")
+                            }
+                            if (overview.reviewedFiles.any { it.canRecommend }) {
+                                Text("아래 단축 버튼은 위 추천 구간을 모두 적용합니다. " +
+                                    "${overview.adjustedFast}개를 고속 저장하고 ${overview.adjustedSkips}개는 건너뜁니다. " +
+                                    "이미 고속 저장 가능한 구간은 유지하며 소리는 필요하면 변환합니다.",
+                                    color = secondary, style = MaterialTheme.typography.bodySmall)
+                                OutlinedButton(onClick = onRecommended, modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(4.dp)) {
+                                    Text("추천 위치로 ${overview.adjustedFast}개 고속 저장")
+                                }
+                            }
+                        }
+                    }
+                }
+                BoxWithConstraints(Modifier.fillMaxWidth()) {
+                    if (maxWidth >= 480.dp) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically) {
+                            BatchReviewSubmitButton(saveCount, overview.reviewedFiles.isNotEmpty(),
+                                Modifier.weight(1f)) { onSubmit(choices.toMap()) }
+                            TextButton(onClick = onDismiss) { Text("설정으로 돌아가기") }
+                        }
+                    } else {
+                        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            BatchReviewSubmitButton(saveCount, overview.reviewedFiles.isNotEmpty(),
+                                Modifier.fillMaxWidth()) { onSubmit(choices.toMap()) }
+                            TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) {
+                                Text("설정으로 돌아가기")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BatchReviewSubmitButton(saveCount: Int, enabled: Boolean, modifier: Modifier, onClick: () -> Unit) {
+    Button(onClick = onClick, enabled = enabled, modifier = modifier.testTag("batch-review-submit"),
+        shape = RoundedCornerShape(4.dp)) {
+        Text(if (saveCount == 0) "전체 제외 적용" else "선택한 설정으로 ${saveCount}개 저장")
+    }
+}
+
+@Composable
+private fun BatchReviewFile(
+    file: BatchReviewedFile,
+    choice: BatchExportChoice,
+    onChoice: (BatchExportChoice) -> Unit,
+) {
+    Column(Modifier.fillMaxWidth().border(1.dp, borderColor, RoundedCornerShape(4.dp)).padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(file.displayName, fontWeight = FontWeight.SemiBold)
+        file.requested?.let { requested ->
+            Text("요청 구간 · " + requested.clips.joinToString(" + ") {
+                "${formatTime(it.startMs)}–${formatTime(it.endMs)}"
+            }, color = secondary, style = MaterialTheme.typography.bodySmall)
+        }
+        if (file.unavailableReason != null) {
+            Text("저장 불가 · ${file.unavailableReason}", color = secondary,
+                style = MaterialTheme.typography.bodySmall)
+        } else if (file.fastAvailable) {
+            Text("정확한 위치로 고속 저장 가능", color = secondary,
+                style = MaterialTheme.typography.bodySmall)
+        }
+        if (file.canRecommend) {
+            val suggestion = checkNotNull(file.suggestion)
+            Text(fastCutSuggestionText(suggestion), color = secondary,
+                style = MaterialTheme.typography.bodySmall)
+            Box(Modifier.fillMaxWidth().testTag("batch-review-${file.uri}-preview")) {
+                FastCutPreview(suggestion)
+            }
+        } else if (file.requested != null && !file.fastAvailable) {
+            Text("검증된 추천 위치 없음 · 정확한 위치로 자동 저장할 수 있습니다.",
+                color = secondary, style = MaterialTheme.typography.bodySmall)
+        }
+        BatchReviewChoice("정확한 위치", choice == BatchExportChoice.EXACT,
+            file.requested != null, "batch-review-${file.uri}-exact") { onChoice(BatchExportChoice.EXACT) }
+        BatchReviewChoice("추천 위치", choice == BatchExportChoice.RECOMMENDED,
+            file.canRecommend, "batch-review-${file.uri}-recommended") { onChoice(BatchExportChoice.RECOMMENDED) }
+        BatchReviewChoice("제외", choice == BatchExportChoice.SKIP,
+            true, "batch-review-${file.uri}-skip") { onChoice(BatchExportChoice.SKIP) }
+    }
+}
+
+@Composable
+private fun BatchReviewChoice(
+    label: String,
+    selected: Boolean,
+    enabled: Boolean,
+    tag: String,
+    onSelect: () -> Unit,
+) {
+    Row(modifier = Modifier.fillMaxWidth().heightIn(min = 42.dp)
+        .selectable(selected = selected, enabled = enabled, role = Role.RadioButton, onClick = onSelect)
+        .testTag(tag), verticalAlignment = Alignment.CenterVertically) {
+        RadioButton(selected = selected, enabled = enabled, onClick = null)
+        Spacer(Modifier.width(8.dp))
+        Text(label, color = if (enabled) onSurface else secondary.copy(alpha = 0.6f))
     }
 }
 
@@ -611,6 +744,8 @@ private fun BatchActions(
                 ) { Text("일괄 편집 및 저장 시작") }
             }
             BatchRunState.RUNNING -> {
+                Text(model.currentExportStage.label, color = secondary,
+                    style = MaterialTheme.typography.bodySmall)
                 OutlinedButton(
                     onClick = onCancel,
                     enabled = !model.isFinalizing,
@@ -638,6 +773,7 @@ private fun BatchActions(
                     ) { Text("실패 작업 재시도") }
                     TextButton(enabled = !model.isRecovering, onClick = model::resetBatch) { Text("새 작업") }
                 }
+                ExportDiagnosticButton()
             }
         }
     }

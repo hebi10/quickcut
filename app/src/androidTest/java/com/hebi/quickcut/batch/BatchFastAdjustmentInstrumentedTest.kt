@@ -7,19 +7,26 @@ import android.net.Uri
 import android.os.Build
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.isDialog
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
 import androidx.lifecycle.ViewModelStore
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.hebi.quickcut.media.SaveDateMode
 import com.hebi.quickcut.media.ExportMode
 import com.hebi.quickcut.media.MediaReader
+import com.hebi.quickcut.media.ExportMethod
+import com.hebi.quickcut.editor.OriginalAction
 import com.hebi.quickcut.editor.formatTime
 import com.hebi.quickcut.settings.BatchDraftSettings
 import com.hebi.quickcut.settings.QuickCutSettings
@@ -117,10 +124,13 @@ class BatchFastAdjustmentInstrumentedTest {
     @Test
     fun nonKeyframeBatchOffersExactSaveAndExplicitlyReviewedFastSave() {
         openReview()
+        composeRule.onNodeWithTag("batch-review-list").performScrollToNode(hasText("전체 자동 저장"))
         composeRule.onNodeWithText("전체 자동 저장").assertIsEnabled()
         composeRule.onNodeWithText("고속 저장 가능한 영상만").assertDoesNotExist()
         composeRule.onNodeWithText("위치 조정 후 고속 저장").assertDoesNotExist()
         composeRule.onNodeWithText("추천 위치로 1개 고속 저장").assertIsEnabled()
+        composeRule.onNodeWithTag("batch-review-list").performScrollToNode(
+            hasText("총 1초가 추가로 삭제됩니다.", substring = true))
         composeRule.onNodeWithText("총 1초가 추가로 삭제됩니다.", substring = true).assertExists()
         composeRule.runOnIdle {
             assertFalse(model.isRunning)
@@ -175,6 +185,122 @@ class BatchFastAdjustmentInstrumentedTest {
         }
         assertFalse(model.isRunning)
         assertTrue(model.files.isEmpty())
+    }
+
+    @Test
+    fun changingThenRestoringASettingStillDiscardsEveryReviewedChoice() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val review = inspect()
+        val choices = review.reviewedFiles.associate { it.uri to BatchExportChoice.RECOMMENDED }
+        composeRule.runOnUiThread {
+            model.draftMute = true
+            model.draftMute = false
+            model.startReviewed(context, review, false, choices)
+        }
+        assertFalse(model.isRunning)
+        assertTrue(model.notification!!.contains("다시 분석"))
+    }
+
+    @Test
+    fun incompleteAndForeignChoicesDoNotStartAnyOutput() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val incomplete = inspect()
+        composeRule.runOnUiThread { model.startReviewed(context, incomplete, false, emptyMap()) }
+        assertFalse(model.isRunning)
+        assertTrue(model.files.all { it.savedOutputUri == null })
+        val foreign = inspect()
+        val choices = BatchExportChoicePolicy.defaults(foreign.reviewedFiles) +
+            ("content://foreign" to BatchExportChoice.SKIP)
+        composeRule.runOnUiThread { model.startReviewed(context, foreign, false, choices) }
+        assertFalse(model.isRunning)
+        assertTrue(model.files.all { it.savedOutputUri == null })
+    }
+
+    @Test
+    fun fileReviewStartsExactAndAllowsAnExplicitSkip() {
+        openReview()
+        val uri = model.files.single().uri
+        composeRule.onNodeWithTag("batch-review-$uri-exact").performScrollTo().assertIsSelected()
+        composeRule.onNodeWithTag("batch-review-$uri-recommended").performScrollTo().assertIsEnabled()
+        composeRule.onNodeWithTag("batch-review-$uri-skip").performScrollTo().performClick()
+        composeRule.onNodeWithText("전체 제외 적용").performClick()
+        composeRule.waitUntil(30_000L) { model.runState == BatchRunState.FINISHED }
+        assertEquals(BatchFileStatus.SKIPPED, model.files.single().status)
+        assertEquals("사용자가 제외한 영상입니다.", model.files.single().reason)
+        assertTrue(model.files.single().savedOutputUri == null)
+    }
+
+    @Test
+    fun previewDoesNotSelectOrStartTheRecommendedExport() {
+        openReview()
+        val uri = model.files.single().uri
+        composeRule.onNodeWithTag("batch-review-list").performScrollToNode(
+            hasTestTag("batch-review-$uri-preview"))
+        composeRule.onNode(hasText("미리보기 · 요청/추천 비교") and
+            hasAnyAncestor(hasTestTag("batch-review-$uri-preview"))).performClick()
+        composeRule.onNodeWithTag("batch-review-list").performScrollToNode(
+            hasTestTag("batch-review-$uri-exact"))
+        composeRule.onNodeWithTag("batch-review-$uri-exact").assertIsSelected()
+        composeRule.onNodeWithTag("batch-review-submit").assertIsEnabled()
+        assertFalse(model.isRunning)
+        assertTrue(model.files.single().savedOutputUri == null)
+    }
+
+    @Test
+    fun unavailableFileShowsItsReasonAndDisablesUnsupportedSelections() {
+        composeRule.runOnUiThread {
+            model.draftLeadingSeconds = "120"
+        }
+        openReview()
+        val uri = model.files.single().uri
+        composeRule.onNodeWithTag("batch-review-list").performScrollToNode(
+            hasTestTag("batch-review-$uri-exact"))
+        composeRule.onNodeWithTag("batch-review-$uri-exact").assertIsNotEnabled()
+        composeRule.onNodeWithTag("batch-review-$uri-recommended").assertIsNotEnabled()
+        composeRule.onNodeWithTag("batch-review-$uri-skip").assertIsSelected()
+        composeRule.onNodeWithText("저장 불가 · 앞뒤 구간을 제거할 만큼 영상이 길지 않습니다.").assertExists()
+        composeRule.onNodeWithText("전체 제외 적용").assertIsEnabled()
+    }
+
+    @Test
+    fun mixedChoicesUsePerFileRangesAndOnlySavedSourcesCanBeDeleted() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val extraUris = (2..3).map { index ->
+            val file = File(context.cacheDir, "batch_choice_$index.mp4")
+            extraSources += file
+            source.copyTo(file, overwrite = true)
+            Uri.fromFile(file)
+        }
+        composeRule.runOnUiThread {
+            model.originalAction = OriginalAction.TRASH
+            model.addVideos(context, extraUris)
+        }
+        composeRule.waitUntil(30_000L) { !model.isImporting && model.files.size == 3 }
+        val review = inspect()
+        val rows = review.reviewedFiles
+        assertEquals(3, rows.count { it.canRecommend })
+        val choices = mapOf(rows[0].uri to BatchExportChoice.EXACT,
+            rows[1].uri to BatchExportChoice.RECOMMENDED,
+            rows[2].uri to BatchExportChoice.SKIP)
+        composeRule.runOnUiThread { model.startReviewed(context, review, false, choices) }
+        composeRule.waitUntil(120_000L) { model.runState == BatchRunState.FINISHED }
+        assertEquals(listOf(BatchFileStatus.SAVED, BatchFileStatus.SAVED, BatchFileStatus.SKIPPED),
+            model.files.map { it.status })
+        assertEquals(rows[0].requested!!.totalDurationMs, model.files[0].outputExpectedDurationMs)
+        assertEquals(rows[1].suggestion!!.adjusted.totalDurationMs, model.files[1].outputExpectedDurationMs)
+        assertTrue(model.files[1].exportReport!!.method in
+            setOf(ExportMethod.ORIGINAL_COPY, ExportMethod.AUDIO_REENCODE))
+        assertEquals(setOf(rows[0].uri, rows[1].uri), model.originalCandidates.toSet())
+        assertTrue(model.files[2].savedOutputUri == null)
+        val outputs = model.files.take(2).map { it.savedOutputUri }
+        val retry = inspect(retryOnly = true)
+        assertEquals(listOf(rows[2].uri), retry.reviewedFiles.map { it.uri })
+        composeRule.runOnUiThread {
+            model.startReviewed(context, retry, true, mapOf(rows[2].uri to BatchExportChoice.SKIP))
+        }
+        composeRule.waitUntil(30_000L) { model.runState == BatchRunState.FINISHED }
+        assertEquals(outputs, model.files.take(2).map { it.savedOutputUri })
+        assertTrue(model.originalCandidates.isEmpty())
     }
 
     @Test

@@ -161,6 +161,7 @@ class ExactBatchExportInstrumentedTest {
         // preserve the requested 3s boundary instead of choosing the 4s shortcut.
         composeRule.onNodeWithText("고속 저장 가능한 영상만").assertDoesNotExist()
         composeRule.onNodeWithText("위치 조정 후 고속 저장").assertDoesNotExist()
+        composeRule.onNodeWithTag("batch-review-list").performScrollToNode(hasText("전체 자동 저장"))
         composeRule.onNodeWithText("전체 자동 저장").assertIsEnabled().performClick()
         composeRule.waitUntil(120_000L) { model.runState == BatchRunState.FINISHED }
 

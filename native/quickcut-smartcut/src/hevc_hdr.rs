@@ -3,6 +3,30 @@
 use anyhow::{bail, ensure, Context, Result};
 use ffmpeg_next as ff;
 
+// ffmpeg-sys-next does not bind mastering_display_metadata.h. These layouts
+// match that header in the pinned FFmpeg 7.1.5 source. Its struct sizes are not
+// a public ABI promise: recheck them when upgrading the native dependency.
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct MasteringDisplayRaw {
+    display_primaries: [[ff::ffi::AVRational; 2]; 3],
+    white_point: [ff::ffi::AVRational; 2],
+    min_luminance: ff::ffi::AVRational,
+    max_luminance: ff::ffi::AVRational,
+    has_primaries: std::ffi::c_int,
+    has_luminance: std::ffi::c_int,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct ContentLightRaw {
+    max_cll: u32,
+    max_fall: u32,
+}
+
+const _: [(); 88] = [(); std::mem::size_of::<MasteringDisplayRaw>()];
+const _: [(); 8] = [(); std::mem::size_of::<ContentLightRaw>()];
+
 pub(crate) struct Guard {
     static_hdr: bool,
     transfer: i32,
@@ -49,10 +73,10 @@ impl Guard {
         match kind {
             MasteringDisplayMetadata => {
                 ensure!(self.static_hdr, "static HDR metadata without supported HDR color");
-                ensure!(bytes.len() == std::mem::size_of::<ff::ffi::AVMasteringDisplayMetadata>(),
+                ensure!(bytes.len() == std::mem::size_of::<MasteringDisplayRaw>(),
                     "invalid mastering-display side-data size");
                 // AVPacket side-data byte alignment is not part of this API.
-                let value = unsafe { std::ptr::read_unaligned(bytes.as_ptr().cast::<ff::ffi::AVMasteringDisplayMetadata>()) };
+                let value = unsafe { std::ptr::read_unaligned(bytes.as_ptr().cast::<MasteringDisplayRaw>()) };
                 ensure!(matches!(value.has_primaries, 0 | 1) && matches!(value.has_luminance, 0 | 1),
                     "invalid mastering-display flags");
                 let mut fields = vec![(value.has_primaries, value.has_luminance)];
@@ -71,12 +95,12 @@ impl Guard {
             }
             ContentLightLevel => {
                 ensure!(self.static_hdr, "static HDR metadata without supported HDR color");
-                ensure!(bytes.len() == std::mem::size_of::<ff::ffi::AVContentLightMetadata>(),
+                ensure!(bytes.len() == std::mem::size_of::<ContentLightRaw>(),
                     "invalid content-light side-data size");
-                let value = unsafe { std::ptr::read_unaligned(bytes.as_ptr().cast::<ff::ffi::AVContentLightMetadata>()) };
-                ensure!(value.MaxCLL <= u16::MAX as u32 && value.MaxFALL <= u16::MAX as u32,
+                let value = unsafe { std::ptr::read_unaligned(bytes.as_ptr().cast::<ContentLightRaw>()) };
+                ensure!(value.max_cll <= u16::MAX as u32 && value.max_fall <= u16::MAX as u32,
                     "content-light side data exceeds HEVC field widths");
-                remember(&mut self.side_content_light, [value.MaxCLL, value.MaxFALL],
+                remember(&mut self.side_content_light, [value.max_cll, value.max_fall],
                     self.seen_access_unit, "content-light side data")?;
             }
             _ => {},
@@ -228,8 +252,8 @@ mod tests {
         unsafe { std::slice::from_raw_parts((value as *const T).cast(), std::mem::size_of::<T>()) }
     }
 
-    fn mastering_side() -> ff::ffi::AVMasteringDisplayMetadata {
-        let mut value: ff::ffi::AVMasteringDisplayMetadata = unsafe { std::mem::zeroed() };
+    fn mastering_side() -> MasteringDisplayRaw {
+        let mut value: MasteringDisplayRaw = unsafe { std::mem::zeroed() };
         value.has_primaries = 1;
         value.has_luminance = 1;
         for (point, values) in value.display_primaries.iter_mut()
@@ -261,8 +285,8 @@ mod tests {
     #[test]
     fn rejects_late_or_changed_packet_content_light_side_data() {
         use ff::codec::packet::side_data::Type::ContentLightLevel;
-        let mut value: ff::ffi::AVContentLightMetadata = unsafe { std::mem::zeroed() };
-        value.MaxCLL = 1000; value.MaxFALL = 400;
+        let mut value: ContentLightRaw = unsafe { std::mem::zeroed() };
+        value.max_cll = 1000; value.max_fall = 400;
         let mut guard = new_guard(&configuration(&[]), true).unwrap();
         guard.inspect(&[&[38, 1]]).unwrap();
         assert!(guard.observe_side_data(ContentLightLevel, side_bytes(&value)).is_err());
@@ -270,7 +294,7 @@ mod tests {
         guard.observe_side_data(ContentLightLevel, side_bytes(&value)).unwrap();
         guard.inspect(&[&[38, 1]]).unwrap();
         guard.observe_side_data(ContentLightLevel, side_bytes(&value)).unwrap();
-        value.MaxFALL += 1;
+        value.max_fall += 1;
         assert!(guard.observe_side_data(ContentLightLevel, side_bytes(&value)).is_err());
     }
 

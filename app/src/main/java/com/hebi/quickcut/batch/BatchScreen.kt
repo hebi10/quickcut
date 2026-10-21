@@ -235,13 +235,36 @@ fun BatchScreen(
                                 style = MaterialTheme.typography.bodySmall)
                         }
                     }
+                    if (overview.adjustments.isNotEmpty()) {
+                        Text("고속 저장 추천 위치", fontWeight = FontWeight.SemiBold)
+                        overview.adjustments.forEach { adjustment ->
+                            Text(adjustment.displayName, fontWeight = FontWeight.SemiBold)
+                            Text(com.hebi.quickcut.ui.fastCutSuggestionText(adjustment.suggestion),
+                                color = secondary, style = MaterialTheme.typography.bodySmall)
+                        }
+                        Text("추천 위치로 저장하면 위 구간만 조정합니다. ${overview.adjustedFast}개를 고속 저장하고 " +
+                            "${overview.adjustedSkips}개는 건너뜁니다. 소리는 필요하면 변환합니다.",
+                            color = secondary, style = MaterialTheme.typography.bodySmall)
+                        overview.unadjustableFiles.forEach {
+                            Text("고속 저장 제외 · $it", color = secondary,
+                                style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
                 }
             },
             confirmButton = {
-                Button(onClick = {
-                    model.startReviewed(context, overview, pendingRetry, ExportMode.ALLOW_REENCODE)
-                    pendingOverview = null
-                }, shape = RoundedCornerShape(4.dp)) { Text("전체 자동 저장") }
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = {
+                        model.startReviewed(context, overview, pendingRetry, ExportMode.ALLOW_REENCODE)
+                        pendingOverview = null
+                    }, shape = RoundedCornerShape(4.dp)) { Text("전체 자동 저장") }
+                    if (overview.adjustments.isNotEmpty()) {
+                        OutlinedButton(onClick = {
+                            model.startReviewed(context, overview, pendingRetry, ExportMode.FAST_ONLY, true)
+                            pendingOverview = null
+                        }, shape = RoundedCornerShape(4.dp)) { Text("추천 위치로 ${overview.adjustedFast}개 고속 저장") }
+                    }
+                }
             },
             dismissButton = {
                 TextButton(onClick = { pendingOverview = null }) { Text("설정으로 돌아가기") }

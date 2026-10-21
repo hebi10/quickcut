@@ -115,11 +115,17 @@ class BatchFastAdjustmentInstrumentedTest {
     }
 
     @Test
-    fun nonKeyframeBatchOffersAutomaticSaveWithoutSkippingOrShifting() {
+    fun nonKeyframeBatchOffersExactSaveAndExplicitlyReviewedFastSave() {
         openReview()
         composeRule.onNodeWithText("전체 자동 저장").assertIsEnabled()
         composeRule.onNodeWithText("고속 저장 가능한 영상만").assertDoesNotExist()
         composeRule.onNodeWithText("위치 조정 후 고속 저장").assertDoesNotExist()
+        composeRule.onNodeWithText("추천 위치로 1개 고속 저장").assertIsEnabled()
+        composeRule.onNodeWithText("총 1초가 추가로 삭제됩니다.", substring = true).assertExists()
+        composeRule.runOnIdle {
+            assertFalse(model.isRunning)
+            assertEquals("3", model.draftLeadingSeconds)
+        }
     }
 
     @Test

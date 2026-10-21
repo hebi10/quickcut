@@ -23,8 +23,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.hebi.quickcut.editor.OriginalAction
-import com.hebi.quickcut.editor.TrimInput
-import com.hebi.quickcut.editor.VideoClip
 import com.hebi.quickcut.media.ExportAssessment
 import com.hebi.quickcut.media.ExportMethod
 import com.hebi.quickcut.media.ExportReport
@@ -110,11 +108,10 @@ private fun SaveChoiceRow(label: String, selected: Boolean, onSelect: () -> Unit
 @Composable
 internal fun ExportModeDialog(
     assessment: ExportAssessment,
-    clip: VideoClip?,
     retryingFastExport: Boolean,
     canSave: Boolean,
     onAllowReencode: () -> Unit,
-    onSuggestedStart: (() -> Unit)?,
+    onSuggestedCut: (() -> Unit)?,
     onDismiss: () -> Unit,
 ) {
     AlertDialog(
@@ -136,15 +133,12 @@ internal fun ExportModeDialog(
                     color = CutColors.secondaryText,
                     style = MaterialTheme.typography.bodySmall,
                 )
-                val startMs = assessment.suggestedStartMs
-                if (startMs != null && clip != null && startMs > clip.startMs) {
-                    Text(
-                        "대안: 앞부분을 " + TrimInput.secondsText(startMs) +
-                            "초까지 삭제하면 빠른 저장이 가능할 수 있습니다. " +
-                            "이 경우 원래보다 더 많은 영상이 삭제됩니다.",
-                        color = CutColors.secondaryText,
-                        style = MaterialTheme.typography.bodySmall,
-                    )
+                assessment.suggestion?.let { suggestion ->
+                    Text("고속 저장 추천 위치", style = MaterialTheme.typography.titleSmall)
+                    Text(fastCutSuggestionText(suggestion))
+                    Text("위 시간은 원본 영상 기준입니다. 키프레임 간격에 따라 차이가 날 수 있습니다. " +
+                        "추천 위치에 동의하면 구간을 변경하고 영상 재인코딩 없이 저장합니다. 소리는 필요하면 변환합니다.",
+                        color = CutColors.secondaryText, style = MaterialTheme.typography.bodySmall)
                 }
             }
         },
@@ -154,11 +148,11 @@ internal fun ExportModeDialog(
                     onClick = onAllowReencode, enabled = canSave,
                     modifier = Modifier.fillMaxWidth(), shape = CutShape,
                 ) { Text("정확한 위치로 자동 저장") }
-                if (onSuggestedStart != null) {
+                if (onSuggestedCut != null) {
                     OutlinedButton(
-                        onClick = onSuggestedStart, enabled = canSave,
+                        onClick = onSuggestedCut, enabled = canSave,
                         modifier = Modifier.fillMaxWidth(), shape = CutShape,
-                    ) { Text("빠른 저장 위치로 변경 후 확인") }
+                    ) { Text("추천 위치로 고속 저장") }
                 }
                 TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth(), shape = CutShape) {
                     Text("취소")

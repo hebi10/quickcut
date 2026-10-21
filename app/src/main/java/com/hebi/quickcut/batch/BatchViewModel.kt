@@ -165,8 +165,8 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
                     } else {
                         encoded++
                         encodingFiles += file.displayName + " · " + assessment.explanation
-                        val adjustment = BatchFastAdjustmentPolicy.suggest(
-                            file.displayName, plan.timeline, assessment.suggestedStartMs,
+                        val adjustment = BatchFastAdjustmentPolicy.fromSuggestion(
+                            file.displayName, assessment.suggestion,
                         )
                         if (adjustment != null) adjustments += adjustment else {
                             unadjustableFiles += file.displayName + " · " + assessment.explanation

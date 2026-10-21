@@ -338,6 +338,17 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         selectedId?.let { trimClip(it, startMs, endMs) }
     }
 
+    fun applyFastCutSuggestion(suggestion: com.hebi.quickcut.media.FastCutSuggestion): Boolean {
+        if (!canStartExport) return false
+        val adjusted = suggestion.applyTo(timeline) ?: return false
+        recordChange()
+        timeline = adjusted
+        needsReencodeConsent = false
+        playPositionMs = playPositionMs.coerceIn(0L, timeline.totalDurationMs)
+        saveSessionSoon()
+        return true
+    }
+
     fun trimClip(id: Long, startMs: Long, endMs: Long) {
         if (timeline.clipAt(id) == null) return
         val edited = runCatching { timeline.updateRange(id, startMs, endMs) }.getOrNull() ?: return

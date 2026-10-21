@@ -47,6 +47,7 @@ internal object NativeSmartCutTrimmer {
         destination: File,
         onProgress: (Int?) -> Unit,
         onUnavailable: (FastExportReason) -> Unit = {},
+        copyVideoOnly: Boolean = false,
     ): NativeSmartCutResult? = withContext(Dispatchers.IO) {
         val jobContext = currentCoroutineContext()
         jobContext.ensureActive()
@@ -77,9 +78,10 @@ internal object NativeSmartCutTrimmer {
                 failureReason = FastExportReason.PROCESSING_FAILED
                 val callbacks = NativeSmartCutCallbacks(jobContext, onProgress)
                 val result = try {
-                    NativeSmartCutBridge.cutRanges(
-                        "/proc/self/fd/${descriptor.fd}", destination.absolutePath,
-                        ranges, clip.muted, callbacks,
+                    if (copyVideoOnly) NativeSmartCutBridge.cutRangesCopyVideo(
+                        "/proc/self/fd/${descriptor.fd}", destination.absolutePath, ranges, clip.muted, callbacks,
+                    ) else NativeSmartCutBridge.cutRanges(
+                        "/proc/self/fd/${descriptor.fd}", destination.absolutePath, ranges, clip.muted, callbacks,
                     )
                 } finally {
                     callbacks.close()
@@ -91,7 +93,8 @@ internal object NativeSmartCutTrimmer {
                     result.size != 3 -> unavailable(FastExportReason.UNKNOWN)
                     result[0] == -1L -> throw CancellationException("Native smart cut cancelled")
                     result[0] == 0L -> unavailable(FastExportReason.fromNativeCode(result[1]))
-                    result[0] != 1L || result[1] <= 0L || result[2] < 0L -> unavailable(FastExportReason.UNKNOWN)
+                    result[0] != 1L || result[1] <= 0L || result[2] < 0L ||
+                        (copyVideoOnly && result[2] != 0L) -> unavailable(FastExportReason.UNKNOWN)
                     else -> NativeSmartCutResult(result[1], result[2])
                 }
             }
@@ -103,10 +106,52 @@ internal object NativeSmartCutTrimmer {
             unavailable(failureReason)
         }
     }
+
+    suspend fun suggestCopyRanges(context: Context, timeline: EditTimeline): List<Pair<Long, Long>>? =
+        withContext(Dispatchers.IO) {
+            val ranges = NativeSmartCutPlan.rangesUs(timeline) ?: return@withContext null
+            val clip = timeline.clips.first()
+            if (!available || clip.sourceDurationMs > Long.MAX_VALUE / 1_000L) return@withContext null
+            val job = currentCoroutineContext()
+            try {
+                context.contentResolver.openAssetFileDescriptor(Uri.parse(clip.uri), "r")?.use { asset ->
+                    val descriptor = asset.parcelFileDescriptor
+                    val size = descriptor.statSize
+                    if (asset.startOffset != 0L || size <= 0L ||
+                        (asset.declaredLength >= 0L && asset.declaredLength != size)) return@use null
+                    val position = Os.lseek(descriptor.fileDescriptor, 0L, OsConstants.SEEK_CUR)
+                    Os.lseek(descriptor.fileDescriptor, position, OsConstants.SEEK_SET)
+                    job.ensureActive()
+                    val callbacks = NativeSmartCutCallbacks(job) {}
+                    val result = try {
+                        NativeSmartCutBridge.suggestCopyRanges("/proc/self/fd/${descriptor.fd}", ranges,
+                            clip.sourceDurationMs * 1_000L, clip.muted, callbacks)
+                    } finally { callbacks.close() }
+                    job.ensureActive()
+                    if (result.size != ranges.size + 1 || result[0] != 1L ||
+                        result.drop(1).any { it < 0L || it % 1_000L != 0L }) return@use null
+                    result.drop(1).chunked(2).map { it[0] / 1_000L to it[1] / 1_000L }
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                job.ensureActive()
+                Log.d("QuickCutExport", "No verified fast cut recommendation: " + error.javaClass.simpleName)
+                null
+            }
+        }
 }
 
 @Keep
 internal object NativeSmartCutBridge {
+    @JvmStatic
+    external fun suggestCopyRanges(inputPath: String, rangesUs: LongArray, sourceEndUs: Long,
+        muted: Boolean, callbacks: NativeSmartCutCallbacks): LongArray
+
+    @JvmStatic
+    external fun cutRangesCopyVideo(inputPath: String, outputPath: String, rangesUs: LongArray,
+        muted: Boolean, callbacks: NativeSmartCutCallbacks): LongArray
+
     @JvmStatic
     external fun cutRanges(
         inputPath: String,

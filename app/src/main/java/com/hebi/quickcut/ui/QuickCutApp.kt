@@ -404,19 +404,13 @@ fun QuickCutApp(
     exportReview?.takeIf {
         model.page == QuickCutPage.EDITOR && model.timeline == it.timeline
     }?.let { review ->
-        val clip = review.timeline.clips.singleOrNull()
-        val suggestedStart = review.assessment.suggestedStartMs
-        val suggestedRange = if (suggestedStart != null && clip != null) {
-            TrimInput.range(suggestedStart, clip.endMs, clip.sourceDurationMs)
-                ?.takeIf { it.startMs > clip.startMs }
-        } else null
+        val suggestion = review.assessment.suggestion
         ExportModeDialog(
             assessment = if (review.retryingFastExport) review.assessment.copy(
                 explanation = model.exportDiagnostics.explanation().ifBlank {
                     "고속 복사를 완료하지 못했습니다. 세부 원인은 확인할 수 없습니다."
                 },
             ) else review.assessment,
-            clip = clip,
             retryingFastExport = review.retryingFastExport,
             canSave = model.canStartExport,
             onAllowReencode = {
@@ -427,20 +421,13 @@ fun QuickCutApp(
                     selectedSaveAction = OriginalAction.KEEP
                 }
             },
-            onSuggestedStart = if (suggestedRange != null && clip != null) {
+            onSuggestedCut = if (suggestion != null && !review.retryingFastExport) {
                 {
-                    if (model.canStartExport && model.timeline == review.timeline) {
-                        model.trimClip(clip.id, suggestedRange.startMs, suggestedRange.endMs)
-                        if (model.quickMode) {
-                            settings.saveQuick(QuickTrimSettings(
-                                leadingMs = suggestedRange.startMs,
-                                trailingMs = clip.sourceDurationMs - suggestedRange.endMs,
-                                muteAudio = clip.muted,
-                            ))
-                        }
-                        selectedSaveAction = review.originalAction
-                        selectedSaveDateMode = review.dateMode
+                    if (model.canStartExport && model.timeline == review.timeline &&
+                        model.applyFastCutSuggestion(suggestion)) {
                         exportReview = null
+                        model.startExport(context, review.originalAction, review.dateMode, ExportMode.FAST_ONLY)
+                        selectedSaveAction = OriginalAction.KEEP
                     }
                 }
             } else null,

@@ -71,7 +71,7 @@ class FastBFrameInstrumentedTest {
     }
 
     @Test
-    fun bFrameSourceWithATrimmedTailStillRequiresPreciseExport() = runBlocking {
+    fun bFrameTrimmedTailOffersAnEarlierSafeEndWithoutChangingTheRequest() = runBlocking {
         withFixture("quickcut_bframes.mp4") { context, _, clip ->
             val retained = clip.copy(startMs = 4_000L, endMs = 7_000L)
             assertNull("A B-frame reference beyond the trim end must not be discarded",
@@ -81,6 +81,10 @@ class FastBFrameInstrumentedTest {
             )
             assertFalse(assessment.fastAvailable)
             assertNull(assessment.suggestedStartMs)
+            val suggestion = checkNotNull(assessment.suggestion)
+            assertEquals(6_000L, suggestion.adjusted.clips.single().endMs)
+            assertEquals(1_000L, suggestion.extraRemovedMs)
+            assertEquals(7_000L, retained.endMs)
             assertTrue("Explain why trimming the tail prevents safe B-frame copy: ${assessment.explanation}",
                 assessment.explanation.contains("끝"))
         }

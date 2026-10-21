@@ -104,9 +104,6 @@ class VideoExporter(private val context: Context) {
                 } catch (unsupported: FastTrimUnavailableException) {
                     diagnostics = diagnostics.copy(copyReason = FastExportReason.COPY_FAILED)
                     showDiagnostics()
-                    if (exportMode == ExportMode.FAST_ONLY) {
-                        throw ReencodeRequiredException("고속 복사를 완료할 수 없습니다. 정확한 위치로 자동 저장을 선택해 주세요.", unsupported)
-                    }
                     Log.w("QuickCutExport", "Fast remux unsupported; using Media3", unsupported)
                     null
                 }
@@ -131,11 +128,6 @@ class VideoExporter(private val context: Context) {
             showDiagnostics()
         }
 
-        if (exportMode == ExportMode.FAST_ONLY) {
-            throw ReencodeRequiredException(
-                "현재 자르기 위치 또는 저장 옵션에서는 고속 복사를 사용할 수 없습니다. 정확한 위치로 자동 저장을 선택해 주세요."
-            )
-        }
         withContext(Dispatchers.IO) {
             val estimate = ExportStorage.estimateOutputBytes(context, timeline, directWrite = false)
             ExportStorage.requireSpace(context, estimate, directWrite = false)
@@ -147,7 +139,8 @@ class VideoExporter(private val context: Context) {
             var nativeReason: FastExportReason? = null
             val nativeResult = try {
                     NativeSmartCutTrimmer.tryExport(context, timeline, temporary, onProgress,
-                        onUnavailable = { nativeReason = it })
+                        onUnavailable = { nativeReason = it },
+                        copyVideoOnly = exportMode == ExportMode.FAST_ONLY)
                         ?.also {
                             withContext(Dispatchers.IO) {
                                 originalDate?.let { Mp4HeaderDates.update(temporary, it.epochMs) }
@@ -165,6 +158,10 @@ class VideoExporter(private val context: Context) {
             val media3Result = if (nativeResult == null) {
                 diagnostics = diagnostics.copy(smartCutReason = nativeReason ?: FastExportReason.UNKNOWN)
                 showDiagnostics()
+                if (exportMode == ExportMode.FAST_ONLY) {
+                    throw ReencodeRequiredException(
+                        "고속 저장을 완료하지 못했습니다. 선택한 구간을 유지하며 정확한 위치로 자동 저장을 선택할 수 있습니다.")
+                }
                 withContext(Dispatchers.IO) {
                     if (temporary.exists() && !temporary.delete()) {
                         throw IOException("이전 저장 시도의 임시 파일을 정리할 수 없습니다.")

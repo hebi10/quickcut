@@ -1,4 +1,4 @@
-use crate::{cut_ranges, Callbacks};
+use crate::{cut_ranges, cut_ranges_copy_video, suggest_copy_ranges, Callbacks};
 use jni::{JNIEnv, JavaVM, objects::{GlobalRef, JClass, JLongArray, JObject, JString, JThrowable, JValue}, sys::{jboolean, jlong, jlongArray}};
 use std::{panic::{catch_unwind, AssertUnwindSafe}, ptr, sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}}};
 
@@ -78,7 +78,7 @@ pub extern "system" fn Java_com_hebi_quickcut_media_NativeSmartCutBridge_cut(
     env: JNIEnv, _class: JClass, input: JString, output: JString,
     start_us: jlong, end_us: jlong, muted: jboolean, callbacks: JObject,
 ) -> jlongArray {
-    run_cut(env, input, output, Ranges::Single(start_us, end_us), muted, callbacks)
+    run_operation(env, input, Ranges::Single(start_us, end_us), muted, callbacks, Operation::Cut(output, false))
 }
 
 #[no_mangle]
@@ -86,18 +86,34 @@ pub extern "system" fn Java_com_hebi_quickcut_media_NativeSmartCutBridge_cutRang
     env: JNIEnv, _class: JClass, input: JString, output: JString,
     ranges: JLongArray, muted: jboolean, callbacks: JObject,
 ) -> jlongArray {
-    run_cut(env, input, output, Ranges::Multiple(ranges), muted, callbacks)
+    run_operation(env, input, Ranges::Multiple(ranges), muted, callbacks, Operation::Cut(output, false))
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_hebi_quickcut_media_NativeSmartCutBridge_cutRangesCopyVideo(
+    env: JNIEnv, _class: JClass, input: JString, output: JString,
+    ranges: JLongArray, muted: jboolean, callbacks: JObject,
+) -> jlongArray {
+    run_operation(env, input, Ranges::Multiple(ranges), muted, callbacks, Operation::Cut(output, true))
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_hebi_quickcut_media_NativeSmartCutBridge_suggestCopyRanges(
+    env: JNIEnv, _class: JClass, input: JString, ranges: JLongArray,
+    source_end_us: jlong, muted: jboolean, callbacks: JObject,
+) -> jlongArray {
+    run_operation(env, input, Ranges::Multiple(ranges), muted, callbacks, Operation::Suggest(source_end_us))
 }
 
 enum Ranges<'a> { Single(i64, i64), Multiple(JLongArray<'a>) }
+enum Operation<'a> { Cut(JString<'a>, bool), Suggest(i64) }
 
-fn run_cut(
-    mut env: JNIEnv, input: JString, output: JString,
-    ranges: Ranges, muted: jboolean, callbacks: JObject,
+fn run_operation(
+    mut env: JNIEnv, input: JString,
+    ranges: Ranges, muted: jboolean, callbacks: JObject, operation: Operation,
 ) -> jlongArray {
     let operation = catch_unwind(AssertUnwindSafe(|| -> jni::errors::Result<jlongArray> {
         let input: String = env.get_string(&input)?.into();
-        let output: String = env.get_string(&output)?.into();
         let ranges = match ranges {
             Ranges::Single(start, end) => vec![(start, end)],
             Ranges::Multiple(array) => {
@@ -115,7 +131,18 @@ fn run_cut(
             vm: env.get_java_vm()?, object: env.new_global_ref(callbacks)?,
             failure: Mutex::new(None), cancelled: AtomicBool::new(false),
         });
-        let result = cut_ranges(&input, &output, &ranges, muted != 0, callback.clone());
+        let result = match operation {
+            Operation::Cut(output, copy_only) => {
+                let output: String = env.get_string(&output)?.into();
+                let cut = if copy_only { cut_ranges_copy_video } else { cut_ranges };
+                cut(&input, &output, &ranges, muted != 0, callback.clone()).map(|report|
+                    vec![1, report.copied_video_packets as i64, report.encoded_video_packets as i64])
+            },
+            Operation::Suggest(source_end) => {
+                suggest_copy_ranges(&input, &ranges, source_end, muted != 0, callback.clone()).map(|ranges|
+                    std::iter::once(1).chain(ranges.into_iter().flat_map(|(start, end)| [start, end])).collect())
+            },
+        };
         let failure = callback.failure.lock().unwrap_or_else(|p| p.into_inner()).take();
         if let Some(failure) = failure {
             match failure {
@@ -128,14 +155,14 @@ fn run_cut(
             return Ok(ptr::null_mut());
         }
         let values = match result {
-            Ok(report) => [1, report.copied_video_packets as i64, report.encoded_video_packets as i64],
+            Ok(values) => values,
             Err(error) => {
                 warn(&format!("Smart rendering declined: {error:#}"));
-                if callback.cancelled.load(Ordering::Relaxed) { [-1, 0, 0] }
-                else { [0, crate::decline::code(&error), 0] }
+                if callback.cancelled.load(Ordering::Relaxed) { vec![-1, 0, 0] }
+                else { vec![0, crate::decline::code(&error), 0] }
             }
         };
-        let array = env.new_long_array(3)?;
+        let array = env.new_long_array(values.len() as i32)?;
         env.set_long_array_region(&array, 0, &values)?;
         Ok(array.into_raw())
     }));

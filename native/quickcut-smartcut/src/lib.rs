@@ -253,6 +253,57 @@ pub fn cut(input: &str, output: &str, start_us: i64, end_us: i64, muted: bool,
 /// indexed once; every encoded boundary gets its own AVC parameter-set ID.
 pub fn cut_ranges(input: &str, output: &str, ranges: &[(i64, i64)], muted: bool,
     callbacks: Arc<dyn Callbacks>) -> Result<Report> {
+    cut_ranges_impl(input, output, ranges, muted, false, callbacks)
+}
+
+/// The user's fast-only choice permits audio conversion, never video encoding.
+pub fn cut_ranges_copy_video(input: &str, output: &str, ranges: &[(i64, i64)], muted: bool,
+    callbacks: Arc<dyn Callbacks>) -> Result<Report> {
+    cut_ranges_impl(input, output, ranges, muted, true, callbacks)
+}
+
+/// Return inward-only, millisecond-representable ranges. These are proposals;
+/// saving still validates the current input and cannot silently encode video.
+pub fn suggest_copy_ranges(input: &str, ranges: &[(i64, i64)], source_end_us: i64, muted: bool,
+    callbacks: Arc<dyn Callbacks>) -> Result<Vec<(i64, i64)>> {
+    ensure!(Path::new(input).is_absolute(), "local absolute path required");
+    ensure!(!ranges.is_empty() && ranges.len() <= 256, "unsupported range count");
+    ensure!(ranges.iter().all(|&(start, end)| start >= 0 && end > start && end <= source_end_us), "invalid range");
+    ensure!(!callbacks.is_cancelled(), "cancelled");
+    smartcut_core::init()?;
+    let stop = Arc::clone(&callbacks);
+    let _reads = smartcut_core::input::stop_reads_when(move || stop.is_cancelled());
+    let stopped = || callbacks.is_cancelled();
+    let source = smartcut_core::scan_stoppable(input, &smartcut_core::index::PacketScan,
+        None, Some(&stopped))?;
+    check_source(&source, source_end_us, muted)?;
+    let points: Vec<i64> = source.points.iter().filter(|p| !p.open_gop() && p.measured)
+        .map(|p| micros(p.time)).filter(|t| *t >= 0 && t % 1_000 == 0).collect();
+    let proposed = ranges.iter().map(|&(start, end)| {
+        let next = points.iter().copied().filter(|&t| t >= start).min().context("no safe start")?;
+        let previous = if end == source_end_us { end } else {
+            points.iter().copied().filter(|&t| t <= end).max().context("no safe end")?
+        };
+        ensure!(previous - next >= 100_000, "adjustment would remove the entire clip");
+        Ok((next, previous))
+    }).collect::<Result<Vec<_>>>()?;
+    let options = PlanOptions { allow_open_gop: false, ..Default::default() };
+    let plans = proposed.iter().map(|&(start, end)| {
+        let plan = plan_range(&source.video, source.duration, &source.points,
+            start as f64 / 1_000_000.0, end as f64 / 1_000_000.0, &options);
+        check_plan(&plan, start, end)?;
+        ensure!(plan.segments.iter().all(|s| s.kind == SegmentKind::Copy), "video encoding still required");
+        Ok(plan)
+    }).collect::<Result<Vec<_>>>()?;
+    inspect_packets(&source, &plans, callbacks.as_ref())?;
+    display::Display::read(input)?;
+    ensure!(!smartcut_core::input::reads_failed() && !smartcut_core::input::reads_stopped()
+        && !callbacks.is_cancelled(), "source read failed or cancelled");
+    Ok(proposed)
+}
+
+fn cut_ranges_impl(input: &str, output: &str, ranges: &[(i64, i64)], muted: bool,
+    copy_video_only: bool, callbacks: Arc<dyn Callbacks>) -> Result<Report> {
     ensure!(Path::new(input).is_absolute() && Path::new(output).is_absolute(), "local absolute paths required");
     ensure!(!ranges.is_empty() && ranges.len() <= 256, "unsupported range count");
     ensure!(ranges.iter().all(|&(start, end)| start >= 0 && end > start), "invalid trim range");
@@ -279,6 +330,8 @@ pub fn cut_ranges(input: &str, output: &str, ranges: &[(i64, i64)], muted: bool,
         ensure_fast!(plans.iter().flat_map(|p| &p.segments).any(|s| s.kind == SegmentKind::Copy), NoCopySegment, "no complete GOP to copy");
         let encoded_segments = plans.iter().flat_map(|p| &p.segments)
             .filter(|s| s.kind == SegmentKind::Reencode).count();
+        ensure_fast!(!copy_video_only || encoded_segments == 0, ExactBoundary,
+            "fast-only consent does not allow video encoding");
         let expected = explain(inspect_packets(&source, &plans, callbacks.as_ref()), Reason::PacketStructure)?;
         let display = explain(display::Display::read(input), Reason::Rotation)?;
         let (parameter_set_ids, reference_frames) = if source.video.codec == "h264" {
@@ -301,6 +354,8 @@ pub fn cut_ranges(input: &str, output: &str, ranges: &[(i64, i64)], muted: bool,
                 ..Default::default()
             }, Some(Box::new(move |_, total, _| report_callback.progress(15 + (total * 65.0).clamp(0.0, 65.0) as i32)))), Reason::ProcessingFailed)?;
         ensure_fast!(stats.copied_video_packets > 0, NoCopySegment, "no actual copied video output");
+        ensure_fast!(!copy_video_only || stats.encoded_video_packets == 0, OutputValidation,
+            "fast-only output unexpectedly encoded video");
         ensure_fast!(stats.copied_video_packets + stats.encoded_video_packets == expected, OutputValidation, "retained picture count changed");
         let final_video_packets = if source.video.codec == "hevc" {
             explain(hevc::remux(&intermediate_path, output, &display, callbacks.as_ref(),

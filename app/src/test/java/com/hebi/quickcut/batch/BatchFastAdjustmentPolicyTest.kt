@@ -21,13 +21,13 @@ class BatchFastAdjustmentPolicyTest {
         assertEquals(3_000L, timeline.clips.single().startMs)
     }
 
-    @Test fun rejectsEarlierUnchangedDistantAndTooShortSuggestions() {
-        listOf(null, 2_000L, 3_000L, 13_001L, 16_901L, 17_000L).forEach { candidate ->
+    @Test fun rejectsEarlierUnchangedAndTooShortSuggestions() {
+        listOf(null, 2_000L, 3_000L, 16_901L, 17_000L).forEach { candidate ->
             assertNull("Unsafe candidate: $candidate",
                 BatchFastAdjustmentPolicy.suggest("one.mp4", timeline, candidate))
         }
-        assertEquals(13_000L,
-            BatchFastAdjustmentPolicy.suggest("one.mp4", timeline, 13_000L)!!.suggestedStartMs)
+        assertEquals(13_001L,
+            BatchFastAdjustmentPolicy.suggest("one.mp4", timeline, 13_001L)!!.suggestedStartMs)
     }
 
     @Test fun refusesToApplyAReviewedOffsetToAChangedClip() {

@@ -68,6 +68,7 @@ import com.hebi.quickcut.editor.EditTimeline
 import com.hebi.quickcut.editor.TrimInput
 import com.hebi.quickcut.editor.OriginalAction
 import com.hebi.quickcut.editor.OriginalActionStatus
+import com.hebi.quickcut.export.ExportWorkMonitor
 import com.hebi.quickcut.media.OriginalMediaActions
 import com.hebi.quickcut.media.SaveDateMode
 import com.hebi.quickcut.media.ExportMode
@@ -351,9 +352,10 @@ fun QuickCutApp(
 
     if (showLicenses) OpenSourceLicensesDialog(onDismiss = { showLicenses = false })
 
-    if (model.isRecoveringExport || model.exportRecoveryNotice?.let {
+    // Live export rollback already owns the screen until its cleanup completes.
+    if (!ExportWorkMonitor.isRunning && (model.isRecoveringExport || model.exportRecoveryNotice?.let {
             model.hasUnresolvedExport || it != dismissedRecoveryNotice
-        } == true) {
+        } == true)) {
         AlertDialog(
             onDismissRequest = {
                 if (!model.isRecoveringExport && !model.hasUnresolvedExport)

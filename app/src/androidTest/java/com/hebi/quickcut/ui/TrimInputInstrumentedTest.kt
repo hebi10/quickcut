@@ -48,6 +48,7 @@ import com.hebi.quickcut.editor.formatTime
 import com.hebi.quickcut.editor.EditorViewModel
 import com.hebi.quickcut.editor.OriginalAction
 import com.hebi.quickcut.editor.QuickCutPage
+import com.hebi.quickcut.export.ExportWorkMonitor
 import com.hebi.quickcut.media.ExportMode
 import com.hebi.quickcut.media.SaveDateMode
 import com.hebi.quickcut.settings.QuickCutSettings
@@ -56,6 +57,7 @@ import java.io.File
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -106,7 +108,7 @@ class TrimInputInstrumentedTest {
     fun cleanUp() {
         if (::model.isInitialized) {
             composeRule.runOnUiThread { model.cancelExport() }
-            composeRule.waitUntil(120_000L) { model.page != QuickCutPage.EXPORTING }
+            composeRule.waitUntil(120_000L) { !ExportWorkMonitor.isRunning && !model.isRecoveringExport }
             model.completedUri?.let {
                 InstrumentationRegistry.getInstrumentation().targetContext
                     .contentResolver.delete(it, null, null)
@@ -464,7 +466,11 @@ class TrimInputInstrumentedTest {
             model.startExport(context, OriginalAction.TRASH, SaveDateMode.ORIGINAL,
                 ExportMode.FAST_ONLY)
         }
-        composeRule.waitUntil(25_000L) { model.needsReencodeConsent }
+        composeRule.waitUntil(25_000L) {
+            model.needsReencodeConsent && !ExportWorkMonitor.isRunning && !model.isRecoveringExport
+        }
+        composeRule.runOnIdle { assertNull(model.exportRecoveryNotice) }
+        composeRule.onNodeWithText("이전 저장 확인").assertDoesNotExist()
         composeRule.waitUntil(25_000L) {
             composeRule.onAllNodes(hasText("정확한 위치로 자동 저장"))
                 .fetchSemanticsNodes().size == 1

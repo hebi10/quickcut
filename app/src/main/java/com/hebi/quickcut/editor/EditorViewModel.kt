@@ -200,7 +200,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private suspend fun recoverExportRecord() {
+    private suspend fun recoverExportRecord(showSuccessNotice: Boolean = true) {
         val result = withContext(Dispatchers.IO) {
             try {
                 // A callback may have failed to persist its new URI. Retain that
@@ -218,7 +218,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 originalActionStatus = OriginalActionStatus.NONE
                 savedDateMode = if (result.snapshot.expectedDateMs != null) SaveDateMode.ORIGINAL else SaveDateMode.CURRENT
                 finishExport(Uri.parse(requireNotNull(result.snapshot.outputUri)), emptyList())
-                if (!hasUnresolvedExport) exportRecoveryNotice =
+                if (showSuccessNotice && !hasUnresolvedExport) exportRecoveryNotice =
                     "이전에 저장이 완료된 영상을 복구했습니다. 중복 저장하지 않았으며 원본 처리 선택은 초기화됐습니다."
             }
             is SingleExportRecoveryResult.Blocked -> {
@@ -229,7 +229,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 activeExportRecord = null
                 hasUnresolvedExport = false
                 hasRestorableSession = sessionStore.load() != null
-                if (result == SingleExportRecoveryResult.RetryAllowed) exportRecoveryNotice =
+                if (showSuccessNotice && result == SingleExportRecoveryResult.RetryAllowed) exportRecoveryNotice =
                     "중단된 저장을 정리했습니다. 이전 편집 내용을 복원하거나 확인한 뒤 다시 저장해 주세요. 원본은 그대로 유지됩니다."
             }
         }
@@ -605,7 +605,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                     try {
                         // GalleryWriter cleanup has returned, even on cancellation.
                         // Confirm absence or retain the journal before enabling retry.
-                        withContext(NonCancellable) { recoverExportRecord() }
+                        withContext(NonCancellable) { recoverExportRecord(showSuccessNotice = false) }
                     } finally {
                         isRecoveringExport = false
                     }

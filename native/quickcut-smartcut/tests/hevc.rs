@@ -102,7 +102,7 @@ fn main_hevc_b_frames_copy_the_middle_and_decode_every_retained_picture() {
         assert_eq!(String::from_utf8(decoded.stdout).unwrap().trim(), "150",
             "a copied splice IDR must never silently discard retained B pictures");
     }
-    assert!(result.unwrap_err().to_string().contains("discard prior pictures"));
+    assert!(format!("{:#}", result.unwrap_err()).contains("discard prior pictures"));
     assert!(!unsafe_output.exists(), "unsafe native output must stay unpublished");
     assert_eq!(std::fs::read(&source).unwrap(), original);
     std::fs::remove_dir_all(directory).unwrap();

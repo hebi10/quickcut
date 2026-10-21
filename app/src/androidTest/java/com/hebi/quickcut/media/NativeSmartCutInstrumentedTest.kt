@@ -430,6 +430,7 @@ class NativeSmartCutInstrumentedTest {
         var commitCount = 0
         var reportCount = 0
         var report: ExportReport? = null
+        var observedDiagnostics = ExportDiagnostics()
         try {
             val saved = VideoExporter(context).export(
                 timeline, {}, {},
@@ -438,6 +439,11 @@ class NativeSmartCutInstrumentedTest {
                 exportMode = exportMode,
                 onOutputCreated = { outputs.add(it) },
                 onCommitted = { committed = it; commitCount++ },
+                onDiagnostics = {
+                    assertEquals("Show reasons before publication", null, committed)
+                    assertEquals(android.os.Looper.getMainLooper(), android.os.Looper.myLooper())
+                    observedDiagnostics = it
+                },
                 onReport = {
                     assertTrue("Report must follow publication", committed != null)
                     report = it
@@ -448,6 +454,8 @@ class NativeSmartCutInstrumentedTest {
             assertEquals(saved, committed)
             assertEquals(1, commitCount)
             assertEquals(1, reportCount)
+            assertEquals("Progress and completion must retain the same observed reasons",
+                observedDiagnostics, report?.diagnostics)
             val pending = context.contentResolver.query(saved,
                 arrayOf(MediaStore.Video.Media.IS_PENDING), null, null, null)?.use {
                 if (it.moveToFirst()) it.getInt(0) else -1

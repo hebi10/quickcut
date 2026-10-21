@@ -6,7 +6,7 @@ enum class FastExportReason(val nativeCode: Long?, val explanation: String) {
     VIDEO_CODEC(2, "영상 코덱이 고속 처리에서 지원하는 H.264·H.265가 아닙니다."),
     PIXEL_FORMAT(3, "영상의 색상 표본 형식이 지원 범위인 8비트 4:2:0과 다릅니다."),
     PICTURE_STRUCTURE(4, "인터레이스 영상이거나 프레임 구조를 확인할 수 없습니다."),
-    FRAME_RATE(5, "프레임 간격이 일정하지 않거나 프레임 속도가 지원 범위인 120fps 이하가 아닙니다."),
+    FRAME_RATE(5, "프레임 간격이 일정하지 않거나 속도 정보를 확인할 수 없거나 120fps를 넘습니다."),
     DIMENSIONS(6, "영상 크기를 확인할 수 없거나 가로·세로가 지원 범위인 8192픽셀을 넘습니다."),
     COLOR_FORMAT(7, "HDR·광색역 등 고속 처리에서 지원하지 않는 색상 정보가 있습니다."),
     AUDIO_FORMAT(8, "소리 형식 또는 채널 구성이 지원 범위인 AAC 1~2채널과 다릅니다."),

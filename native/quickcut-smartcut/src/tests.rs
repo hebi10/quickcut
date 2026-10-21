@@ -131,7 +131,7 @@ fn h264_b_frames_and_aac_real_mixed_cut() {
             // original/head/tail configurations, not a synthetic map.
             let error = avc1::unused_ids(output.to_str().unwrap(), 2)
                 .expect_err("several source SPS/PPS pairs must use the fallback");
-            assert!(error.to_string().contains("multiple source AVC configurations"), "wrong decline reason: {error:#}");
+            assert!(format!("{error:#}").contains("multiple source AVC configurations"), "wrong decline reason: {error:#}");
         }
     }
     for start in [1_980_000, 2_010_000] {

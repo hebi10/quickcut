@@ -24,7 +24,7 @@ fn understated_level_is_declined_without_publishing_or_changing_source() {
     std::fs::write(&source, &bytes).unwrap();
     let failure = cut(source.to_str().unwrap(), output.to_str().unwrap(), 1_950_000, 5_500_000,
         false, Arc::new(Observer)).unwrap_err();
-    assert!(failure.to_string().contains("SPS level"), "{failure}");
+    assert!(format!("{failure:#}").contains("SPS level"), "{failure:#}");
     assert!(!output.exists());
     assert!(!directory.join("output.mp4.smartcut.mp4").exists());
     assert_eq!(std::fs::read(&source).unwrap(), bytes);

@@ -1,0 +1,29 @@
+{
+  "head": "095d5c150ede7e2f8a71d9f84bf2953a7b3048b3",
+  "tree": "dff10dd8c61f06073c6adb686f80992649dd1ffa",
+  "build": 39586267244,
+  "android": 39586267233,
+  "tests": {
+    "jvm": 149,
+    "android": 152,
+    "native": 76
+  },
+  "files": {
+    "QuickCut-v0.4.10-release.apk": {
+      "bytes": 77356373,
+      "sha256": "30cd97a462e184c8de620f3b6802f7e5a8ccf2ef05e3c17be351ae366867002f"
+    },
+    "QuickCut-v0.4.10-source.tar.gz": {
+      "bytes": 54783664,
+      "sha256": "7ac5eef50b284bf9e60b7d1b32d546b7ee94691d9d354e9bfd4b2474aefba652"
+    },
+    "QuickCut-v0.4.10-source-guide.md": {
+      "bytes": 74059,
+      "sha256": "d6d11e56b755c0b3cf0291ab50423a20282d28f5033b6250b38d018a21e1c79f"
+    },
+    "SHA256SUMS.txt": {
+      "bytes": 291,
+      "sha256": "febfeec3f7ff1b60eb28aa491e8c9cc11796ce225fc5566d11269d7452c70482"
+    }
+  }
+}

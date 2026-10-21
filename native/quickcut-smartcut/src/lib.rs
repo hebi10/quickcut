@@ -276,7 +276,7 @@ pub fn suggest_copy_ranges(input: &str, ranges: &[(i64, i64)], source_end_us: i6
     let stopped = || callbacks.is_cancelled();
     let source = smartcut_core::scan_stoppable(input, &smartcut_core::index::PacketScan,
         None, Some(&stopped))?;
-    check_source(&source, source_end_us, muted)?;
+    for &(_, end) in ranges { check_source(&source, end, muted)?; }
     let points: Vec<i64> = source.points.iter().filter(|p| !p.open_gop() && p.measured)
         .map(|p| micros(p.time)).filter(|t| *t >= 0 && t % 1_000 == 0).collect();
     let proposed = ranges.iter().map(|&(start, end)| {

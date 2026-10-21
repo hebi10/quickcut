@@ -21,6 +21,10 @@ fn recommendations_only_remove_more_and_export_every_retained_picture_without_vi
     let observer = || Arc::new(Observer) as Arc<dyn Callbacks>;
     assert_eq!(suggest_copy_ranges(path, &[(3_000_000, 7_500_000)], 8_000_000, true, observer()).unwrap(),
         vec![(4_000_000, 6_000_000)]);
+    // A container can report a longer header duration than its video track.
+    // An interior range still has exactly the same valid copy boundaries.
+    assert_eq!(suggest_copy_ranges(path, &[(3_000_000, 7_500_000)], 9_000_000, true, observer()).unwrap(),
+        vec![(4_000_000, 6_000_000)]);
     let ranges = suggest_copy_ranges(path, &[(0, 3_100_000), (5_100_000, 8_000_000)],
         8_000_000, true, observer()).unwrap();
     assert_eq!(ranges, vec![(0, 2_000_000), (6_000_000, 8_000_000)]);

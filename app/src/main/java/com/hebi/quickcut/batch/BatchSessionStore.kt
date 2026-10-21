@@ -6,6 +6,8 @@ import com.hebi.quickcut.media.OriginalTimestamp
 import com.hebi.quickcut.media.SaveDateMode
 import com.hebi.quickcut.media.ExportMethod
 import com.hebi.quickcut.media.ExportReport
+import com.hebi.quickcut.media.ExportDiagnostics
+import com.hebi.quickcut.media.FastExportReason
 import java.io.File
 import org.json.JSONArray
 import org.json.JSONObject
@@ -82,6 +84,8 @@ class BatchSessionStore(context: Context) {
                         put("method", report.method.name)
                         put("elapsedMs", report.elapsedMs)
                         put("optimizationResult", report.optimizationResult ?: JSONObject.NULL)
+                        put("copyReason", report.diagnostics.copyReason?.name ?: JSONObject.NULL)
+                        put("smartCutReason", report.diagnostics.smartCutReason?.name ?: JSONObject.NULL)
                     }
                 } ?: JSONObject.NULL)
             })
@@ -124,6 +128,12 @@ class BatchSessionStore(context: Context) {
                 elapsedMs = data.getLong("elapsedMs").also { require(it >= 0L) },
                 optimizationResult = if (data.isNull("optimizationResult")) null
                     else data.getInt("optimizationResult"),
+                diagnostics = ExportDiagnostics(
+                    copyReason = FastExportReason.fromStoredName(
+                        if (data.isNull("copyReason")) null else data.optString("copyReason")),
+                    smartCutReason = FastExportReason.fromStoredName(
+                        if (data.isNull("smartCutReason")) null else data.optString("smartCutReason")),
+                ),
             )
         }.getOrNull() // Optional telemetry must never invalidate a saved-output journal.
     }

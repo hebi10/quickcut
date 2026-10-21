@@ -214,6 +214,39 @@ class ExactBatchExportInstrumentedTest {
         assertFileText("처리 방식: 확인할 수 없음", substring = true)
     }
 
+    @Test
+    fun restoredFullEncodingShowsBothReasonsInTheFileResult() {
+        restorePublishedJournal {
+            it.put("exportReport", JSONObject().apply {
+                put("method", "VIDEO_REENCODE")
+                put("elapsedMs", 123L)
+                put("copyReason", "KEYFRAME")
+                put("smartCutReason", "FRAME_RATE")
+            })
+        }
+        showScreen()
+        assertFileText("원본 복사 제한: 자르기 시작 위치가 키프레임", substring = true)
+        assertFileText("고속 부분 처리 제한: 프레임 간격이 일정하지 않거나", substring = true)
+        sessionStore.save(BatchSessionSnapshot(model.files, model.previewTemplate(),
+            SaveDateMode.CURRENT, BatchRunState.FINISHED))
+        assertEquals(model.files.single().exportReport,
+            sessionStore.load()?.files?.single()?.exportReport)
+    }
+
+    @Test
+    fun unknownFutureReasonDoesNotDiscardSavedResultOrInventACondition() {
+        restorePublishedJournal {
+            it.put("exportReport", JSONObject().apply {
+                put("method", "VIDEO_REENCODE")
+                put("elapsedMs", 123L)
+                put("smartCutReason", "FUTURE_REASON")
+            })
+        }
+        assertEquals(ExportMethod.VIDEO_REENCODE, model.files.single().exportReport?.method)
+        showScreen()
+        assertFileText("고속 부분 처리 제한: 원인 확인 불가", substring = true)
+    }
+
     private fun restorePublishedJournal(changeReport: (JSONObject) -> Unit) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val output = runBlocking { GalleryWriter(context).save(source) }

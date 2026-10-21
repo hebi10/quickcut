@@ -46,25 +46,35 @@ internal object NativeSmartCutTrimmer {
         timeline: EditTimeline,
         destination: File,
         onProgress: (Int?) -> Unit,
+        onUnavailable: (FastExportReason) -> Unit = {},
     ): NativeSmartCutResult? = withContext(Dispatchers.IO) {
         val jobContext = currentCoroutineContext()
         jobContext.ensureActive()
-        val ranges = NativeSmartCutPlan.rangesUs(timeline) ?: return@withContext null
+        fun unavailable(reason: FastExportReason): NativeSmartCutResult? {
+            onUnavailable(reason)
+            return null
+        }
+        val ranges = NativeSmartCutPlan.rangesUs(timeline) ?: return@withContext unavailable(
+            NativeSmartCutPlan.unavailableReason(timeline) ?: FastExportReason.UNKNOWN)
         val clip = timeline.clips.first()
-        if (!available) return@withContext null
+        if (!available) return@withContext unavailable(FastExportReason.ENGINE_UNAVAILABLE)
+        var failureReason = FastExportReason.SOURCE_ACCESS
         try {
             // Keep this handle alive until the blocking native call returns. Native
             // code recognizes the fd identifier and uses duplicated descriptors with
             // independent pread cursors, without reopening a provider's private path.
-            context.contentResolver.openAssetFileDescriptor(Uri.parse(clip.uri), "r")?.use { asset ->
+            val asset = context.contentResolver.openAssetFileDescriptor(Uri.parse(clip.uri), "r")
+                ?: return@withContext unavailable(FastExportReason.SOURCE_ACCESS)
+            asset.use {
                 val descriptor = asset.parcelFileDescriptor
                 val size = descriptor.statSize
                 if (asset.startOffset != 0L || size <= 0L ||
                     (asset.declaredLength >= 0L && asset.declaredLength != size)
-                ) return@use null
+                ) return@use unavailable(FastExportReason.SOURCE_ACCESS)
                 val position = Os.lseek(descriptor.fileDescriptor, 0L, OsConstants.SEEK_CUR)
                 Os.lseek(descriptor.fileDescriptor, position, OsConstants.SEEK_SET)
                 jobContext.ensureActive()
+                failureReason = FastExportReason.PROCESSING_FAILED
                 val callbacks = NativeSmartCutCallbacks(jobContext, onProgress)
                 val result = try {
                     NativeSmartCutBridge.cutRanges(
@@ -78,9 +88,10 @@ internal object NativeSmartCutTrimmer {
                 // or publication. Never abandon a native writer on a detached thread.
                 jobContext.ensureActive()
                 when {
-                    result.size != 3 -> null
+                    result.size != 3 -> unavailable(FastExportReason.UNKNOWN)
                     result[0] == -1L -> throw CancellationException("Native smart cut cancelled")
-                    result[0] != 1L || result[1] <= 0L || result[2] < 0L -> null
+                    result[0] == 0L -> unavailable(FastExportReason.fromNativeCode(result[1]))
+                    result[0] != 1L || result[1] <= 0L || result[2] < 0L -> unavailable(FastExportReason.UNKNOWN)
                     else -> NativeSmartCutResult(result[1], result[2])
                 }
             }
@@ -89,7 +100,7 @@ internal object NativeSmartCutTrimmer {
         } catch (error: Exception) {
             jobContext.ensureActive()
             Log.w("QuickCutExport", "Native smart cut declined; keeping the exact Media3 path", error)
-            null
+            unavailable(failureReason)
         }
     }
 }

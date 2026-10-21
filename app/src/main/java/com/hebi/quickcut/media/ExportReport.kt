@@ -17,6 +17,7 @@ data class ExportReport(
     val method: ExportMethod,
     val elapsedMs: Long,
     val optimizationResult: Int? = null,
+    val diagnostics: ExportDiagnostics = ExportDiagnostics(),
 )
 
 @OptIn(UnstableApi::class)

@@ -17,6 +17,7 @@ import com.hebi.quickcut.media.VideoExporter
 import com.hebi.quickcut.media.SaveDateMode
 import com.hebi.quickcut.media.ExportMode
 import com.hebi.quickcut.media.ExportReport
+import com.hebi.quickcut.media.ExportDiagnostics
 import com.hebi.quickcut.media.ReencodeRequiredException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -138,6 +139,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     var completedUri by mutableStateOf<Uri?>(null)
         private set
     var completedExportReport by mutableStateOf<ExportReport?>(null)
+        private set
+    var exportDiagnostics by mutableStateOf(ExportDiagnostics())
         private set
     var errorMessage by mutableStateOf<String?>(null)
         private set
@@ -427,6 +430,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         requestedExportMode = exportMode
         completedUri = null
         completedExportReport = null
+        exportDiagnostics = ExportDiagnostics()
         originalActionStatus = OriginalActionStatus.NONE
         originalsFromSavedTimeline = emptyList()
         page = QuickCutPage.EXPORTING
@@ -453,6 +457,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                     },
                     saveDateMode = selectedDateMode,
                     exportMode = exportMode,
+                    onDiagnostics = { exportDiagnostics = it },
                     onReport = { report ->
                         if (committedOutput != null && page == QuickCutPage.COMPLETED &&
                             completedUri == committedOutput) completedExportReport = report
@@ -466,7 +471,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 page = QuickCutPage.EDITOR
             } catch (error: Exception) {
                 reportError("저장에 실패했습니다. " +
-                    (error.localizedMessage ?: "다시 시도해 주세요."))
+                    (error.localizedMessage ?: "다시 시도해 주세요.") +
+                    exportDiagnostics.explanation().let { if (it.isBlank()) "" else "\n\n$it" })
                 page = QuickCutPage.EDITOR
             } finally {
                 isFinalizing = false

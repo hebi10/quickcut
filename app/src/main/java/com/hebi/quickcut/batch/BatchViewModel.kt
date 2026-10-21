@@ -24,6 +24,7 @@ import com.hebi.quickcut.media.VideoExporter
 import com.hebi.quickcut.media.ExportPlanner
 import com.hebi.quickcut.media.ExportMode
 import com.hebi.quickcut.media.ExportReport
+import com.hebi.quickcut.media.ExportDiagnostics
 import com.hebi.quickcut.media.ReencodeRequiredException
 import com.hebi.quickcut.settings.QuickCutSettings
 import com.hebi.quickcut.settings.BatchDraftSettings
@@ -611,6 +612,7 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
                             }
                             isFinalizing = false
                             ExportWorkMonitor.update(workId, "${completedCount + 1}/${files.size} · ${row.displayName}")
+                            var diagnostics = ExportDiagnostics()
                             try {
                                 val expectedAudio = timeline.clips.any { it.hasAudio && !it.muted }
                                 var committedOutput: Uri? = null
@@ -643,6 +645,12 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
                                     outputBaseName = row.displayName,
                                     exportMode = exportMode,
                                     resolvedOriginalDate = row.originalDate,
+                                    onDiagnostics = { details ->
+                                        diagnostics = details
+                                        update(row.uri, persist = false) {
+                                            it.copy(reason = details.explanation().takeIf(String::isNotBlank))
+                                        }
+                                    },
                                     onReport = { report ->
                                         // Reporting follows publication. A journal failure here
                                         // must not turn a saved video into a failed export.
@@ -665,7 +673,7 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
                             } catch (required: ReencodeRequiredException) {
                                 update(row.uri) {
                                     it.copy(status=BatchFileStatus.SKIPPED,progress=null,
-                                        reason="고속 저장을 지원하지 않아 건너뛰었습니다.")
+                                        reason="고속 저장을 지원하지 않아 건너뛰었습니다.\n" + diagnostics.explanation())
                                 }
                             } catch (cancelled: CancellationException) {
                                 if (files.first { it.uri == row.uri }.status != BatchFileStatus.SAVED) update(row.uri) {
@@ -676,7 +684,8 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
                             } catch (failure: Exception) {
                                 update(row.uri) {
                                     it.copy(status=BatchFileStatus.FAILED,progress=null,
-                                        reason=failure.localizedMessage ?: "영상 저장 실패")
+                                        reason=(failure.localizedMessage ?: "영상 저장 실패") +
+                                            diagnostics.explanation().let { text -> if (text.isBlank()) "" else "\n$text" })
                                 }
                             } finally {
                                 isFinalizing = false

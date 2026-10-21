@@ -4,6 +4,7 @@ import com.hebi.quickcut.editor.EditTimeline
 import com.hebi.quickcut.editor.VideoClip
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class NativeSmartCutPlanTest {
@@ -39,5 +40,14 @@ class NativeSmartCutPlanTest {
         assertNull(NativeSmartCutPlan.rangesUs(EditTimeline(List(257) { source.copy(id = it.toLong()) })))
         assertNull(NativeSmartCutPlan.rangesUs(EditTimeline(listOf(
             VideoClip(1L, source.uri, Long.MAX_VALUE)))))
+    }
+
+    @Test fun differentSourcesAndMixedAudioHaveDifferentExplanations() {
+        assertEquals(FastExportReason.MULTIPLE_SOURCES, NativeSmartCutPlan.unavailableReason(
+            EditTimeline(listOf(source, source.copy(uri = "content://video/2")))))
+        assertEquals(FastExportReason.MIXED_AUDIO_POLICY, NativeSmartCutPlan.unavailableReason(
+            EditTimeline(listOf(source, source.copy(muted = true)))))
+        assertEquals(FastExportReason.RANGE_COUNT, NativeSmartCutPlan.unavailableReason(EditTimeline()))
+        assertNull(NativeSmartCutPlan.unavailableReason(EditTimeline(listOf(source))))
     }
 }

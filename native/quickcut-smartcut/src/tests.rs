@@ -36,7 +36,16 @@ fn actual_pts_accept_b_frames_but_reject_vfr_duplicate_and_missing_pictures() {
     assert!(missing.finish().is_err());
     let mut vfr = PictureClock::new(30.0, 1.0 / 15_360.0);
     vfr.add(0.0).unwrap();
-    assert!(vfr.add(0.05).is_err());
+    let error = explain(vfr.add(0.05), Reason::PacketStructure).unwrap_err();
+    assert_eq!(decline::code(&error), 18, "keep the precise timestamp reason across inspection layers");
+}
+
+#[test]
+fn unknown_failure_does_not_invent_a_codec_or_frame_condition() {
+    let error = anyhow::anyhow!("unexpected read failure at /private/source.mp4");
+    assert_eq!(decline::code(&error), 0);
+    let error = explain::<()>(Err(error), Reason::SourceUnreadable).unwrap_err();
+    assert_eq!(decline::code(&error), 1);
 }
 
 #[test]

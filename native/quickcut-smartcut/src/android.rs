@@ -131,7 +131,8 @@ fn run_cut(
             Ok(report) => [1, report.copied_video_packets as i64, report.encoded_video_packets as i64],
             Err(error) => {
                 warn(&format!("Smart rendering declined: {error:#}"));
-                [if callback.cancelled.load(Ordering::Relaxed) { -1 } else { 0 }, 0, 0]
+                if callback.cancelled.load(Ordering::Relaxed) { [-1, 0, 0] }
+                else { [0, crate::decline::code(&error), 0] }
             }
         };
         let array = env.new_long_array(3)?;

@@ -181,7 +181,15 @@ internal fun exportReportText(report: ExportReport?): String {
     val elapsed = report?.let {
         " · " + String.format(java.util.Locale.getDefault(), "%.1f", it.elapsedMs / 1_000.0) + "초"
     }.orEmpty()
-    return "처리 방식: " + method + elapsed
+    val reasons = when (report?.method) {
+        ExportMethod.ORIGINAL_COPY, null -> ""
+        ExportMethod.PARTIAL_REENCODE, ExportMethod.AUDIO_REENCODE ->
+            report.diagnostics.explanation(includeSmartCut = false)
+        else -> report.diagnostics.explanation().ifBlank {
+            if (report.method == ExportMethod.VIDEO_REENCODE) "고속 처리 제외 사유: 기록 없음" else ""
+        }
+    }
+    return "처리 방식: " + method + elapsed + if (reasons.isBlank()) "" else "\n" + reasons
 }
 
 @Composable

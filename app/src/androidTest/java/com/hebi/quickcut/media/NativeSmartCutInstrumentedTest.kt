@@ -141,9 +141,27 @@ class NativeSmartCutInstrumentedTest {
                 original.copy(id = 2L, startMs = 0L, endMs = 3_000L)))
             withExport(context, timeline) { saved, report ->
                 assertEquals(ExportMethod.VIDEO_REENCODE, report.method)
+                assertEquals(FastExportReason.MULTIPLE_CLIPS, report.diagnostics.copyReason)
+                assertEquals(FastExportReason.UNSAFE_SPLICE, report.diagnostics.smartCutReason)
                 assertDecodedPictures(context, saved, 150)
                 assertDurationAndAudio(context, saved, 5_000L)
             }
+        }
+    }
+
+    @Test
+    fun shortRangeReportsWhyNoMiddleCanBeCopiedBeforeFallback() = runBlocking {
+        withSource("quickcut_keyframes.mp4") { context, _, original ->
+            val output = File(context.cacheDir, "quickcut_reason_${UUID.randomUUID()}.mp4")
+            var reason: FastExportReason? = null
+            try {
+                val result = NativeSmartCutTrimmer.tryExport(context,
+                    EditTimeline(listOf(original.copy(startMs = 3_000L, endMs = 3_500L))),
+                    output, {}, onUnavailable = { reason = it })
+                assertEquals(null, result)
+                assertEquals(FastExportReason.NO_COPY_SEGMENT, reason)
+                assertFalse(output.exists())
+            } finally { output.delete() }
         }
     }
 

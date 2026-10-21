@@ -42,10 +42,19 @@ class VideoExporter(private val context: Context) {
         onCommitted: (Uri) -> Unit = {},
         resolvedOriginalDate: OriginalTimestamp? = null,
         onReport: (ExportReport) -> Unit = {},
+        onDiagnostics: (ExportDiagnostics) -> Unit = {},
     ): android.net.Uri {
         require(!timeline.isEmpty) { "편집할 영상이 없습니다." }
         require(timeline.clips.all { it.durationMs >= 100L }) { "저장할 영상 구간은 0.1초 이상이어야 합니다." }
         val startedAt = SystemClock.elapsedRealtime()
+        var diagnostics = ExportDiagnostics()
+        suspend fun showDiagnostics() {
+            withContext(Dispatchers.Main.immediate) {
+                try { onDiagnostics(diagnostics) }
+                catch (cancelled: CancellationException) { throw cancelled }
+                catch (error: Exception) { Log.w("QuickCutExport", "Could not display processing reasons", error) }
+            }
+        }
         val expectedDurationMs = timeline.totalDurationMs
         val expectAudio = timeline.clips.any { !it.muted && it.hasAudio }
         val originalDate = if (saveDateMode == SaveDateMode.ORIGINAL) {
@@ -62,8 +71,14 @@ class VideoExporter(private val context: Context) {
         // Original dates change MP4 headers, not compressed pictures.
         if (timeline.clips.size == 1) {
             val clip = timeline.clips.first()
-            val plan = withContext(Dispatchers.IO) {
-                FastMp4Trimmer.prepare(context, clip)
+            val inspection = withContext(Dispatchers.IO) {
+                FastMp4Trimmer.inspect(context, clip)
+            }
+            val plan = inspection.plan
+            if (plan == null) {
+                diagnostics = diagnostics.copy(copyReason =
+                    FastExportReason.fromStoredName(inspection.reason?.name) ?: FastExportReason.UNKNOWN)
+                showDiagnostics()
             }
             if (plan != null) {
                 val output = try {
@@ -87,6 +102,8 @@ class VideoExporter(private val context: Context) {
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (unsupported: FastTrimUnavailableException) {
+                    diagnostics = diagnostics.copy(copyReason = FastExportReason.COPY_FAILED)
+                    showDiagnostics()
                     if (exportMode == ExportMode.FAST_ONLY) {
                         throw ReencodeRequiredException("고속 복사를 완료할 수 없습니다. 정확한 위치로 자동 저장을 선택해 주세요.", unsupported)
                     }
@@ -109,6 +126,9 @@ class VideoExporter(private val context: Context) {
                     return output
                 }
             }
+        } else {
+            diagnostics = diagnostics.copy(copyReason = FastExportReason.MULTIPLE_CLIPS)
+            showDiagnostics()
         }
 
         if (exportMode == ExportMode.FAST_ONLY) {
@@ -124,8 +144,10 @@ class VideoExporter(private val context: Context) {
         // withContext can lose the cleanup handle while dispatching back to Main.
         val temporary = File(context.cacheDir, "quickcut_" + UUID.randomUUID().toString() + ".mp4")
         try {
+            var nativeReason: FastExportReason? = null
             val nativeResult = try {
-                    NativeSmartCutTrimmer.tryExport(context, timeline, temporary, onProgress)
+                    NativeSmartCutTrimmer.tryExport(context, timeline, temporary, onProgress,
+                        onUnavailable = { nativeReason = it })
                         ?.also {
                             withContext(Dispatchers.IO) {
                                 originalDate?.let { Mp4HeaderDates.update(temporary, it.epochMs) }
@@ -137,9 +159,12 @@ class VideoExporter(private val context: Context) {
                 } catch (invalidOutput: IOException) {
                     Log.w("QuickCutExport", "Native output validation failed; using exact Media3 export",
                         invalidOutput)
+                    nativeReason = FastExportReason.OUTPUT_VALIDATION
                     null
                 }
             val media3Result = if (nativeResult == null) {
+                diagnostics = diagnostics.copy(smartCutReason = nativeReason ?: FastExportReason.UNKNOWN)
+                showDiagnostics()
                 withContext(Dispatchers.IO) {
                     if (temporary.exists() && !temporary.delete()) {
                         throw IOException("이전 저장 시도의 임시 파일을 정리할 수 없습니다.")
@@ -183,6 +208,7 @@ class VideoExporter(private val context: Context) {
                     ),
                     SystemClock.elapsedRealtime() - startedAt,
                     media3Result?.optimizationResult,
+                    diagnostics,
                 ),
                 onReport,
             )

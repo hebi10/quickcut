@@ -4,6 +4,13 @@ import java.util.Locale
 
 private const val MIN_CLIP_MS = 100L
 
+data class PreciseClipRange(val startUs: Long, val endUs: Long) {
+    init { require(startUs >= 0L && endUs > startUs) }
+}
+
+internal fun ceilMilliseconds(timeUs: Long): Long =
+    timeUs / 1_000L + if (timeUs % 1_000L == 0L) 0L else 1L
+
 data class VideoClip(
     val id: Long,
     val uri: String,
@@ -12,6 +19,7 @@ data class VideoClip(
     val endMs: Long = sourceDurationMs,
     val muted: Boolean = false,
     val hasAudio: Boolean = true,
+    val preciseRange: PreciseClipRange? = null,
 ) {
     init {
         require(sourceDurationMs > 0L) { "영상 길이는 0보다 커야 합니다." }
@@ -20,13 +28,30 @@ data class VideoClip(
         }
     }
 
-    val durationMs: Long get() = endMs - startMs
+    // A legacy copy(startMs/endMs) must never silently retain old exact boundaries.
+    private val activeRange: PreciseClipRange?
+        get() = preciseRange?.takeIf {
+            it.startUs / 1_000L == startMs && ceilMilliseconds(it.endUs) == endMs
+        }
+    val startUs: Long get() = activeRange?.startUs ?: Math.multiplyExact(startMs, 1_000L)
+    val endUs: Long get() = activeRange?.endUs ?: Math.multiplyExact(endMs, 1_000L)
+    val durationUs: Long get() = endUs - startUs
+    val durationMs: Long get() = activeRange?.let { ceilMilliseconds(it.endUs - it.startUs) } ?: (endMs - startMs)
+
+    fun withRangeUs(startUs: Long, endUs: Long): VideoClip {
+        require(startUs >= 0L && endUs > startUs && ceilMilliseconds(endUs) <= sourceDurationMs)
+        return copy(startMs = startUs / 1_000L, endMs = ceilMilliseconds(endUs),
+            preciseRange = if (startUs % 1_000L == 0L && endUs % 1_000L == 0L) null
+                else PreciseClipRange(startUs, endUs))
+    }
 }
 
 data class TimelinePosition(val index: Int, val offsetMs: Long)
 
 data class EditTimeline(val clips: List<VideoClip> = emptyList()) {
-    val totalDurationMs: Long get() = clips.sumOf { it.durationMs }
+    val totalDurationUs: Long get() = clips.fold(0L) { total, clip -> Math.addExact(total, clip.durationUs) }
+    val totalDurationMs: Long get() = if (clips.any { it.preciseRange != null })
+        ceilMilliseconds(totalDurationUs) else clips.sumOf { it.durationMs }
     val isEmpty: Boolean get() = clips.isEmpty()
 
     fun append(items: List<VideoClip>): EditTimeline = copy(clips = clips + items)
@@ -35,7 +60,7 @@ data class EditTimeline(val clips: List<VideoClip> = emptyList()) {
         val clip = clips.first { it.id == id }
         require(startMs >= 0 && endMs <= clip.sourceDurationMs && endMs - startMs >= MIN_CLIP_MS)
         return copy(clips = clips.map {
-            if (it.id == id) it.copy(startMs = startMs, endMs = endMs) else it
+            if (it.id == id) it.copy(startMs = startMs, endMs = endMs, preciseRange = null) else it
         })
     }
 
@@ -44,12 +69,13 @@ data class EditTimeline(val clips: List<VideoClip> = emptyList()) {
         val index = clips.indexOfFirst { it.id == id }
         require(index >= 0) { "클립을 찾지 못했습니다." }
         val clip = clips[index]
-        require(offsetMs >= MIN_CLIP_MS && clip.durationMs - offsetMs >= MIN_CLIP_MS) {
+        val offsetUs = Math.multiplyExact(offsetMs, 1_000L)
+        require(offsetMs >= MIN_CLIP_MS && clip.durationUs - offsetUs >= MIN_CLIP_MS * 1_000L) {
             "분할 위치가 클립 경계에 너무 가깝습니다."
         }
-        val splitMs = clip.startMs + offsetMs
-        val left = clip.copy(endMs = splitMs)
-        val right = clip.copy(id = newId, startMs = splitMs)
+        val splitUs = clip.startUs + offsetUs
+        val left = clip.withRangeUs(clip.startUs, splitUs)
+        val right = clip.withRangeUs(splitUs, clip.endUs).copy(id = newId)
         return copy(clips = clips.toMutableList().apply {
             removeAt(index)
             add(index, left)

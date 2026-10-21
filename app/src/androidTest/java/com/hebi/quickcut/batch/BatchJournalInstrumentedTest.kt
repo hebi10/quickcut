@@ -1,8 +1,13 @@
 package com.hebi.quickcut.batch
 
 import android.app.Application
+import android.content.ContentProvider
+import android.content.ContentResolver
 import android.content.ContentValues
 import android.content.Context
+import android.content.pm.ProviderInfo
+import android.database.Cursor
+import android.database.CursorWrapper
 import android.net.Uri
 import android.os.Environment
 import android.provider.MediaStore
@@ -70,6 +75,142 @@ class BatchJournalInstrumentedTest {
         }
     }
 
+    @Test fun movedPublishedOutputRemainsSavedAndCanBeRemovedFromQueue() = runBlocking {
+        verifyMovedPublishedOutput(reset = false)
+    }
+
+    @Test fun movedPublishedOutputRemainsSavedAndCanResetForNewWork() = runBlocking {
+        verifyMovedPublishedOutput(reset = true)
+    }
+
+    private suspend fun verifyMovedPublishedOutput(reset: Boolean) {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val input = fixture(context)
+        var output: Uri? = null
+        try {
+            val saved = GalleryWriter(context).save(input)
+            output = saved
+            val metadata = MediaReader.metadata(context, saved)
+            seed(context, input, saved, metadata.durationMs, metadata.hasAudio,
+                status = BatchFileStatus.SAVED)
+            assertEquals(1, context.contentResolver.update(saved, ContentValues().apply {
+                put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/QuickCutMoved")
+            }, null, null))
+            val restored = restore(context)
+            assertEquals("Moving a published output must preserve SAVED", BatchFileStatus.SAVED,
+                restored.files.single().status)
+            assertEquals(saved.toString(), restored.files.single().savedOutputUri)
+            assertTrue(restored.files.single().durationMs > 0L)
+            withContext(Dispatchers.Main) {
+                if (reset) restored.resetBatch() else restored.removeVideo(restored.files.single().uri)
+            }
+            withTimeout(30_000L) { while (restored.isImporting) delay(50L) }
+            assertTrue("Completed entries must be removable after a move", restored.files.isEmpty())
+            assertEquals(BatchRunState.SETUP, restored.runState)
+            MediaReader.validateExport(context, saved, metadata.durationMs, metadata.hasAudio)
+            assertTrue("Queue changes must preserve the original", input.exists())
+        } finally {
+            output?.let { context.contentResolver.delete(it, null, null) }
+            BatchSessionStore(context).clear()
+            input.delete()
+        }
+    }
+
+    @Test fun pendingOutputOutsideQuickCutFolderIsProtectedFromRecoveryAndReset() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val input = fixture(context)
+        val pending = context.contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+            ContentValues().apply {
+                put(MediaStore.Video.Media.DISPLAY_NAME, "QuickCut_protected_test.mp4")
+                put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/QuickCutMoved")
+                put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+                put(MediaStore.Video.Media.IS_PENDING, 1)
+            })!!
+        try {
+            seed(context, input, pending, 2_000L, true)
+            assertProtectedTrackedOutput(context, pending)
+            assertEquals(1, context.contentResolver.query(pending, arrayOf(MediaStore.Video.Media._ID),
+                null, null, null)?.use { it.count })
+        } finally {
+            context.contentResolver.delete(pending, null, null)
+            input.delete()
+        }
+    }
+
+    @Test fun ownerMismatchPendingOutputIsProtectedFromRecoveryAndReset() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val input = fixture(context)
+        val pending = context.contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+            ContentValues().apply {
+                put(MediaStore.Video.Media.DISPLAY_NAME, "QuickCut_owner_guard_test.mp4")
+                put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/QuickCut")
+                put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+                put(MediaStore.Video.Media.IS_PENDING, 1)
+            })!!
+        val provider = OwnerMismatchProvider(context.contentResolver, pending)
+        provider.attachInfo(context, ProviderInfo().apply { authority = "media"; exported = true })
+        val application = ResolverApplication(context, ContentResolver.wrap(provider))
+        try {
+            seed(context, input, pending, 2_000L, true)
+            assertProtectedTrackedOutput(context, pending, application)
+            assertTrue("Owner mismatch must be observed during recovery", provider.ownerReads > 0)
+            assertEquals("Owner mismatch must never delegate deletion", 0, provider.deleteAttempts)
+            assertEquals(1, context.contentResolver.query(pending, arrayOf(MediaStore.Video.Media._ID),
+                null, null, null)?.use { it.count })
+            assertTrue(input.exists())
+        } finally {
+            context.contentResolver.delete(pending, null, null)
+            input.delete()
+        }
+    }
+
+    private class ResolverApplication(base: Context, private val resolver: ContentResolver) : Application() {
+        init { attachBaseContext(base) }
+        override fun getContentResolver(): ContentResolver = resolver
+    }
+
+    /** Keep real MediaStore rows visible, changing only the ownership reported for the pending output. */
+    private class OwnerMismatchProvider(private val real: ContentResolver, private val output: Uri) : ContentProvider() {
+        var deleteAttempts = 0
+        var ownerReads = 0
+        override fun onCreate() = true
+        override fun getType(uri: Uri): String? = real.getType(uri)
+        override fun insert(uri: Uri, values: ContentValues?): Uri? = real.insert(uri, values)
+        override fun update(uri: Uri, values: ContentValues?, selection: String?, selectionArgs: Array<out String>?): Int =
+            real.update(uri, values, selection, selectionArgs)
+        override fun delete(uri: Uri, selection: String?, selectionArgs: Array<out String>?): Int {
+            if (uri == output) deleteAttempts++
+            return real.delete(uri, selection, selectionArgs)
+        }
+        override fun query(uri: Uri, projection: Array<out String>?, selection: String?,
+            selectionArgs: Array<out String>?, sortOrder: String?): Cursor? {
+            val cursor = real.query(uri, projection, selection, selectionArgs, sortOrder) ?: return null
+            if (uri != output) return cursor
+            return object : CursorWrapper(cursor) {
+                override fun getString(columnIndex: Int): String? {
+                    if (getColumnName(columnIndex) == MediaStore.Video.Media.OWNER_PACKAGE_NAME) {
+                        ownerReads++
+                        return "com.example.otherowner"
+                    }
+                    return super.getString(columnIndex)
+                }
+            }
+        }
+    }
+
+    private suspend fun assertProtectedTrackedOutput(context: Context, output: Uri,
+        application: Application = context.applicationContext as Application) {
+        val restored = restore(context, application)
+        assertEquals(BatchFileStatus.SKIPPED, restored.files.single().status)
+        assertEquals(output.toString(), restored.files.single().savedOutputUri)
+        withContext(Dispatchers.Main) { restored.removeVideo(restored.files.single().uri) }
+        withTimeout(30_000L) { while (restored.isImporting) delay(50L) }
+        assertEquals("Unsafe output must remain tracked after removal attempt", 1, restored.files.size)
+        withContext(Dispatchers.Main) { restored.resetBatch() }
+        withTimeout(30_000L) { while (restored.isImporting) delay(50L) }
+        assertEquals("Unsafe output must remain tracked after reset attempt", 1, restored.files.size)
+    }
+
     @Test fun incompleteOutputIsRemovedAndRemainingWorkNeedsExplicitReview() = runBlocking {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val input = fixture(context)
@@ -120,18 +261,20 @@ class BatchJournalInstrumentedTest {
         } finally { BatchSessionStore(context).clear(); input.delete() }
     }
 
-    private fun seed(context: Context, input: File, output: Uri?, duration: Long, audio: Boolean) {
+    private fun seed(context: Context, input: File, output: Uri?, duration: Long, audio: Boolean,
+        status: BatchFileStatus = BatchFileStatus.RUNNING) {
         BatchSessionStore(context).save(BatchSessionSnapshot(
             files = listOf(BatchFile(Uri.fromFile(input).toString(), input.name, 3_000L, true,
-                status=BatchFileStatus.RUNNING, savedOutputUri=output?.toString(),
+                status=status, savedOutputUri=output?.toString(),
                 outputExpectedDurationMs=duration, outputExpectedAudio=audio)),
             template = BatchTemplate(name="복구 계획", mode=BatchClipMode.KEEP_FIRST, leadingMs=2_000L),
             dateMode = SaveDateMode.CURRENT, runState=BatchRunState.RUNNING,
         ))
     }
 
-    private suspend fun restore(context: Context): BatchViewModel {
-        val model = withContext(Dispatchers.Main) { BatchViewModel(context.applicationContext as Application) }.also { this.model = it }
+    private suspend fun restore(context: Context,
+        application: Application = context.applicationContext as Application): BatchViewModel {
+        val model = withContext(Dispatchers.Main) { BatchViewModel(application) }.also { this.model = it }
         withTimeout(30_000L) { while (model.isRecovering) delay(50L) }
         return model
     }
@@ -141,3 +284,4 @@ class BatchJournalInstrumentedTest {
             .use { source -> it.outputStream().use { target -> source.copyTo(target) } }
     }
 }
+

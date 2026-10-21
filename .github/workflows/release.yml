@@ -1,0 +1,98 @@
+name: Signed release APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+      - run: sdkmanager --install "platforms;android-36" "build-tools;36.0.0"
+      - name: Install native build tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y cmake nasm pkg-config
+          sdkmanager --install "ndk;27.3.13750724"
+      - name: Restore native build cache
+        id: native_cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            build/native-smartcut
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: native-smartcut-${{ runner.os }}-${{ hashFiles('scripts/build-native-smartcut.sh', 'scripts/native-smartcut-sources.json') }}-${{ hashFiles('native/**') }}
+          restore-keys: |
+            native-smartcut-${{ runner.os }}-${{ hashFiles('scripts/build-native-smartcut.sh', 'scripts/native-smartcut-sources.json') }}-
+            native-smartcut-${{ runner.os }}-
+      - name: Reset Rust outputs from a different native dependency cache
+        env:
+          NATIVE_CACHE_MATCHED_KEY: ${{ steps.native_cache.outputs.cache-matched-key }}
+          NATIVE_CACHE_DEPENDENCY_PREFIX: native-smartcut-${{ runner.os }}-${{ hashFiles('scripts/build-native-smartcut.sh', 'scripts/native-smartcut-sources.json') }}-
+        run: |
+          # Legacy/cross-dependency caches may retain C builds, validated by .build-key.
+          # Rebuild Rust from scratch so stale external static libraries cannot be linked.
+          if [[ -n "$NATIVE_CACHE_MATCHED_KEY" && "$NATIVE_CACHE_MATCHED_KEY" != "$NATIVE_CACHE_DEPENDENCY_PREFIX"* ]]; then
+            rm -rf build/native-smartcut/cargo-target
+          fi
+      - name: Build native smart-cut engine
+        run: bash scripts/build-native-smartcut.sh
+      - name: Save native build cache
+        if: success() && steps.native_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            build/native-smartcut
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ steps.native_cache.outputs.cache-primary-key }}
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.4.1"
+      - name: Build with persistent release identity
+        env:
+          QUICKCUT_KEYSTORE_BASE64: ${{ secrets.QUICKCUT_KEYSTORE_BASE64 }}
+          QUICKCUT_KEYSTORE_PASSWORD: ${{ secrets.QUICKCUT_KEYSTORE_PASSWORD }}
+          QUICKCUT_KEY_ALIAS: ${{ secrets.QUICKCUT_KEY_ALIAS }}
+          QUICKCUT_KEY_PASSWORD: ${{ secrets.QUICKCUT_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for name in QUICKCUT_KEYSTORE_BASE64 QUICKCUT_KEYSTORE_PASSWORD QUICKCUT_KEY_ALIAS QUICKCUT_KEY_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing release signing secret: $name. No replacement key will be generated."
+              exit 1
+            fi
+          done
+          umask 077
+          export QUICKCUT_KEYSTORE_PATH="$RUNNER_TEMP/quickcut-release.p12"
+          trap 'rm -f "$QUICKCUT_KEYSTORE_PATH"' EXIT
+          printf '%s' "$QUICKCUT_KEYSTORE_BASE64" | base64 --decode > "$QUICKCUT_KEYSTORE_PATH"
+          gradle --no-daemon :app:testReleaseUnitTest :app:lintRelease :app:assembleRelease
+          bash scripts/verify-release-apk.sh app/build/outputs/apk/release/app-release.apk
+      - name: Package corresponding source
+        run: bash scripts/package-smartcut-source.sh
+      - name: Upload corresponding source
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quickcut-corresponding-source
+          path: build/source-delivery/*
+          if-no-files-found: error
+      - name: Upload signed release
+        uses: actions/upload-artifact@v4
+        with:
+          name: quickcut-release-signed
+          path: app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error

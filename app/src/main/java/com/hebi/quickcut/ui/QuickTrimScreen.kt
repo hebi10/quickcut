@@ -72,6 +72,7 @@ import com.hebi.quickcut.media.CompositionFactory
 import com.hebi.quickcut.settings.QuickCutSettings
 import com.hebi.quickcut.settings.QuickTrimSettings
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 
 @OptIn(UnstableApi::class)
 @Composable
@@ -87,34 +88,71 @@ fun QuickTrimScreen(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val player = remember(context) { ExoPlayer.Builder(context.applicationContext).build() }
+    // The player may outlive a timeline change until Compose disposes this screen.
+    // Only write back a position belonging to the range actually loaded in it.
+    val loadedClip = remember(player) { arrayOfNulls<VideoClip>(1) }
+    fun syncPosition() {
+        val loaded = loadedClip[0] ?: return
+        val current = model.timeline.clips.singleOrNull() ?: return
+        if (current.id == loaded.id && current.uri == loaded.uri &&
+            current.startUs == loaded.startUs && current.endUs == loaded.endUs
+        ) {
+            model.seek(player.currentPosition.coerceIn(0L, current.durationMs))
+        }
+    }
     DisposableEffect(player, model) {
         val listener = object : Player.Listener {
             override fun onPlayerError(error: PlaybackException) {
                 model.reportError("미리보기 재생에 실패했습니다. 다른 영상을 선택하거나 다시 시도해 주세요.")
             }
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                if (!isPlaying) syncPosition()
+            }
+            override fun onPositionDiscontinuity(
+                oldPosition: Player.PositionInfo,
+                newPosition: Player.PositionInfo,
+                reason: Int,
+            ) {
+                syncPosition()
+            }
         }
         player.addListener(listener)
         onDispose {
+            syncPosition()
             player.removeListener(listener)
             player.release()
         }
     }
     DisposableEffect(player, lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_STOP) player.pause()
+            if (event == Lifecycle.Event.ON_STOP) {
+                syncPosition()
+                player.pause()
+                model.saveSessionOnStop()
+            }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
-    LaunchedEffect(clip.uri, clip.startMs, clip.endMs) {
+    LaunchedEffect(player) {
+        while (isActive) {
+            delay(120L)
+            if (player.isPlaying) syncPosition()
+        }
+    }
+    LaunchedEffect(clip.id, clip.uri, clip.startUs, clip.endUs) {
         delay(200L)
-        val position = player.currentPosition.coerceIn(0L, clip.durationMs)
+        val position = model.playPositionMs.coerceIn(0L, clip.durationMs)
+        // Ignore reset/seek callbacks until the replacement media is configured.
+        loadedClip[0] = null
         player.pause()
         try {
             player.setMediaItem(CompositionFactory.mediaItem(clip))
-            player.prepare()
             player.seekTo(position)
+            loadedClip[0] = clip
+            player.prepare()
         } catch (_: Exception) {
+            loadedClip[0] = null
             model.reportError("현재 영상을 미리 볼 수 없습니다. 다른 영상을 선택하거나 다시 시도해 주세요.")
         }
     }
@@ -151,7 +189,13 @@ fun QuickTrimScreen(
     SideEffect { model.setTrimInputValidity(valid) }
     val canSave = valid && model.canStartExport
     val saveValidated: (() -> Unit) -> Unit = { action ->
-        updateTrim(leadingText, trailingText)
+        val range = TrimInput.removedRange(leadingText, trailingText, clip.sourceDurationMs)
+        model.setTrimInputValidity(range != null)
+        // Valid edits already update the timeline. Saving an unchanged rounded
+        // display must preserve a previously reviewed precise boundary.
+        if (range != null && (range.startMs != clip.startMs || range.endMs != clip.endMs)) {
+            updateTrim(leadingText, trailingText)
+        }
         if (model.canStartExport) {
             player.pause()
             action()
@@ -389,4 +433,5 @@ private fun TrimSecondsRow(
         }
     }
 }
+
 

@@ -23,9 +23,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.hebi.quickcut.editor.OriginalAction
-import com.hebi.quickcut.editor.TrimInput
-import com.hebi.quickcut.editor.VideoClip
 import com.hebi.quickcut.media.ExportAssessment
+import com.hebi.quickcut.media.ExportMethod
+import com.hebi.quickcut.media.ExportReport
 import com.hebi.quickcut.media.SaveDateMode
 
 @Composable
@@ -63,8 +63,8 @@ internal fun SaveOptionsDialog(
                 }
                 if (dateMode == SaveDateMode.ORIGINAL) {
                     Text(
-                        "원본 날짜 유지에서는 직접 고속 복사를 지원하지 않습니다. " +
-                            "정밀 저장으로 날짜를 기록합니다.",
+                        "원본 날짜를 유지하면서 가능한 원본 복사·부분 처리를 우선 사용합니다. " +
+                            "날짜 기록을 위한 임시 저장 공간이 필요할 수 있습니다.",
                         color = CutColors.secondaryText,
                         style = MaterialTheme.typography.bodySmall,
                     )
@@ -108,11 +108,10 @@ private fun SaveChoiceRow(label: String, selected: Boolean, onSelect: () -> Unit
 @Composable
 internal fun ExportModeDialog(
     assessment: ExportAssessment,
-    clip: VideoClip?,
     retryingFastExport: Boolean,
     canSave: Boolean,
     onAllowReencode: () -> Unit,
-    onSuggestedStart: (() -> Unit)?,
+    onSuggestedCut: (() -> Unit)?,
     onDismiss: () -> Unit,
 ) {
     AlertDialog(
@@ -124,24 +123,23 @@ internal fun ExportModeDialog(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 if (retryingFastExport) {
-                    Text("고속 저장 중 호환성 문제가 발생했습니다. 재인코딩을 허용할지 선택해 주세요.")
+                    Text("고속 복사를 완료하지 못했습니다. 요청한 위치를 유지하며 다른 처리 방식으로 저장할 수 있습니다.")
                 }
                 Text(assessment.explanation)
                 Text(
-                    "정밀 저장은 영상 전체 또는 일부 구간을 다시 인코딩할 수 있어 " +
-                        "긴 영상에서는 저장 시간이 늘어날 수 있습니다.",
+                    "정확한 위치로 자동 저장은 요청한 구간을 유지합니다. 원본 데이터 복사와 " +
+                        "일부 구간 최적화를 우선 시도하고, 필요하면 전체 재인코딩을 허용합니다. " +
+                        "처리 시간은 영상과 기기에 따라 달라지며 완료 후 실제 처리 방식을 표시합니다.",
                     color = CutColors.secondaryText,
                     style = MaterialTheme.typography.bodySmall,
                 )
-                val startMs = assessment.suggestedStartMs
-                if (startMs != null && clip != null && startMs > clip.startMs) {
-                    Text(
-                        "대안: 앞부분을 " + TrimInput.secondsText(startMs) +
-                            "초까지 삭제하면 빠른 저장이 가능할 수 있습니다. " +
-                            "이 경우 원래보다 더 많은 영상이 삭제됩니다.",
-                        color = CutColors.secondaryText,
-                        style = MaterialTheme.typography.bodySmall,
-                    )
+                assessment.suggestion?.let { suggestion ->
+                    Text("고속 저장 추천 위치", style = MaterialTheme.typography.titleSmall)
+                    Text(fastCutSuggestionText(suggestion))
+                    FastCutPreview(suggestion)
+                    Text("위 시간은 원본 영상 기준입니다. 키프레임 간격에 따라 차이가 날 수 있습니다. " +
+                        "추천 위치에 동의하면 구간을 변경하고 영상 재인코딩 없이 저장합니다. 소리는 필요하면 변환합니다.",
+                        color = CutColors.secondaryText, style = MaterialTheme.typography.bodySmall)
                 }
             }
         },
@@ -150,12 +148,12 @@ internal fun ExportModeDialog(
                 Button(
                     onClick = onAllowReencode, enabled = canSave,
                     modifier = Modifier.fillMaxWidth(), shape = CutShape,
-                ) { Text("정밀 저장 (재인코딩 허용)") }
-                if (onSuggestedStart != null) {
+                ) { Text("정확한 위치로 자동 저장") }
+                if (onSuggestedCut != null) {
                     OutlinedButton(
-                        onClick = onSuggestedStart, enabled = canSave,
+                        onClick = onSuggestedCut, enabled = canSave,
                         modifier = Modifier.fillMaxWidth(), shape = CutShape,
-                    ) { Text("빠른 저장 위치로 변경 후 확인") }
+                    ) { Text("추천 위치로 고속 저장") }
                 }
                 TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth(), shape = CutShape) {
                     Text("취소")
@@ -167,19 +165,42 @@ internal fun ExportModeDialog(
     )
 }
 
+internal fun exportReportText(report: ExportReport?): String {
+    val method = when (report?.method ?: ExportMethod.UNKNOWN) {
+        ExportMethod.ORIGINAL_COPY -> "원본 데이터 복사"
+        ExportMethod.PARTIAL_REENCODE -> "일부 구간 재인코딩"
+        ExportMethod.VIDEO_REENCODE -> "전체 영상 재인코딩"
+        ExportMethod.AUDIO_REENCODE -> "소리 재인코딩"
+        ExportMethod.UNKNOWN -> "확인할 수 없음"
+    }
+    val elapsed = report?.let {
+        " · " + String.format(java.util.Locale.getDefault(), "%.1f", it.elapsedMs / 1_000.0) + "초"
+    }.orEmpty()
+    val reasons = when (report?.method) {
+        ExportMethod.ORIGINAL_COPY, null -> ""
+        ExportMethod.PARTIAL_REENCODE, ExportMethod.AUDIO_REENCODE ->
+            report.diagnostics.explanation(includeSmartCut = false)
+        else -> report.diagnostics.explanation().ifBlank {
+            if (report.method == ExportMethod.VIDEO_REENCODE) "고속 처리 제외 사유: 기록 없음" else ""
+        }
+    }
+    return "처리 방식: " + method + elapsed + if (reasons.isBlank()) "" else "\n" + reasons
+}
+
 @Composable
-internal fun ExportInspectionDialog() {
+internal fun ExportInspectionDialog(progress: Int? = null, onCancel: () -> Unit) {
     AlertDialog(
-        onDismissRequest = {},
+        onDismissRequest = onCancel,
         title = { Text("저장 방식 분석 중") },
         text = {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 CircularProgressIndicator(modifier = Modifier.size(32.dp))
-                Text("코덱과 자르기 위치, 저장 공간을 확인하고 있습니다.",
+                Text((progress?.let { "원본 분석 ${it.coerceIn(0, 100)}%\n" } ?: "원본 분석 준비 중\n") +
+                    "키프레임과 구간 연결, 저장 공간을 확인하고 있습니다. 긴 영상은 분석에 시간이 걸릴 수 있습니다.",
                     modifier = Modifier.padding(start = 12.dp))
             }
         },
-        confirmButton = {},
+        confirmButton = { TextButton(onClick = onCancel, shape = CutShape) { Text("분석 취소") } },
         containerColor = CutColors.panel,
         shape = CutShape,
     )
@@ -204,3 +225,4 @@ internal fun ExportCancelDialog(canCancel: Boolean, onCancel: () -> Unit, onDism
         shape = CutShape,
     )
 }
+

@@ -4,6 +4,10 @@ import android.content.Context
 import android.util.AtomicFile
 import com.hebi.quickcut.media.OriginalTimestamp
 import com.hebi.quickcut.media.SaveDateMode
+import com.hebi.quickcut.media.ExportMethod
+import com.hebi.quickcut.media.ExportReport
+import com.hebi.quickcut.media.ExportDiagnostics
+import com.hebi.quickcut.media.FastExportReason
 import java.io.File
 import org.json.JSONArray
 import org.json.JSONObject
@@ -39,6 +43,7 @@ class BatchSessionStore(context: Context) {
                 outputExpectedDurationMs = if (row.isNull("expectedDuration")) null else row.getLong("expectedDuration"),
                 outputExpectedAudio = if (row.isNull("expectedAudio")) null else row.getBoolean("expectedAudio"),
                 outputExpectedDateMs = if (row.isNull("expectedDate")) null else row.getLong("expectedDate"),
+                exportReport = readReport(row.optJSONObject("exportReport")),
             ).also { require(it.durationMs >= 0L && it.uri.isNotBlank()) }
         }
         require(files.map { it.uri }.distinct().size == files.size)
@@ -74,6 +79,15 @@ class BatchSessionStore(context: Context) {
                 put("expectedDuration", row.outputExpectedDurationMs ?: JSONObject.NULL)
                 put("expectedAudio", row.outputExpectedAudio ?: JSONObject.NULL)
                 put("expectedDate", row.outputExpectedDateMs ?: JSONObject.NULL)
+                put("exportReport", row.exportReport?.let { report ->
+                    JSONObject().apply {
+                        put("method", report.method.name)
+                        put("elapsedMs", report.elapsedMs)
+                        put("optimizationResult", report.optimizationResult ?: JSONObject.NULL)
+                        put("copyReason", report.diagnostics.copyReason?.name ?: JSONObject.NULL)
+                        put("smartCutReason", report.diagnostics.smartCutReason?.name ?: JSONObject.NULL)
+                    }
+                } ?: JSONObject.NULL)
             })
         }
         val data = JSONObject().apply {
@@ -104,4 +118,24 @@ class BatchSessionStore(context: Context) {
 
     @Synchronized
     fun clear() { file.delete() }
+
+    private fun readReport(data: JSONObject?): ExportReport? {
+        if (data == null) return null // Version 0.4.2 journals have no report.
+        return runCatching {
+            ExportReport(
+                method = ExportMethod.entries.firstOrNull { it.name == data.optString("method") }
+                    ?: ExportMethod.UNKNOWN,
+                elapsedMs = data.getLong("elapsedMs").also { require(it >= 0L) },
+                optimizationResult = if (data.isNull("optimizationResult")) null
+                    else data.getInt("optimizationResult"),
+                diagnostics = ExportDiagnostics(
+                    copyReason = FastExportReason.fromCopyReasonName(
+                        if (data.isNull("copyReason")) null else data.optString("copyReason")),
+                    smartCutReason = FastExportReason.fromStoredName(
+                        if (data.isNull("smartCutReason")) null else data.optString("smartCutReason")),
+                ),
+            )
+        }.getOrNull() // Optional telemetry must never invalidate a saved-output journal.
+    }
 }
+

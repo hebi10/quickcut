@@ -10,6 +10,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 enum class ExportMode {
+    /** Copy video only; the native path may convert audio after review. */
     FAST_ONLY,
     ALLOW_REENCODE,
 }
@@ -17,8 +18,15 @@ enum class ExportMode {
 data class ExportAssessment(
     val fastAvailable: Boolean,
     val explanation: String,
-    val suggestedStartMs: Long? = null,
-)
+    val suggestion: FastCutSuggestion? = null,
+    val directCopy: Boolean = false,
+) {
+    val suggestedStartMs: Long? get() {
+        val review = suggestion ?: return null
+        val clip = review.adjusted.clips.singleOrNull() ?: return null
+        return clip.startMs.takeIf { it > review.requested.clips.single().startMs }
+    }
+}
 
 /** A preview, not a speed guarantee: runtime remuxing may still fail. */
 object ExportPlanner {
@@ -26,38 +34,53 @@ object ExportPlanner {
         context: Context,
         timeline: EditTimeline,
         dateMode: SaveDateMode,
+        onProgress: (Int?) -> Unit = {},
     ): ExportAssessment = withContext(Dispatchers.IO) {
-        val assessment = when {
+        var assessment = when {
             timeline.isEmpty -> ExportAssessment(false, "편집할 영상이 없습니다.")
             timeline.clips.size > 1 -> ExportAssessment(
-                false, "여러 클립 연결 및 분할 결과에는 전체 영상 처리가 필요할 수 있습니다."
-            )
-            dateMode == SaveDateMode.ORIGINAL -> ExportAssessment(
-                false, "현재 원본 날짜 유지 방식은 고속 복사를 지원하지 않습니다."
+                false, "구간 연결도 자동 저장할 수 있습니다. 같은 원본의 구간은 부분 처리를 우선 시도하며, 필요하면 전체 처리로 이어집니다."
             )
             else -> {
                 val clip = timeline.clips.single()
-                if (FastMp4Trimmer.prepare(context, clip) != null) {
-                    ExportAssessment(true, "현재 구간은 재인코딩 없이 빠르게 저장할 수 있습니다.")
+                val inspection = FastMp4Trimmer.inspect(context, clip)
+                if (inspection.plan != null) {
+                    ExportAssessment(true, "현재 구간은 재인코딩 없이 빠르게 저장할 수 있습니다.", directCopy = true)
                 } else {
                     ExportAssessment(
                         fastAvailable = false,
-                        explanation = "영상 코덱 또는 자르기 시작 위치 때문에 빠른 저장을 적용하기 어렵습니다.",
-                        suggestedStartMs = nearbyKeyframe(context, clip),
+                        explanation = inspection.reason?.explanation
+                            ?: "현재 영상에서 고속 저장을 사용할 수 없습니다.",
+                        suggestion = if (inspection.reason == FastMp4Trimmer.UnavailableReason.KEYFRAME) {
+                            nearbyKeyframe(context, clip)?.let {
+                                FastCutSuggestion.createUs(timeline, listOf(it to clip.endUs))
+                            }
+                        } else null,
                     )
                 }
             }
         }
         if (timeline.isEmpty) return@withContext assessment
-        val estimatedBytes = ExportStorage.estimateOutputBytes(context, timeline, assessment.fastAvailable)
+        if (!assessment.fastAvailable && assessment.suggestion == null) {
+            NativeSmartCutTrimmer.suggestCopyRangesUs(context, timeline, onProgress)?.let { ranges ->
+                if (ranges == timeline.clips.map { it.startUs to it.endUs }) {
+                    assessment = ExportAssessment(true,
+                        "현재 구간은 영상 재인코딩 없이 고속 저장할 수 있습니다. 소리는 필요하면 변환합니다.")
+                } else {
+                    assessment = assessment.copy(suggestion = FastCutSuggestion.createUs(timeline, ranges))
+                }
+            }
+        }
+        val direct = assessment.directCopy && dateMode != SaveDateMode.ORIGINAL
+        val estimatedBytes = ExportStorage.estimateOutputBytes(context, timeline, direct)
         assessment.copy(
             explanation = assessment.explanation + "\n" +
-                ExportStorage.explanation(context, estimatedBytes, assessment.fastAvailable),
+                ExportStorage.explanation(context, estimatedBytes, direct),
         )
     }
 
     private fun nearbyKeyframe(context: Context, clip: VideoClip): Long? {
-        if (clip.startMs <= 0L) return null
+        if (clip.startUs <= 0L) return null
         val extractor = MediaExtractor()
         return try {
             extractor.setDataSource(context, Uri.parse(clip.uri), null)
@@ -66,17 +89,15 @@ object ExportPlanner {
                     ?.startsWith("video/") == true
             } ?: return null
             extractor.selectTrack(video)
-            extractor.seekTo(clip.startMs * 1_000L, MediaExtractor.SEEK_TO_NEXT_SYNC)
+            extractor.seekTo(clip.startUs, MediaExtractor.SEEK_TO_NEXT_SYNC)
             val candidateUs = extractor.sampleTime
-            if (candidateUs < clip.startMs * 1_000L ||
-                candidateUs > (clip.startMs + 10_000L) * 1_000L ||
-                candidateUs >= (clip.endMs - 100L) * 1_000L
+            if (candidateUs < clip.startUs ||
+                candidateUs > clip.endUs - 100_000L
             ) return null
-            val candidateMs = candidateUs / 1_000L
-            val candidate = clip.copy(startMs = candidateMs)
+            val candidate = clip.withRangeUs(candidateUs, clip.endUs)
             if (FastMp4Trimmer.prepare(context, candidate) != null &&
-                candidateMs != clip.startMs
-            ) candidateMs else null
+                candidateUs != clip.startUs
+            ) candidateUs else null
         } catch (_: Exception) {
             null
         } finally {
@@ -84,4 +105,5 @@ object ExportPlanner {
         }
     }
 }
+
 

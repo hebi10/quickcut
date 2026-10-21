@@ -11,8 +11,8 @@ class FastMp4TrimmerTest {
     }
 
     @Test
-    fun followingKeyframeWithinOneFrameIsEligible() {
-        assertTrue(FastMp4Trimmer.isAcceptableStart(4_000_000L, 4_033_333L, 9_000_000L))
+    fun followingKeyframeWithinOneFrameMustNotMoveTheRequestedStart() {
+        assertFalse(FastMp4Trimmer.isAcceptableStart(4_000_000L, 4_033_333L, 9_000_000L))
     }
 
     @Test
@@ -35,3 +35,4 @@ class FastMp4TrimmerTest {
         assertTrue(FastMp4Trimmer.isAcceptableStart(0L, 0L, 3_000_000L))
     }
 }
+

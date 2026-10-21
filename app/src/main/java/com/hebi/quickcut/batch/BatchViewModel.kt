@@ -9,6 +9,7 @@ import android.provider.MediaStore
 import android.os.Environment
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
@@ -23,6 +24,9 @@ import com.hebi.quickcut.media.SaveDateMode
 import com.hebi.quickcut.media.VideoExporter
 import com.hebi.quickcut.media.ExportPlanner
 import com.hebi.quickcut.media.ExportMode
+import com.hebi.quickcut.media.ExportStage
+import com.hebi.quickcut.media.ExportReport
+import com.hebi.quickcut.media.ExportDiagnostics
 import com.hebi.quickcut.media.ReencodeRequiredException
 import com.hebi.quickcut.settings.QuickCutSettings
 import com.hebi.quickcut.settings.BatchDraftSettings
@@ -53,6 +57,7 @@ data class BatchFile(
     val outputExpectedDurationMs: Long? = null,
     val outputExpectedAudio: Boolean? = null,
     val outputExpectedDateMs: Long? = null,
+    val exportReport: ExportReport? = null,
 )
 
 data class BatchExportOverview(
@@ -62,7 +67,15 @@ data class BatchExportOverview(
     val skipped: Int,
     val encodingFiles: List<String>,
     val skippedFiles: List<String>,
-)
+    val adjustments: List<BatchStartAdjustment>,
+    val unadjustableFiles: List<String>,
+    val reviewedFiles: List<BatchReviewedFile> = emptyList(),
+) {
+    val adjustedFast: Int get() = if (reviewedFiles.isEmpty()) fast + adjustments.size
+        else reviewedFiles.count { it.fastAvailable || it.canRecommend }
+    val adjustedSkips: Int get() = if (reviewedFiles.isEmpty()) skipped + needsEncoding - adjustments.size
+        else reviewedFiles.size - adjustedFast
+}
 
 class BatchViewModel(application: Application) : AndroidViewModel(application) {
     private val settings = QuickCutSettings(application)
@@ -71,18 +84,56 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
     private val restored = sessionStore.load()
     private var activeTemplate: BatchTemplate? = restored?.template
     private var activeDateMode = restored?.dateMode ?: settings.loadSaveDate()
+    internal var reviewGeneration by mutableLongStateOf(0L)
+        private set
+    private var pendingReview: ExportReview? = null
+
+    private data class ReviewState(
+        val name: String,
+        val mode: BatchClipMode,
+        val leading: String,
+        val trailing: String,
+        val muted: Boolean,
+        val templateId: String?,
+        val dateMode: SaveDateMode,
+        val originalAction: OriginalAction,
+        val files: List<BatchFile>,
+        val runState: BatchRunState,
+        val retryOnly: Boolean,
+    )
+
+    private data class ExportReview(
+        val overview: BatchExportOverview,
+        val state: ReviewState,
+        val generation: Long,
+    )
+
+    private fun reviewState(retryOnly: Boolean) = ReviewState(
+        draftName, draftMode, draftLeadingSeconds, draftTrailingSeconds, draftMute,
+        selectedTemplateId, saveDateMode, originalAction, files.toList(), runState, retryOnly,
+    )
+
+    private fun invalidateReview() {
+        pendingReview = null
+        reviewGeneration++
+    }
 
     suspend fun inspectExport(
         context: Context,
         retryOnly: Boolean,
+        onFileProgress: (Int?) -> Unit = {},
         onProgress: (Int, Int) -> Unit = { _, _ -> },
     ): BatchExportOverview {
-        check(!isRecovering) { "이전 작업의 파일을 확인 중입니다. 잠시 후 다시 시도해 주세요." }
+        invalidateReview()
+        val generation = reviewGeneration
+        check(!isRecovering && !isImporting && !isRunning) {
+            "파일을 확인하거나 저장 중입니다. 잠시 후 다시 시도해 주세요."
+        }
+        val reviewedState = reviewState(retryOnly)
         val template = previewTemplate()
             ?: throw IllegalArgumentException("편집 설정을 확인해 주세요.")
         val dateMode = saveDateMode
-        val targets = files.filter { it.durationMs >= 100L &&
-            it.status != BatchFileStatus.SAVED &&
+        val targets = files.filter { it.status != BatchFileStatus.SAVED &&
             (!retryOnly || it.status == BatchFileStatus.FAILED ||
                 it.status == BatchFileStatus.SKIPPED)
         }
@@ -91,35 +142,142 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
         var skipped = 0
         val encodingFiles = mutableListOf<String>()
         val skippedFiles = mutableListOf<String>()
+        val adjustments = mutableListOf<BatchStartAdjustment>()
+        val unadjustableFiles = mutableListOf<String>()
+        val reviewedFiles = mutableListOf<BatchReviewedFile>()
         for ((index, file) in targets.withIndex()) {
             onProgress(index + 1, targets.size)
+            onFileProgress(null)
+            if (file.durationMs < 100L) {
+                skipped++
+                val reason = file.reason ?: "영상 정보를 읽을 수 없습니다."
+                skippedFiles += file.displayName + " · " + reason
+                reviewedFiles += BatchReviewedFile(file.uri, file.displayName, null, unavailableReason = reason)
+                continue
+            }
             if (dateMode == SaveDateMode.ORIGINAL && file.originalDate == null) {
                 skipped++
                 skippedFiles += file.displayName + " · 원본 날짜 없음"
+                reviewedFiles += BatchReviewedFile(file.uri, file.displayName, null,
+                    unavailableReason = "원본 날짜가 없어 건너뛰었습니다.")
                 continue
             }
             when (val plan = template.plan(file.uri, file.durationMs, file.hasAudio)) {
                 is BatchPlan.Skip -> {
                     skipped++
                     skippedFiles += file.displayName + " · " + plan.reason
+                    reviewedFiles += BatchReviewedFile(file.uri, file.displayName, null,
+                        unavailableReason = plan.reason)
                 }
                 is BatchPlan.Ready -> {
-                    val assessment = ExportPlanner.analyze(context, plan.timeline, dateMode)
-                    if (assessment.fastAvailable) fast++ else {
+                    val assessment = ExportPlanner.analyze(context, plan.timeline, dateMode,
+                        onProgress = onFileProgress)
+                    val suggestion = assessment.suggestion?.takeIf { it.applyTo(plan.timeline) != null }
+                    reviewedFiles += BatchReviewedFile(file.uri, file.displayName, plan.timeline,
+                        suggestion, assessment.fastAvailable, explanation = assessment.explanation)
+                    if (assessment.fastAvailable) {
+                        fast++
+                    } else {
                         encoded++
                         encodingFiles += file.displayName + " · " + assessment.explanation
+                        val adjustment = BatchFastAdjustmentPolicy.fromSuggestion(
+                            file.displayName, suggestion,
+                        )
+                        if (adjustment != null) adjustments += adjustment
+                        if (suggestion == null) {
+                            unadjustableFiles += file.displayName + " · " + assessment.explanation
+                        }
                     }
                 }
             }
         }
-        return BatchExportOverview(
+        check(generation == reviewGeneration && reviewedState == reviewState(retryOnly) &&
+            !isRecovering && !isImporting && !isRunning) {
+            "분석 중 설정이나 파일이 변경됐습니다. 저장 방식을 다시 분석해 주세요."
+        }
+        val overview = BatchExportOverview(
             ready = fast + encoded,
             fast = fast,
             needsEncoding = encoded,
             skipped = skipped,
             encodingFiles = encodingFiles,
             skippedFiles = skippedFiles,
+            adjustments = adjustments,
+            unadjustableFiles = unadjustableFiles,
+            reviewedFiles = reviewedFiles.toList(),
         )
+        pendingReview = ExportReview(overview, reviewedState, generation)
+        return overview
+    }
+
+    fun isReviewCurrent(overview: BatchExportOverview, retryOnly: Boolean): Boolean {
+        val review = pendingReview
+        return review != null && review.overview === overview &&
+            review.generation == reviewGeneration &&
+            review.state == reviewState(retryOnly) && !isRunning && !isRecovering && !isImporting
+    }
+
+    private fun requireCurrentReview(overview: BatchExportOverview, retryOnly: Boolean): Boolean {
+        if (isReviewCurrent(overview, retryOnly)) return true
+        invalidateReview()
+        notification = "설정이나 파일 또는 재시도 상태가 변경됐습니다. 저장 방식을 다시 분석해 주세요."
+        return false
+    }
+
+    /** A complete map explicitly authorizes the requested mode of every reviewed file. */
+    fun startReviewed(
+        context: Context,
+        overview: BatchExportOverview,
+        retryOnly: Boolean,
+        choices: Map<String, BatchExportChoice>,
+    ) {
+        if (!requireCurrentReview(overview, retryOnly)) return
+        val resolved = BatchExportChoicePolicy.resolve(overview.reviewedFiles, choices.toMap())
+        if (resolved == null) {
+            invalidateReview()
+            notification = "파일별 저장 선택을 확인할 수 없습니다. 저장 방식을 다시 분석해 주세요."
+            return
+        }
+        startExport(context, retryOnly, ExportMode.ALLOW_REENCODE, resolved.associateBy { it.uri })
+    }
+
+    /** Compatibility shortcuts are still bound to the exact, unconsumed review shown to the user. */
+    fun startReviewed(
+        context: Context,
+        overview: BatchExportOverview,
+        retryOnly: Boolean,
+        exportMode: ExportMode = ExportMode.ALLOW_REENCODE,
+        adjustStarts: Boolean = false,
+    ) {
+        if (!requireCurrentReview(overview, retryOnly)) return
+        if (adjustStarts && (exportMode != ExportMode.FAST_ONLY || overview.reviewedFiles.none { it.canRecommend })) {
+            invalidateReview()
+            notification = "위치 조정 내용을 다시 분석하고 확인해 주세요."
+            return
+        }
+        val choices = overview.reviewedFiles.associate { file ->
+            file.uri to when {
+                file.requested == null -> BatchExportChoice.SKIP
+                exportMode == ExportMode.ALLOW_REENCODE || file.fastAvailable -> BatchExportChoice.EXACT
+                adjustStarts && file.canRecommend -> BatchExportChoice.RECOMMENDED
+                else -> BatchExportChoice.SKIP
+            }
+        }
+        val resolved = BatchExportChoicePolicy.resolve(overview.reviewedFiles, choices)
+        if (resolved == null) {
+            invalidateReview()
+            notification = "위치 조정 내용을 다시 분석하고 확인해 주세요."
+            return
+        }
+        val exports = resolved.map { result ->
+            if (exportMode == ExportMode.FAST_ONLY && result.timeline != null) {
+                result.copy(exportMode = ExportMode.FAST_ONLY)
+            } else if (result.choice == BatchExportChoice.SKIP && result.requested != null) {
+                result.copy(skipReason = "고속 저장을 지원하지 않아 건너뛰었습니다. " +
+                    overview.reviewedFiles.first { it.uri == result.uri }.explanation.orEmpty())
+            } else result
+        }
+        startExport(context, retryOnly, exportMode, exports.associateBy { it.uri })
     }
 
     var templates by mutableStateOf<List<BatchTemplate>>(emptyList())
@@ -132,6 +290,8 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
         private set
     var isFinalizing by mutableStateOf(false)
         private set
+    var currentExportStage by mutableStateOf(ExportStage.PREPARING)
+        private set
     var isImporting by mutableStateOf(false)
         private set
     var notification by mutableStateOf<String?>(null)
@@ -141,13 +301,34 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
     var selectedTemplateId by mutableStateOf<String?>(lastDraft.selectedTemplateId)
         private set
 
-    var draftName by mutableStateOf(lastDraft.name)
-    var draftMode by mutableStateOf(lastDraft.mode)
-    var draftLeadingSeconds by mutableStateOf(formatSeconds(lastDraft.leadingMs))
-    var draftTrailingSeconds by mutableStateOf(formatSeconds(lastDraft.trailingMs))
-    var draftMute by mutableStateOf(lastDraft.muteAudio)
-    var saveDateMode by mutableStateOf(settings.loadSaveDate())
-    var originalAction by mutableStateOf(OriginalAction.KEEP)
+    private var draftNameState by mutableStateOf(lastDraft.name)
+    var draftName: String
+        get() = draftNameState
+        set(value) { if (value != draftNameState) { invalidateReview(); draftNameState = value } }
+    private var draftModeState by mutableStateOf(lastDraft.mode)
+    var draftMode: BatchClipMode
+        get() = draftModeState
+        set(value) { if (value != draftModeState) { invalidateReview(); draftModeState = value } }
+    private var draftLeadingState by mutableStateOf(formatSeconds(lastDraft.leadingMs))
+    var draftLeadingSeconds: String
+        get() = draftLeadingState
+        set(value) { if (value != draftLeadingState) { invalidateReview(); draftLeadingState = value } }
+    private var draftTrailingState by mutableStateOf(formatSeconds(lastDraft.trailingMs))
+    var draftTrailingSeconds: String
+        get() = draftTrailingState
+        set(value) { if (value != draftTrailingState) { invalidateReview(); draftTrailingState = value } }
+    private var draftMuteState by mutableStateOf(lastDraft.muteAudio)
+    var draftMute: Boolean
+        get() = draftMuteState
+        set(value) { if (value != draftMuteState) { invalidateReview(); draftMuteState = value } }
+    private var saveDateState by mutableStateOf(settings.loadSaveDate())
+    var saveDateMode: SaveDateMode
+        get() = saveDateState
+        set(value) { if (value != saveDateState) { invalidateReview(); saveDateState = value } }
+    private var originalActionState by mutableStateOf(OriginalAction.KEEP)
+    var originalAction: OriginalAction
+        get() = originalActionState
+        set(value) { if (value != originalActionState) { invalidateReview(); originalActionState = value } }
     var performedOriginalAction by mutableStateOf(OriginalAction.KEEP)
         private set
     var originalStatus by mutableStateOf(OriginalActionStatus.NONE)
@@ -231,6 +412,7 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
 
     fun chooseTemplate(templateId: String?) {
         if (isRunning || isRecovering) return
+        invalidateReview()
         selectedTemplateId = templateId
         val selected = templates.firstOrNull { it.id == templateId } ?: return
         draftName = selected.name
@@ -240,11 +422,7 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
         draftMute = selected.muteAudio
     }
 
-    private fun parseMillis(text: String): Long? {
-        val number = text.replace(',', '.').toDoubleOrNull()
-        if (number == null || !number.isFinite() || number !in 0.0..7200.0) return null
-        return (number * 1_000.0).toLong()
-    }
+    private fun parseMillis(text: String): Long? = BatchTimeInput.parse(text)
 
     private fun currentDraft(): BatchTemplate? {
         // Disabled inputs must never block validation or alter the saved template.
@@ -267,11 +445,22 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
 
     fun previewTemplate(): BatchTemplate? = currentDraft()?.takeIf { it.checkValidity() == null }
 
+    fun draftError(): String? {
+        if (draftMode.usesLeading && parseMillis(draftLeadingSeconds) == null) {
+            return "앞부분 시간을 확인해 주세요."
+        }
+        if (draftMode.usesTrailing && parseMillis(draftTrailingSeconds) == null) {
+            return "뒷부분 시간을 확인해 주세요."
+        }
+        return currentDraft()?.checkValidity()
+    }
+
     fun saveTemplate(context: Context) {
         if (isRunning || isRecovering) return
+        invalidateReview()
         val proposed = currentDraft()
         if (proposed == null) {
-            notification = "시간은 0~7,200초 사이의 숫자로 입력해 주세요."
+            notification = "시간은 분과 초로 나누어 최대 120분까지 입력해 주세요."
             return
         }
         proposed.checkValidity()?.let {
@@ -289,6 +478,7 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
 
     fun removeTemplate(context: Context) {
         if (isRunning || isRecovering) return
+        invalidateReview()
         val id = selectedTemplateId ?: return
         templates = TemplateStore(context).remove(id)
         selectedTemplateId = null
@@ -300,6 +490,7 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
 
     fun addVideos(context: Context, selected: List<Uri>) {
         if (isRunning || isRecovering || isImporting || selected.isEmpty()) return
+        invalidateReview()
         if (files.size + selected.distinctBy { it.toString() }.count { uri -> files.none { it.uri == uri.toString() } } > 250) {
             notification = "한 번에 최대 250개의 영상을 선택할 수 있습니다."
             return
@@ -363,6 +554,7 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
     fun removeVideo(uri: String) {
         if (isRunning || isRecovering || isImporting) return
         val row = files.firstOrNull { it.uri == uri } ?: return
+        invalidateReview()
         isImporting = true
         viewModelScope.launch {
             try {
@@ -389,7 +581,17 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
         retryOnly: Boolean = false,
         exportMode: ExportMode = ExportMode.ALLOW_REENCODE,
     ) {
+        startExport(context, retryOnly, exportMode)
+    }
+
+    private fun startExport(
+        context: Context,
+        retryOnly: Boolean,
+        exportMode: ExportMode,
+        reviewedExports: Map<String, BatchReviewedExport>? = null,
+    ) {
         if (isRunning || isRecovering || isImporting) return
+        invalidateReview()
         if (ExportWorkMonitor.isRunning) {
             notification = "다른 영상 저장이 진행 중입니다. 완료 후 다시 시작해 주세요."
             return
@@ -432,6 +634,7 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
                     } else null,
                     progress = null,
                     savedOutputUri = file.savedOutputUri,
+                    exportReport = null,
                 )
             }
         }
@@ -453,6 +656,14 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
                     // Previously completed files are never exported twice.
                     if (row.status == BatchFileStatus.SAVED) continue
                     if (retryOnly && row.status != BatchFileStatus.FAILED && row.status != BatchFileStatus.SKIPPED) continue
+                    val reviewedExport = reviewedExports?.get(row.uri)
+                    if (reviewedExport?.choice == BatchExportChoice.SKIP) {
+                        update(row.uri) {
+                            it.copy(status = BatchFileStatus.SKIPPED, progress = null,
+                                reason = reviewedExport.skipReason, exportReport = null)
+                        }
+                        continue
+                    }
                     if (row.durationMs < 100L) continue
                     if (selectedDateMode == SaveDateMode.ORIGINAL && row.originalDate == null) {
                         update(row.uri) {
@@ -468,15 +679,28 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
                             }
                         }
                         is BatchPlan.Ready -> {
+                            val timeline = if (reviewedExports == null) plan.timeline
+                                else reviewedExport?.timelineFor(plan.timeline)
+                            if (timeline == null) {
+                                update(row.uri) {
+                                    it.copy(status = BatchFileStatus.SKIPPED, progress = null,
+                                        reason = "분석 이후 구간이 변경돼 건너뛰었습니다. 다시 분석해 주세요.")
+                                }
+                                continue
+                            }
                             update(row.uri) {
-                                it.copy(status=BatchFileStatus.RUNNING,reason=null,progress=null)
+                                it.copy(status=BatchFileStatus.RUNNING,reason=null,progress=null,
+                                    exportReport=null)
                             }
                             isFinalizing = false
+                            currentExportStage = ExportStage.PREPARING
                             ExportWorkMonitor.update(workId, "${completedCount + 1}/${files.size} · ${row.displayName}")
+                            var diagnostics = ExportDiagnostics()
                             try {
-                                val expectedAudio = plan.timeline.clips.any { it.hasAudio && !it.muted }
+                                val expectedAudio = timeline.clips.any { it.hasAudio && !it.muted }
+                                var committedOutput: Uri? = null
                                 val result = VideoExporter(context.applicationContext).export(
-                                    timeline = plan.timeline,
+                                    timeline = timeline,
                                     onProgress = { percent ->
                                         update(row.uri, persist = false) { it.copy(progress=percent) }
                                         ExportWorkMonitor.update(workId, "${completedCount + 1}/${files.size} · ${row.displayName}", percent)
@@ -488,11 +712,13 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
                                     },
                                     onOutputCreated = { output ->
                                         update(row.uri) { it.copy(savedOutputUri = output.toString(),
-                                            outputExpectedDurationMs = plan.timeline.totalDurationMs,
+                                            outputExpectedDurationMs = timeline.totalDurationMs,
                                             outputExpectedAudio = expectedAudio,
-                                            outputExpectedDateMs = if (selectedDateMode == SaveDateMode.ORIGINAL) row.originalDate?.epochMs else null) }
+                                            outputExpectedDateMs = if (selectedDateMode == SaveDateMode.ORIGINAL) row.originalDate?.epochMs else null,
+                                            exportReport = null) }
                                     },
                                     onCommitted = { output ->
+                                        committedOutput = output
                                         update(row.uri) { it.copy(status=BatchFileStatus.SAVED, progress=100,
                                             savedOutputUri=output.toString(), reason=null) }
                                         if (selectedOriginalAction != OriginalAction.KEEP)
@@ -500,8 +726,29 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
                                     },
                                     saveDateMode = selectedDateMode,
                                     outputBaseName = row.displayName,
-                                    exportMode = exportMode,
+                                    exportMode = reviewedExport?.exportMode ?: exportMode,
                                     resolvedOriginalDate = row.originalDate,
+                                    onStage = { currentExportStage = it },
+                                    onDiagnostics = { details ->
+                                        diagnostics = details
+                                        update(row.uri, persist = false) {
+                                            it.copy(reason = details.explanation().takeIf(String::isNotBlank))
+                                        }
+                                    },
+                                    onReport = { report ->
+                                        // Reporting follows publication. A journal failure here
+                                        // must not turn a saved video into a failed export.
+                                        runCatching {
+                                            update(row.uri) {
+                                                if (committedOutput != null &&
+                                                    it.status == BatchFileStatus.SAVED &&
+                                                    it.savedOutputUri == committedOutput.toString())
+                                                    it.copy(exportReport = report) else it
+                                            }
+                                        }.onFailure {
+                                            notification = "영상은 저장했지만 처리 방식 기록을 보관하지 못했습니다."
+                                        }
+                                    },
                                 )
                                 if (files.first { it.uri == row.uri }.status != BatchFileStatus.SAVED) {
                                     update(row.uri) { it.copy(status=BatchFileStatus.SAVED,progress=100,
@@ -510,7 +757,7 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
                             } catch (required: ReencodeRequiredException) {
                                 update(row.uri) {
                                     it.copy(status=BatchFileStatus.SKIPPED,progress=null,
-                                        reason="고속 저장을 지원하지 않아 건너뛰었습니다.")
+                                        reason="고속 저장을 지원하지 않아 건너뛰었습니다.\n" + diagnostics.explanation())
                                 }
                             } catch (cancelled: CancellationException) {
                                 if (files.first { it.uri == row.uri }.status != BatchFileStatus.SAVED) update(row.uri) {
@@ -521,7 +768,8 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
                             } catch (failure: Exception) {
                                 update(row.uri) {
                                     it.copy(status=BatchFileStatus.FAILED,progress=null,
-                                        reason=failure.localizedMessage ?: "영상 저장 실패")
+                                        reason=(failure.localizedMessage ?: "영상 저장 실패") +
+                                            diagnostics.explanation().let { text -> if (text.isBlank()) "" else "\n$text" })
                                 }
                             } finally {
                                 isFinalizing = false
@@ -603,6 +851,7 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
 
     fun resetBatch() {
         if (isRunning || isRecovering || isImporting) return
+        invalidateReview()
         val tracked = files.filter { it.status != BatchFileStatus.SAVED && it.savedOutputUri != null }
         if (tracked.isEmpty()) {
             clearBatch()
@@ -650,11 +899,16 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
                     MediaStore.Video.Media.OWNER_PACKAGE_NAME, MediaStore.Video.Media.RELATIVE_PATH),
                     null, null, null)?.use { cursor ->
                     if (!cursor.moveToFirst()) { queryConfirmed = true; return@use BatchOutputState.ABSENT }
-                    val owned = cursor.getString(1) == context.packageName &&
-                        cursor.getString(2)?.trimEnd('/') == Environment.DIRECTORY_MOVIES + "/QuickCut"
-                    if (!owned) return@use BatchOutputState.INVALID
+                    if (cursor.getInt(0) == 1) {
+                        // Only unfinished outputs in our own output folder may be deleted.
+                        val safeToDelete = cursor.getString(1) == context.packageName &&
+                            cursor.getString(2)?.trimEnd('/') == Environment.DIRECTORY_MOVIES + "/QuickCut"
+                        if (!safeToDelete) return@use BatchOutputState.INVALID
+                        queryConfirmed = true
+                        return@use BatchOutputState.PENDING
+                    }
+                    // Published outputs retain their URI when moved to another folder.
                     queryConfirmed = true
-                    if (cursor.getInt(0) == 1) return@use BatchOutputState.PENDING
                     MediaReader.validateExport(context, output, row.outputExpectedDurationMs, row.outputExpectedAudio)
                     row.outputExpectedDateMs?.let { expected ->
                         val actual = OriginalMediaDates.resolve(context, output)?.epochMs
@@ -664,7 +918,8 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
                 } ?: BatchOutputState.ABSENT.also { queryConfirmed = true }
             }.getOrDefault(BatchOutputState.INVALID)
             if (!queryConfirmed) return row.copy(status=BatchFileStatus.SKIPPED, durationMs=0L,
-                reason="이전 출력에 접근할 수 없습니다. 파일 접근을 확인한 뒤 다시 시도해 주세요.", progress=null)
+                reason="이전 출력에 접근할 수 없습니다. 파일 접근을 확인한 뒤 다시 시도해 주세요.", progress=null,
+                exportReport=null)
         }
         val action = BatchRecoveryPolicy.decide(row.status == BatchFileStatus.SAVED, state)
         if (action == BatchRecoveryAction.KEEP_SAVED || action == BatchRecoveryAction.ADOPT_SAVED)
@@ -672,18 +927,22 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
         if (action == BatchRecoveryAction.REMOVE_PENDING) {
             val deleted = runCatching { context.contentResolver.delete(output!!, null, null) > 0 }.getOrDefault(false)
             if (!deleted) return row.copy(status=BatchFileStatus.SKIPPED,
-                durationMs=0L, reason="미완성 파일을 정리하지 못했습니다. 파일 권한을 확인하고 다시 선택해 주세요.", progress=null)
+                durationMs=0L, reason="미완성 파일을 정리하지 못했습니다. 파일 권한을 확인하고 다시 선택해 주세요.", progress=null,
+                exportReport=null)
         }
         val metadata = runCatching { MediaReader.metadata(context, Uri.parse(row.uri)) }.getOrNull()
         if (metadata == null) return row.copy(status=BatchFileStatus.SKIPPED, durationMs=0L,
-            reason="원본에 접근할 수 없습니다. 영상을 다시 선택해 주세요.", savedOutputUri=null, progress=null)
+            reason="원본에 접근할 수 없습니다. 영상을 다시 선택해 주세요.", savedOutputUri=null, progress=null,
+            exportReport=null)
         return row.copy(status=BatchFileStatus.SKIPPED, durationMs=metadata.durationMs, hasAudio=metadata.hasAudio,
             originalDate=OriginalMediaDates.resolve(context, Uri.parse(row.uri)), savedOutputUri=null, progress=null,
-            reason="이전 작업이 중단됐거나 완료 파일을 확인할 수 없습니다. 설정 확인 후 다시 시작해 주세요.")
+            reason="이전 작업이 중단됐거나 완료 파일을 확인할 수 없습니다. 설정 확인 후 다시 시작해 주세요.",
+            exportReport=null)
     }
 
     private fun formatSeconds(ms: Long): String =
         if (ms % 1_000L == 0L) (ms / 1_000L).toString()
         else (ms / 1_000.0).toString()
 }
+
 

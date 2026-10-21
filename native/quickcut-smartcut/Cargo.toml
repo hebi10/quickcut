@@ -1,0 +1,21 @@
+[package]
+name = "quickcut-smartcut"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-only"
+publish = false
+
+[lib]
+name = "quickcut_smartcut"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+anyhow = "1"
+ffmpeg-next = "=7.1.0"
+jni = "0.21.1"
+smartcut-core = { path = "../vendor/smartcut/crates/core", default-features = false }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"

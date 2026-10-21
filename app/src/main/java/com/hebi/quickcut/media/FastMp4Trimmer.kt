@@ -19,11 +19,10 @@ import kotlinx.coroutines.ensureActive
 
 /**
  * Copies compressed MP4 samples without decoding or re-encoding. Only use when the
- * first retained video sample is a nearby sync sample. Never retain hidden pre-roll.
+ * first retained video sample is exactly the requested sync sample. Never retain hidden pre-roll.
  */
 internal object FastMp4Trimmer {
     private const val TAG = "QuickCutExport"
-    private const val MAX_START_SHIFT_US = 50_000L
     private const val MAX_SAMPLE_BYTES = 64 * 1024 * 1024
 
     data class Plan(
@@ -33,13 +32,30 @@ internal object FastMp4Trimmer {
         val startUs: Long,
         val endUs: Long,
         val rotationDegrees: Int,
+        val copyToEndOfSource: Boolean,
     )
 
-    fun isAcceptableStart(requestedUs: Long, syncUs: Long, endUs: Long): Boolean =
-        requestedUs >= 0L && syncUs >= requestedUs &&
-            syncUs - requestedUs <= MAX_START_SHIFT_US && endUs - syncUs >= 100_000L
+    enum class UnavailableReason(val explanation: String) {
+        NO_VIDEO("영상 트랙을 찾을 수 없어 고속 저장을 사용할 수 없습니다."),
+        TRACK_LAYOUT("영상·음성 트랙이 여러 개이거나 추가 트랙이 있어 현재 고속 저장에서 지원하지 않습니다."),
+        VIDEO_CODEC("현재 고속 저장은 H.264 또는 H.265 영상만 지원합니다."),
+        COLOR_FORMAT("원본 복사 경로에서 색상·밝기 정보를 보존할 수 없습니다."),
+        ROTATION("영상 회전 정보가 고속 저장의 지원 범위와 다릅니다."),
+        AUDIO_CODEC("현재 고속 복사는 AAC 소리를 지원합니다. 다른 소리 형식은 정확한 위치로 자동 저장을 선택해 주세요."),
+        KEYFRAME("자르기 시작 위치가 키프레임(재생 기준 프레임)과 맞지 않습니다."),
+        UNSAFE_START("시작 지점 앞의 프레임이 재생 순서에 섞여 있어 해당 위치에서 고속 저장을 사용할 수 없습니다."),
+        REORDERED_END("B프레임처럼 재생 순서가 다른 영상의 끝부분을 자르려면 정확한 위치로 자동 저장을 선택해 주세요. 끝부분을 유지하면 고속 복사가 가능할 수 있습니다."),
+        SOURCE_UNREADABLE("영상 정보를 읽지 못해 고속 저장 가능 여부를 확인할 수 없습니다."),
+    }
 
-    fun prepare(context: Context, clip: VideoClip): Plan? {
+    data class Inspection(val plan: Plan?, val reason: UnavailableReason?)
+
+    fun isAcceptableStart(requestedUs: Long, syncUs: Long, endUs: Long): Boolean =
+        requestedUs >= 0L && syncUs == requestedUs && endUs - syncUs >= 100_000L
+
+    fun prepare(context: Context, clip: VideoClip): Plan? = inspect(context, clip).plan
+
+    fun inspect(context: Context, clip: VideoClip): Inspection {
         val extractor = MediaExtractor()
         try {
             extractor.setDataSource(context, Uri.parse(clip.uri), null)
@@ -49,7 +65,8 @@ internal object FastMp4Trimmer {
             var audioFormat: MediaFormat? = null
             for (track in 0 until extractor.trackCount) {
                 val format = extractor.getTrackFormat(track)
-                val mime = format.getString(MediaFormat.KEY_MIME) ?: return null
+                val mime = format.getString(MediaFormat.KEY_MIME)
+                    ?: return unavailable(UnavailableReason.TRACK_LAYOUT)
                 when {
                     mime.startsWith("video/") && videoTrack < 0 -> {
                         videoTrack = track
@@ -59,64 +76,70 @@ internal object FastMp4Trimmer {
                         audioTrack = track
                         audioFormat = format
                     }
-                    else -> return null
+                    else -> return unavailable(UnavailableReason.TRACK_LAYOUT)
                 }
             }
-            val video = videoFormat ?: return null
+            val video = videoFormat ?: return unavailable(UnavailableReason.NO_VIDEO)
             if (video.getString(MediaFormat.KEY_MIME) !in
                 setOf(MediaFormat.MIMETYPE_VIDEO_AVC, MediaFormat.MIMETYPE_VIDEO_HEVC)
-            ) return null
+            ) return unavailable(UnavailableReason.VIDEO_CODEC)
             if (video.containsKey(MediaFormat.KEY_COLOR_TRANSFER) &&
                 video.getInteger(MediaFormat.KEY_COLOR_TRANSFER) !=
                     MediaFormat.COLOR_TRANSFER_SDR_VIDEO
-            ) return null
+            ) return unavailable(UnavailableReason.COLOR_FORMAT)
             val rotation = if (video.containsKey(MediaFormat.KEY_ROTATION)) {
                 video.getInteger(MediaFormat.KEY_ROTATION)
             } else 0
-            if (rotation !in setOf(0, 90, 180, 270)) return null
+            if (rotation !in setOf(0, 90, 180, 270)) return unavailable(UnavailableReason.ROTATION)
 
             val keepAudio = !clip.muted && clip.hasAudio
             if (keepAudio &&
                 (audioFormat == null ||
                     audioFormat.getString(MediaFormat.KEY_MIME) !=
                         MediaFormat.MIMETYPE_AUDIO_AAC)
-            ) return null
+            ) return unavailable(UnavailableReason.AUDIO_CODEC)
 
-            val requestedUs = clip.startMs * 1_000L
-            val endUs = clip.endMs * 1_000L
+            val requestedUs = clip.startUs
+            val endUs = clip.endUs
             extractor.selectTrack(videoTrack)
             extractor.seekTo(requestedUs, MediaExtractor.SEEK_TO_NEXT_SYNC)
             val syncUs = extractor.sampleTime
             if (extractor.sampleTrackIndex != videoTrack ||
                 (extractor.sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC) == 0 ||
                 !isAcceptableStart(requestedUs, syncUs, endUs)
-            ) return null
+            ) return unavailable(UnavailableReason.KEYFRAME)
 
-            // Reject streams with presentation-order reversals before writing a large file.
+            val copyToEndOfSource = clip.endUs == clip.sourceDurationMs * 1_000L
             var previousTimeUs = syncUs
             repeat(12) {
                 if (extractor.advance()) {
                     val timeUs = extractor.sampleTime
-                    if (timeUs < previousTimeUs) return null
+                    if (timeUs < syncUs) return unavailable(UnavailableReason.UNSAFE_START)
+                    if (!copyToEndOfSource && timeUs < previousTimeUs) {
+                        return unavailable(UnavailableReason.REORDERED_END)
+                    }
                     previousTimeUs = timeUs
                 }
             }
 
-            return Plan(
+            return Inspection(Plan(
                 source = Uri.parse(clip.uri),
                 videoTrack = videoTrack,
                 audioTrack = audioTrack.takeIf { keepAudio && it >= 0 },
                 startUs = syncUs,
                 endUs = endUs,
                 rotationDegrees = rotation,
-            )
+                copyToEndOfSource = copyToEndOfSource,
+            ), null)
         } catch (error: Exception) {
             Log.d(TAG, "Fast MP4 eligibility check skipped: " + error.javaClass.simpleName)
-            return null
+            return unavailable(UnavailableReason.SOURCE_UNREADABLE)
         } finally {
             extractor.release()
         }
     }
+
+    private fun unavailable(reason: UnavailableReason) = Inspection(null, reason)
 
     suspend fun write(
         context: Context,
@@ -144,8 +167,6 @@ internal object FastMp4Trimmer {
             writer.start()
             started = true
 
-            val trackCount = if (audioOutput == null) 1 else 2
-            val finished = HashSet<Int>(trackCount)
             var buffer = ByteBuffer.allocateDirect(1024 * 1024)
             val info = MediaCodec.BufferInfo()
             var videoSamples = 0
@@ -162,9 +183,13 @@ internal object FastMp4Trimmer {
                 val index = extractor.sampleTrackIndex
                 if (index < 0) break
                 val timeUs = extractor.sampleTime
-                // Remuxing assumes timestamp order. A reordered stream needs Media3.
                 if (index == plan.videoTrack) {
-                    if (timeUs < lastVideoTimeUs) {
+                    if (videoSamples > 0 && timeUs < plan.startUs) {
+                        throw FastTrimUnavailableException("Video contains frames before the retained sync sample")
+                    }
+                    // Keep decode order and original PTS for B-frames. Mid-stream
+                    // cuts cannot safely discard their forward reference frames.
+                    if (!plan.copyToEndOfSource && timeUs < lastVideoTimeUs) {
                         throw FastTrimUnavailableException("Reordered video timestamps")
                     }
                     lastVideoTimeUs = timeUs
@@ -178,14 +203,12 @@ internal object FastMp4Trimmer {
                     extractor.advance()
                     continue
                 }
-                if (timeUs >= plan.endUs) {
-                    finished.add(index)
-                    if (finished.size >= trackCount) break
-                    extractor.advance()
-                    continue
-                }
-                if (index in finished) {
-                    extractor.advance()
+                if (!plan.copyToEndOfSource && timeUs >= plan.endUs) {
+                    // A shorter track may already be at EOS, so waiting for every
+                    // track to cross endUs would scan the other track's entire tail.
+                    // Unselect changes the current sample to a remaining track;
+                    // do not advance here or that track's next sample is skipped.
+                    extractor.unselectTrack(index)
                     continue
                 }
 
@@ -253,4 +276,5 @@ internal object FastMp4Trimmer {
 }
 
 internal class FastTrimUnavailableException(message: String, cause: Throwable? = null) : Exception(message, cause)
+
 

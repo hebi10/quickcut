@@ -1,0 +1,777 @@
+//! The subtitles a preview draws over the picture.
+//!
+//! Nothing here is part of a cut. A cut carries subtitles from one file to
+//! another without ever asking what they say -- see [`crate::pgs`] and
+//! [`crate::vobsub`] -- and that is the right way to move them. This is the
+//! other question, and the window asks it: **what is on screen at this
+//! instant**, so that the frame under the playhead can be shown the way a
+//! player would show it. Which is what a cut is judged by: a break that
+//! lands in the middle of a line is a break in the wrong place, and the only
+//! way to see that is to see the line.
+//!
+//! Three kinds arrive here and two answers come out.
+//!
+//! A broadcast carries **ARIB captions**, which are characters and where to
+//! put them. Nothing decodes those -- libavcodec has no decoder for them in
+//! any build this program is shipped against -- so they are read here, by
+//! [`crate::caption::Layout`], and handed over as text with positions. The
+//! window draws them with the fonts it already has, which is also why they
+//! come out sharp at any size.
+//!
+//! A disc carries **pictures**: a Blu-ray's display sets and a DVD's units.
+//! libavcodec decodes both, and what comes back is one byte per pixel and a
+//! table of colours. That is turned into a PNG here -- cropped to the
+//! subtitle's own rectangle, which is a fraction of the screen -- because a
+//! PNG is what a webview can put over an image without being told anything
+//! about palettes.
+//!
+//! ## Reading a window rather than the file
+//!
+//! A timeline is scrubbed, and a preview has to answer at whatever instant
+//! the pointer lands on. Indexing the whole recording first would be minutes
+//! of reading for a disc, most of it never asked about; decoding from
+//! scratch at every frame would be a seek and a decode per preview.
+//!
+//! So a stretch is read at a time -- [`LOOKBACK`] before the instant and
+//! [`AHEAD`] after it -- and kept. Scrubbing inside that stretch is a lookup
+//! and playback runs off the end of it once a minute. The lookback is what
+//! makes the answer right rather than merely quick: a subtitle that went up
+//! twenty seconds ago is still on screen, and a reader that started at the
+//! playhead would say there was none.
+
+use anyhow::{anyhow, Result};
+use ffmpeg_next as ff;
+
+use crate::caption;
+use crate::input::ReadPackets;
+use crate::vobsub::{self, Drawn};
+use crate::Source;
+
+/// How far before the instant a window begins.
+///
+/// A subtitle is on screen because something before it put it there, and
+/// nothing says how long before. Thirty seconds covers every subtitle
+/// measured here twice over -- a broadcast caption stands for a few seconds
+/// and a disc's for less -- and covers the one that is left up over a long
+/// silent shot, which is the case a shorter lookback loses.
+pub const LOOKBACK: f64 = 30.0;
+
+/// And how far past it the window is read on.
+///
+/// Long enough that playback crosses a window edge once a minute rather than
+/// once a second, and short enough that a jump costs a fraction of a second.
+pub const AHEAD: f64 = 30.0;
+
+/// Which kind of subtitle a track carries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    /// A broadcast's ARIB captions: characters, read here.
+    Caption,
+    /// The crawl a station writes across whatever is on air, in the same
+    /// characters on a stream of its own. Read exactly as the captions are;
+    /// kept apart because it belongs to the hour rather than to the
+    /// programme, and a viewer looking for a line of dialogue should not be
+    /// shown an earthquake instead.
+    Superimpose,
+    /// A 4K recording's subtitles, which are TTML documents rather than ARIB
+    /// text. See [`crate::ttml`].
+    Ttml,
+    /// A Blu-ray's graphics: pictures, decoded by libavcodec.
+    Graphics,
+    /// A DVD's subtitles: pictures too, and a palette that is not in the
+    /// stream. See [`crate::vobsub::Palette`].
+    Subpicture,
+}
+
+/// One subtitle track, as something to choose from a list.
+#[derive(Debug, Clone)]
+pub struct Track {
+    /// What the recording calls it: a PID in a transport stream, a
+    /// substream id on a DVD. The same number the track chooser uses.
+    pub id: i32,
+    pub kind: Kind,
+    pub language: Option<String>,
+}
+
+/// Every subtitle track a recording carries: the subtitles first, then the
+/// crawl, then what a disc draws.
+///
+/// **Not the order the recording names them in.** A broadcast puts its
+/// caption stream and its crawl in the map in whichever order it pleases,
+/// and it is not the same order twice: of twenty-five recordings taken at
+/// random off one shelf, six list the crawl first. A list that reshuffles
+/// itself between one recording and the next is one nobody can reach into
+/// without reading it, and the subtitles are what somebody opening this is
+/// nearly always after -- the crawl belongs to the hour rather than to the
+/// programme. So the kind decides the order, and the recording's own order
+/// decides it within a kind, which is what tells two languages apart.
+///
+/// Takes the three lists rather than the recording, because the window asks
+/// this of a file it has only glanced at: an [`crate::Outline`] carries the
+/// same three and no index. See `audio_tracks_of` in the window, which is
+/// the same arrangement for the same reason.
+pub fn tracks(
+    captions: &[crate::CaptionInfo],
+    graphics: &[crate::GraphicsInfo],
+    subpictures: &[crate::SubpictureInfo],
+) -> Vec<Track> {
+    let captions = captions.iter().map(|c| Track {
+        id: c.pid,
+        kind: match (c.kind, c.format) {
+            (crate::TextKind::Superimpose, _) => Kind::Superimpose,
+            (_, crate::TextFormat::Ttml) => Kind::Ttml,
+            _ => Kind::Caption,
+        },
+        language: c.language.clone(),
+    });
+    let graphics = graphics.iter().map(|g| Track {
+        id: g.pid,
+        kind: Kind::Graphics,
+        language: g.language.clone(),
+    });
+    let subpictures = subpictures.iter().map(|s| Track {
+        id: s.id,
+        kind: Kind::Subpicture,
+        language: s.language.clone(),
+    });
+    let mut out: Vec<Track> = captions.chain(graphics).chain(subpictures).collect();
+    // A stable sort, so that two tracks of one kind stay in the order the
+    // recording named them in.
+    out.sort_by_key(|t| match t.kind {
+        Kind::Caption => 0,
+        Kind::Ttml => 1,
+        Kind::Superimpose => 2,
+        Kind::Graphics => 3,
+        Kind::Subpicture => 4,
+    });
+    out
+}
+
+/// What is on screen: characters to draw, or a picture to put up.
+#[derive(Debug, Clone)]
+pub enum Shown {
+    /// Characters and where they go, on the plane they were laid out for.
+    Text {
+        plane: (u16, u16),
+        runs: Vec<caption::Run>,
+    },
+    /// A picture, cropped to itself, and where on the screen it sits.
+    Picture {
+        /// The screen the position is measured against.
+        screen: (u16, u16),
+        x: u16,
+        y: u16,
+        width: u16,
+        height: u16,
+        png: Vec<u8>,
+    },
+}
+
+/// One thing the stream said, at the moment it said it.
+struct Event {
+    at: f64,
+    /// When it takes itself down, where it says so. A caption says so by
+    /// sending the next statement; a disc's subtitle often carries its own
+    /// end.
+    until: Option<f64>,
+    /// `None` for the statement or the display set that only clears the
+    /// screen, which is how a subtitle comes down.
+    shown: Option<Shown>,
+}
+
+/// One subtitle track, read a window at a time.
+///
+/// Held open between questions: the file stays open, the decoder stays
+/// built, and a question inside the window already read is answered without
+/// touching the disc.
+pub struct Reader {
+    url: String,
+    start_time: f64,
+    /// Which track, by the number the recording gives it.
+    id: i32,
+    /// See [`crate::CaptionInfo::base`].
+    base: f64,
+    /// The recording's entry pictures, for a 4K recording's subtitles: what
+    /// places a document is where in the file it arrives. See
+    /// [`crate::ttml::shown_at`]. Empty for every other kind.
+    points: Vec<crate::AccessPoint>,
+    kind: Kind,
+    /// The picture the subtitles are drawn over, which is what a disc's
+    /// positions are measured against.
+    screen: (u16, u16),
+    /// A DVD's colours, which are on the disc rather than in the stream.
+    palette: Option<vobsub::Palette>,
+    /// Which stream the pictures are on. See [`Reader::fill`]: they are the
+    /// clock a window is read against.
+    video: usize,
+    ictx: Option<crate::input::Demux>,
+    /// The stretch [`Reader::events`] answers for, which starts a little
+    /// after where the read did; see [`Reader::fill`]. Empty until the first
+    /// read.
+    window: Option<(f64, f64)>,
+    events: Vec<Event>,
+}
+
+impl Reader {
+    /// Open a reader on one of the recording's subtitle tracks.
+    ///
+    /// The palette is read here rather than per window: a DVD keeps it in
+    /// the index beside the cells, and reading that is one small read of a
+    /// file that is not the stream.
+    pub fn open(src: &Source, id: i32) -> Result<Reader> {
+        let track = tracks(&src.captions, &src.graphics, &src.subpictures)
+            .into_iter()
+            .find(|t| t.id == id)
+            .ok_or_else(|| anyhow!("no subtitle track {id} in this recording"))?;
+        let palette = (track.kind == Kind::Subpicture)
+            .then(|| {
+                crate::dvd::subtitles_of(&src.path)
+                    .map(|s| s.palette)
+                    .unwrap_or_else(vobsub::Palette::grey)
+            });
+        // Where a TTML document's times are counted from. Zero for
+        // everything else, whose packets carry times of their own.
+        let base = src
+            .captions
+            .iter()
+            .find(|c| c.pid == id)
+            .map_or(0.0, |c| c.base);
+        let points = match track.kind {
+            Kind::Ttml => src.points.clone(),
+            _ => Vec::new(),
+        };
+        Ok(Reader {
+            url: src.input.url.clone(),
+            start_time: src.start_time,
+            id,
+            base,
+            points,
+            kind: track.kind,
+            screen: (src.video.width as u16, src.video.height as u16),
+            palette,
+            video: src.video.stream_index,
+            ictx: None,
+            window: None,
+            events: Vec::new(),
+        })
+    }
+
+    /// What is on screen at `t`, reading the recording if it has to.
+    pub fn at(&mut self, t: f64) -> Result<Option<&Shown>> {
+        let inside = self
+            .window
+            .is_some_and(|(from, to)| t >= from && t < to);
+        if !inside {
+            self.fill(t)?;
+        }
+        // The last thing said before this instant, and only if it is still
+        // standing: a subtitle that named its own end has gone by then, and
+        // one the next statement replaced is not in the way of it either.
+        let i = self.events.partition_point(|e| e.at <= t);
+        let event = self.events[..i].iter().rev().find(|e| e.shown.is_some());
+        let Some(event) = event else { return Ok(None) };
+        if event.until.is_some_and(|u| t >= u) {
+            return Ok(None);
+        }
+        // Anything after it that clears the screen takes it down.
+        if self.events[..i].iter().any(|e| e.at > event.at) {
+            return Ok(None);
+        }
+        Ok(event.shown.as_ref())
+    }
+
+    /// Read the stretch around `t` into [`Reader::events`].
+    fn fill(&mut self, t: f64) -> Result<()> {
+        let from = (t - LOOKBACK).max(0.0);
+        let to = t + AHEAD;
+        let (id, kind, screen, start_time) = (self.id, self.kind, self.screen, self.start_time);
+        let base = self.base;
+        let video = self.video;
+        let ictx = match self.ictx.as_mut() {
+            Some(c) => c,
+            None => {
+                let c = crate::input::demux(&self.url)?;
+                // The pictures and the sound are the whole file; nothing
+                // here reads a byte of either, so the demuxer is told not
+                // to hand them over. Without this a window costs the file.
+                //
+                // The pictures are the exception, and only their entry
+                // points: a window ends at a time, and a track that says
+                // nothing for a minute -- a subtitle stream on a scene with
+                // no dialogue, or a second language that subtitles almost
+                // nothing -- would otherwise be read to the end of the
+                // recording looking for a packet to end on. An entry point
+                // every half second is a clock to stop against, and costs
+                // the demuxer nothing to hand over.
+                let keep = id;
+                let pictures = video;
+                for stream in c.streams() {
+                    // A crawl and a 4K recording's subtitles arrive as data
+                    // rather than as subtitles -- libav has no name for
+                    // either -- so what makes a stream this reader's is its
+                    // number, and the medium only says which it cannot be.
+                    let mine = matches!(
+                        stream.parameters().medium(),
+                        ff::media::Type::Subtitle | ff::media::Type::Data
+                    ) && stream.id() == keep;
+                    let discard = match () {
+                        _ if mine => continue,
+                        _ if stream.index() == pictures => ff::Discard::NonKey,
+                        _ => ff::Discard::All,
+                    };
+                    unsafe {
+                        (*(stream.as_ptr() as *mut ff::ffi::AVStream)).discard = discard.into();
+                    }
+                }
+                self.ictx.insert(c)
+            }
+        };
+        // A window from the very front is read from the front, as
+        // `cut::seek_to` does it: aimed at the container's own start, a
+        // transport stream's seek lands past its first entry point, and a
+        // subtitle up in the opening second of the recording was not there.
+        let target = if from > 0.0 {
+            ((from + self.start_time) * ff::ffi::AV_TIME_BASE as f64) as i64
+        } else {
+            i64::MIN / 2
+        };
+        let _ = ictx.seek(target, ..target);
+
+        let mut events: Vec<Event> = Vec::new();
+        let mut layout = caption::Layout::default();
+        let mut decoder = match kind {
+            Kind::Caption | Kind::Superimpose | Kind::Ttml => None,
+            Kind::Graphics => Some(pictures_decoder(
+                ff::codec::Id::HDMV_PGS_SUBTITLE,
+                screen,
+                None,
+            )?),
+            Kind::Subpicture => Some(pictures_decoder(
+                ff::codec::Id::DVD_SUBTITLE,
+                screen,
+                self.palette.as_ref(),
+            )?),
+        };
+        let mut units: Vec<u8> = Vec::new();
+        // The last picture's time, for a packet that carries none: see the
+        // crawl below.
+        let mut clock: Option<f64> = None;
+        // Read through [`crate::input::Packets`], which reads past the
+        // "try again" a transport stream answers with over damage: stopping
+        // at the first error left everything after a dropout without its
+        // subtitles for as long as the window lasted.
+        //
+        // Each packet's stream is asked of the packet, not of a list taken
+        // before the read. A DVD's subtitles are not streams until the
+        // demuxer meets their first unit (see [`crate::SubpictureInfo`]). A
+        // list taken up front did not have them, so the first window read
+        // -- the one the playhead was first put down in -- passed every
+        // unit over as nobody's and showed none, and only a window read
+        // after that one found them.
+        for (stream, packet) in ictx.read_packets() {
+            let (stream_id, tb, medium) = (
+                stream.id(),
+                f64::from(stream.time_base()),
+                stream.parameters().medium(),
+            );
+            let mine = stream_id == id
+                && matches!(
+                    medium,
+                    ff::media::Type::Subtitle | ff::media::Type::Data
+                );
+            if !mine {
+                // A picture's entry point, which is here to be a clock.
+                if packet.stream() == video {
+                    if let Some(pts) = packet.pts() {
+                        let t = pts as f64 * tb - start_time;
+                        if t > to {
+                            break;
+                        }
+                        clock = Some(t);
+                    }
+                }
+                continue;
+            }
+            let Some(data) = packet.data() else {
+                continue;
+            };
+            if kind == Kind::Ttml {
+                // The packet's own stamp is a counter, so it is not read at
+                // all, which is why this comes before it: read as a time, a
+                // counter of 1, 2, 3 can be taken by the demuxer for a clock
+                // that has wrapped -- a clip whose own clock starts more than
+                // a minute in -- and moved 26 hours on.
+                //
+                // Nor are the document's own times always what place it:
+                // where they have drifted from the pictures it arrives
+                // beside, it goes up where it arrives and stands for as long
+                // as it says. See [`crate::ttml::shown_at`] and
+                // [`crate::ttml::placed`], which the cut places it by too
+                // (`take_ttml` in `cut.rs`).
+                let shown = crate::ttml::shown_at(&self.points, packet.position() as i64);
+                let Some((begin, end, _)) = crate::ttml::placed(data, shown, base) else {
+                    continue;
+                };
+                if begin > to {
+                    break;
+                }
+                if let Some(written) = crate::ttml::written(data) {
+                    // A document is one page, timed by the document's own
+                    // pair of times (see [`crate::ttml::written`]), and those
+                    // are what `begin` and `end` are, moved.
+                    for page in written.pages {
+                        events.push(Event {
+                            at: begin,
+                            until: Some(end),
+                            shown: Some(Shown::Text {
+                                plane: written.plane,
+                                runs: page.runs,
+                            }),
+                        });
+                    }
+                }
+                continue;
+            }
+            let at = match packet.pts() {
+                Some(pts) => pts as f64 * tb - start_time,
+                // A crawl is sent asynchronously -- a PES packet with no
+                // header and so no time -- and every one of them was passed
+                // over here, so the crawl track never showed anything. A
+                // receiver puts it up as it arrives, so it is timed by the
+                // last picture read before it: within a second or so, which
+                // for a crawl is near enough.
+                None if kind == Kind::Superimpose => match clock {
+                    Some(t) => t,
+                    None => continue,
+                },
+                None => continue,
+            };
+            if at > to {
+                break;
+            }
+            match decoder.as_mut() {
+                None => {
+                    // A caption's PES payload can carry several data groups
+                    // and only the statements are of any interest. See
+                    // [`crate::caption`].
+                    caption::data_groups(data, |id, body| {
+                        if !caption::is_statement(id) {
+                            return;
+                        }
+                        // The pictures of the characters no code stands
+                        // for, which arrive beside the words and are taken
+                        // in first: the cell a line writes is defined in
+                        // the statement that writes it.
+                        layout.glyphs(body);
+                        caption::text_units(body, &mut units);
+                        if units.is_empty() {
+                            return;
+                        }
+                        let written = layout.statement(&units);
+                        if written.pages.is_empty() {
+                            // The statement that only clears the plane,
+                            // which is how a caption comes down.
+                            events.push(Event {
+                                at,
+                                until: None,
+                                shown: None,
+                            });
+                        }
+                        // A statement that times itself carries more than
+                        // one, each with its own moment. See
+                        // [`caption::Page`].
+                        for page in written.pages {
+                            events.push(Event {
+                                at: at + f64::from(page.at),
+                                until: page.until.map(|u| at + f64::from(u)),
+                                shown: Some(Shown::Text {
+                                    plane: written.plane,
+                                    runs: page.runs,
+                                }),
+                            });
+                        }
+                    });
+                }
+                Some(decoder) => {
+                    // Not decoded at all: see `pgs::oversized`.
+                    if kind == Kind::Graphics && crate::pgs::oversized(data) {
+                        continue;
+                    }
+                    let mut sub = ff::codec::subtitle::Subtitle::new();
+                    if !decoder.decode(&packet, &mut sub).unwrap_or(false) {
+                        // A DVD's unit with nothing to show is one that takes
+                        // the last down (see `convert_subpicture` in
+                        // `cut.rs`). A Blu-ray's graphics decode nothing for
+                        // every segment but the last of a set, so there it
+                        // is only a packet read.
+                        if kind == Kind::Subpicture {
+                            events.push(Event {
+                                at,
+                                until: None,
+                                shown: None,
+                            });
+                        }
+                        continue;
+                    }
+                    let drawn = vobsub::drawn_from(&sub);
+                    let placed = placed_on(decoder, screen);
+                    events.push(Event {
+                        at,
+                        until: drawn.as_ref().and_then(|d| d.until).map(|d| at + d),
+                        shown: drawn.map(|d| picture(placed, &d)).transpose()?,
+                    });
+                }
+            }
+        }
+        // A page a statement times for itself goes up after the statement
+        // that carried it, and the next statement may have arrived by then.
+        // Put back in order, because that is what [`Reader::at`] searches;
+        // stable, so two things said at the same instant stay in the order
+        // the recording said them.
+        events.sort_by(|a, b| a.at.partial_cmp(&b.at).unwrap_or(std::cmp::Ordering::Equal));
+        self.events = events;
+        // Answered from here only where some of the lookback is still behind
+        // the instant: an instant a second after `from` has a second of it,
+        // and a subtitle that went up before `from` and is still standing
+        // was answered as nothing. Stepping back past this reads again.
+        let near = if from > 0.0 { from + LOOKBACK / 3.0 } else { from };
+        self.window = Some((near, to));
+        Ok(())
+    }
+
+}
+
+/// One decoded subtitle, as a picture a window can put up.
+fn picture(screen: (u16, u16), drawn: &Drawn) -> Result<Shown> {
+    Ok(Shown::Picture {
+        screen,
+        x: drawn.x,
+        y: drawn.y,
+        width: drawn.width,
+        height: drawn.height,
+        png: png(drawn)?,
+    })
+}
+
+/// The screen a decoded picture's position is measured against.
+///
+/// Not always the picture the subtitles are drawn over. A display set names
+/// the screen it was composed for, and the decoder takes that on as its own
+/// size: a UHD disc's graphics are composed for 1920 x 1080 over a picture
+/// twice that, and placed against the picture they came out at half the
+/// size, in the top left quarter of it. A DVD's decoder keeps the size it
+/// was opened with, which is the picture's.
+fn placed_on(decoder: &ff::codec::decoder::Subtitle, picture: (u16, u16)) -> (u16, u16) {
+    let (w, h) = unsafe {
+        let p = decoder.as_ptr();
+        ((*p).width, (*p).height)
+    };
+    match (u16::try_from(w), u16::try_from(h)) {
+        (Ok(w), Ok(h)) if w > 0 && h > 0 => (w, h),
+        _ => picture,
+    }
+}
+
+/// A decoder for the pictures one of the disc formats carries.
+///
+/// A DVD's needs the palette handed to it in the text an `.idx` is written
+/// in, which is the one thing about a DVD's subtitles that is not in the
+/// stream at all; a Blu-ray's carries its own colours and needs only the
+/// screen.
+fn pictures_decoder(
+    id: ff::codec::Id,
+    screen: (u16, u16),
+    palette: Option<&vobsub::Palette>,
+) -> Result<ff::codec::decoder::Subtitle> {
+    let mut ctx = ff::codec::context::Context::new();
+    let told = palette.map(|p| {
+        let colours: Vec<String> = p.0.iter().map(|c| format!("{c:06x}")).collect();
+        format!(
+            "size: {}x{}\npalette: {}\n",
+            screen.0,
+            screen.1,
+            colours.join(", ")
+        )
+    });
+    unsafe {
+        let p = ctx.as_mut_ptr();
+        (*p).codec_type = ff::ffi::AVMediaType::AVMEDIA_TYPE_SUBTITLE;
+        (*p).codec_id = id.into();
+        (*p).width = screen.0 as i32;
+        (*p).height = screen.1 as i32;
+        if let Some(told) = told {
+            let n = told.len();
+            let room = n + ff::ffi::AV_INPUT_BUFFER_PADDING_SIZE as usize;
+            let buf = ff::ffi::av_mallocz(room) as *mut u8;
+            if buf.is_null() {
+                return Err(anyhow!("no room for the palette"));
+            }
+            std::ptr::copy_nonoverlapping(told.as_ptr(), buf, n);
+            (*p).extradata = buf;
+            (*p).extradata_size = n as i32;
+        }
+    }
+    Ok(ctx.decoder().subtitle()?)
+}
+
+/// A decoded subtitle written as a PNG.
+///
+/// Cropped to the subtitle's own rectangle, which is where it was already:
+/// what libavcodec hands back is the picture and where on the screen it
+/// goes, and a page can place a small image far more cheaply than it can
+/// place a screen-sized one that is transparent nearly everywhere.
+fn png(drawn: &Drawn) -> Result<Vec<u8>> {
+    let (w, h) = (drawn.width as u32, drawn.height as u32);
+    if w == 0 || h == 0 {
+        return Err(anyhow!("a subtitle with no picture in it"));
+    }
+    let codec = ff::encoder::find(ff::codec::Id::PNG).ok_or_else(|| anyhow!("no PNG encoder"))?;
+    let mut enc = ff::codec::context::Context::new_with_codec(codec)
+        .encoder()
+        .video()?;
+    enc.set_width(w);
+    enc.set_height(h);
+    enc.set_format(ff::format::Pixel::RGBA);
+    enc.set_time_base(ff::Rational::new(1, 25));
+    let mut enc = enc.open_as(codec)?;
+
+    let mut frame = ff::frame::Video::new(ff::format::Pixel::RGBA, w, h);
+    let stride = frame.stride(0);
+    let data = frame.data_mut(0);
+    for row in 0..h as usize {
+        for col in 0..w as usize {
+            let index = drawn.indices[row * w as usize + col] as usize;
+            let (r, g, b, a) = drawn.palette.get(index).copied().unwrap_or((0, 0, 0, 0));
+            let at = row * stride + col * 4;
+            data[at] = r;
+            data[at + 1] = g;
+            data[at + 2] = b;
+            data[at + 3] = a;
+        }
+    }
+    frame.set_pts(Some(0));
+    enc.send_frame(&frame)?;
+    enc.send_eof()?;
+    let mut out = Vec::new();
+    let mut packet = ff::Packet::empty();
+    while enc.receive_packet(&mut packet).is_ok() {
+        out.extend_from_slice(packet.data().unwrap_or(&[]));
+        packet = ff::Packet::empty();
+    }
+    if out.is_empty() {
+        return Err(anyhow!("the PNG encoder produced nothing"));
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn text(pid: i32, kind: crate::TextKind, format: crate::TextFormat) -> crate::CaptionInfo {
+        crate::CaptionInfo {
+            stream_index: 0,
+            pid,
+            language: None,
+            time_base: 0.0,
+            kind,
+            format,
+            base: 0.0,
+        }
+    }
+
+    fn drawn(pid: i32) -> crate::GraphicsInfo {
+        crate::GraphicsInfo {
+            stream_index: 0,
+            pid,
+            language: Some("eng".into()),
+            time_base: 0.0,
+        }
+    }
+
+    /// A broadcast lists its caption stream and its crawl in the map in
+    /// whichever order it pleases. The list a window offers does not.
+    #[test]
+    fn the_subtitles_come_before_the_crawl_whichever_way_the_map_had_them() {
+        use crate::{TextFormat::Arib, TextKind::*};
+        let crawl_first = [text(0x1c02, Superimpose, Arib), text(0x120f, Caption, Arib)];
+        assert_eq!(
+            tracks(&crawl_first, &[], &[])
+                .iter()
+                .map(|t| (t.kind, t.id))
+                .collect::<Vec<_>>(),
+            [(Kind::Caption, 0x120f), (Kind::Superimpose, 0x1c02)]
+        );
+        // And the other way round comes out the same, rather than reversed.
+        let caption_first = [text(0x0130, Caption, Arib), text(0x0138, Superimpose, Arib)];
+        assert_eq!(
+            tracks(&caption_first, &[], &[])
+                .iter()
+                .map(|t| (t.kind, t.id))
+                .collect::<Vec<_>>(),
+            [(Kind::Caption, 0x0130), (Kind::Superimpose, 0x0138)]
+        );
+        // A 4K recording's subtitles are subtitles, and go where those go.
+        use crate::TextFormat::Ttml;
+        let four_k = [text(0x1c00, Superimpose, Arib), text(0x1c01, Caption, Ttml)];
+        assert_eq!(
+            tracks(&four_k, &[], &[])
+                .iter()
+                .map(|t| t.kind)
+                .collect::<Vec<_>>(),
+            [Kind::Ttml, Kind::Superimpose]
+        );
+    }
+
+    /// A UHD disc's graphics are composed for 1920 x 1080 over a picture
+    /// twice that, and a subtitle is placed on the screen its set names.
+    /// And a set naming a screen no disc has is not drawn out at that size.
+    #[test]
+    fn a_display_set_is_placed_on_the_screen_it_names() {
+        crate::init().expect("libav");
+        let set = |screen: (u16, u16), width: u16, height: u16| -> Vec<u8> {
+            let indices = vec![1u8; usize::from(width) * usize::from(height)];
+            let palette = [(0, 0, 0, 0), (255, 255, 255, 255)];
+            let picture = crate::pgs::write::Picture {
+                x: 100,
+                y: 900,
+                width,
+                height,
+                indices: &indices,
+                palette: &palette,
+            };
+            crate::pgs::write::draw(screen, 1, 1.0, &picture)
+                .into_iter()
+                .flat_map(|h| h.data)
+                .collect()
+        };
+        let uhd = (3840, 2160);
+        let mut decoder =
+            pictures_decoder(ff::codec::Id::HDMV_PGS_SUBTITLE, uhd, None).expect("a decoder");
+        let mut sub = ff::codec::subtitle::Subtitle::new();
+        let packet = ff::Packet::copy(&set((1920, 1080), 64, 8));
+        assert!(!crate::pgs::oversized(packet.data().expect("data")));
+        assert!(crate::pgs::oversized(&set((16000, 16000), 5000, 8)));
+        assert!(decoder.decode(&packet, &mut sub).expect("decodes"));
+        let drawn = vobsub::drawn_from(&sub).expect("draws");
+        assert_eq!((drawn.x, drawn.y, drawn.width), (100, 900, 64));
+        assert_eq!(placed_on(&decoder, uhd), (1920, 1080));
+
+        let mut sub = ff::codec::subtitle::Subtitle::new();
+        let packet = ff::Packet::copy(&set((16000, 16000), 5000, 5000));
+        assert!(decoder.decode(&packet, &mut sub).expect("decodes"));
+        assert!(vobsub::drawn_from(&sub).is_none(), "5000 dots square is no subtitle");
+    }
+
+    /// Two tracks of one kind keep the order the recording named them in:
+    /// that is all a disc says about which of its two English subtitles is
+    /// which.
+    #[test]
+    fn two_of_a_kind_stay_as_the_recording_had_them() {
+        let two = [drawn(0x1201), drawn(0x1200)];
+        assert_eq!(
+            tracks(&[], &two, &[]).iter().map(|t| t.id).collect::<Vec<_>>(),
+            [0x1201, 0x1200]
+        );
+    }
+}

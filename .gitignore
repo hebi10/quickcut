@@ -4,9 +4,17 @@
 local.properties
 build/
 **/build/
+**/target/
+__pycache__/
 captures/
 .externalNativeBuild/
 .cxx/
 *.apk
 *.aab
+*.jks
+*.keystore
+*.p12
+keystore.properties
+app/src/androidTest/assets/quickcut_*.mp4
 .DS_Store
+

@@ -30,6 +30,7 @@ class GalleryWriter(private val context: Context) {
         onFinalizing: () -> Unit = {},
         onOutputCreated: (Uri) -> Unit = {},
         onCommitted: (Uri) -> Unit = {},
+        onValidating: () -> Unit = {},
     ): Uri {
         withContext(Dispatchers.IO) {
             require(file.isFile && file.length() > 0L) { "저장할 영상 파일이 없습니다." }
@@ -62,6 +63,7 @@ class GalleryWriter(private val context: Context) {
             onFinalizing = onFinalizing,
             onOutputCreated = onOutputCreated,
             onCommitted = onCommitted,
+            onValidating = onValidating,
         )
     }
 
@@ -78,6 +80,7 @@ class GalleryWriter(private val context: Context) {
         estimatedOutputBytes: Long? = null,
         onOutputCreated: (Uri) -> Unit = {},
         onCommitted: (Uri) -> Unit = {},
+        onValidating: () -> Unit = {},
     ): Uri {
         withContext(Dispatchers.IO) {
             val estimate = estimatedOutputBytes ?: ExportStoragePolicy.estimateOutputBytes(
@@ -100,6 +103,7 @@ class GalleryWriter(private val context: Context) {
             onFinalizing = onFinalizing,
             onOutputCreated = onOutputCreated,
             onCommitted = onCommitted,
+            onValidating = onValidating,
         )
     }
 
@@ -113,6 +117,7 @@ class GalleryWriter(private val context: Context) {
         onFinalizing: () -> Unit,
         onOutputCreated: (Uri) -> Unit,
         onCommitted: (Uri) -> Unit,
+        onValidating: () -> Unit,
     ): Uri {
         val resolver = context.contentResolver
         var pendingUri: Uri? = null
@@ -138,6 +143,7 @@ class GalleryWriter(private val context: Context) {
                     }
                 }
                 try {
+                    runCallback(onValidating)
                     MediaReader.validateExport(context, created, expectedDurationMs, expectAudio, originalTimestampMs)
                 } catch (error: IOException) {
                     if (fastValidation) throw FastTrimUnavailableException("Fast output validation failed", error)
@@ -165,9 +171,31 @@ class GalleryWriter(private val context: Context) {
             }
         } catch (error: Throwable) {
             if (!committed) {
-                withContext(NonCancellable) {
-                    withContext(Dispatchers.IO) {
-                        pendingUri?.let { runCatching { resolver.delete(it, null, null) } }
+                val uri = pendingUri
+                if (uri != null) {
+                    val cleanupFailure = withContext(NonCancellable) {
+                        withContext(Dispatchers.IO) {
+                            runCatching {
+                                if (resolver.delete(uri, null, null) <= 0) {
+                                    // Zero may mean another cleanup already removed it.
+                                    // A null/failed query is not evidence of absence.
+                                    val absent = resolver.query(uri,
+                                        arrayOf(MediaStore.Video.Media._ID), null, null, null)
+                                        ?.use { !it.moveToFirst() } == true
+                                    if (!absent) throw IOException("미완성 출력 삭제를 확인할 수 없습니다.")
+                                }
+                            }.exceptionOrNull()
+                        }
+                    }
+                    if (cleanupFailure != null) {
+                        val failure = OutputCleanupException(uri, error).apply {
+                            addSuppressed(cleanupFailure)
+                        }
+                        // Cancellation remains cancellation, but its cleanup handle is
+                        // available to callers. Never expose a fast-path error here:
+                        // retrying would overwrite the journal's only pending URI.
+                        if (error is CancellationException) error.addSuppressed(failure)
+                        else throw failure
                     }
                 }
             }
@@ -209,3 +237,10 @@ class GalleryWriter(private val context: Context) {
     }
 }
 
+
+
+/** An unpublished output still needs cleanup before another export can begin. */
+class OutputCleanupException(
+    val outputUri: Uri,
+    cause: Throwable,
+) : IOException("미완성 파일을 정리하지 못했습니다. 파일 접근을 확인하고 다시 시도해 주세요.", cause)

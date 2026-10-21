@@ -17,8 +17,8 @@ object CompositionFactory {
             .setUri(Uri.parse(clip.uri))
             .setClippingConfiguration(
                 MediaItem.ClippingConfiguration.Builder()
-                    .setStartPositionMs(clip.startMs)
-                    .setEndPositionMs(clip.endMs)
+                    .setStartPositionUs(clip.startUs)
+                    .setEndPositionUs(clip.endUs)
                     .build()
             )
             .build()

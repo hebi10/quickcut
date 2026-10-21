@@ -68,11 +68,13 @@ import com.hebi.quickcut.editor.EditTimeline
 import com.hebi.quickcut.editor.TrimInput
 import com.hebi.quickcut.editor.OriginalAction
 import com.hebi.quickcut.editor.OriginalActionStatus
+import com.hebi.quickcut.export.ExportWorkMonitor
 import com.hebi.quickcut.media.OriginalMediaActions
 import com.hebi.quickcut.media.SaveDateMode
 import com.hebi.quickcut.media.ExportMode
 import com.hebi.quickcut.media.ExportPlanner
 import com.hebi.quickcut.media.ExportAssessment
+import com.hebi.quickcut.media.ExportReport
 import com.hebi.quickcut.settings.QuickCutSettings
 import com.hebi.quickcut.settings.QuickTrimSettings
 import kotlinx.coroutines.launch
@@ -100,9 +102,12 @@ fun QuickCutApp(
     val coroutineScope = rememberCoroutineScope()
     var showBatch by rememberSaveable { mutableStateOf(false) }
     var showLastSettings by rememberSaveable { mutableStateOf(false) }
-    var pendingQuickDefaults by rememberSaveable { mutableStateOf(false) }
+    var showLicenses by rememberSaveable { mutableStateOf(false) }
     var exportReview by remember { mutableStateOf<ExportReview?>(null) }
     var inspectingExport by remember { mutableStateOf(false) }
+    var inspectionProgress by remember { mutableStateOf<Int?>(null) }
+    var dismissedRecoveryNotice by remember { mutableStateOf<String?>(null) }
+    var inspectionJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     var showExportCancelConfirmation by rememberSaveable { mutableStateOf(false) }
     var showSaveOptions by rememberSaveable { mutableStateOf(false) }
     var selectedSaveAction by remember { mutableStateOf(OriginalAction.KEEP) }
@@ -133,10 +138,12 @@ fun QuickCutApp(
             val reviewedAction = selectedSaveAction
             val reviewedDate = selectedSaveDateMode
             inspectingExport = true
-            coroutineScope.launch {
+            inspectionProgress = null
+            inspectionJob = coroutineScope.launch {
                 try {
                     val assessment = ExportPlanner.analyze(
-                        context.applicationContext, reviewedTimeline, reviewedDate
+                        context.applicationContext, reviewedTimeline, reviewedDate,
+                        onProgress = { inspectionProgress = it },
                     )
                     if (!model.canStartExport || model.timeline != reviewedTimeline) return@launch
                     if (assessment.fastAvailable && !model.needsReencodeConsent) {
@@ -170,22 +177,13 @@ fun QuickCutApp(
             val reviewedTimeline = model.timeline
             val reviewedAction = model.originalAction
             val reviewedDate = model.savedDateMode
-            try {
-                val assessment = ExportPlanner.analyze(
-                    context.applicationContext, reviewedTimeline, reviewedDate
-                )
-                if (model.needsReencodeConsent && model.canStartExport &&
-                    model.timeline == reviewedTimeline) {
-                    exportReview = ExportReview(assessment, reviewedTimeline,
-                        reviewedAction, reviewedDate, retryingFastExport = true)
-                }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                model.reportError(
-                    "고속 저장을 완료하지 못했습니다. 정밀 저장 허용 여부를 다시 선택해 주세요."
-                )
-            }
+            // A failed fast-only save already supplies its diagnostics. Do not
+            // rescan a long source to propose an action this retry cannot offer.
+            exportReview = ExportReview(
+                ExportAssessment(false, model.exportDiagnostics.explanation().ifBlank {
+                    "고속 저장을 완료하지 못했습니다. 정확한 위치로 자동 저장을 선택할 수 있습니다."
+                }), reviewedTimeline, reviewedAction, reviewedDate, retryingFastExport = true,
+            )
         }
     }
     LaunchedEffect(model.page) {
@@ -212,32 +210,13 @@ fun QuickCutApp(
     ) { uri ->
         if (uri != null) {
             model.changeQuickMode(true)
-            pendingQuickDefaults = true
-            model.importVideos(context, listOf(uri))
+            model.importVideos(context, listOf(uri), quickDefaults = settings.loadQuick())
         }
     }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) {
             model.changeQuickMode(false)
             model.importVideos(context, uris, append = model.page == QuickCutPage.EDITOR)
-        }
-    }
-    LaunchedEffect(model.page, model.timeline) {
-        if (pendingQuickDefaults && model.page == QuickCutPage.EDITOR &&
-            model.timeline.clips.size == 1
-        ) {
-            pendingQuickDefaults = false
-            val clip = model.timeline.clips.single()
-            val previous = settings.loadQuick()
-            if (TrimInput.range(previous.leadingMs,
-                    clip.sourceDurationMs - previous.trailingMs, clip.sourceDurationMs) != null) {
-                model.trimClip(
-                    clip.id,
-                    previous.leadingMs,
-                    clip.sourceDurationMs - previous.trailingMs,
-                )
-            }
-            if (previous.muteAudio && !clip.muted) model.toggleMute()
         }
     }
     val batchPicker = rememberLauncherForActivityResult(
@@ -310,6 +289,7 @@ fun QuickCutApp(
                 quickSettings = settings.loadQuick(),
                 dateMode = selectedSaveDateMode,
                 onPreferences = { showLastSettings = true },
+                onLicenses = { showLicenses = true },
             )
             QuickCutPage.IMPORTING -> CenterStatus("영상 불러오는 중", "선택한 파일을 확인하고 있습니다.", null)
             QuickCutPage.EDITOR -> {
@@ -331,16 +311,13 @@ fun QuickCutApp(
                 }
             }
             QuickCutPage.EXPORTING -> CenterStatus(
-                title = when {
-                    model.isFinalizing -> "갤러리 등록 중"
-                    model.requestedExportMode == ExportMode.FAST_ONLY -> "고속 저장 중"
-                    else -> "정밀 저장 중"
-                },
-                subtitle = if (model.isFinalizing)
+                title = model.exportStage.label,
+                subtitle = (if (model.isFinalizing)
                     "결과물을 확인하고 갤러리에 등록하고 있습니다. 완료 단계에서는 취소할 수 없습니다."
                 else if (model.requestedExportMode == ExportMode.FAST_ONLY)
                     "압축된 영상 데이터를 복사하고 있습니다. 다른 앱을 사용하거나 화면을 꺼도 저장은 계속됩니다."
-                else "재인코딩이 발생할 수 있습니다. 다른 앱을 사용하거나 화면을 꺼도 저장은 계속됩니다.",
+                else "요청한 구간을 유지하며 저장합니다. 복사·최적화가 안 되면 재인코딩하며, 처리 시간은 영상과 기기에 따라 달라집니다. 다른 앱을 사용하거나 화면을 꺼도 저장은 계속됩니다.") +
+                    model.exportDiagnostics.explanation().let { if (it.isBlank()) "" else "\n\n$it" },
                 progress = if (model.isFinalizing) null else model.progressPercent,
                 onCancel = if (model.isFinalizing) null
                     else { { showExportCancelConfirmation = true } },
@@ -364,6 +341,7 @@ fun QuickCutApp(
                 onNew = model::startNew,
                 originalAction = model.originalAction,
                 savedDateMode = model.savedDateMode,
+                exportReport = model.completedExportReport,
                 originalStatus = model.originalActionStatus,
                 originalCount = model.originalsFromSavedTimeline.size,
                 onRetryOriginalAction = model::showOriginalDeletionConfirmation,
@@ -371,6 +349,31 @@ fun QuickCutApp(
         }
     }
 
+
+    if (showLicenses) OpenSourceLicensesDialog(onDismiss = { showLicenses = false })
+
+    // Live export rollback already owns the screen until its cleanup completes.
+    if (!ExportWorkMonitor.isRunning && (model.isRecoveringExport || model.exportRecoveryNotice?.let {
+            model.hasUnresolvedExport || it != dismissedRecoveryNotice
+        } == true)) {
+        AlertDialog(
+            onDismissRequest = {
+                if (!model.isRecoveringExport && !model.hasUnresolvedExport)
+                    dismissedRecoveryNotice = model.exportRecoveryNotice
+            },
+            title = { Text("이전 저장 확인") },
+            text = { Text(if (model.isRecoveringExport) "중단된 저장 파일과 완료 여부를 확인하고 있습니다."
+                else model.exportRecoveryNotice.orEmpty()) },
+            confirmButton = {
+                TextButton(enabled = !model.isRecoveringExport, onClick = {
+                    if (model.hasUnresolvedExport) model.retryExportRecovery()
+                    else dismissedRecoveryNotice = model.exportRecoveryNotice
+                }) { Text(if (model.hasUnresolvedExport) "다시 확인" else "확인") }
+            },
+            dismissButton = { ExportDiagnosticButton() },
+            containerColor = CutColors.panel, shape = CutShape,
+        )
+    }
 
     if (showSaveOptions && model.page == QuickCutPage.EDITOR) {
         SaveOptionsDialog(
@@ -413,19 +416,17 @@ fun QuickCutApp(
         )
     }
 
-    if (inspectingExport) ExportInspectionDialog()
+    if (inspectingExport) ExportInspectionDialog(progress = inspectionProgress, onCancel = { inspectionJob?.cancel() })
     exportReview?.takeIf {
         model.page == QuickCutPage.EDITOR && model.timeline == it.timeline
     }?.let { review ->
-        val clip = review.timeline.clips.singleOrNull()
-        val suggestedStart = review.assessment.suggestedStartMs
-        val suggestedRange = if (suggestedStart != null && clip != null) {
-            TrimInput.range(suggestedStart, clip.endMs, clip.sourceDurationMs)
-                ?.takeIf { it.startMs > clip.startMs }
-        } else null
+        val suggestion = review.assessment.suggestion
         ExportModeDialog(
-            assessment = review.assessment,
-            clip = clip,
+            assessment = if (review.retryingFastExport) review.assessment.copy(
+                explanation = model.exportDiagnostics.explanation().ifBlank {
+                    "고속 복사를 완료하지 못했습니다. 세부 원인은 확인할 수 없습니다."
+                },
+            ) else review.assessment,
             retryingFastExport = review.retryingFastExport,
             canSave = model.canStartExport,
             onAllowReencode = {
@@ -436,20 +437,13 @@ fun QuickCutApp(
                     selectedSaveAction = OriginalAction.KEEP
                 }
             },
-            onSuggestedStart = if (suggestedRange != null && clip != null) {
+            onSuggestedCut = if (suggestion != null && !review.retryingFastExport) {
                 {
-                    if (model.canStartExport && model.timeline == review.timeline) {
-                        model.trimClip(clip.id, suggestedRange.startMs, suggestedRange.endMs)
-                        if (model.quickMode) {
-                            settings.saveQuick(QuickTrimSettings(
-                                leadingMs = suggestedRange.startMs,
-                                trailingMs = clip.sourceDurationMs - suggestedRange.endMs,
-                                muteAudio = clip.muted,
-                            ))
-                        }
-                        selectedSaveAction = review.originalAction
-                        selectedSaveDateMode = review.dateMode
+                    if (model.canStartExport && model.timeline == review.timeline &&
+                        model.applyFastCutSuggestion(suggestion)) {
                         exportReview = null
+                        model.startExport(context, review.originalAction, review.dateMode, ExportMode.FAST_ONLY)
+                        selectedSaveAction = OriginalAction.KEEP
                     }
                 }
             } else null,
@@ -520,7 +514,7 @@ fun QuickCutApp(
         AlertDialog(
             onDismissRequest = model::dismissError,
             title = { Text("안내") },
-            text = { Text(text) },
+            text = { Column { Text(text); ExportDiagnosticButton() } },
             confirmButton = {
                 TextButton(onClick = model::dismissError, shape = CutShape) { Text("확인") }
             },
@@ -559,6 +553,7 @@ private fun StartScreen(
     quickSettings: QuickTrimSettings,
     dateMode: SaveDateMode,
     onPreferences: () -> Unit,
+    onLicenses: () -> Unit,
 ) {
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
@@ -577,6 +572,7 @@ private fun StartScreen(
             )
             Text("필요한 구간만 빠르게 잘라 저장하세요.",
                 color = CutColors.secondaryText)
+            ExportDiagnosticButton()
             Column(
                 modifier = Modifier.fillMaxWidth()
                     .background(CutColors.surface).padding(16.dp),
@@ -628,6 +624,9 @@ private fun StartScreen(
                     modifier = Modifier.fillMaxWidth().height(52.dp),
                     shape = RoundedCornerShape(4.dp),
                 ) { Text("이전 편집 이어서 진행") }
+            }
+            TextButton(onClick = onLicenses, shape = CutShape) {
+                Text("오픈소스 라이선스", color = CutColors.secondaryText)
             }
         }
     }
@@ -777,6 +776,7 @@ private fun CompletedScreen(
     onNew: () -> Unit,
     originalAction: OriginalAction,
     savedDateMode: SaveDateMode,
+    exportReport: ExportReport?,
     originalStatus: OriginalActionStatus,
     originalCount: Int,
     onRetryOriginalAction: () -> Unit,
@@ -796,6 +796,8 @@ private fun CompletedScreen(
         Text("저장 완료", color = CutColors.primaryText, fontSize = 28.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(10.dp))
         Text("영상이 갤러리에 저장되었습니다.", color = CutColors.secondaryText)
+        Text(exportReportText(exportReport), color = CutColors.secondaryText)
+        ExportDiagnosticButton()
         if (savedDateMode == SaveDateMode.ORIGINAL) {
             Text("원본 날짜 기준으로 저장했습니다.", color = CutColors.secondaryText)
         }
@@ -851,4 +853,5 @@ private fun CompletedScreen(
         }
     }
 }
+
 

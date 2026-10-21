@@ -1,0 +1,1527 @@
+//! Reading picture properties straight out of packet payloads.
+//!
+//! The only question asked here is whether a picture is used as a reference,
+//! which decides if an open-GOP entry point's leading pictures can be cut
+//! away. The Python prototype had to shell out to ffmpeg and re-extract an
+//! Annex-B window to answer it; with libav the packet is already in hand.
+
+/// How NAL units are framed inside a packet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NalFraming {
+    /// Start codes, as in MPEG-TS.
+    AnnexB,
+    /// Length prefixes of the given width, as in MP4.
+    Length(usize),
+}
+
+/// Read the NAL length size out of an `avcC` / `hvcC` extradata blob.
+pub fn framing_from_extradata(codec: &str, extradata: &[u8]) -> NalFraming {
+    let offset = match codec {
+        "h264" => 4,  // avcC: configurationVersion, profile, compat, level
+        "hevc" => 21, // hvcC: fixed header before lengthSizeMinusOne
+        _ => return NalFraming::AnnexB,
+    };
+    match extradata.get(offset) {
+        // an avcC/hvcC starts with configurationVersion 1; anything else (or
+        // a start code) means the stream is already Annex-B
+        Some(b) if is_configuration_record(codec, extradata) => {
+            NalFraming::Length((b & 0x03) as usize + 1)
+        }
+        _ => NalFraming::AnnexB,
+    }
+}
+
+/// Whether extradata is an `avcC` / `hvcC` rather than Annex-B parameter
+/// sets.
+///
+/// An `hvcC` written before its standard settled carries configurationVersion
+/// 0, and libavcodec still reads it as one -- by the same test as here: not a
+/// start code. Taken for Annex-B, every length-prefixed picture of such a
+/// file is searched for start codes it does not have.
+fn is_configuration_record(codec: &str, extradata: &[u8]) -> bool {
+    match (codec, extradata) {
+        ("hevc", [a, b, c, ..]) => *a != 0 || *b != 0 || *c > 1,
+        _ => extradata.first() == Some(&1),
+    }
+}
+
+/// Offsets of each NAL unit's payload within a packet.
+pub(crate) fn nal_payloads(data: &[u8], framing: NalFraming) -> Vec<&[u8]> {
+    let mut out = Vec::new();
+    match framing {
+        NalFraming::Length(n) => {
+            let mut i = 0;
+            while i + n <= data.len() {
+                let mut len = 0usize;
+                for k in 0..n {
+                    len = (len << 8) | data[i + k] as usize;
+                }
+                i += n;
+                // A NAL of no length is nothing, and what follows it is still
+                // the packet's; only one that runs past the end stops this.
+                if len == 0 {
+                    continue;
+                }
+                if i + len > data.len() {
+                    break;
+                }
+                out.push(&data[i..i + len]);
+                i += len;
+            }
+        }
+        NalFraming::AnnexB => {
+            let starts = start_codes(data);
+            for (k, &s) in starts.iter().enumerate() {
+                let end = starts.get(k + 1).map_or(data.len(), |&n| {
+                    // trim the next start code, and its optional leading zero
+                    let e = n - 3;
+                    if e > s && data[e - 1] == 0 {
+                        e - 1
+                    } else {
+                        e
+                    }
+                });
+                if s < end {
+                    out.push(&data[s..end]);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Where each payload begins: the byte after every `00 00 01`, the search
+/// going on three bytes past each one found.
+///
+/// **Asked of every byte of every picture**, by the walk among others -- and
+/// on an interlaced H.264 recording, of each picture twice (the reference
+/// question and the field question). So the third byte is looked at first:
+/// above 1 it rules out a start code at any of the three places it could be
+/// part of, and the search steps over all three. Which places are found is
+/// exactly what a byte-by-byte search finds (see the test).
+fn start_codes(data: &[u8]) -> Vec<usize> {
+    let mut starts = Vec::new();
+    let mut i = 0;
+    while i + 3 <= data.len() {
+        match data[i + 2] {
+            1 if data[i] == 0 && data[i + 1] == 0 => {
+                starts.push(i + 3);
+                i += 3;
+            }
+            // A start code at `i + 1` or `i + 2` needs this byte to be 0.
+            0 => i += 1,
+            _ => i += 3,
+        }
+    }
+    starts
+}
+
+pub(crate) const H264_VCL: std::ops::RangeInclusive<u8> = 1..=5;
+/// HEVC leading pictures: the `_N` variants are sub-layer non-reference.
+const HEVC_LEADING_NONREF: [u8; 2] = [6, 8]; // RADL_N, RASL_N
+
+/// Can every leading picture of an entry point be cut away, whatever this
+/// recording's encoder did?
+///
+/// **HEVC states as a rule what other codecs only usually manage.** Its
+/// leading pictures -- RADL and RASL -- may not be used as reference
+/// pictures for the trailing pictures of the same entry point, so a copy
+/// that starts there and leaves all of them behind cannot be missing a
+/// reference. RASL pictures are more than droppable: a decoder handed the
+/// stream from that entry point onwards is required to discard them itself,
+/// since what they reference is on the other side of the cut.
+///
+/// Nothing else here can be told that in advance. An H.264 encoder is free
+/// to build a pyramid whose leading pictures reference each other, and one
+/// of those *is* a reference for what follows, so those are measured picture
+/// by picture in [`is_reference`] and taken at their word.
+pub fn leading_always_droppable(codec: &str) -> bool {
+    codec == "hevc"
+}
+
+/// Is the picture in this packet used as a reference by later pictures?
+///
+/// Decides whether a leading picture may simply be cut out of a copied
+/// segment. MPEG-2 B pictures never reference-back, but H.264/HEVC encoders
+/// routinely build B-pyramids whose leading pictures *are* references -- drop
+/// one of those and every picture that depended on it decodes to garbage.
+///
+/// `vc1` is the pair of headers a VC-1 stream declares itself with. It is the
+/// one codec here whose pictures cannot be read without them -- whether a
+/// picture even states its type in three bits or in one is settled in the
+/// sequence header -- and a stream that never produced them is answered for
+/// conservatively.
+pub fn is_reference(
+    data: &[u8],
+    codec: &str,
+    framing: NalFraming,
+    vc1: Option<&smartcut_vc1::Shape>,
+) -> bool {
+    match codec {
+        "vc1" | "wmv3" => match vc1.and_then(|shape| shape.picture(data)) {
+            Some(picture) => picture.reference(),
+            // Taking a picture for a reference costs only the chance to
+            // enter an open GOP at it; taking a reference for a B picture
+            // would cut away something the rest of the GOP is decoded from.
+            None => true,
+        },
+        "mpeg1video" | "mpeg2video" => {
+            // picture_coding_type sits just past the 10-bit temporal_reference
+            // of a picture header: 1=I, 2=P, 3=B. Only B is never referenced.
+            let mut i = 0;
+            while i + 6 <= data.len() {
+                if data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1 && data[i + 3] == 0 {
+                    return (data[i + 5] >> 3) & 0x07 != 3;
+                }
+                i += 1;
+            }
+            true
+        }
+        "mpeg4" => {
+            // Part 2 has no picture header of the kind above: `00 00 01 00`
+            // is a video object's start code there, and a picture is a VOP
+            // (`00 00 01 B6`) whose first two bits are its type -- 0=I, 1=P,
+            // 2=B, 3=S. Only B is never referenced. The first VOP answers for
+            // the packet, as a packed P+B one is the P's.
+            let mut i = 0;
+            while i + 5 <= data.len() {
+                if data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1 && data[i + 3] == 0xB6 {
+                    return data[i + 4] >> 6 != 2;
+                }
+                i += 1;
+            }
+            true
+        }
+        "hevc" => {
+            for nal in nal_payloads(data, framing) {
+                let Some(&b) = nal.first() else { continue };
+                let nal_type = (b >> 1) & 0x3F;
+                if nal_type < 32 {
+                    return !HEVC_LEADING_NONREF.contains(&nal_type);
+                }
+            }
+            true
+        }
+        "h264" => {
+            for nal in nal_payloads(data, framing) {
+                let Some(&b) = nal.first() else { continue };
+                if H264_VCL.contains(&(b & 0x1F)) {
+                    return (b >> 5) & 0x03 != 0; // nal_ref_idc
+                }
+            }
+            true
+        }
+        // Anything else is not framed as H.264 NALs -- a VP9 or AV1 packet
+        // read that way finds a "slice" wherever its bytes happen to spell a
+        // start code -- so it is answered for conservatively.
+        _ => true,
+    }
+}
+
+/// Does the picture in this packet restart the coded video sequence?
+///
+/// **The two things a Blu-ray or a broadcast may put at an entry point are
+/// not equally good places to splice onto.** An IDR restarts everything: the
+/// pictures after it reference nothing before it, and a decoder meeting one
+/// empties what it was holding. An I picture with a recovery point is only a
+/// place to *start reading* -- the pictures after it may still reference
+/// pictures before it, which is exactly what a splice does not have. Joining
+/// a copied segment onto one of those leaves its opening pictures predicted
+/// from whatever the decoder happens to be holding, which after a re-encoded
+/// run is the pictures this program just wrote; on one disc that put a
+/// picture of the outgoing scene a frame *after* the incoming one.
+///
+/// Every codec here other than H.264 and HEVC states its pictures' display
+/// order within the group they belong to and starts each group afresh, so
+/// every entry point of one of those is already a clean start and the answer
+/// is yes.
+pub fn starts_a_sequence(data: &[u8], codec: &str, framing: NalFraming) -> bool {
+    match codec {
+        "h264" => nal_payloads(data, framing)
+            .iter()
+            .any(|nal| nal.first().is_some_and(|b| b & 0x1F == 5)),
+        // 19 and 20 are the IDRs. The other intra random access pictures --
+        // a clean random access, chiefly -- are the recovery point's
+        // equivalent here: a place to start reading whose leading pictures
+        // may reference what came before.
+        "hevc" => nal_payloads(data, framing).iter().any(|nal| {
+            nal.first()
+                .is_some_and(|b| matches!((b >> 1) & 0x3F, 19 | 20))
+        }),
+        _ => true,
+    }
+}
+
+/// Pull the parameter sets out of an `avcC` / `hvcC` extradata blob.
+///
+/// They have to be re-inserted in front of every copied keyframe. A
+/// re-encoded segment carries its own SPS in-band, and once the decoder
+/// activates that one, the copied pictures that follow would be decoded
+/// against the wrong parameter set unless the original is restated.
+pub fn parameter_sets(codec: &str, extradata: &[u8]) -> Vec<Vec<u8>> {
+    let mut out = Vec::new();
+    let take = |d: &[u8], i: &mut usize, out: &mut Vec<Vec<u8>>| {
+        if *i + 2 > d.len() {
+            return false;
+        }
+        let len = ((d[*i] as usize) << 8) | d[*i + 1] as usize;
+        *i += 2;
+        if *i + len > d.len() {
+            return false;
+        }
+        out.push(d[*i..*i + len].to_vec());
+        *i += len;
+        true
+    };
+    match codec {
+        "h264" => {
+            if extradata.len() < 7 || extradata[0] != 1 {
+                return out;
+            }
+            let mut i = 5;
+            let n_sps = (extradata[i] & 0x1F) as usize;
+            i += 1;
+            for _ in 0..n_sps {
+                if !take(extradata, &mut i, &mut out) {
+                    return out;
+                }
+            }
+            if i >= extradata.len() {
+                return out;
+            }
+            let n_pps = extradata[i] as usize;
+            i += 1;
+            for _ in 0..n_pps {
+                if !take(extradata, &mut i, &mut out) {
+                    return out;
+                }
+            }
+        }
+        "hevc" => {
+            if extradata.len() < 23 || !is_configuration_record(codec, extradata) {
+                return out;
+            }
+            let mut i = 22;
+            let arrays = extradata[i] as usize;
+            i += 1;
+            for _ in 0..arrays {
+                if i + 3 > extradata.len() {
+                    return out;
+                }
+                i += 1; // array_completeness | NAL_unit_type
+                let count = ((extradata[i] as usize) << 8) | extradata[i + 1] as usize;
+                i += 2;
+                for _ in 0..count {
+                    if !take(extradata, &mut i, &mut out) {
+                        return out;
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+    out
+}
+
+/// Does this payload start with a start code?
+pub fn is_annexb(data: &[u8]) -> bool {
+    data.len() >= 4
+        && data[0] == 0
+        && data[1] == 0
+        && (data[2] == 1 || (data[2] == 0 && data[3] == 1))
+}
+
+/// A NAL behind its length, in `n` bytes. A recording can count its lengths
+/// in one or two, and a picture this program encodes can be longer than two
+/// bytes will say: written with only its low bytes, it went out as a length
+/// that points into the middle of itself, and everything after it in the
+/// sample was read as garbage. So that is an error rather than a file.
+fn push_length_prefixed(out: &mut Vec<u8>, nal: &[u8], n: usize) -> anyhow::Result<()> {
+    let len = nal.len();
+    if n < std::mem::size_of::<usize>() && len >> (8 * n) != 0 {
+        anyhow::bail!(
+            "a NAL of {len} bytes does not fit the {n}-byte lengths this recording counts in; \
+             write it as a .ts, or re-encode it whole"
+        );
+    }
+    for k in (0..n).rev() {
+        out.push((len >> (8 * k)) as u8);
+    }
+    out.extend_from_slice(nal);
+    Ok(())
+}
+
+/// Re-frame an Annex-B payload with length prefixes, as MP4 stores them.
+pub fn annexb_to_length(data: &[u8], n: usize) -> anyhow::Result<Vec<u8>> {
+    let mut out = Vec::with_capacity(data.len() + 16);
+    for nal in nal_payloads(data, NalFraming::AnnexB) {
+        push_length_prefixed(&mut out, nal, n)?;
+    }
+    Ok(out)
+}
+
+/// Re-frame a length-prefixed payload with start codes, as MPEG-TS wants it.
+///
+/// The other direction from [`annexb_to_length`], and needed for the same
+/// reason: a recording read out of an MP4 carries lengths, and a transport
+/// stream carries start codes. Without this the copied pictures reach the
+/// file as they were -- four bytes of length where a decoder is looking for
+/// `00 00 00 01` -- and everything but the re-encoded fringes is unreadable.
+pub fn length_to_annexb(data: &[u8], n: usize) -> Vec<u8> {
+    let mut out = Vec::with_capacity(data.len() + 16);
+    for nal in nal_payloads(data, NalFraming::Length(n)) {
+        out.extend_from_slice(&[0, 0, 0, 1]);
+        out.extend_from_slice(nal);
+    }
+    out
+}
+
+/// An HEVC picture with its Dolby Vision taken out: the RPU (NAL type 62)
+/// and the enhancement layer (63), which no other use of HEVC writes.
+///
+/// For a recording whose base layer stands on its own, once the output has
+/// given up Dolby Vision -- a player that finds RPUs in a stream takes it for
+/// Dolby Vision whatever the container says. `None` where there was nothing
+/// to take out, so a picture without any comes through as its own bytes.
+pub fn strip_dolby_vision(data: &[u8], framing: NalFraming) -> Option<Vec<u8>> {
+    let is_dovi = |nal: &&[u8]| nal.first().is_some_and(|b| matches!((b >> 1) & 0x3F, 62 | 63));
+    let nals = nal_payloads(data, framing);
+    if !nals.iter().any(is_dovi) {
+        return None;
+    }
+    let mut out = Vec::with_capacity(data.len());
+    for nal in nals.iter().filter(|nal| !is_dovi(nal)) {
+        match framing {
+            NalFraming::AnnexB => {
+                out.extend_from_slice(&[0, 0, 0, 1]);
+                out.extend_from_slice(nal);
+            }
+            // The NAL came out of this framing, so its length fits it.
+            NalFraming::Length(n) => push_length_prefixed(&mut out, nal, n).ok()?,
+        }
+    }
+    Some(out)
+}
+
+/// Put the given parameter sets in front of a payload, with start codes.
+///
+/// An MP4 keeps its parameter sets in the `hvcC`/`avcC` and out of the
+/// pictures; a transport stream expects to meet them in the stream itself,
+/// in front of the pictures that were coded against them.
+pub fn prepend_parameter_sets_annexb(data: &[u8], sets: &[Vec<u8>]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(data.len() + sets.iter().map(|s| s.len() + 4).sum::<usize>());
+    for s in sets {
+        out.extend_from_slice(&[0, 0, 0, 1]);
+        out.extend_from_slice(s);
+    }
+    out.extend_from_slice(data);
+    out
+}
+
+/// Put the given parameter sets in front of a length-prefixed payload.
+pub fn prepend_parameter_sets(data: &[u8], sets: &[Vec<u8>], n: usize) -> anyhow::Result<Vec<u8>> {
+    let mut out = Vec::with_capacity(data.len() + sets.iter().map(|s| s.len() + n).sum::<usize>());
+    for s in sets {
+        push_length_prefixed(&mut out, s, n)?;
+    }
+    out.extend_from_slice(data);
+    Ok(out)
+}
+
+/// How many fields this picture occupies: two normally, more under pulldown.
+pub fn display_fields(data: &[u8], codec: &str, vc1: Option<&smartcut_vc1::Shape>) -> i64 {
+    match codec {
+        "mpeg2video" if mpeg2_repeats_field(data) => 3,
+        // VC-1 says it in the picture header: a repeated field, or -- where
+        // the stream is progressive or segmented -- a whole repeated frame.
+        "vc1" | "wmv3" => vc1
+            .and_then(|shape| shape.picture(data))
+            .map_or(2, |p| p.display_fields()),
+        _ => 2,
+    }
+}
+
+/// Does this MPEG-2 picture ask for an extra field to be shown?
+///
+/// `repeat_first_field` is how 24 fps film is carried in a 29.97 stream:
+/// every other picture is displayed for three fields instead of two. The
+/// pictures then do not arrive at a constant rate, which breaks any output
+/// timeline built from a single frame duration.
+pub fn mpeg2_repeats_field(data: &[u8]) -> bool {
+    mpeg2_coding_extensions(data)
+        .first()
+        .is_some_and(|e| e[3] & 0x02 != 0)
+}
+
+/// Whether an MPEG-2 packet's sequence extension says the sequence is
+/// interlaced (`progressive_sequence` clear), or nothing where it carries none.
+///
+/// That flag is what decides whether a picture may repeat a field at all:
+/// in a progressive sequence the same bit repeats whole frames instead.
+pub fn mpeg2_interlaced_sequence(data: &[u8]) -> Option<bool> {
+    let mut i = 0;
+    while i + 6 <= data.len() {
+        if data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1 && data[i + 3] == 0xB5 {
+            if data[i + 4] >> 4 == 0x1 {
+                return Some(data[i + 5] & 0x08 == 0);
+            }
+            i += 4;
+            continue;
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Whether any picture in an MPEG-2 packet asks for a field to be repeated.
+///
+/// Every picture of it, which [`mpeg2_repeats_field`] does not ask: the
+/// parser joins the two fields of a field pair into one packet, and a packet
+/// is not always one picture.
+pub fn mpeg2_any_repeat(data: &[u8]) -> bool {
+    mpeg2_coding_extensions(data).iter().any(|e| e[3] & 0x02 != 0)
+}
+
+/// Say how an MPEG-2 picture written by libavcodec is to be shown.
+///
+/// libavcodec's encoder never writes `repeat_first_field`, and writes
+/// `top_field_first` only in an interlaced sequence -- which is also the only
+/// sequence in which it codes a picture as two fields, and so the one in
+/// which a field may not be repeated. A picture that repeats a field has to
+/// be a frame picture coded as a frame (`progressive_frame` and
+/// `frame_pred_frame_dct` set), so such pictures are encoded as a
+/// progressive sequence and put back into the recording's own here: the
+/// sequence extension is given the recording's `progressive_sequence`, and
+/// the picture its field order and its repeat.
+///
+/// Nothing about how the picture decodes changes. A frame picture with
+/// `frame_pred_frame_dct` set carries neither `dct_type` nor
+/// `frame_motion_type`, whatever the sequence says, so the macroblocks read
+/// the same either way.
+pub fn mpeg2_set_display(data: &mut [u8], interlaced_sequence: bool, tff: bool, rff: bool) {
+    let mut i = 0;
+    while i + 9 <= data.len() {
+        if data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1 && data[i + 3] == 0xB5 {
+            match data[i + 4] >> 4 {
+                0x1 => {
+                    if interlaced_sequence {
+                        data[i + 5] &= !0x08;
+                    } else {
+                        data[i + 5] |= 0x08;
+                    }
+                }
+                // Only a picture coded as a frame and predicted as one may
+                // repeat a field. Anything else is left as it was written.
+                0x8 if data[i + 6] & 0x03 == 0x03 && data[i + 7] & 0x40 != 0 => {
+                    let e = &mut data[i + 4..];
+                    e[3] = (e[3] & !0x80) | if tff { 0x80 } else { 0 };
+                    let rff = rff && e[4] & 0x80 != 0;
+                    e[3] = (e[3] & !0x02) | if rff { 0x02 } else { 0 };
+                }
+                _ => {}
+            }
+            i += 4;
+            continue;
+        }
+        i += 1;
+    }
+}
+
+/// The picture coding extensions in a packet, each from its extension id
+/// onwards. Everything MPEG-2 says about how a picture is shown is in here,
+/// and there is one per picture -- which is not always one per packet. See
+/// [`is_field_picture`].
+fn mpeg2_coding_extensions(data: &[u8]) -> Vec<&[u8]> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i + 8 <= data.len() {
+        if data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1 && data[i + 3] == 0xB5 {
+            // picture coding extension: extension id 0x8 in the top nibble
+            if data[i + 4] >> 4 == 0x8 {
+                out.push(&data[i + 4..]);
+                i += 8;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
+/// What an H.264 recording has to be read against for a picture to say
+/// whether it is a whole frame or one field of a pair.
+///
+/// MPEG-2 writes the answer plainly in every picture it codes and needs
+/// nothing kept. H.264 writes it as a single bit of the slice header, and
+/// where that bit sits depends on numbers that appear nowhere but the
+/// sequence parameter set -- so the sequence has to be read first and kept,
+/// the way a VC-1 stream's has to. See [`is_reference`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FieldShape {
+    /// Width of `frame_num`, the one field of variable width standing
+    /// between the start of a slice header and the flag being looked for.
+    frame_num_bits: usize,
+    /// Set where each colour plane is coded on its own, which puts one more
+    /// field in front of `frame_num`. 4:4:4 only, and vanishingly rare.
+    separate_colour_planes: bool,
+}
+
+/// Read out of a recording's sequence header what is needed to tell a field
+/// picture from a whole frame.
+///
+/// `data` is a packet or a container's extradata; either may carry the
+/// header, and a transport stream restates it in front of every entry point.
+/// `None` where the sequence says every picture in it is a whole frame,
+/// which is what all but a handful of recordings say -- and `None` again
+/// where no header was found or it could not be read. Both answers mean the
+/// same thing to a caller: nothing here is coded as fields.
+pub fn field_shape(codec: &str, data: &[u8], framing: NalFraming) -> Option<FieldShape> {
+    if codec != "h264" {
+        return None;
+    }
+    // An `avcC` is not NAL-framed and has to be unpacked before it can be
+    // searched; a packet -- and a transport stream's Annex-B extradata --
+    // already is.
+    let packed = parameter_sets(codec, data);
+    if packed.iter().any(|nal| is_h264_sps(nal)) {
+        return packed.iter().find_map(|nal| h264_field_shape(nal));
+    }
+    nal_payloads(data, framing)
+        .into_iter()
+        .find_map(h264_field_shape)
+}
+
+fn is_h264_sps(nal: &[u8]) -> bool {
+    nal.first().is_some_and(|b| b & 0x1F == 7)
+}
+
+/// Profiles whose sequence header states its chroma format, and may carry
+/// quantiser matrices, ahead of everything read below.
+const H264_CHROMA_PROFILES: &[u32] =
+    &[100, 110, 122, 244, 44, 83, 86, 118, 128, 134, 135, 138, 139];
+
+fn h264_field_shape(nal: &[u8]) -> Option<FieldShape> {
+    h264_sequence_shape(nal).flatten()
+}
+
+/// [`h264_field_shape`], telling a header that says every picture is a whole
+/// frame (`Some(None)`) from one that could not be read (`None`).
+fn h264_sequence_shape(nal: &[u8]) -> Option<Option<FieldShape>> {
+    if !is_h264_sps(nal) {
+        return None;
+    }
+    let mut b = Bits::new(nal.get(1..)?); // past the one-byte NAL header
+    let profile = b.u(8)?;
+    b.skip(16)?; // constraint and reserved flags, then level_idc
+    b.ue()?; // seq_parameter_set_id
+    let mut separate_colour_planes = false;
+    if H264_CHROMA_PROFILES.contains(&profile) {
+        let chroma = b.ue()?;
+        if chroma == 3 {
+            separate_colour_planes = b.u(1)? == 1;
+        }
+        b.ue()?; // bit_depth_luma_minus8
+        b.ue()?; // bit_depth_chroma_minus8
+        b.skip(1)?; // qpprime_y_zero_transform_bypass_flag
+        if b.u(1)? == 1 {
+            h264_scaling_lists(&mut b, if chroma == 3 { 12 } else { 8 })?;
+        }
+    }
+    let frame_num_bits = b.ue()? as usize + 4;
+    if frame_num_bits > 32 {
+        return None;
+    }
+    match b.ue()? {
+        // pic_order_cnt_type 0 and 1 each carry their own tail; 2 carries
+        // nothing.
+        0 => {
+            b.ue()?; // log2_max_pic_order_cnt_lsb_minus4
+        }
+        1 => {
+            b.skip(1)?; // delta_pic_order_always_zero_flag
+            b.se()?; // offset_for_non_ref_pic
+            b.se()?; // offset_for_top_to_bottom_field
+            let cycle = b.ue()?;
+            if cycle > 255 {
+                return None;
+            }
+            for _ in 0..cycle {
+                b.se()?;
+            }
+        }
+        _ => {}
+    }
+    b.ue()?; // max_num_ref_frames
+    b.skip(1)?; // gaps_in_frame_num_value_allowed_flag
+    b.ue()?; // pic_width_in_mbs_minus1
+    b.ue()?; // pic_height_in_map_units_minus1
+    let frame_mbs_only = b.u(1)? == 1;
+    // Set, and every picture in the sequence is a whole frame: no picture
+    // need be asked, and nothing after this is read.
+    Some((!frame_mbs_only).then_some(FieldShape {
+        frame_num_bits,
+        separate_colour_planes,
+    }))
+}
+
+/// What a packet says again of the sequence its pictures are read by, where
+/// it says it: `Some(Some(shape))` from a sequence header that allows field
+/// pictures, `Some(None)` from one whose every picture is a whole frame, and
+/// `None` where the packet carries no header ahead of its pictures, or one
+/// that could not be read -- which leaves the caller with what it had.
+///
+/// A transport stream restates the header in front of every entry point, and
+/// a recording can change it on the way: a cut of a recorder's PAFF
+/// recording opens on an encoder's MBAFF pictures and goes on into the
+/// recorder's fields, each with a `frame_num` of its own width, and a join
+/// can go on into a progressive recording's frames, whose slices carry no
+/// `field_pic_flag` at all.
+///
+/// **Only what comes before the packet's first slice is looked at**, which
+/// is where a header goes and is a few dozen bytes of a picture's hundred
+/// thousand. Asked of every packet of an interlaced recording, a search of
+/// the whole packet ([`field_shape`]) doubled the time a walk of a recorder's
+/// 45-minute clip took.
+pub fn restated_field_shape(
+    codec: &str,
+    data: &[u8],
+    framing: NalFraming,
+) -> Option<Option<FieldShape>> {
+    if codec != "h264" {
+        return None;
+    }
+    h264_sequence_shape(h264_header_ahead(data, framing)?)
+}
+
+/// The first sequence header in a packet ahead of its first slice. See
+/// [`restated_field_shape`].
+fn h264_header_ahead(data: &[u8], framing: NalFraming) -> Option<&[u8]> {
+    // What a NAL unit opening with `b` is: `Some(true)` a sequence header,
+    // `Some(false)` a slice (and so the end of the search), `None` anything
+    // else -- a delimiter, a picture header, supplemental information.
+    let kind = |b: u8| match b & 0x1F {
+        7 => Some(true),
+        t if H264_VCL.contains(&t) => Some(false),
+        _ => None,
+    };
+    match framing {
+        NalFraming::Length(n) => {
+            let mut i = 0;
+            while i + n <= data.len() {
+                let mut len = 0usize;
+                for k in 0..n {
+                    len = (len << 8) | data[i + k] as usize;
+                }
+                i += n;
+                if len == 0 {
+                    continue;
+                }
+                let nal = data.get(i..i.checked_add(len)?)?;
+                match kind(nal[0]) {
+                    Some(true) => return Some(nal),
+                    Some(false) => return None,
+                    None => i += len,
+                }
+            }
+            None
+        }
+        NalFraming::AnnexB => {
+            let start_after = |from: usize| -> Option<usize> {
+                (from..data.len().saturating_sub(2))
+                    .find(|&i| data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1)
+            };
+            let mut s = start_after(0)? + 3;
+            loop {
+                let found = data.get(s).copied().and_then(kind);
+                if found == Some(false) {
+                    return None;
+                }
+                let next = start_after(s);
+                if found == Some(true) {
+                    // Up to the next start code, less the leading zero of a
+                    // four-byte one, as [`nal_payloads`] cuts it.
+                    let end = next.map_or(data.len(), |e| if e > s && data[e - 1] == 0 { e - 1 } else { e });
+                    return data.get(s..end);
+                }
+                s = next? + 3;
+            }
+        }
+    }
+}
+
+/// Step over the quantiser matrices a sequence header may write for itself.
+fn h264_scaling_lists(b: &mut Bits, lists: usize) -> Option<()> {
+    for i in 0..lists {
+        if b.u(1)? == 0 {
+            continue;
+        }
+        // A matrix is written as differences and stops early at a zero, so
+        // how many are actually there can only be found by reading them.
+        let (mut last, mut next) = (8i32, 8i32);
+        for _ in 0..if i < 6 { 16 } else { 64 } {
+            if next != 0 {
+                // In i64: `delta_scale` is ±128 by the standard and ±2³¹ by
+                // what a damaged header can carry.
+                next = (i64::from(last) + i64::from(b.se()?) + 256).rem_euclid(256) as i32;
+            }
+            if next != 0 {
+                last = next;
+            }
+        }
+    }
+    Some(())
+}
+
+/// Does this packet carry one field of a pair rather than a whole frame?
+///
+/// A recording coded as field pairs hands the two halves of a frame over
+/// separately. **The output timeline counts in fields** -- see the writer --
+/// so the pair takes two places on it and lasts a field each, where
+/// [`display_fields`] answers for a packet that is a whole frame.
+///
+/// **The question is about the packet, not about how the pictures inside it
+/// are coded.** libavcodec's MPEG-2 parser joins a complementary field pair
+/// into one packet, and a broadcast in the sample here does that seven times
+/// in half a minute: two field pictures, one frame, two fields of the
+/// timeline. Its H.264 parser hands each field of a pair over on its own,
+/// which is what a recorder's own disc is made of. So what is counted is the
+/// pictures the packet opens, and the answer is yes only where there is one
+/// of them and it is a field.
+///
+/// `shape` is what the sequence header said, and `None` -- from a recording
+/// that codes no fields, or one whose header could not be read -- is
+/// answered no: a frame taken for a field is half a frame missing from the
+/// output, while a field taken for a frame is what every recording before
+/// this one was.
+pub fn is_field_picture(
+    data: &[u8],
+    codec: &str,
+    framing: NalFraming,
+    shape: Option<&FieldShape>,
+) -> bool {
+    match codec {
+        // picture_structure in the picture coding extension: 3 is a frame,
+        // 1 and 2 are the top and the bottom field on their own. A field
+        // picture may not also ask for a repeat, so it is one field exactly.
+        "mpeg2video" => match mpeg2_coding_extensions(data).as_slice() {
+            [only] => only[2] & 0x03 != 3,
+            _ => false,
+        },
+        "h264" => {
+            let Some(shape) = shape else { return false };
+            let mut opened = None;
+            for nal in nal_payloads(data, framing) {
+                if !nal.first().is_some_and(|b| H264_VCL.contains(&(b & 0x1F))) {
+                    continue;
+                }
+                // A picture written in several slices opens once; the slices
+                // after the first carry on from a macroblock further in.
+                let Some(field) = h264_opens_a_picture(nal, shape) else {
+                    continue;
+                };
+                if opened.is_some() {
+                    return false; // a second picture: a whole frame's worth
+                }
+                opened = Some(field);
+            }
+            opened.unwrap_or(false)
+        }
+        _ => false,
+    }
+}
+
+/// `Some(field_pic_flag)` where this slice opens a picture, `None` where it
+/// carries on one already opened.
+fn h264_opens_a_picture(nal: &[u8], shape: &FieldShape) -> Option<bool> {
+    // Past the one-byte NAL header, and no further than the slice header
+    // reaches: three numbers of at most 63 bits each, two bits, `frame_num`
+    // and the flag come to 224 bits at the most, and 96 bytes hold 512 of
+    // them however many emulation prevention bytes are taken out. Unpacked
+    // whole, every slice of every picture was copied to read its first few
+    // bytes, which on an interlaced recording was a quarter of a walk.
+    let nal = nal.get(1..)?;
+    let mut b = Bits::new(&nal[..nal.len().min(96)]);
+    if b.ue()? != 0 {
+        return None; // first_mb_in_slice
+    }
+    b.ue()?; // slice_type
+    b.ue()?; // pic_parameter_set_id
+    if shape.separate_colour_planes {
+        b.skip(2)?; // colour_plane_id
+    }
+    b.skip(shape.frame_num_bits)?;
+    Some(b.u(1)? == 1)
+}
+
+/// The bits of a NAL unit's payload, with the emulation prevention bytes
+/// taken back out.
+///
+/// Every read is fallible and every one is checked, because this reads a
+/// sequence header out of a recording nobody vouched for: a truncated or
+/// mangled one has to come back as "no answer", never as a panic or a loop.
+pub(crate) struct Bits {
+    data: Vec<u8>,
+    pos: usize,
+}
+
+impl Bits {
+    pub(crate) fn new(nal: &[u8]) -> Self {
+        let mut data = Vec::with_capacity(nal.len());
+        let mut i = 0;
+        while i < nal.len() {
+            if i + 2 < nal.len() && nal[i] == 0 && nal[i + 1] == 0 && nal[i + 2] == 3 {
+                data.extend_from_slice(&[0, 0]);
+                i += 3;
+            } else {
+                data.push(nal[i]);
+                i += 1;
+            }
+        }
+        Bits { data, pos: 0 }
+    }
+
+    pub(crate) fn u(&mut self, n: usize) -> Option<u32> {
+        let mut v = 0u32;
+        for _ in 0..n {
+            let byte = *self.data.get(self.pos >> 3)?;
+            v = (v << 1) | u32::from((byte >> (7 - (self.pos & 7))) & 1);
+            self.pos += 1;
+        }
+        Some(v)
+    }
+
+    /// Step over bits whose value is not wanted -- runs of reserved flags,
+    /// chiefly, which are longer than a single read may be.
+    pub(crate) fn skip(&mut self, n: usize) -> Option<()> {
+        self.pos = self.pos.checked_add(n)?;
+        (self.pos <= self.data.len() * 8).then_some(())
+    }
+
+    pub(crate) fn ue(&mut self) -> Option<u32> {
+        let mut zeros = 0usize;
+        while self.u(1)? == 0 {
+            zeros += 1;
+            // A value this long is not a value; it is a mis-parse.
+            if zeros > 31 {
+                return None;
+            }
+        }
+        if zeros == 0 {
+            return Some(0);
+        }
+        ((1u32 << zeros) - 1).checked_add(self.u(zeros)?)
+    }
+
+    pub(crate) fn se(&mut self) -> Option<i32> {
+        let k = self.ue()?;
+        Some(if k % 2 == 1 {
+            k.div_ceil(2) as i32
+        } else {
+            -((k / 2) as i32)
+        })
+    }
+}
+
+/// The HEVC sequence header in a packet or an extradata blob, if there is one.
+pub fn sequence_header<'a>(codec: &str, data: &'a [u8], framing: NalFraming) -> Option<&'a [u8]> {
+    if codec != "hevc" {
+        return None;
+    }
+    nal_payloads(data, framing)
+        .into_iter()
+        .find(|nal| nal.first().is_some_and(|b| (b >> 1) & 0x3F == 33))
+}
+
+/// The transfer characteristic an HEVC sequence header writes for itself.
+///
+/// **Not the same thing as the one a decoder reports.** A broadcast carries
+/// HLG the way it has to for a receiver that predates it: the sequence
+/// header says `bt2020-10` -- wide-gamut SDR, which every decoder ever built
+/// understands -- and an `alternative_transfer_characteristics` SEI beside it
+/// says the pictures are really HLG. libavcodec resolves the two and hands
+/// back the answer, 18, which is what the pictures are; this hands back 14,
+/// which is what the recording *says*. A re-encoded picture has to say the
+/// same thing as the copied ones beside it, or a player reading only the
+/// sequence header changes its mind partway through the cut.
+///
+/// `None` where the header cannot be read, or says nothing about colour.
+pub fn coded_transfer(sps: &[u8]) -> Option<u8> {
+    // The caller may hand over every parameter set an `hvcC` carries, VPS
+    // and SEI included; read as a sequence header, one of those can come out
+    // as a transfer it never stated.
+    if (sps.first()? >> 1) & 0x3F != 33 {
+        return None;
+    }
+    let mut b = Bits::new(sps.get(2..)?); // past the two-byte NAL header
+    b.skip(4)?; // sps_video_parameter_set_id
+    let max_sub = b.u(3)? as usize;
+    b.skip(1)?; // sps_temporal_id_nesting_flag
+    profile_tier_level(&mut b, max_sub)?;
+    b.ue()?; // sps_seq_parameter_set_id
+    if b.ue()? == 3 {
+        b.skip(1)?; // separate_colour_plane_flag
+    }
+    b.ue()?; // pic_width_in_luma_samples
+    b.ue()?; // pic_height_in_luma_samples
+    if b.u(1)? == 1 {
+        for _ in 0..4 {
+            b.ue()?; // conformance window
+        }
+    }
+    b.ue()?; // bit_depth_luma_minus8
+    b.ue()?; // bit_depth_chroma_minus8
+    let log2_poc_lsb = b.ue()? as usize + 4;
+    let per_sub_layer = b.u(1)? == 1;
+    for _ in (if per_sub_layer { 0 } else { max_sub })..=max_sub {
+        b.ue()?;
+        b.ue()?;
+        b.ue()?;
+    }
+    for _ in 0..6 {
+        b.ue()?; // coding and transform block sizes, and the two depths
+    }
+    if b.u(1)? == 1 && b.u(1)? == 1 {
+        scaling_list_data(&mut b)?;
+    }
+    b.skip(2)?; // amp_enabled_flag, sample_adaptive_offset_enabled_flag
+    if b.u(1)? == 1 {
+        b.skip(8)?; // pcm sample bit depths
+        b.ue()?;
+        b.ue()?;
+        b.skip(1)?;
+    }
+    let sets = b.ue()? as usize;
+    if sets > 64 {
+        return None;
+    }
+    let mut deltas: Vec<u32> = Vec::with_capacity(sets);
+    for i in 0..sets {
+        let n = short_term_ref_pic_set(&mut b, i, sets, &deltas)?;
+        deltas.push(n);
+    }
+    if b.u(1)? == 1 {
+        let n = b.ue()?;
+        if n > 64 {
+            return None;
+        }
+        for _ in 0..n {
+            b.skip(log2_poc_lsb)?;
+            b.skip(1)?;
+        }
+    }
+    b.skip(2)?; // temporal mvp, strong intra smoothing
+    if b.u(1)? != 1 {
+        return None; // vui_parameters_present_flag
+    }
+    if b.u(1)? == 1 && b.u(8)? == 255 {
+        b.skip(32)?; // an aspect ratio written out as a pair of extents
+    }
+    if b.u(1)? == 1 {
+        b.skip(1)?; // overscan_appropriate_flag
+    }
+    if b.u(1)? != 1 {
+        return None; // video_signal_type_present_flag
+    }
+    b.skip(4)?; // video_format, video_full_range_flag
+    if b.u(1)? != 1 {
+        return None; // colour_description_present_flag
+    }
+    b.skip(8)?; // colour_primaries
+    b.u(8).map(|v| v as u8)
+}
+
+/// The profile, tier and level, which are only ever stepped over here.
+fn profile_tier_level(b: &mut Bits, max_sub: usize) -> Option<()> {
+    b.skip(8)?; // profile_space, tier_flag, profile_idc
+    b.skip(32)?; // profile compatibility flags
+    b.skip(48)?; // source and constraint flags, reserved, inbld
+    b.skip(8)?; // general_level_idc
+    let mut present = Vec::with_capacity(max_sub);
+    for _ in 0..max_sub {
+        present.push((b.u(1)? == 1, b.u(1)? == 1));
+    }
+    if max_sub > 0 {
+        b.skip(2 * (8 - max_sub))?;
+    }
+    for (profile, level) in present {
+        if profile {
+            b.skip(88)?;
+        }
+        if level {
+            b.skip(8)?;
+        }
+    }
+    Some(())
+}
+
+/// The quantiser matrices, where a recording writes its own.
+fn scaling_list_data(b: &mut Bits) -> Option<()> {
+    for size_id in 0..4usize {
+        let step = if size_id == 3 { 3 } else { 1 };
+        let mut matrix_id = 0;
+        while matrix_id < 6 {
+            if b.u(1)? == 0 {
+                b.ue()?; // scaling_list_pred_matrix_id_delta
+            } else {
+                let coefficients = std::cmp::min(64, 1 << (4 + (size_id << 1)));
+                if size_id > 1 {
+                    b.se()?; // scaling_list_dc_coef_minus8
+                }
+                for _ in 0..coefficients {
+                    b.se()?;
+                }
+            }
+            matrix_id += step;
+        }
+    }
+    Some(())
+}
+
+/// One of the reference picture sets, and how many pictures it names --
+/// which is what the next one may be written as a difference against.
+fn short_term_ref_pic_set(b: &mut Bits, idx: usize, sets: usize, deltas: &[u32]) -> Option<u32> {
+    if idx != 0 && b.u(1)? == 1 {
+        if idx == sets {
+            b.ue()?; // delta_idx_minus1
+        }
+        b.skip(1)?; // delta_rps_sign
+        b.ue()?; // abs_delta_rps_minus1
+        let reference = *deltas.get(idx.checked_sub(1)?)?;
+        let mut kept = 0;
+        for _ in 0..=reference {
+            // use_delta_flag is written only where the picture is not used
+            // by the current one, so the second read is conditional.
+            if b.u(1)? == 1 || b.u(1)? == 1 {
+                kept += 1;
+            }
+        }
+        return Some(kept);
+    }
+    let negative = b.ue()?;
+    let positive = b.ue()?;
+    if negative > 64 || positive > 64 {
+        return None;
+    }
+    for _ in 0..negative + positive {
+        b.ue()?;
+        b.skip(1)?;
+    }
+    Some(negative + positive)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A sequence extension saying progressive, and a picture as libavcodec
+    /// writes one in a progressive sequence: frame structure, frame DCT,
+    /// progressive frame, top field first clear, no repeat.
+    fn progressive_picture() -> Vec<u8> {
+        let mut v = vec![0, 0, 1, 0xB5, 0x14, 0x8A, 0x00, 0x01, 0x00, 0x00];
+        v.extend_from_slice(&[0, 0, 1, 0x00, 0x00, 0x0F, 0xFF, 0xF8]);
+        // ext id 8, f_codes, dc precision 0, frame; tff 0, fpfd 1, rff 0,
+        // chroma_420_type 1; progressive_frame 1
+        v.extend_from_slice(&[0, 0, 1, 0xB5, 0x81, 0x11, 0xF3, 0x41, 0x80]);
+        v.extend_from_slice(&[0, 0, 1, 0x01, 0x12]);
+        v
+    }
+
+    #[test]
+    fn a_progressive_picture_is_put_back_into_an_interlaced_sequence() {
+        let mut p = progressive_picture();
+        assert_eq!(mpeg2_interlaced_sequence(&p), Some(false));
+        assert!(!mpeg2_any_repeat(&p));
+        mpeg2_set_display(&mut p, true, true, true);
+        assert_eq!(mpeg2_interlaced_sequence(&p), Some(true));
+        assert!(mpeg2_any_repeat(&p));
+        let e = mpeg2_coding_extensions(&p)[0];
+        assert_eq!(e[3] & 0x80, 0x80, "top field first");
+        // Everything else in the byte is as the encoder wrote it.
+        assert_eq!(e[3] & 0x7D, 0x41);
+        // And back: two fields, bottom first.
+        mpeg2_set_display(&mut p, true, false, false);
+        let e = mpeg2_coding_extensions(&p)[0];
+        assert_eq!(e[3], 0x41);
+    }
+
+    #[test]
+    fn a_picture_coded_as_fields_is_never_told_to_repeat_one() {
+        let mut p = progressive_picture();
+        // frame_pred_frame_dct clear and progressive_frame clear: an
+        // interlaced picture, which may not repeat a field.
+        let at = p.len() - 9 - 5 + 7;
+        p[at] &= !0x40;
+        let before = p.clone();
+        mpeg2_set_display(&mut p, true, true, true);
+        assert!(!mpeg2_any_repeat(&p));
+        assert_eq!(mpeg2_coding_extensions(&p)[0], mpeg2_coding_extensions(&before)[0]);
+    }
+
+    fn sps(hex: &str) -> Vec<u8> {
+        (0..hex.len() / 2)
+            .map(|i| u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).unwrap())
+            .collect()
+    }
+
+    /// A 4K broadcast that carries HLG the backward-compatible way: the
+    /// sequence header says 14, and an SEI beside it says the pictures are
+    /// really 18. What is wanted here is the 14.
+    #[test]
+    fn reads_the_transfer_a_broadcast_writes_rather_than_the_one_it_means() {
+        let header = sps(
+            "420101022000000300b00000030000030099a001e020021c4db18869242942f016a121c136ca0000\
+             07d20001d4c0c24820dc0002b4be00015a5f7cf1e3d0",
+        );
+        assert_eq!(coded_transfer(&header), Some(14));
+    }
+
+    /// One that says what it means: PQ, in the header, with nothing to
+    /// reconcile.
+    #[test]
+    fn reads_the_transfer_of_a_recording_that_states_it_plainly() {
+        let header = sps(
+            "420101222000000300b00000030000030099a001e020021c4d90628d9242942f016a12201228000\
+             01f480007530786b041b80007270c00039387f9e3c7a0",
+        );
+        assert_eq!(coded_transfer(&header), Some(16));
+        // And what an encoder of ours writes for the same pictures.
+        let written = sps(
+            "420101022000000300900000030000030099a001e020021c4d96565924caf016a1224120800001f\
+             48000753004",
+        );
+        assert_eq!(coded_transfer(&written), Some(18));
+    }
+
+    /// A Dolby Vision recording states no colour at all -- the RPU carries
+    /// it -- so there is nothing to answer with.
+    #[test]
+    fn says_nothing_where_the_header_describes_no_colour() {
+        let header = sps(
+            "42010102a000000300b00000030000030096a001e020021c4d94526491b6bc040400000fa400017\
+             70186b7bdf8000aba900017d782",
+        );
+        assert_eq!(coded_transfer(&header), None);
+    }
+
+    /// Whatever a damaged recording hands over, an answer comes back rather
+    /// than a panic or a loop.
+    #[test]
+    fn refuses_a_header_it_cannot_read() {
+        assert_eq!(coded_transfer(&[]), None);
+        assert_eq!(coded_transfer(&[0x42, 0x01]), None);
+        assert_eq!(coded_transfer(&[0xff; 64]), None);
+        let mut truncated = sps(
+            "420101022000000300b00000030000030099a001e020021c4db18869242942f016a121c136ca0000\
+             07d20001d4c0c24820dc0002b4be00015a5f7cf1e3d0",
+        );
+        // Another kind of NAL is not read as one, however well its bits
+        // would parse: an `hvcC` hands its VPS and SEI over alongside.
+        truncated[0] = 0x40;
+        assert_eq!(coded_transfer(&truncated), None);
+        while truncated.pop().is_some() {
+            // every prefix of a real one, none of which may hang
+            let _ = coded_transfer(&truncated);
+        }
+    }
+
+    /// The sequence header is picked out of a packet by its NAL type.
+    #[test]
+    fn finds_the_sequence_header_among_the_others() {
+        let mut packet = vec![0, 0, 1, 0x40, 0x01, 0xaa]; // VPS
+        packet.extend_from_slice(&[0, 0, 1, 0x42, 0x01, 0xbb]); // SPS
+        let found = sequence_header("hevc", &packet, NalFraming::AnnexB).unwrap();
+        assert_eq!(found, &[0x42, 0x01, 0xbb]);
+        assert!(sequence_header("h264", &packet, NalFraming::AnnexB).is_none());
+    }
+
+    /// Wrap NAL payloads back up as a transport stream's packet would carry
+    /// them.
+    fn annexb(nals: &[&[u8]]) -> Vec<u8> {
+        let mut out = Vec::new();
+        for nal in nals {
+            out.extend_from_slice(&[0, 0, 0, 1]);
+            out.extend_from_slice(nal);
+        }
+        out
+    }
+
+    /// A recorder's own disc: 1440x1080 at 29.97, and every picture on it
+    /// half a frame. The header says fields are coded at all, and the two
+    /// slices are the two halves of one frame.
+    #[test]
+    fn reads_a_recorder_that_codes_its_pictures_as_field_pairs() {
+        let header =
+            sps("27640028ac2ca50168111f7ff800200018800001f480007530742000206c80001036651b5805");
+        let shape = field_shape("h264", &annexb(&[&header]), NalFraming::AnnexB)
+            .expect("the recorder codes fields");
+        assert_eq!(shape.frame_num_bits, 8);
+        assert!(!shape.separate_colour_planes);
+        for slice in ["2188a7de14d29e346f5a", "219927fe3f219e2c5ffa"] {
+            let packet = annexb(&[&[0x09, 0x10], &sps(slice)]);
+            assert!(is_field_picture(
+                &packet,
+                "h264",
+                NalFraming::AnnexB,
+                Some(&shape)
+            ));
+        }
+    }
+
+    /// **The header alone does not settle it.** What this program writes back
+    /// over the same recording says fields are coded -- it is interlaced, and
+    /// `frame_mbs_only_flag` is clear -- while every picture in it is a whole
+    /// frame. So the picture is what is asked, and the header only says how
+    /// to ask it.
+    #[test]
+    fn a_header_that_allows_fields_does_not_make_every_picture_one() {
+        let header = sps("67640028ace40168113f7870800001f4800075300f8b1689");
+        let shape = field_shape("h264", &annexb(&[&header]), NalFraming::AnnexB).unwrap();
+        assert_eq!(shape.frame_num_bits, 4);
+        let packet = annexb(&[&sps("6588820804bff626")]);
+        assert!(!is_field_picture(
+            &packet,
+            "h264",
+            NalFraming::AnnexB,
+            Some(&shape)
+        ));
+    }
+
+    /// Progressive material says so outright, and then no picture need be
+    /// read at all.
+    #[test]
+    fn a_progressive_recording_codes_no_fields() {
+        let header = sps("67f4000d919b28283f6022000003000200000300781e28532c");
+        assert!(field_shape("h264", &annexb(&[&header]), NalFraming::AnnexB).is_none());
+    }
+
+    /// The start codes found by stepping over bytes that cannot be part of
+    /// one are the ones a byte-by-byte search finds, on data dense with the
+    /// bytes that matter.
+    #[test]
+    fn start_codes_are_the_ones_a_plain_search_finds() {
+        let plain = |d: &[u8]| {
+            let (mut out, mut i) = (Vec::new(), 0);
+            while i + 3 <= d.len() {
+                if d[i] == 0 && d[i + 1] == 0 && d[i + 2] == 1 {
+                    out.push(i + 3);
+                    i += 3;
+                } else {
+                    i += 1;
+                }
+            }
+            out
+        };
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        for len in 0..2000usize {
+            let d: Vec<u8> = (0..len % 97)
+                .map(|_| {
+                    seed ^= seed << 13;
+                    seed ^= seed >> 7;
+                    seed ^= seed << 17;
+                    [0u8, 0, 0, 1, 1, 2, 3, 0xff][(seed % 8) as usize]
+                })
+                .collect();
+            assert_eq!(start_codes(&d), plain(&d), "{d:?}");
+        }
+    }
+
+    /// A packet restating its sequence ahead of its slices changes how the
+    /// slices after it are read -- to fields, to frames -- and one that
+    /// restates nothing, or nothing readable, leaves it as it was.
+    #[test]
+    fn a_packet_restates_its_sequence_ahead_of_its_slices() {
+        let fields =
+            sps("27640028ac2ca50168111f7ff800200018800001f480007530742000206c80001036651b5805");
+        let frames = sps("67f4000d919b28283f6022000003000200000300781e28532c");
+        let slice = sps("2188a7de14d29e346f5a");
+        let aud: &[u8] = &[0x09, 0x10];
+        let shape = field_shape("h264", &annexb(&[&fields]), NalFraming::AnnexB).unwrap();
+        let ask = |nals: &[&[u8]]| restated_field_shape("h264", &annexb(nals), NalFraming::AnnexB);
+        assert_eq!(ask(&[aud, &fields, &slice]), Some(Some(shape)));
+        assert_eq!(ask(&[aud, &frames, &slice]), Some(None));
+        assert_eq!(ask(&[aud, &slice]), None);
+        // Behind the slice is not ahead of it.
+        assert_eq!(ask(&[&slice, &fields]), None);
+        // Cut short, it says nothing.
+        assert_eq!(ask(&[aud, &fields[..6]]), None);
+        // The same, framed by length as an MP4 frames it.
+        let mut framed = Vec::new();
+        for nal in [aud, &fields[..], &slice[..]] {
+            framed.extend_from_slice(&(nal.len() as u32).to_be_bytes());
+            framed.extend_from_slice(nal);
+        }
+        assert_eq!(
+            restated_field_shape("h264", &framed, NalFraming::Length(4)),
+            Some(Some(shape))
+        );
+        assert_eq!(restated_field_shape("hevc", &annexb(&[&fields]), NalFraming::AnnexB), None);
+        for cut in 0..framed.len() {
+            let _ = restated_field_shape("h264", &framed[..cut], NalFraming::Length(4));
+            let _ = ask(&[aud, &fields[..cut.min(fields.len())]]);
+        }
+    }
+
+    /// MPEG-2 says it in the picture itself: `picture_structure` 3 is a whole
+    /// frame, 1 and 2 are the top and the bottom field on their own. But a
+    /// packet holding the two fields of one frame is a whole frame, which is
+    /// how libavcodec's parser hands a pair over.
+    #[test]
+    fn an_mpeg2_field_pair_arrives_as_one_frame() {
+        // A picture header, then a coding extension whose third byte carries
+        // intra_dc_precision and picture_structure in its low four bits.
+        let picture = |structure: u8| {
+            let mut d = vec![0, 0, 1, 0x00, 0x00, 0x08, 0xff, 0xff];
+            d.extend_from_slice(&[0, 0, 1, 0xB5, 0x8f, 0xff, 0xf0 | structure, 0x00]);
+            d
+        };
+        let asked = |d: &[u8]| is_field_picture(d, "mpeg2video", NalFraming::AnnexB, None);
+        assert!(!asked(&picture(3)));
+        assert!(asked(&picture(1)));
+        assert!(asked(&picture(2)));
+        // The pair joined, which is what the demuxer actually produces.
+        let mut pair = picture(1);
+        pair.extend_from_slice(&picture(2));
+        assert!(!asked(&pair));
+        // And a packet with no coding extension in it at all is a frame.
+        assert!(!asked(&[0, 0, 1, 0x00]));
+    }
+
+    /// A picture written in several slices opens once, and the slices after
+    /// the first say nothing about which it is.
+    #[test]
+    fn a_picture_in_several_slices_is_still_one_picture() {
+        let header =
+            sps("27640028ac2ca50168111f7ff800200018800001f480007530742000206c80001036651b5805");
+        let shape = field_shape("h264", &annexb(&[&header]), NalFraming::AnnexB).unwrap();
+        let opening = sps("2188a7de14d29e346f5a");
+        // The same slice header with a first_mb_in_slice of 90 in front of
+        // it, which is how the second slice of a 1440-wide picture starts.
+        let mut later = vec![0x21, 0x00, 0x5a];
+        later.extend_from_slice(&opening[1..]);
+        let one = annexb(&[&opening, &later]);
+        assert!(is_field_picture(
+            &one,
+            "h264",
+            NalFraming::AnnexB,
+            Some(&shape)
+        ));
+        // Two pictures in one packet are a frame's worth between them.
+        let two = annexb(&[&opening, &opening]);
+        assert!(!is_field_picture(
+            &two,
+            "h264",
+            NalFraming::AnnexB,
+            Some(&shape)
+        ));
+    }
+
+    /// Whatever a damaged recording hands over, an answer comes back rather
+    /// than a panic or a loop -- and a picture nothing could be read from is
+    /// a whole frame, which is what every recording before the recorder's
+    /// own was.
+    #[test]
+    fn refuses_a_picture_it_cannot_read() {
+        assert!(field_shape("h264", &[], NalFraming::AnnexB).is_none());
+        assert!(field_shape("h264", &[0xff; 64], NalFraming::AnnexB).is_none());
+        let mut header =
+            sps("27640028ac2ca50168111f7ff800200018800001f480007530742000206c80001036651b5805");
+        let shape = field_shape("h264", &annexb(&[&header]), NalFraming::AnnexB).unwrap();
+        while header.pop().is_some() {
+            // every prefix of a real one, none of which may hang
+            let _ = field_shape("h264", &annexb(&[&header]), NalFraming::AnnexB);
+        }
+        let mut slice = sps("2188a7de14d29e346f5a");
+        while slice.pop().is_some() {
+            let _ = is_field_picture(&annexb(&[&slice]), "h264", NalFraming::AnnexB, Some(&shape));
+        }
+        // And with nothing read from the sequence, no picture is a field.
+        assert!(!is_field_picture(
+            &annexb(&[&sps("2188a7de14d29e346f5a")]),
+            "h264",
+            NalFraming::AnnexB,
+            None
+        ));
+    }
+
+    /// Each codec's pictures are read by their own header. An MPEG-4 Part 2
+    /// B-VOP is not referenced, and its I-VOP carrying a video object start
+    /// code is; an MPEG-1 picture is read like an MPEG-2 one, where the H.264
+    /// rule took its first slice (`00 00 01 01`) for a non-reference NAL; and
+    /// a codec with no NALs is not read as if it had them.
+    #[test]
+    fn each_codec_is_asked_about_its_own_pictures() {
+        let none = NalFraming::AnnexB;
+        let vop = |kind: u8| vec![0, 0, 1, 0xB6, kind << 6, 0x12, 0x34];
+        assert!(is_reference(&vop(0), "mpeg4", none, None));
+        assert!(is_reference(&vop(1), "mpeg4", none, None));
+        assert!(!is_reference(&vop(2), "mpeg4", none, None));
+        let mut keyed = vec![0, 0, 1, 0x00, 0, 0, 1, 0x20, 0x08, 0xC8];
+        keyed.extend(vop(0));
+        assert!(is_reference(&keyed, "mpeg4", none, None));
+        // temporal_reference 0, picture_coding_type 1 (I) then 3 (B)
+        let picture = |kind: u8| vec![0, 0, 1, 0x00, 0x00, kind << 3, 0xFF, 0xF8, 0, 0, 1, 0x01, 0x12];
+        assert!(is_reference(&picture(1), "mpeg1video", none, None));
+        assert!(!is_reference(&picture(3), "mpeg1video", none, None));
+        assert!(is_reference(&[0x82, 0x49, 0x83, 0, 0, 1, 0x01, 0x00], "vp9", none, None));
+    }
+
+    #[test]
+    fn dolby_vision_comes_out_of_either_framing() {
+        // A trailing picture, its RPU, and one enhancement-layer NAL.
+        let slice = [0x02, 0x01, 0xAA, 0xBB];
+        let rpu = [0x7C, 0x01, 0x19, 0x08];
+        let el = [0x7E, 0x01, 0x02, 0x01, 0xCC];
+        let mut annexb = Vec::new();
+        for nal in [&slice[..], &el, &rpu] {
+            annexb.extend_from_slice(&[0, 0, 0, 1]);
+            annexb.extend_from_slice(nal);
+        }
+        let mut want = vec![0, 0, 0, 1];
+        want.extend_from_slice(&slice);
+        assert_eq!(strip_dolby_vision(&annexb, NalFraming::AnnexB), Some(want));
+        let lengths = annexb_to_length(&annexb, 4).unwrap();
+        assert_eq!(
+            strip_dolby_vision(&lengths, NalFraming::Length(4)),
+            Some(annexb_to_length(&[0, 0, 0, 1, 0x02, 0x01, 0xAA, 0xBB], 4).unwrap())
+        );
+        // Nothing to take out is not a rewrite.
+        assert_eq!(strip_dolby_vision(&annexb[..8], NalFraming::AnnexB), None);
+    }
+}
+
+/// What an MPEG-2 sequence header says the stream's rate and buffer are.
+///
+/// Two fields, in the units the header counts them in: the rate in 400 bit/s,
+/// and the buffer a decoder needs in 16384-bit units. Returned as they are
+/// written rather than converted, because what they are for is being written
+/// back unchanged.
+///
+/// **A re-encoded picture has to say the same thing as the copied ones beside
+/// it.** libavcodec fills both from the rate control it was given, and given
+/// none it writes the value that means "unspecified": all eighteen bits set,
+/// which reads as 104.857 Mbit/s. A stream carrying that beside a
+/// broadcast's own 20 Mbit/s is a stream with two different answers in it,
+/// and a tool that reads the second one refuses the file -- which is what
+/// `ビットレート（サポートしていません）` is. See `cut::signalling_of`.
+///
+/// ```text
+///   00 00 01 B3   the sequence header start code
+///   12 bits       horizontal size
+///   12 bits       vertical size
+///    4 bits       aspect ratio
+///    4 bits       frame rate code
+///   18 bits       bit rate, in 400 bit/s
+///    1 bit        marker
+///   10 bits       vbv buffer size, in 16384 bits
+/// ```
+pub fn mpeg2_rate(data: &[u8]) -> Option<(u32, u32)> {
+    let at = data
+        .windows(4)
+        .position(|w| w == [0x00, 0x00, 0x01, 0xB3])?;
+    let h = data.get(at + 4..at + 12)?;
+    let rate = (u32::from(h[4]) << 10) | (u32::from(h[5]) << 2) | (u32::from(h[6]) >> 6);
+    let vbv = ((u32::from(h[6]) & 0x1F) << 5) | (u32::from(h[7]) >> 3);
+    // All ones is the header saying it does not know, which is no more use
+    // to copy than it was to write.
+    (rate != 0 && rate != 0x3_FFFF).then_some((rate, vbv))
+}

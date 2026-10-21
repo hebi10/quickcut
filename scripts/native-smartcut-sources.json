@@ -1,0 +1,28 @@
+{
+  "ffmpeg": {
+    "version": "7.1.5",
+    "directory": "ffmpeg-7.1.5",
+    "archive": "ffmpeg-7.1.5.tar.xz",
+    "url": "https://ffmpeg.org/releases/ffmpeg-7.1.5.tar.xz",
+    "sha256": "de668509caf9e35e3cd162473441fdb29538c6d96ed080292b3cf9e6fc5d558f"
+  },
+  "x264": {
+    "commit": "b35605ace3ddf7c1a5d67a2eb553f034aef41d55",
+    "directory": "x264-b35605ace3ddf7c1a5d67a2eb553f034aef41d55",
+    "archive": "x264-b35605ace3ddf7c1a5d67a2eb553f034aef41d55.tar.gz",
+    "url": "https://code.videolan.org/videolan/x264/-/archive/b35605ace3ddf7c1a5d67a2eb553f034aef41d55/x264-b35605ace3ddf7c1a5d67a2eb553f034aef41d55.tar.gz",
+    "sha256": "cd71a7515b0e9a012e1ac9b1f8415bebcaf6fc97d4db32286642ac4c0fbe24f9"
+  },
+  "toolchains": {
+    "ndk": "27.3.13750724",
+    "rust": "1.98.0",
+    "androidApi": 29
+  },
+  "x265": {
+    "version": "4.1",
+    "directory": "x265_4.1",
+    "archive": "x265_4.1.tar.gz",
+    "url": "https://download.videolan.org/pub/videolan/x265/x265_4.1.tar.gz",
+    "sha256": "a31699c6a89806b74b0151e5e6a7df65de4b49050482fe5ebf8a4379d7af8f29"
+  }
+}

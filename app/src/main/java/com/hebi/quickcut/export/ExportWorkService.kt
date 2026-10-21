@@ -36,11 +36,12 @@ class ExportWorkService : Service() {
         val id = intent?.getStringExtra(WORK_ID)
         if (intent?.action == CANCEL) {
             ExportWorkMonitor.cancel(id)
+            stopIfIdle()
             return START_NOT_STICKY
         }
         val state = ExportWorkMonitor.status.value
         if (id == null || state?.id != id) {
-            if (workId == null) stopSelf(startId)
+            stopIfIdle()
             return START_NOT_STICKY
         }
         workId = id
@@ -60,9 +61,7 @@ class ExportWorkService : Service() {
             observation = scope.launch {
                 ExportWorkMonitor.status.collectLatest { latest ->
                     if (latest == null) {
-                        releaseWakeLock()
-                        stopForeground(STOP_FOREGROUND_REMOVE)
-                        stopSelf(startId)
+                        stopIfIdle()
                     } else {
                         getSystemService(NotificationManager::class.java)
                             .notify(NOTIFICATION_ID, notification(latest))
@@ -93,6 +92,16 @@ class ExportWorkService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    private fun stopIfIdle() {
+        // Commands can advance Android's startId without starting a new export.
+        // Recheck the live lease on Main so a queued new export stays protected.
+        if (ExportWorkMonitor.status.value != null) return
+        workId = null
+        releaseWakeLock()
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+    }
 
     private fun releaseWakeLock() {
         wakeLock?.let { if (it.isHeld) it.release() }
@@ -127,3 +136,4 @@ class ExportWorkService : Service() {
         private const val CANCEL = "com.hebi.quickcut.CANCEL_EXPORT"
     }
 }
+

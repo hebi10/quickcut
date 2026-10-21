@@ -1,0 +1,108 @@
+{
+  "repository": "https://android.googlesource.com/platform/frameworks/support",
+  "androidx": {
+    "androidx.activity:1.13.0": {
+      "commit": "475afe04599ffc0893939effda40187916c4ceb0",
+      "releasePage": "activity"
+    },
+    "androidx.lifecycle:2.10.0": {
+      "commit": "ee621bea3237b1eab3c48eef4cf7ef7c7943b4bb",
+      "releasePage": "lifecycle"
+    },
+    "androidx.compose.ui:1.11.4": {
+      "commit": "854220f44ea8ea80fee824a6c5a045f39bede289",
+      "releasePage": "compose-ui"
+    },
+    "androidx.compose.foundation:1.11.4": {
+      "commit": "854220f44ea8ea80fee824a6c5a045f39bede289",
+      "releasePage": "compose-foundation"
+    },
+    "androidx.compose.runtime:1.11.4": {
+      "commit": "854220f44ea8ea80fee824a6c5a045f39bede289",
+      "releasePage": "compose-runtime"
+    },
+    "androidx.compose.material3:1.4.0": {
+      "commit": "5113b82a4ed6416d6344efa50e41db8cb65928ff",
+      "releasePage": "compose-material3"
+    },
+    "androidx.compose.material:1.7.8": {
+      "commit": "215cdfd8cb9c0762dd0347c383250644057c367f",
+      "releasePage": "compose-material"
+    },
+    "androidx.core:1.18.0": {
+      "commit": "d0311626e34d3399038ccd85c9ea91f7297de350",
+      "releasePage": "core"
+    },
+    "androidx.savedstate:1.4.0": {
+      "commit": "56090e32a2b7028588a6dd0c73d706c6dd8dd1ee",
+      "releasePage": "savedstate"
+    },
+    "androidx.window:1.5.0": {
+      "commit": "3b3f055fe2da3f4a8a74003f8640b461b1694954",
+      "releasePage": "window"
+    },
+    "androidx.annotation:annotation-experimental:1.4.1": {
+      "commit": "cb993e8594b035615bb12e0cb8294769eb7c10d1",
+      "releasePage": "annotation",
+      "releaseAnchor": "annotation-experimental-1.4.1"
+    },
+    "androidx.autofill:1.0.0": {
+      "commit": "34328d238b2999f231e824d2a9149acdbe3d5c00",
+      "releasePage": "autofill"
+    },
+    "androidx.customview:customview-poolingcontainer:1.0.0": {
+      "commit": "1e0793130863c72dc4a2d02bc975128f3ef0158b",
+      "releasePage": "customview",
+      "releaseAnchor": "customview-poolingcontainer-1.0.0"
+    },
+    "androidx.emoji2:1.4.0": {
+      "commit": "2d25c5e925564cf1f52fb6d2f88088d2dd5becfe",
+      "releasePage": "emoji2"
+    },
+    "androidx.exifinterface:1.3.6": {
+      "commit": "00bc5313008ea35c4c78635d300238697527b76b",
+      "releasePage": "exifinterface"
+    },
+    "androidx.graphics:graphics-path:1.0.1": {
+      "commit": "8a05a22af450d589ef911d772a001a49dcb05b71",
+      "releasePage": "graphics",
+      "releaseAnchor": "graphics-path-1.0.1"
+    },
+    "androidx.navigationevent:1.0.0": {
+      "commit": "a336be7aa59aced2a87c402849988939d848fee3",
+      "releasePage": "navigationevent"
+    },
+    "androidx.profileinstaller:1.4.0": {
+      "commit": "3bc0fb3beaccef509bb170cd69ddaad907b493b8",
+      "releasePage": "profileinstaller"
+    },
+    "androidx.recyclerview:1.3.0": {
+      "commit": "86bf1b167c3ff33791a75eb42b0c8f056eaeab3e",
+      "releasePage": "recyclerview",
+      "releaseAnchor": "recyclerview-1.3.0"
+    },
+    "androidx.startup:1.1.1": {
+      "commit": "8337e0c05174a73ea6db825b680f461c33144bf4",
+      "releasePage": "startup"
+    },
+    "androidx.tracing:1.2.0": {
+      "commit": "538750227118fd2cca14f4de7df81bace1f50dd3",
+      "releasePage": "tracing"
+    },
+    "androidx.transition:1.6.0": {
+      "commit": "184a59d7780ba90e35570b93f6513724b08c2168",
+      "releasePage": "transition"
+    },
+    "androidx.versionedparcelable:1.1.1": {
+      "commit": "9fd278801e06c07a5d230fd7edbb97e16c322949",
+      "releasePage": "versionedparcelable"
+    }
+  },
+  "media3": {
+    "1.11.1": {
+      "repository": "https://github.com/androidx/media",
+      "commit": "8c6678b657ede1e7883fc164ef73ed483c7796c3",
+      "releaseTag": "1.11.1"
+    }
+  }
+}

@@ -181,6 +181,7 @@ fn append_set(out: &mut Vec<u8>, set: &[u8]) -> Result<()> {
 pub fn remux(input_path: &str, output_path: &str, display: &crate::display::Display, callbacks: &dyn Callbacks,
     frame_rate: f64) -> Result<u64> {
     let mut input = smartcut_core::input::open_local(input_path)?;
+    crate::decline::explain(crate::audio_config::validate(&input), crate::decline::Reason::AudioFormat)?;
     let video = input.streams().best(ff::media::Type::Video).context("missing video")?.index();
     let (width, original_sets) = configuration(&input, video)?;
     let mut sets = Sets::default();

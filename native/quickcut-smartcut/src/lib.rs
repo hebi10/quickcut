@@ -16,6 +16,7 @@ macro_rules! ensure_fast {
 }
 
 mod android;
+mod audio_config;
 mod avc1;
 mod avc_sps;
 mod duration;

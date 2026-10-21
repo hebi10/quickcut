@@ -9,7 +9,7 @@ enum class FastExportReason(val nativeCode: Long?, val explanation: String) {
     FRAME_RATE(5, "프레임 간격이 일정하지 않거나 속도 정보를 확인할 수 없거나 120fps를 넘습니다."),
     DIMENSIONS(6, "영상 크기를 확인할 수 없거나 가로·세로가 지원 범위인 8192픽셀을 넘습니다."),
     COLOR_FORMAT(7, "색상·밝기 정보의 조합이 고속 처리에서 지원하는 SDR·HDR10·HLG 범위와 다릅니다."),
-    AUDIO_FORMAT(8, "지원하지 않는 소리 형식이거나 소리 채널 수가 지원 범위인 1~8채널과 다릅니다."),
+    AUDIO_FORMAT(8, "소리 형식·채널 수·채널 배치가 고속 처리 지원 범위를 벗어납니다."),
     TRACK_LAYOUT(9, "영상·소리 트랙이 여러 개이거나 자막 등 추가 트랙이 있습니다."),
     SOURCE_DURATION(10, "원본 길이와 선택 구간의 끝을 정확히 일치시킬 수 없습니다."),
     CONTAINER(11, "파일 컨테이너가 부분 처리에서 지원하는 MP4가 아닙니다."),

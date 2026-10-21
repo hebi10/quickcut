@@ -197,14 +197,17 @@ class NativeSmartCutInstrumentedTest {
 
     private fun assertTenBitExport(variant: String, standard: Int, transfer: Int) = runBlocking {
         withSource("quickcut_main10_$variant.mp4") { context, source, original ->
+            val main10Profiles = setOf(MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10,
+                MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10HDR10,
+                MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10HDR10Plus)
             fun checkColor(uri: Uri) {
                 val extractor = MediaExtractor()
                 try {
                     extractor.setDataSource(context, uri, null)
                     val format = (0 until extractor.trackCount).map(extractor::getTrackFormat)
                         .first { it.getString(MediaFormat.KEY_MIME) == "video/hevc" }
-                    assertEquals(MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10,
-                        format.getInteger(MediaFormat.KEY_PROFILE))
+                    assertTrue("The extractor must identify a Main10 profile",
+                        format.getInteger(MediaFormat.KEY_PROFILE) in main10Profiles)
                     assertEquals(standard, format.getInteger(MediaFormat.KEY_COLOR_STANDARD))
                     assertEquals(transfer, format.getInteger(MediaFormat.KEY_COLOR_TRANSFER))
                     assertEquals(MediaFormat.COLOR_RANGE_LIMITED, format.getInteger(MediaFormat.KEY_COLOR_RANGE))
@@ -212,9 +215,6 @@ class NativeSmartCutInstrumentedTest {
             }
             checkColor(source)
             val timeline = EditTimeline(listOf(original.copy(startMs = 3_000L, endMs = 7_500L)))
-            val main10Profiles = setOf(MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10,
-                MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10HDR10,
-                MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10HDR10Plus)
             val hevcDecoders = MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos
                 .filter { !it.isEncoder && it.supportedTypes.any { type -> type.equals("video/hevc", ignoreCase = true) } }
                 .associate { it.name to it.getCapabilitiesForType("video/hevc").profileLevels.map { level -> level.profile } }

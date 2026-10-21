@@ -39,6 +39,7 @@ pub fn nals(data: &[u8], width: usize) -> Result<Vec<&[u8]>> {
 pub fn remux(input_path: &str, output_path: &str, display: &Display, callbacks: &dyn Callbacks,
     splices: &[i64], frame_rate: f64) -> Result<u64> {
     let mut input = smartcut_core::input::open_local(input_path)?;
+    explain(crate::audio_config::validate(&input), Reason::AudioFormat)?;
     let video = input.streams().best(ff::media::Type::Video).context("missing video")?.index();
     let parameters = input.stream(video).unwrap().parameters();
     let extradata = unsafe {

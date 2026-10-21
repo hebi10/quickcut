@@ -190,13 +190,16 @@ pub enum Subtitles {
 
 /// Actual video packets accepted by the muxer, rather than the planner's
 /// estimates. A progressive H.264 picture occupies one such packet.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CutStats {
     pub copied_video_packets: u64,
     pub encoded_video_packets: u64,
     pub skipped_video_packets: u64,
     pub damaged_video_packets: u64,
     pub audio_packets: u64,
+    /// Actual output presentation times of nonempty copied segments. These
+    /// follow the retained pictures' clock, including off-frame requested cuts.
+    pub copied_segment_starts_us: Vec<i64>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -9959,6 +9962,15 @@ fn cut_into(
             if holding {
                 writer.seal();
             }
+            if seg.kind == SegmentKind::Copy && span.pictures > 0 && display_base > 0 {
+                // Follow the same two clock conversions as the written packet;
+                // requested durations can differ from retained-frame spans.
+                let ticks = unsafe { ff::ffi::av_rescale_q(display_base * writer.field_ticks,
+                    writer.our_tb.into(), writer.out_tb.into()) };
+                let us = unsafe { ff::ffi::av_rescale_q(ticks, writer.out_tb.into(),
+                    ff::Rational::new(1, 1_000_000).into()) };
+                writer.stats.copied_segment_starts_us.push(us);
+            }
             display_base += span.fields;
             pictures += span.pictures;
         }
@@ -10272,7 +10284,7 @@ fn cut_into(
     // over this file, which Windows refuses to do while the file is open.
     // The writing pass's own reporter goes with it; what is left to report is
     // the tables, which have their own.
-    let mut stats = writer.stats;
+    let mut stats = std::mem::take(&mut writer.stats);
     stats.skipped_video_packets = writer.skipped as u64;
     stats.audio_packets = writer.audio.iter().map(|t| t.written as u64).sum();
     drop(writer.progress.take());

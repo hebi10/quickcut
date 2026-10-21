@@ -4,12 +4,12 @@ enum class FastExportReason(val nativeCode: Long?, val explanation: String) {
     UNKNOWN(0, "원인 확인 불가: 고속 처리 엔진이 구체적인 사유를 반환하지 않았습니다."),
     SOURCE_UNREADABLE(1, "원본 영상 정보를 끝까지 읽거나 분석하지 못했습니다."),
     VIDEO_CODEC(2, "영상 코덱이 고속 처리에서 지원하는 H.264·H.265가 아닙니다."),
-    PIXEL_FORMAT(3, "영상의 색상 표본 형식이 지원 범위인 8비트 4:2:0과 다릅니다."),
+    PIXEL_FORMAT(3, "영상의 색상 표본 형식이 지원 범위인 H.264 8비트·H.265 8/10비트 4:2:0과 다릅니다."),
     PICTURE_STRUCTURE(4, "인터레이스 영상이거나 프레임 구조를 확인할 수 없습니다."),
     FRAME_RATE(5, "프레임 간격이 일정하지 않거나 속도 정보를 확인할 수 없거나 120fps를 넘습니다."),
     DIMENSIONS(6, "영상 크기를 확인할 수 없거나 가로·세로가 지원 범위인 8192픽셀을 넘습니다."),
-    COLOR_FORMAT(7, "HDR·광색역 등 고속 처리에서 지원하지 않는 색상 정보가 있습니다."),
-    AUDIO_FORMAT(8, "소리 형식 또는 채널 구성이 지원 범위인 AAC 1~2채널과 다릅니다."),
+    COLOR_FORMAT(7, "색상·밝기 정보의 조합이 고속 처리에서 지원하는 SDR·HDR10·HLG 범위와 다릅니다."),
+    AUDIO_FORMAT(8, "지원하지 않는 소리 형식이거나 소리 채널 수가 지원 범위인 1~8채널과 다릅니다."),
     TRACK_LAYOUT(9, "영상·소리 트랙이 여러 개이거나 자막 등 추가 트랙이 있습니다."),
     SOURCE_DURATION(10, "원본 길이와 선택 구간의 끝을 정확히 일치시킬 수 없습니다."),
     CONTAINER(11, "파일 컨테이너가 부분 처리에서 지원하는 MP4가 아닙니다."),
@@ -36,6 +36,7 @@ enum class FastExportReason(val nativeCode: Long?, val explanation: String) {
     UNSAFE_START(null, "시작 지점 앞의 프레임이 재생 순서에 섞여 있어 해당 위치에서 복사할 수 없습니다."),
     REORDERED_END(null, "프레임의 저장·재생 순서가 달라 선택한 끝 지점까지 단순 복사할 수 없습니다."),
     AUDIO_CODEC(null, "소리 코덱이 원본 복사에서 지원하는 AAC가 아닙니다."),
+    COPY_COLOR_FORMAT(null, "원본 복사 경로에서 이 색상·밝기 정보를 보존할 수 없습니다."),
     ;
 
     companion object {
@@ -44,6 +45,9 @@ enum class FastExportReason(val nativeCode: Long?, val explanation: String) {
 
         fun fromStoredName(name: String?): FastExportReason? =
             name?.let { value -> entries.firstOrNull { it.name == value } ?: UNKNOWN }
+
+        fun fromCopyReasonName(name: String?): FastExportReason? =
+            if (name == "COLOR_FORMAT") COPY_COLOR_FORMAT else fromStoredName(name)
     }
 }
 

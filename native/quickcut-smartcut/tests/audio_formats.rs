@@ -13,6 +13,7 @@ const RATE: usize = 48_000;
 const EARLY_TONES: [u32; 6] = [320, 520, 720, 60, 920, 1120];
 const LATE_TONES: [u32; 6] = [440, 640, 840, 100, 1040, 1240];
 const SINGLE_RANGE: &[(i64, i64)] = &[(3_000_000, 7_500_000)];
+const REORDERED_RANGES: &[(i64, i64)] = &[(4_500_000, 8_000_000), (0, 3_000_000)];
 
 struct Observer;
 impl Callbacks for Observer {
@@ -49,7 +50,15 @@ fn fixture(path: &Path, encoder: &str, channels: usize, bit_rate: Option<&str>) 
         "0.2*sin(2*PI*if(lt(t,4),{},{})*t)",
         EARLY_TONES[channel], LATE_TONES[channel]
     )).collect::<Vec<_>>().join("|");
-    let layout = match channels { 1 => "mono", 2 => "stereo", 6 => "5.1(side)", _ => unreachable!() };
+    let layout = match channels {
+        1 => "mono",
+        2 => "stereo",
+        // AAC's standard six-channel configuration uses back surrounds.
+        // AC-3 and E-AC-3 retain their usual side-surround input layout.
+        6 if encoder == "aac" => "5.1",
+        6 => "5.1(side)",
+        _ => unreachable!(),
+    };
     let audio = format!(
         "aevalsrc=exprs='{tones}':sample_rate={RATE}:duration=8:channel_layout={layout}"
     );
@@ -61,6 +70,8 @@ fn fixture(path: &Path, encoder: &str, channels: usize, bit_rate: Option<&str>) 
             "-keyint_min", "60", "-sc_threshold", "0", "-bf", "2", "-x264-params",
             "open-gop=0", "-c:a", encoder]);
     if let Some(bit_rate) = bit_rate { command.args(["-b:a", bit_rate]); }
+    // FFmpeg 6 requires explicit opt-in for FLAC's MP4 sample entry.
+    if encoder == "flac" { command.args(["-strict", "-2"]); }
     run(command.args(["-movflags", "+faststart"]).arg(path));
 }
 
@@ -160,7 +171,10 @@ fn assert_audio_content(path: &Path, channels: usize, ranges: &[(i64, i64)]) {
 fn exercise(codec: &str, encoder: &str, channels: usize, bit_rate: Option<&str>,
     ranges: &[(i64, i64)]) {
     let directory = Directory::new(codec);
-    let source = directory.0.join("source.mp4");
+    // Use MOV's PCM sample entries without depending on version-specific
+    // MP4 PCM muxing support. Input still uses the MOV/MP4 demuxer.
+    let extension = if codec.starts_with("pcm_") { "mov" } else { "mp4" };
+    let source = directory.0.join(format!("source.{extension}"));
     let output = directory.0.join("cut.mp4");
     fixture(&source, encoder, channels, bit_rate);
     assert_audio_format(&source, codec, channels);
@@ -211,7 +225,7 @@ fn exercise(codec: &str, encoder: &str, channels: usize, bit_rate: Option<&str>,
 
 #[test]
 fn stereo_mp3_keeps_both_channels_and_reordered_audio_across_the_join() {
-    exercise("mp3", "libmp3lame", 2, Some("192k"), &[(4_500_000, 8_000_000), (0, 3_000_000)]);
+    exercise("mp3", "libmp3lame", 2, Some("192k"), REORDERED_RANGES);
 }
 
 #[test]
@@ -227,4 +241,28 @@ fn eac3_surround_becomes_aac_without_downmixing_or_reencoding_all_video() {
 #[test]
 fn lossless_alac_mono_becomes_aac_with_exact_picture_and_audio_bounds() {
     exercise("alac", "alac", 1, None, SINGLE_RANGE);
+}
+
+#[test]
+fn opus_and_flac_keep_stereo_audio_content_and_copied_video() {
+    for (codec, encoder, bit_rate, ranges) in [
+        // Revisit the opening after a later range to exercise Opus pre-skip
+        // and decoder state across an out-of-order audio join.
+        ("opus", "libopus", Some("192k"), REORDERED_RANGES),
+        ("flac", "flac", None, SINGLE_RANGE),
+    ] {
+        exercise(codec, encoder, 2, bit_rate, ranges);
+    }
+}
+
+#[test]
+fn little_endian_pcm_integer_widths_and_float_become_aac_without_reencoding_all_video() {
+    for codec in ["pcm_s16le", "pcm_s24le", "pcm_s32le", "pcm_f32le"] {
+        exercise(codec, codec, 2, None, SINGLE_RANGE);
+    }
+}
+
+#[test]
+fn aac_surround_keeps_all_six_channels_during_a_mixed_video_cut() {
+    exercise("aac", "aac", 6, Some("384k"), SINGLE_RANGE);
 }

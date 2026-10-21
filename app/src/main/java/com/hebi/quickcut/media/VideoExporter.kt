@@ -77,7 +77,7 @@ class VideoExporter(private val context: Context) {
             val plan = inspection.plan
             if (plan == null) {
                 diagnostics = diagnostics.copy(copyReason =
-                    FastExportReason.fromStoredName(inspection.reason?.name) ?: FastExportReason.UNKNOWN)
+                    FastExportReason.fromCopyReasonName(inspection.reason?.name) ?: FastExportReason.UNKNOWN)
                 showDiagnostics()
             }
             if (plan != null) {

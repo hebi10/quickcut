@@ -30,7 +30,7 @@ fn pictures(path: &std::path::Path) -> Vec<(i64, Vec<u8>)> {
 
 fn decoded_hashes(path: &std::path::Path) -> Vec<String> {
     let result = Command::new("ffmpeg").args(["-v", "error", "-xerror", "-i"])
-        .arg(path).args(["-map", "0:v:0", "-f", "framemd5", "-"]).output().unwrap();
+        .arg(path).args(["-map", "0:v:0", "-fps_mode", "passthrough", "-f", "framemd5", "-"]).output().unwrap();
     assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
     String::from_utf8(result.stdout).unwrap().lines().filter(|line| !line.starts_with('#'))
         .map(|line| line.rsplit(',').next().unwrap().trim().to_owned()).collect()
@@ -117,6 +117,45 @@ fn main_hevc_b_frames_copy_the_middle_and_decode_every_retained_picture() {
         &[(6_000_000, 8_000_000), (0, 2_000_000)], false, Arc::new(Observer)).unwrap();
     assert_eq!((copied.copied_video_packets, copied.encoded_video_packets), (120, 0));
     assert_eq!(decoded_hashes(&copy_output), expected);
+    let flagged_original = std::fs::read(&flagged).unwrap();
+    // At 30 fps, [3.01, 7.5) starts with source frame 91 and contains 134
+    // pictures. Its 29-frame encoded head places the copied GOP at frame 29
+    // (0.966667 s), although subtracting the requested bounds gives 0.99 s.
+    // Reversing and repeating the opening GOP also exercises actual flag
+    // repairs after those off-frame spans. Each [0, 2.02) retains 61 pictures.
+    for (name, ranges, copied, encoded, copied_spans) in [
+        ("off-frame-single", vec![(3_010_000, 7_500_000)], 60, 74,
+            vec![(29, 120)]),
+        ("off-frame-reversed-repeated", vec![(3_010_000, 7_500_000), (0, 2_020_000), (0, 2_020_000)],
+            180, 76, vec![(29, 120), (134, 0), (195, 0)]),
+    ] {
+        let off_frame_output = directory.join(format!("{name}.mp4"));
+        let _ = std::fs::remove_file(&off_frame_output);
+        let report = if ranges.len() == 1 {
+            cut(flagged.to_str().unwrap(), off_frame_output.to_str().unwrap(),
+                ranges[0].0, ranges[0].1, false, Arc::new(Observer))
+        } else {
+            cut_ranges(flagged.to_str().unwrap(), off_frame_output.to_str().unwrap(),
+                &ranges, false, Arc::new(Observer))
+        }.unwrap_or_else(|error| panic!("{name}: {error:#}"));
+        assert_eq!((report.copied_video_packets, report.encoded_video_packets), (copied, encoded), "{name}");
+        let expected_count = (copied + encoded) as usize;
+        let decoded = decoded_hashes(&off_frame_output);
+        assert_eq!(decoded.len(), expected_count, "{name}: every retained picture must decode");
+        let mut pts: Vec<_> = pictures(&off_frame_output).into_iter().map(|(pts, _)| pts).collect();
+        pts.sort_unstable();
+        assert_eq!(pts.len(), expected_count, "{name}: packet count must match decoded count");
+        for (frame, pts) in pts.into_iter().enumerate() {
+            let expected_pts = (frame as f64 * 1_000_000.0 / 30.0).round() as i64;
+            assert!((pts - expected_pts).abs() <= 2,
+                "{name}: frame {frame} has PTS {pts}, expected {expected_pts}");
+        }
+        for (output_at, source_at) in copied_spans {
+            assert_eq!(&decoded[output_at..output_at + 60], &original_pictures[source_at..source_at + 60],
+                "{name}: copied GOP at output frame {output_at} must match its source pictures");
+        }
+    }
+    assert_eq!(std::fs::read(&flagged).unwrap(), flagged_original);
     assert_eq!(std::fs::read(&source).unwrap(), original);
     std::fs::remove_dir_all(directory).unwrap();
 }

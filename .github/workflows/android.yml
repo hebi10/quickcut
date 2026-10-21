@@ -55,16 +55,7 @@ jobs:
             rm -rf build/native-smartcut/cargo-target
           fi
       - name: Build native smart-cut engine
-        run: |
-          cargo() {
-            if [[ " $* " == *" test "* ]]; then
-              command cargo "$@" --no-fail-fast
-            else
-              command cargo "$@"
-            fi
-          }
-          export -f cargo
-          bash scripts/build-native-smartcut.sh --host-tests
+        run: bash scripts/build-native-smartcut.sh --host-tests
       - name: Save native build cache
         if: success() && steps.native_cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4

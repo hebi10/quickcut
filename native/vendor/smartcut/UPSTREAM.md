@@ -20,3 +20,18 @@ from erasing repeated sound. HEVC boundary encodes use the fast preset, two work
 threads and one frame thread; only the adapter's checked SDR Main/8-bit inputs are
 enabled. Codec/rotation/date validation and final MP4 remuxing live in the JNI adapter
 and Kotlin exporter rather than changing upstream's general input promises.
+
+## 2026-10-21 broader audio and Main10 coverage
+
+The Android adapter explicitly requests AAC output for its supported input audio
+formats, preserving the source channel count rather than downmixing. The pinned
+x265 build combines its 8-bit and 10-bit static variants. The adapter accepts
+verified Main10 SDR/HDR10/HLG signalling; the existing upstream encoder receives
+the source frame's static mastering-display and content-light metadata. Unsupported
+dynamic or changing HDR metadata is declined before cutting. A final adapter-only
+HEVC remux may clear the prior-picture discard flag at a newly introduced IDR splice
+after checking all slice headers and the adjacent decoder configuration. It does
+not alter the first output picture or intact source IDRs.
+Cut statistics also expose actual copied-segment output times after retained-frame
+placement, so off-frame requested cuts do not misidentify a splice by using the
+requested duration instead of the written picture clock.

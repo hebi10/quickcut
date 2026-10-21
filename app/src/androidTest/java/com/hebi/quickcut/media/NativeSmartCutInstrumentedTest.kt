@@ -134,19 +134,99 @@ class NativeSmartCutInstrumentedTest {
     }
 
     @Test
-    fun hevcDiscardPriorPicturesAtAJoinUsesCompleteExactFallback() = runBlocking {
+    fun hevcDiscardPriorPicturesAtAJoinKeepsPartialProcessing() = runBlocking {
         withSource("quickcut_hevc_no_output.mp4") { context, source, original ->
             assertDecodedPictures(context, source, 240)
             val timeline = EditTimeline(listOf(original.copy(startMs = 6_000L, endMs = 8_000L),
                 original.copy(id = 2L, startMs = 0L, endMs = 3_000L)))
             withExport(context, timeline) { saved, report ->
-                assertEquals(ExportMethod.VIDEO_REENCODE, report.method)
+                assertEquals(ExportMethod.PARTIAL_REENCODE, report.method)
                 assertEquals(FastExportReason.MULTIPLE_CLIPS, report.diagnostics.copyReason)
-                assertEquals(FastExportReason.UNSAFE_SPLICE, report.diagnostics.smartCutReason)
+                assertEquals(null, report.diagnostics.smartCutReason)
                 assertDecodedPictures(context, saved, 150)
                 assertDurationAndAudio(context, saved, 5_000L)
+                for (time in listOf(0L, 1_966_667L, 2_000_000L, 3_966_667L, 4_966_667L)) {
+                    val sourceTime = if (time < 2_000_000L) time + 6_000_000L else time - 2_000_000L
+                    assertTrue(meanDifference(frame(context, source, sourceTime), frame(context, saved, time)) < 12.0)
+                }
             }
         }
+    }
+
+    @Test
+    fun stereoMp3ReencodesOnlySoundWhenVideoCanBeCopied() = runBlocking {
+        withSource("quickcut_mp3.mp4") { context, source, original ->
+            val timeline = EditTimeline(listOf(original.copy(startMs = 0L, endMs = 2_000L),
+                original.copy(id = 2L, startMs = 4_000L, endMs = 6_000L)))
+            withExport(context, timeline) { saved, report ->
+                assertEquals(ExportMethod.AUDIO_REENCODE, report.method)
+                assertAudioFormat(context, saved, 2)
+                assertMiddleCopied(context, source, saved, 0L, 2_000_000L, 0L, 1_000L)
+                assertMiddleCopied(context, source, saved, 4_000_000L, 6_000_000L, 2_000_000L, 1_000L)
+                assertDurationAndAudio(context, saved, 4_000L)
+                assertDecodedPictures(context, saved, 120)
+            }
+        }
+    }
+
+    @Test
+    fun ac3SurroundKeepsSixChannelsWithPartialVideoProcessing() = runBlocking {
+        withSource("quickcut_ac3.mp4") { context, source, original ->
+            withExport(context, EditTimeline(listOf(original.copy(startMs = 3_000L, endMs = 7_500L)))) { saved, report ->
+                assertEquals(ExportMethod.PARTIAL_REENCODE, report.method)
+                assertAudioFormat(context, saved, 6)
+                assertMiddleCopied(context, source, saved, 4_000_000L, 6_000_000L, 3_000_000L, 1_000L)
+                assertDurationAndAudio(context, saved, 4_500L)
+                assertDecodedPictures(context, saved, 135)
+            }
+        }
+    }
+
+    @Test
+    fun main10SdrUsesPartialProcessingAndPreservesColor() = assertTenBitExport("sdr", MediaFormat.COLOR_STANDARD_BT709, MediaFormat.COLOR_TRANSFER_SDR_VIDEO)
+
+    @Test
+    fun hdr10UsesPartialProcessingAndPreservesColor() = assertTenBitExport("pq", MediaFormat.COLOR_STANDARD_BT2020, MediaFormat.COLOR_TRANSFER_ST2084)
+
+    @Test
+    fun hlgUsesPartialProcessingAndPreservesColor() = assertTenBitExport("hlg", MediaFormat.COLOR_STANDARD_BT2020, MediaFormat.COLOR_TRANSFER_HLG)
+
+    private fun assertTenBitExport(variant: String, standard: Int, transfer: Int) = runBlocking {
+        withSource("quickcut_main10_$variant.mp4") { context, source, original ->
+            fun checkColor(uri: Uri) {
+                val extractor = MediaExtractor()
+                try {
+                    extractor.setDataSource(context, uri, null)
+                    val format = (0 until extractor.trackCount).map(extractor::getTrackFormat)
+                        .first { it.getString(MediaFormat.KEY_MIME) == "video/hevc" }
+                    assertEquals(standard, format.getInteger(MediaFormat.KEY_COLOR_STANDARD))
+                    assertEquals(transfer, format.getInteger(MediaFormat.KEY_COLOR_TRANSFER))
+                    assertEquals(MediaFormat.COLOR_RANGE_LIMITED, format.getInteger(MediaFormat.KEY_COLOR_RANGE))
+                } finally { extractor.release() }
+            }
+            checkColor(source)
+            withExport(context, EditTimeline(listOf(original.copy(startMs = 3_000L, endMs = 7_500L)))) { saved, report ->
+                assertEquals(ExportMethod.PARTIAL_REENCODE, report.method)
+                assertEquals(null, report.optimizationResult)
+                assertEquals(null, report.diagnostics.smartCutReason)
+                if (variant != "sdr") assertEquals(FastExportReason.COPY_COLOR_FORMAT, report.diagnostics.copyReason)
+                checkColor(saved)
+                assertMiddleCopied(context, source, saved, 4_000_000L, 6_000_000L, 3_000_000L, 1_000L)
+                assertDurationAndAudio(context, saved, 4_500L)
+                assertDecodedPictures(context, saved, 135)
+            }
+        }
+    }
+
+    private fun assertAudioFormat(context: Context, uri: Uri, channels: Int) {
+        val extractor = MediaExtractor()
+        try {
+            extractor.setDataSource(context, uri, null)
+            val format = (0 until extractor.trackCount).map(extractor::getTrackFormat)
+                .first { it.getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true }
+            assertEquals("audio/mp4a-latm", format.getString(MediaFormat.KEY_MIME))
+            assertEquals(channels, format.getInteger(MediaFormat.KEY_CHANNEL_COUNT))
+        } finally { extractor.release() }
     }
 
     @Test
@@ -410,7 +490,7 @@ class NativeSmartCutInstrumentedTest {
             }
             val uri = Uri.fromFile(file)
             val metadata = MediaReader.metadata(context, uri)
-            assertTrue("The source fixture must contain AAC", metadata.hasAudio)
+            assertTrue("The source fixture must contain audio", metadata.hasAudio)
             block(context, uri, VideoClip(1L, uri.toString(), metadata.durationMs,
                 hasAudio = metadata.hasAudio))
         } finally {

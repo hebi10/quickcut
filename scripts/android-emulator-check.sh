@@ -20,9 +20,9 @@ trap on_failure EXIT
 
 # An older version-code fixture uses this runner's same debug key. This checks
 # Android's update/data retention path, not compatibility with old distributed APKs.
-gradle --no-daemon -PquickcutTestVersionCode=11 :app:assembleDebug
+gradle --no-daemon -PquickcutTestVersionCode=12 :app:assembleDebug
 adb install -r -d app/build/outputs/apk/debug/app-debug.apk
-if [[ ! $(adb shell dumpsys package com.hebi.quickcut) =~ versionCode=11[[:space:]] ]]; then
+if [[ ! $(adb shell dumpsys package com.hebi.quickcut) =~ versionCode=12[[:space:]] ]]; then
   echo "::error::Older-version update fixture was not installed"
   exit 1
 fi
@@ -30,7 +30,7 @@ adb shell run-as com.hebi.quickcut mkdir -p files
 printf 'quickcut-update-data' | adb shell run-as com.hebi.quickcut sh -c '"cat > files/update-sentinel"'
 gradle --no-daemon :app:assembleDebug
 adb install -r app/build/outputs/apk/debug/app-debug.apk
-if [[ ! $(adb shell dumpsys package com.hebi.quickcut) =~ versionCode=12[[:space:]] ]]; then
+if [[ ! $(adb shell dumpsys package com.hebi.quickcut) =~ versionCode=13[[:space:]] ]]; then
   echo "::error::Update candidate was not installed"
   exit 1
 fi
@@ -132,6 +132,27 @@ while at < end:
 assert patched, 'HEVC fixture needs a first IDR'
 source.with_name('quickcut_hevc_no_output.mp4').write_bytes(data)
 PYHEVC
+
+ffmpeg -v error -y -i app/src/androidTest/assets/quickcut_bframes.mp4 \
+  -c:v copy -c:a libmp3lame -ac 2 -b:a 192k app/src/androidTest/assets/quickcut_mp3.mp4
+ffmpeg -v error -y -i app/src/androidTest/assets/quickcut_bframes.mp4 \
+  -c:v copy -c:a ac3 -ac 6 -ar 48000 -b:a 384k app/src/androidTest/assets/quickcut_ac3.mp4
+for hdr_variant in sdr pq hlg; do
+  hdr_primaries=bt2020
+  hdr_matrix=bt2020nc
+  hdr_extra=''
+  case "$hdr_variant" in
+    sdr) hdr_primaries=bt709; hdr_matrix=bt709; hdr_transfer=bt709 ;;
+    pq) hdr_transfer=smpte2084; hdr_extra=':master-display=G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L(10000000,50):max-cll=1000,400' ;;
+    hlg) hdr_transfer=arib-std-b67 ;;
+  esac
+  ffmpeg -v error -y -f lavfi -i 'testsrc2=size=320x240:rate=30' \
+    -f lavfi -i 'sine=frequency=660:sample_rate=44100' -t 8 \
+    -c:v libx265 -preset fast -pix_fmt yuv420p10le -color_range tv \
+    -color_primaries "$hdr_primaries" -colorspace "$hdr_matrix" -color_trc "$hdr_transfer" \
+    -x265-params "pools=1:frame-threads=1:keyint=60:min-keyint=60:scenecut=0:open-gop=0:bframes=2:log-level=error:repeat-headers=1$hdr_extra" \
+    -tag:v hvc1 -c:a aac -b:a 64k -shortest "app/src/androidTest/assets/quickcut_main10_$hdr_variant.mp4"
+done
 
 # Leading B-frames after an open-GOP sync sample must not be silently discarded.
 ffmpeg -hide_banner -loglevel error -y \

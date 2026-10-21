@@ -129,7 +129,7 @@ class BatchSessionStore(context: Context) {
                 optimizationResult = if (data.isNull("optimizationResult")) null
                     else data.getInt("optimizationResult"),
                 diagnostics = ExportDiagnostics(
-                    copyReason = FastExportReason.fromStoredName(
+                    copyReason = FastExportReason.fromCopyReasonName(
                         if (data.isNull("copyReason")) null else data.optString("copyReason")),
                     smartCutReason = FastExportReason.fromStoredName(
                         if (data.isNull("smartCutReason")) null else data.optString("smartCutReason")),

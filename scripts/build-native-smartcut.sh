@@ -68,7 +68,7 @@ build_dependencies() (
     return
   fi
   rm -rf "$build" "$prefix"
-  mkdir -p "$build/x264" "$build/x265" "$build/ffmpeg" "$prefix"
+  mkdir -p "$build/x264" "$build/x265" "$build/x265-10" "$build/ffmpeg" "$prefix"
   export PKG_CONFIG_PATH="$prefix/lib/pkgconfig" PKG_CONFIG_LIBDIR="$prefix/lib/pkgconfig" PKG_CONFIG_SYSROOT_DIR=""
   local cross_x264=() cross_ffmpeg=() cross_x265=()
   if [[ "$abi" == host ]]; then
@@ -90,11 +90,26 @@ build_dependencies() (
     --extra-ldflags="-Wl,-z,max-page-size=16384"
   make -j"$JOBS"
   make install
+  cmake -S "$X265_SOURCE/source" -B "$build/x265-10" "${cross_x265[@]}" \
+    -DCMAKE_BUILD_TYPE=Release -DENABLE_SHARED=OFF -DENABLE_CLI=OFF \
+    -DENABLE_LIBNUMA=OFF -DENABLE_PIC=ON -DENABLE_ASSEMBLY=OFF \
+    -DHIGH_BIT_DEPTH=ON -DEXPORT_C_API=OFF
+  cmake --build "$build/x265-10" --parallel "$JOBS"
+  cp "$build/x265-10/libx265.a" "$build/x265/libx265_main10.a"
   cmake -S "$X265_SOURCE/source" -B "$build/x265" "${cross_x265[@]}" \
     -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$prefix" \
     -DENABLE_SHARED=OFF -DENABLE_CLI=OFF -DENABLE_LIBNUMA=OFF -DENABLE_PIC=ON \
-    -DENABLE_ASSEMBLY=OFF -DHIGH_BIT_DEPTH=OFF -DEXPORT_C_API=ON
+    -DENABLE_ASSEMBLY=OFF -DHIGH_BIT_DEPTH=OFF -DEXPORT_C_API=ON \
+    -DLINKED_10BIT=ON -DEXTRA_LIB=x265_main10.a -DEXTRA_LINK_FLAGS="-L$build/x265"
   cmake --build "$build/x265" --parallel "$JOBS"
+  mv "$build/x265/libx265.a" "$build/x265/libx265_main.a"
+  "$AR" -M <<EOF
+CREATE $build/x265/libx265.a
+ADDLIB $build/x265/libx265_main.a
+ADDLIB $build/x265/libx265_main10.a
+SAVE
+END
+EOF
   cmake --install "$build/x265"
   if [[ "$abi" != host ]]; then
     # x265 is C++; Rust links through clang, so include the NDK's static C++
@@ -108,7 +123,8 @@ build_dependencies() (
     --enable-static --disable-shared --enable-pic --disable-programs --disable-doc --disable-debug \
     --disable-network --disable-autodetect --disable-everything --enable-gpl --enable-libx264 --enable-libx265 \
     --enable-protocol=file,pipe --enable-demuxer=mov --enable-muxer=mp4,mov \
-    --enable-decoder=h264,hevc,aac --enable-encoder=libx264,libx265,aac --enable-parser=h264,hevc,aac \
+    --enable-decoder=h264,hevc,aac,mp3,ac3,eac3,opus,flac,alac,pcm_s16le,pcm_s24le,pcm_s32le,pcm_f32le \
+    --enable-encoder=libx264,libx265,aac --enable-parser=h264,hevc,aac,mpegaudio,ac3,opus,flac \
     --enable-bsf=h264_mp4toannexb,hevc_mp4toannexb,aac_adtstoasc,extract_extradata --enable-filter=anull,aresample \
     --extra-cflags="-O2 -ffunction-sections -fdata-sections -I$prefix/include" \
     --extra-ldflags="-L$prefix/lib -Wl,-z,max-page-size=16384"
@@ -159,7 +175,7 @@ if [[ "$HOST_TESTS" == true ]]; then
     export PKG_CONFIG_ALL_STATIC=1 FFMPEG_STATIC=1 PKG_CONFIG_SYSROOT_DIR=""
     unset RUSTFLAGS
     export BINDGEN_EXTRA_CLANG_ARGS="-resource-dir=$TOOLCHAIN/lib/clang/18"
-    cargo +"$RUST_VERSION" test --manifest-path "$CRATE" --locked --release
+    cargo +"$RUST_VERSION" test --manifest-path "$CRATE" --locked --release --no-fail-fast
     cargo +"$RUST_VERSION" test --manifest-path "$CRATE" --locked --release -p smartcut-core --lib descriptor
   )
 fi

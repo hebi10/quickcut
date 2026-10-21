@@ -22,6 +22,7 @@ import com.hebi.quickcut.media.ExportMode
 import com.hebi.quickcut.media.MediaReader
 import com.hebi.quickcut.media.OutputCleanupException
 import com.hebi.quickcut.MainActivity
+import com.hebi.quickcut.export.ExportWorkMonitor
 import java.io.File
 import java.io.IOException
 import java.io.RandomAccessFile
@@ -67,8 +68,14 @@ class SingleExportRecoveryInstrumentedTest {
 
     @After fun restore() = runBlocking {
         withContext(Dispatchers.Main) {
-            models.forEach { ViewModelStore().apply { put("recovery", it) }.clear() }
+            models.forEach {
+                it.cancelExport()
+                ViewModelStore().apply { put("recovery", it) }.clear()
+            }
         }
+        // Cancellation can still be finishing non-cancellable publication/cleanup.
+        // Do not restore another test's journal while that work can write to it.
+        awaitExportIdle()
         outputs.forEach { runCatching { context.contentResolver.delete(it, null, null) } }
         oldSession?.let(session::save) ?: session.clear()
         oldExport?.let(journal::save) ?: journal.clear()
@@ -119,16 +126,16 @@ class SingleExportRecoveryInstrumentedTest {
                 assertEquals("최신 편집은 300ms 지연 없이 저장 전에 기록되어야 합니다", 2_000L,
                     session.load()!!.timeline.clips.single().endMs)
             }
-            withTimeout(60_000L) {
-                while (model.page == QuickCutPage.EXPORTING || model.isRecoveringExport) delay(25L)
+            awaitExportIdle()
+            withContext(Dispatchers.Main) {
+                model.completedUri?.let(outputs::add)
+                assertEquals(model.errorMessage, QuickCutPage.COMPLETED, model.page)
+                assertNotNull(model.completedUri)
+                assertNull(session.load())
+                assertNull(journal.load())
+                assertFalse(model.hasUnresolvedExport)
+                assertTrue(source.exists())
             }
-            model.completedUri?.let(outputs::add)
-            assertEquals(model.errorMessage, QuickCutPage.COMPLETED, model.page)
-            assertNotNull(model.completedUri)
-            assertNull(session.load())
-            assertNull(journal.load())
-            assertFalse(model.hasUnresolvedExport)
-            assertTrue(source.exists())
         }
     }
 
@@ -333,6 +340,14 @@ class SingleExportRecoveryInstrumentedTest {
         }.also(models::add)
         withTimeout(25_000L) { while (model.isRecoveringExport) delay(25L) }
         return model
+    }
+
+    private suspend fun awaitExportIdle() = withTimeout(60_000L) {
+        // COMPLETED is assigned before finishExport clears the persisted state.
+        // The monitor ends only after the exporter and its final cleanup return.
+        while (withContext(Dispatchers.Main) {
+            ExportWorkMonitor.isRunning || models.any { it.isRecoveringExport }
+        }) delay(25L)
     }
 
     private fun record(uri: Uri?) = SingleExportSnapshot(uri?.toString(), edit.timeline.totalDurationMs,

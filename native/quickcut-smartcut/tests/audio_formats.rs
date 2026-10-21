@@ -93,6 +93,32 @@ fn assert_audio_format(path: &Path, codec: &str, channels: usize) {
     }
 }
 
+fn assert_standard_aac_configuration(path: &Path, channels: usize) {
+    let input = ff::format::input(path).unwrap();
+    let audio = input.streams().best(ff::media::Type::Audio).unwrap();
+    let parameters = audio.parameters();
+    let config = unsafe {
+        let raw = parameters.as_ptr();
+        assert!(!(*raw).extradata.is_null() && (*raw).extradata_size >= 2,
+            "AAC output must include an AudioSpecificConfig");
+        std::slice::from_raw_parts((*raw).extradata, (*raw).extradata_size as usize)
+    };
+    assert_eq!(config[0] >> 3, 2, "output must use AAC-LC");
+    assert_eq!(((config[0] & 7) << 1) | (config[1] >> 7), 3,
+        "fixture output must retain the standard 48 kHz frequency index");
+    let expected_configuration = match channels {
+        1 => 1,
+        2 => 2,
+        6 => 6,
+        _ => unreachable!(),
+    };
+    // A side-surround PCE can still decode in FFmpeg while Android's AAC
+    // decoder rejects ConfigRaw before producing sound. Check the actual
+    // output header as well as decoded channel count and distinct tones.
+    assert_eq!((config[1] >> 3) & 15, expected_configuration,
+        "AAC output must use a standard channel configuration, not a PCE: {config:02x?}");
+}
+
 fn timing_diagnostics(path: &Path) -> String {
     let probe = run(Command::new("ffprobe").args(["-v", "error", "-select_streams", "v:0",
         "-show_entries", "packet=pts_time,dts_time,duration_time,flags:stream=time_base,start_time,duration_ts,duration,nb_frames,avg_frame_rate,r_frame_rate:format=start_time,duration",
@@ -241,6 +267,7 @@ fn exercise(codec: &str, encoder: &str, channels: usize, bit_rate: Option<&str>,
         "reported copies must retain the source VCL bytes at the selected timestamps");
     assert_audio_format(&output, "aac", channels);
     assert_audio_content(&output, channels, ranges);
+    assert_standard_aac_configuration(&output, channels);
     // Check duration last so a metadata mismatch cannot hide decoding,
     // unchanged-picture, channel-loss, or audio-join failures in CI.
     if duration_mismatch {

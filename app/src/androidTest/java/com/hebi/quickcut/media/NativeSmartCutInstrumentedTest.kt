@@ -5,12 +5,16 @@ import android.content.ContentValues
 import android.graphics.Color
 import android.media.AudioFormat
 import android.media.MediaCodec
+import android.media.MediaCodecInfo
+import android.media.MediaCodecList
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.provider.MediaStore
+import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.hebi.quickcut.editor.EditTimeline
@@ -199,22 +203,108 @@ class NativeSmartCutInstrumentedTest {
                     extractor.setDataSource(context, uri, null)
                     val format = (0 until extractor.trackCount).map(extractor::getTrackFormat)
                         .first { it.getString(MediaFormat.KEY_MIME) == "video/hevc" }
+                    assertEquals(MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10,
+                        format.getInteger(MediaFormat.KEY_PROFILE))
                     assertEquals(standard, format.getInteger(MediaFormat.KEY_COLOR_STANDARD))
                     assertEquals(transfer, format.getInteger(MediaFormat.KEY_COLOR_TRANSFER))
                     assertEquals(MediaFormat.COLOR_RANGE_LIMITED, format.getInteger(MediaFormat.KEY_COLOR_RANGE))
                 } finally { extractor.release() }
             }
             checkColor(source)
-            withExport(context, EditTimeline(listOf(original.copy(startMs = 3_000L, endMs = 7_500L)))) { saved, report ->
-                assertEquals(ExportMethod.PARTIAL_REENCODE, report.method)
-                assertEquals(null, report.optimizationResult)
-                assertEquals(null, report.diagnostics.smartCutReason)
-                if (variant != "sdr") assertEquals(FastExportReason.COPY_COLOR_FORMAT, report.diagnostics.copyReason)
-                checkColor(saved)
-                assertMiddleCopied(context, source, saved, 4_000_000L, 6_000_000L, 3_000_000L, 1_000L)
-                assertDurationAndAudio(context, saved, 4_500L)
-                assertDecodedPictures(context, saved, 135)
+            val timeline = EditTimeline(listOf(original.copy(startMs = 3_000L, endMs = 7_500L)))
+            val main10Profiles = setOf(MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10,
+                MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10HDR10,
+                MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10HDR10Plus)
+            val hevcDecoders = MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos
+                .filter { !it.isEncoder && it.supportedTypes.any { type -> type.equals("video/hevc", ignoreCase = true) } }
+                .associate { it.name to it.getCapabilitiesForType("video/hevc").profileLevels.map { level -> level.profile } }
+            val main10Decoders = hevcDecoders.filterValues { profiles -> profiles.any { it in main10Profiles } }
+            Log.i("QuickCutMain10Test", "$variant HEVC decoder profiles: $hevcDecoders")
+            if (main10Decoders.isNotEmpty()) {
+                withExport(context, timeline) { saved, report ->
+                    persistTenBitFixtures(context, variant, source, saved)
+                    assertEquals(ExportMethod.PARTIAL_REENCODE, report.method)
+                    assertEquals(null, report.optimizationResult)
+                    assertEquals(null, report.diagnostics.smartCutReason)
+                    if (variant != "sdr") assertEquals(FastExportReason.COPY_COLOR_FORMAT, report.diagnostics.copyReason)
+                    checkColor(saved)
+                    assertMiddleCopied(context, source, saved, 4_000_000L, 6_000_000L, 3_000_000L, 1_000L)
+                    assertDurationAndAudio(context, saved, 4_500L)
+                    assertDecodedPictures(context, saved, 135)
+                    Log.i("QuickCutMain10Test", "$variant passed full Android export and frame decoding")
+                }
+            } else {
+                // API 35's x86_64 emulator exposes only 8-bit HEVC decoders. Its
+                // rejection of Main10 source pictures is not an export failure.
+                // Exercise the packaged native engine and require the host gate
+                // to decode the actual Android artifacts saved below. This does
+                // not claim Android Main10 playback coverage on this device.
+                assertFalse("This path requires absent Main10 decoder capability: $hevcDecoders",
+                    hevcDecoders.values.flatten().any { it in main10Profiles })
+                val output = File(context.cacheDir, "main10_${variant}_${UUID.randomUUID()}.mp4")
+                var unavailable: FastExportReason? = null
+                try {
+                    val result = NativeSmartCutTrimmer.tryExport(context, timeline, output, {},
+                        onUnavailable = { unavailable = it })
+                    val counts = result ?: throw AssertionError("Native Main10 export declined: $unavailable")
+                    val saved = Uri.fromFile(output)
+                    persistTenBitFixtures(context, variant, source, saved)
+                    assertEquals(null, unavailable)
+                    assertEquals(60L, counts.copiedPackets)
+                    assertEquals(75L, counts.encodedPackets)
+                    checkColor(saved)
+                    assertMiddleCopied(context, source, saved, 4_000_000L, 6_000_000L, 3_000_000L, 1_000L)
+                    val samples = videoSamples(context, saved).sortedBy { it.timeUs }
+                    assertEquals("Every retained picture needs an output access unit", 135, samples.size)
+                    samples.forEachIndexed { index, sample ->
+                        assertTrue("Output access unit $index has unexpected PTS ${sample.timeUs}",
+                            abs(sample.timeUs - index * 1_000_000L / 30L) <= 1_000L)
+                    }
+                    val metadata = MediaReader.metadata(context, saved)
+                    assertTrue("Requested=4500ms, actual=${metadata.durationMs}ms",
+                        abs(metadata.durationMs - 4_500L) <= 34L)
+                    assertTrue("Native Main10 output must retain audio", metadata.hasAudio)
+                    assertAudibleContinuousAudio(context, saved, 4_500L, emptyMap())
+                    Log.i("QuickCutMain10Test", "$variant passed native export and extraction; " +
+                        "Main10 playback unavailable on this device; host decoding is required")
+                } finally {
+                    output.delete()
+                }
             }
+        }
+    }
+
+    /** Keep actual device outputs after Gradle uninstalls the tested application. */
+    private fun persistTenBitFixtures(context: Context, variant: String, source: Uri, output: Uri) {
+        require(variant in setOf("sdr", "pq", "hlg"))
+        val staging = File(requireNotNull(context.getExternalFilesDir(null)),
+            "main10_validation_${UUID.randomUUID()}")
+        assertTrue("External staging directory must be writable", staging.mkdirs())
+        fun shell(command: String): String {
+            val descriptor = InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand(command)
+            return ParcelFileDescriptor.AutoCloseInputStream(descriptor).bufferedReader().use { it.readText() }
+        }
+        try {
+            shell("mkdir -p /data/local/tmp/quickcut-main10")
+            for ((kind, uri) in listOf("source" to source, "output" to output)) {
+                val staged = File(staging, "$variant-$kind.mp4")
+                checkNotNull(context.contentResolver.openInputStream(uri)).use { input ->
+                    staged.outputStream().use { input.copyTo(it) }
+                }
+                assertTrue("The preserved fixture must contain media bytes", staged.length() > 0L)
+                // Generated paths contain no shell syntax or whitespace. The
+                // shell cannot read the application's private cache directory.
+                require(staged.absolutePath.matches(Regex("[A-Za-z0-9_./-]+")))
+                val destination = "/data/local/tmp/quickcut-main10/${staged.name}"
+                shell("cp ${staged.absolutePath} $destination")
+                val expectedHash = MessageDigest.getInstance("SHA-256").digest(staged.readBytes())
+                    .joinToString("") { "%02x".format(it.toInt() and 0xff) }
+                val actualHash = shell("sha256sum $destination").trim().substringBefore(' ')
+                assertEquals("The host decoder requires the complete actual Android fixture: $destination",
+                    expectedHash, actualHash)
+            }
+        } finally {
+            staging.deleteRecursively()
         }
     }
 

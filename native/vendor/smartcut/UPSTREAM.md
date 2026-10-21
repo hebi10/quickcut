@@ -24,8 +24,12 @@ and Kotlin exporter rather than changing upstream's general input promises.
 ## 2026-10-21 broader audio and Main10 coverage
 
 The Android adapter explicitly requests AAC output for its supported input audio
-formats, preserving the source channel count rather than downmixing. The pinned
-x265 build combines its 8-bit and 10-bit static variants. The adapter accepts
+formats, preserving the source channel count rather than downmixing. The
+whole-track AAC encoder maps an exact side-surround 5.1 input to AAC's standard
+six-channel arrangement, retaining every channel while avoiding a PCE rejected
+by Android's AAC decoder. AAC encoders advertising small-last-frame support are
+fed the actual final sample count so MP4 duration excludes codec padding.
+The pinned x265 build combines its 8-bit and 10-bit static variants. The adapter accepts
 verified Main10 SDR/HDR10/HLG signalling; the existing upstream encoder receives
 the source frame's static mastering-display and content-light metadata. Unsupported
 dynamic or changing HDR metadata is declined before cutting. A final adapter-only

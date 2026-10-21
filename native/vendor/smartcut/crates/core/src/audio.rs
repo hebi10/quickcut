@@ -738,7 +738,8 @@ pub struct Reencoder {
     /// Whether the last frame may be short of the rest. A lossless encoder's
     /// may (FLAC's, ALAC's), and a lossless track padded up to a whole block
     /// ended in up to 4096 samples of silence the recording never had: a
-    /// `.flac` up to 0.09 s too long.
+    /// `.flac` up to 0.09 s too long. AAC also accepts a short input frame;
+    /// its packet duration excludes the padding in the coded frame.
     short_last: bool,
     /// How the encoder wants its channels arranged, which is not always the
     /// arrangement libav hands back as the default for that many. See
@@ -771,7 +772,19 @@ impl Reencoder {
         let like = like.unwrap_or_else(|| sample_format(&params));
         // The track's own arrangement where it keeps its count; a fold
         // goes to the plain one for the count it folds to.
-        let keep = layout_of(&params).filter(|l| l.channels() == channels as i32);
+        let keep = layout_of(&params).filter(|l| l.channels() == channels as i32).map(|layout| {
+            // AAC's standard six-channel configuration names back surrounds.
+            // Keeping AC-3's side layout requires a PCE that Android can
+            // reject during decoder setup. For a whole-track AAC encode,
+            // conform maps that surround pair one-for-one and keeps all six
+            // channels. Other layouts and boundary patches keep their own
+            // arrangement.
+            if target == ff::codec::Id::AAC && layout == ff::channel_layout::ChannelLayout::_5POINT1 {
+                ff::channel_layout::ChannelLayout::_5POINT1_BACK
+            } else {
+                layout
+            }
+        });
         let encoder = open_encoder(target, like, rate, channels, keep.as_ref(), bit_rate, false)?;
         let frame_size = frame_size_of(&encoder);
         let enc_format = encoder.format();
@@ -779,13 +792,17 @@ impl Reencoder {
         // Every lossless encoder that takes a short last frame, not FLAC's
         // alone: ALAC frames 4096 samples at a time, and a re-encoded .mov
         // ended in up to 85 ms of silence the recording never had.
+        // AAC needs the actual tail length too: padding its input to 1024
+        // makes MP4 present that padding, while a short input frame lets
+        // the encoder report the retained samples in the packet duration.
         let short_last = unsafe {
             let codec = (*encoder.as_ptr()).codec;
             let desc = ff::ffi::avcodec_descriptor_get(target.into());
             !codec.is_null()
                 && (*codec).capabilities & ff::ffi::AV_CODEC_CAP_SMALL_LAST_FRAME as i32 != 0
                 && !desc.is_null()
-                && (*desc).props & ff::ffi::AV_CODEC_PROP_LOSSLESS != 0
+                && (target == ff::codec::Id::AAC
+                    || (*desc).props & ff::ffi::AV_CODEC_PROP_LOSSLESS != 0)
         };
         let layout = encoder.channel_layout();
         // What the encoder settled on, which is the rate asked for wherever
@@ -1329,7 +1346,7 @@ impl Reencoder {
         Ok(())
     }
 
-    /// Finish: pad the tail to a whole frame and flush the encoder.
+    /// Finish with a short tail where supported, otherwise pad, then flush.
     pub fn finish(&mut self, out: &mut Vec<(ff::Packet, i64)>) -> Result<()> {
         // Everything still on the input side, and then the resampler's own
         // tail after it -- in that order, or the last few milliseconds of

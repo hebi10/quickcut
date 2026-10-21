@@ -7,6 +7,7 @@ on:
       - ".github/workflows/emulator-smoke.yml"
       - "scripts/android-emulator-check.sh"
       - "scripts/test-emulator-failure.py"
+      - "scripts/verify-android-main10.py"
       - "scripts/build-native-smartcut.sh"
       - "scripts/native-smartcut-sources.json"
       - "native/**"
@@ -25,6 +26,7 @@ on:
       - ".github/workflows/emulator-smoke.yml"
       - "scripts/android-emulator-check.sh"
       - "scripts/test-emulator-failure.py"
+      - "scripts/verify-android-main10.py"
       - "scripts/build-native-smartcut.sh"
       - "scripts/native-smartcut-sources.json"
       - "native/**"
@@ -156,6 +158,15 @@ jobs:
         with:
           name: quickcut-native-diagnostics
           path: quickcut-native-diagnostics/
+          if-no-files-found: ignore
+      - name: Upload Android Main10 decoding evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quickcut-android-main10
+          path: |
+            quickcut-main10-preflight/
+            quickcut-main10-full/
           if-no-files-found: ignore
 
 

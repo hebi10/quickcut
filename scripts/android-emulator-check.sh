@@ -39,7 +39,7 @@ if [ "$(adb shell run-as com.hebi.quickcut cat files/update-sentinel | tr -d '\r
   exit 1
 fi
 adb shell run-as com.hebi.quickcut rm files/update-sentinel
-echo "Same-signature version-code 11 to 12 update retained application data"
+echo "Same-signature version-code 12 to 13 update retained application data"
 adb shell am force-stop com.google.android.apps.nexuslauncher
 adb shell am start -W -n com.hebi.quickcut/.MainActivity
 sleep 3
@@ -196,12 +196,20 @@ rm -rf "$fixture_work"
 
 # Run the native boundary checks first to collect focused failures quickly.
 # The unfiltered suite below remains mandatory after this preflight succeeds.
+adb shell rm -rf /data/local/tmp/quickcut-main10
 gradle --no-daemon :app:connectedDebugAndroidTest \
   -Pandroid.testInstrumentationRunnerArguments.class=com.hebi.quickcut.media.NativeSmartCutInstrumentedTest
+rm -rf quickcut-main10-preflight
+adb pull /data/local/tmp/quickcut-main10 quickcut-main10-preflight
+python3 scripts/verify-android-main10.py quickcut-main10-preflight
 # Remove preflight results so an up-to-date task or stale XML cannot satisfy the
 # full-suite gate. Only generated instrumentation output is removed.
 rm -rf app/build/outputs/androidTest-results/connected
+adb shell rm -rf /data/local/tmp/quickcut-main10
 gradle --no-daemon :app:connectedDebugAndroidTest
+rm -rf quickcut-main10-full
+adb pull /data/local/tmp/quickcut-main10 quickcut-main10-full
+python3 scripts/verify-android-main10.py quickcut-main10-full
 python3 - <<'PYCODE'
 from pathlib import Path
 import xml.etree.ElementTree as ET

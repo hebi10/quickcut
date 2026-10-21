@@ -37,7 +37,13 @@ impl Directory {
     }
 }
 impl Drop for Directory {
-    fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); }
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            eprintln!("retained failed long-source fixture: {}", self.0.display());
+        } else {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
 }
 
 fn run(command: &mut Command) -> Output {
@@ -45,6 +51,17 @@ fn run(command: &mut Command) -> Output {
     assert!(output.status.success(), "{command:?} failed: {}",
         String::from_utf8_lossy(&output.stderr));
     output
+}
+
+fn timing_diagnostics(path: &Path) -> String {
+    let probe = run(Command::new("ffprobe").args(["-v", "error", "-select_streams", "v:0",
+        "-show_entries", "packet=pts_time,dts_time,duration_time,flags:stream=time_base,start_time,duration_ts,duration,nb_frames,avg_frame_rate,r_frame_rate:format=start_time,duration",
+        "-of", "compact"]).arg(path));
+    let text = String::from_utf8(probe.stdout).unwrap();
+    let lines: Vec<_> = text.lines().collect();
+    format!("{}\n{}\n...\n{}", path.display(),
+        lines.iter().take(4).copied().collect::<Vec<_>>().join("\n"),
+        lines.iter().skip(lines.len().saturating_sub(12)).copied().collect::<Vec<_>>().join("\n"))
 }
 
 fn fingerprint(path: &Path) -> (u64, u64) {
@@ -127,9 +144,14 @@ fn three_hour_source_keeps_long_timestamps_and_smart_cuts_near_the_end() {
     assert_eq!(result_media.nb_streams(), 1);
     let video = result_media.streams().best(ff::media::Type::Video).unwrap();
     let video_duration_us = (video.duration() as f64 * f64::from(video.time_base()) * 1_000_000.0).round() as i64;
-    assert!((video_duration_us - DURATION_US).abs() <= 1);
-    assert!((result_media.duration() - DURATION_US).abs() <= 1_000);
+    let movie_duration_us = result_media.duration();
     drop(result_media);
+    let duration_mismatch = (video_duration_us - DURATION_US).abs() > 1
+        || (movie_duration_us - DURATION_US).abs() > 1_000;
+    if duration_mismatch {
+        eprintln!("long-source duration diagnostic: video={video_duration_us}, movie={movie_duration_us}, expected={DURATION_US} us\n{}",
+            timing_diagnostics(&output));
+    }
     let decoded = run(Command::new("ffmpeg").args(["-v", "error", "-xerror", "-i"])
         .arg(&output).args(["-map", "0:v:0", "-fps_mode", "passthrough", "-pix_fmt",
             "yuv420p", "-f", "rawvideo", "-"]));
@@ -146,4 +168,11 @@ fn three_hour_source_keeps_long_timestamps_and_smart_cuts_near_the_end() {
     ).count();
     assert_eq!(actual_copies as u64, report.copied_video_packets,
         "copied VCL payloads must match the source at its original three-hour timestamps");
+    if duration_mismatch {
+        eprintln!("long source: all 45 pictures decoded and all {actual_copies} copied VCL payloads matched");
+    }
+    assert!((video_duration_us - DURATION_US).abs() <= 1,
+        "video duration changed: {video_duration_us} instead of {DURATION_US} us");
+    assert!((movie_duration_us - DURATION_US).abs() <= 1_000,
+        "movie duration changed: {movie_duration_us} instead of {DURATION_US} us");
 }

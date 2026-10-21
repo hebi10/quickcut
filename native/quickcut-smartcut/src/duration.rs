@@ -1,9 +1,25 @@
-//! Recognize Android's AAC priming-inclusive whole-file duration. This is not
+//! Preserve frame presentation duration during remux, and recognize Android's
+//! AAC priming-inclusive whole-file duration. The latter is not
 //! an overshoot tolerance: only the actual mdhd value, explained by a normal
 //! single-entry AAC edit, is accepted. The requested trim plan stays unchanged.
 use anyhow::{ensure, Context, Result};
 use ffmpeg_next as ff;
 use smartcut_core::{input::Demux, Source};
+
+/// The core's MP4 uses a field-resolution time base. FFmpeg's parser can then
+/// report one field as the duration of a progressive frame, even when PTS/DTS
+/// and the original MP4 duration are correct. Our caller has verified CFR, so
+/// retain a full picture duration when remuxing without changing either clock.
+pub(crate) fn picture_ticks(frame_rate: f64, time_base: ff::Rational) -> Result<i64> {
+    ensure!(frame_rate.is_finite() && frame_rate > 0.0, "invalid picture rate");
+    let rate = ff::Rational::from(frame_rate).reduce();
+    ensure!(rate.0 > 0 && rate.1 > 0 && time_base.0 > 0 && time_base.1 > 0,
+        "invalid picture clock");
+    let ticks = unsafe { ff::ffi::av_rescale_q(1,
+        ff::Rational::new(rate.1, rate.0).into(), time_base.into()) };
+    ensure!(ticks > 0, "picture duration is below the output clock resolution");
+    Ok(ticks)
+}
 
 #[derive(Clone, Copy)]
 struct Atom { kind: [u8; 4], data: i64, end: i64 }

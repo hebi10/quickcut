@@ -33,7 +33,13 @@ impl Directory {
     }
 }
 impl Drop for Directory {
-    fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); }
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            eprintln!("retained failed audio fixture: {}", self.0.display());
+        } else {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
 }
 
 fn run(command: &mut Command) -> Output {
@@ -85,6 +91,17 @@ fn assert_audio_format(path: &Path, codec: &str, channels: usize) {
         assert!(text.lines().any(|line| line == expected),
             "{} must contain {expected}: {text}", path.display());
     }
+}
+
+fn timing_diagnostics(path: &Path) -> String {
+    let probe = run(Command::new("ffprobe").args(["-v", "error", "-select_streams", "v:0",
+        "-show_entries", "packet=pts_time,dts_time,duration_time,flags:stream=time_base,start_time,duration_ts,duration,nb_frames,avg_frame_rate,r_frame_rate:format=start_time,duration",
+        "-of", "compact"]).arg(path));
+    let text = String::from_utf8(probe.stdout).unwrap();
+    let lines: Vec<_> = text.lines().collect();
+    format!("{}\n{}\n...\n{}", path.display(),
+        lines.iter().take(4).copied().collect::<Vec<_>>().join("\n"),
+        lines.iter().skip(lines.len().saturating_sub(12)).copied().collect::<Vec<_>>().join("\n"))
 }
 
 fn video_pictures(path: &Path) -> Vec<(i64, Vec<u8>)> {
@@ -198,11 +215,14 @@ fn exercise(codec: &str, encoder: &str, channels: usize, bit_rate: Option<&str>,
     assert_eq!(input.nb_streams(), 2, "keep exactly one video and one audio track");
     let video = input.streams().best(ff::media::Type::Video).unwrap();
     let video_duration_us = (video.duration() as f64 * f64::from(video.time_base()) * 1_000_000.0).round() as i64;
-    assert!((video_duration_us - duration_us).abs() <= 1,
-        "video duration changed: {video_duration_us} instead of {duration_us} us");
-    assert!((input.duration() - duration_us).abs() <= 1_000,
-        "movie duration must match the requested ranges to the MP4 millisecond clock");
+    let movie_duration_us = input.duration();
     drop(input);
+    let duration_mismatch = (video_duration_us - duration_us).abs() > 1
+        || (movie_duration_us - duration_us).abs() > 1_000;
+    if duration_mismatch {
+        eprintln!("{codec} duration diagnostic: video={video_duration_us}, movie={movie_duration_us}, expected={duration_us} us\n{}",
+            timing_diagnostics(&output));
+    }
 
     let decoded = run(Command::new("ffmpeg").args(["-v", "error", "-xerror", "-i"])
         .arg(&output).args(["-map", "0:v:0", "-fps_mode", "passthrough", "-pix_fmt",
@@ -221,6 +241,15 @@ fn exercise(codec: &str, encoder: &str, channels: usize, bit_rate: Option<&str>,
         "reported copies must retain the source VCL bytes at the selected timestamps");
     assert_audio_format(&output, "aac", channels);
     assert_audio_content(&output, channels, ranges);
+    // Check duration last so a metadata mismatch cannot hide decoding,
+    // unchanged-picture, channel-loss, or audio-join failures in CI.
+    if duration_mismatch {
+        eprintln!("{codec}: all {expected_pictures} pictures decoded, {actual_copies} copied VCL payloads matched, and all {channels} audio channels passed sample-count and tone checks");
+    }
+    assert!((video_duration_us - duration_us).abs() <= 1,
+        "video duration changed: {video_duration_us} instead of {duration_us} us");
+    assert!((movie_duration_us - duration_us).abs() <= 1_000,
+        "movie duration changed: {movie_duration_us} instead of {duration_us} us");
 }
 
 #[test]

@@ -303,9 +303,10 @@ pub fn cut_ranges(input: &str, output: &str, ranges: &[(i64, i64)], muted: bool,
         ensure_fast!(stats.copied_video_packets + stats.encoded_video_packets == expected, OutputValidation, "retained picture count changed");
         let final_video_packets = if source.video.codec == "hevc" {
             explain(hevc::remux(&intermediate_path, output, &display, callbacks.as_ref(),
-                &stats.copied_segment_starts_us), Reason::OutputValidation)?
+                &stats.copied_segment_starts_us, source.video.frame_rate), Reason::OutputValidation)?
         } else {
-            explain(avc1::remux(&intermediate_path, output, &display, callbacks.as_ref()), Reason::OutputValidation)?
+            explain(avc1::remux(&intermediate_path, output, &display, callbacks.as_ref(),
+                source.video.frame_rate), Reason::OutputValidation)?
         };
         ensure_fast!(final_video_packets == expected, OutputValidation, "final remux changed the retained picture count");
         ensure_fast!(!smartcut_core::input::reads_failed(), SourceUnreadable, "input read failed");

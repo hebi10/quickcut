@@ -37,7 +37,7 @@ pub fn nals(data: &[u8], width: usize) -> Result<Vec<&[u8]>> {
 }
 
 pub fn remux(input_path: &str, output_path: &str, display: &Display, callbacks: &dyn Callbacks,
-    splices: &[i64]) -> Result<u64> {
+    splices: &[i64], frame_rate: f64) -> Result<u64> {
     let mut input = smartcut_core::input::open_local(input_path)?;
     let video = input.streams().best(ff::media::Type::Video).context("missing video")?.index();
     let parameters = input.stream(video).unwrap().parameters();
@@ -63,6 +63,7 @@ pub fn remux(input_path: &str, output_path: &str, display: &Display, callbacks: 
         if stream.index() == video { display.apply(&mut out)?; }
     }
     output.write_header()?;
+    let picture_ticks = crate::duration::picture_ticks(frame_rate, output.stream(video).unwrap().time_base())?;
     let mut count = 0;
     loop {
         ensure!(!callbacks.is_cancelled(), "cancelled");
@@ -77,6 +78,7 @@ pub fn remux(input_path: &str, output_path: &str, display: &Display, callbacks: 
             if let Some(index) = matched { pending.remove(index); }
         }
         packet.rescale_ts(time_bases[stream], output.stream(stream).unwrap().time_base());
+        if stream == video { packet.set_duration(picture_ticks); }
         packet.set_position(-1);
         packet.write_interleaved(&mut output)?;
         if stream == video { count += 1; }

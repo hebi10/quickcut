@@ -178,7 +178,8 @@ fn append_set(out: &mut Vec<u8>, set: &[u8]) -> Result<()> {
     Ok(())
 }
 
-pub fn remux(input_path: &str, output_path: &str, display: &crate::display::Display, callbacks: &dyn Callbacks) -> Result<u64> {
+pub fn remux(input_path: &str, output_path: &str, display: &crate::display::Display, callbacks: &dyn Callbacks,
+    frame_rate: f64) -> Result<u64> {
     let mut input = smartcut_core::input::open_local(input_path)?;
     let video = input.streams().best(ff::media::Type::Video).context("missing video")?.index();
     let (width, original_sets) = configuration(&input, video)?;
@@ -223,6 +224,7 @@ pub fn remux(input_path: &str, output_path: &str, display: &crate::display::Disp
         }
     }
     output.write_header()?;
+    let picture_ticks = crate::duration::picture_ticks(frame_rate, output.stream(video).unwrap().time_base())?;
     let mut written = 0;
     let mut video_written = 0u64;
     loop {
@@ -245,6 +247,7 @@ pub fn remux(input_path: &str, output_path: &str, display: &crate::display::Disp
             packet = stripped;
         }
         packet.rescale_ts(input_time_bases[stream], output.stream(stream).unwrap().time_base());
+        if stream == video { packet.set_duration(picture_ticks); }
         packet.set_position(-1);
         packet.write_interleaved(&mut output)?;
         if stream == video { video_written += 1; }

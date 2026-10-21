@@ -93,17 +93,27 @@ def main():
             assert run["head_sha"] == HEAD
             assert run["status"] == "completed" and run["conclusion"] == "success"
         assert api("git/commits/" + HEAD)["tree"]["sha"] == TREE
-        existing_response = subprocess.run(
-            ["gh", "api", "repos/" + REPO + "/releases/tags/" + TAG],
-            capture_output=True, text=True)
-        if existing_response.returncode == 0:
-            initial = json.loads(existing_response.stdout)
-        else:
-            assert "HTTP 404" in existing_response.stderr, "Could not inspect release state"
+        # The tag endpoint cannot resolve an unpublished draft: no tag exists yet.
+        # List releases as the authenticated publisher so a retry reuses the draft.
+        def find_release():
+            matches = []
+            page = 1
+            while True:
+                releases = api("releases?per_page=100&page=" + str(page))
+                matches.extend(release for release in releases if release["tag_name"] == TAG)
+                if len(releases) < 100:
+                    break
+                page += 1
+            assert len(matches) <= 1, "Multiple releases use this tag"
+            return matches[0] if matches else None
+
+        initial = find_release()
+        if initial is None:
             gh("release", "create", TAG, "--repo", REPO, "--draft",
                "--target", HEAD, "--title", "QuickCut v0.4.7",
                "--notes-file", HERE / "release-notes.md")
-            initial = api("releases/tags/" + TAG)
+            initial = find_release()
+            assert initial is not None, "Created draft could not be retrieved"
         release_id = initial["id"]
         existing = verify_release(initial)
         assert initial["draft"] or set(existing) == set(FILES)

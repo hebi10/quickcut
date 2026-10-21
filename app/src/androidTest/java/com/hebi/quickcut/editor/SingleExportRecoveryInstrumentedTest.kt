@@ -24,6 +24,7 @@ import com.hebi.quickcut.media.OutputCleanupException
 import com.hebi.quickcut.MainActivity
 import java.io.File
 import java.io.IOException
+import java.io.RandomAccessFile
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -149,8 +150,7 @@ class SingleExportRecoveryInstrumentedTest {
     }
 
     @Test fun invalidPublishedOutputIsRetainedAndBlocksAnotherExport() = runBlocking {
-        val uri = createOutput(published = false)
-        context.contentResolver.update(uri, ContentValues().apply { put(MediaStore.Video.Media.IS_PENDING, 0) }, null, null)
+        val uri = createUnverifiablePublishedOutput()
         val saved = record(uri)
         journal.save(saved)
         val model = restartedModel()
@@ -164,8 +164,7 @@ class SingleExportRecoveryInstrumentedTest {
     }
 
     @Test fun retryRecoveryAfterUserRemovesUnverifiableOutputKeepsEditingAvailable() = runBlocking {
-        val uri = createOutput(published = false)
-        context.contentResolver.update(uri, ContentValues().apply { put(MediaStore.Video.Media.IS_PENDING, 0) }, null, null)
+        val uri = createUnverifiablePublishedOutput()
         journal.save(record(uri))
         val model = restartedModel()
         assertTrue(model.hasUnresolvedExport)
@@ -339,7 +338,7 @@ class SingleExportRecoveryInstrumentedTest {
     private fun record(uri: Uri?) = SingleExportSnapshot(uri?.toString(), edit.timeline.totalDurationMs,
         edit.timeline.clips.any { !it.muted && it.hasAudio })
 
-    private fun createOutput(published: Boolean): Uri {
+    private fun createOutput(published: Boolean, contents: File = source): Uri {
         val uri = requireNotNull(context.contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
             ContentValues().apply {
                 put(MediaStore.Video.Media.DISPLAY_NAME, "QuickCut_recovery_test_${System.nanoTime()}.mp4")
@@ -349,11 +348,63 @@ class SingleExportRecoveryInstrumentedTest {
             }))
         outputs.add(uri)
         if (published) {
-            context.contentResolver.openOutputStream(uri)!!.use { sink -> source.inputStream().use { it.copyTo(sink) } }
+            context.contentResolver.openOutputStream(uri)!!.use { sink -> contents.inputStream().use { it.copyTo(sink) } }
             assertEquals(1, context.contentResolver.update(uri,
                 ContentValues().apply { put(MediaStore.Video.Media.IS_PENDING, 0) }, null, null))
         }
         return uri
+    }
+
+    private fun createUnverifiablePublishedOutput(): Uri {
+        val damaged = File.createTempFile("single_export_damaged_samples", ".mp4", context.cacheDir)
+        try {
+            source.copyTo(damaged, overwrite = true)
+            // Publishing a row without a backing file makes MediaStore remove it.
+            // Keep a real, indexed MP4 container and damage only its media samples.
+            RandomAccessFile(damaged, "rw").use { mp4 ->
+                var position = 0L
+                var erased = false
+                while (position + 8L <= mp4.length()) {
+                    mp4.seek(position)
+                    val shortSize = mp4.readInt().toLong() and 0xffff_ffffL
+                    val type = ByteArray(4).also(mp4::readFully).toString(Charsets.US_ASCII)
+                    val headerSize = if (shortSize == 1L) 16L else 8L
+                    val size = when (shortSize) {
+                        0L -> mp4.length() - position
+                        1L -> mp4.readLong()
+                        else -> shortSize
+                    }
+                    check(size >= headerSize && size <= mp4.length() - position)
+                    if (type == "mdat") {
+                        mp4.seek(position + headerSize)
+                        var remaining = size - headerSize
+                        val zeros = ByteArray(64 * 1024)
+                        while (remaining > 0L) {
+                            val count = minOf(remaining, zeros.size.toLong()).toInt()
+                            mp4.write(zeros, 0, count)
+                            remaining -= count
+                        }
+                        erased = true
+                    }
+                    position += size
+                }
+                check(erased) { "Fixture must contain media samples" }
+            }
+            val uri = createOutput(published = true, contents = damaged)
+            context.contentResolver.query(uri, arrayOf(MediaStore.Video.Media.IS_PENDING), null, null, null)!!.use {
+                assertTrue("Damaged output must remain an indexed video before recovery", it.moveToFirst())
+                assertEquals("Fixture must already be published", 0, it.getInt(0))
+            }
+            val saved = record(uri)
+            assertEquals("Container metadata must remain readable", saved.expectedDurationMs,
+                MediaReader.metadata(context, uri).durationMs)
+            assertNotNull("Damaged samples must fail validation before recovery starts", runCatching {
+                MediaReader.validateExport(context, uri, saved.expectedDurationMs, saved.expectedAudio)
+            }.exceptionOrNull())
+            return uri
+        } finally {
+            damaged.delete()
+        }
     }
 
     private fun exists(uri: Uri): Boolean = context.contentResolver.query(uri,

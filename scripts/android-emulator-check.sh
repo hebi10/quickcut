@@ -204,7 +204,8 @@ rm -rf "$fixture_work"
 # Run the native boundary checks first to collect focused failures quickly.
 # The unfiltered suite below remains mandatory after this preflight succeeds.
 adb shell rm -rf /data/local/tmp/quickcut-main10
-gradle --no-daemon :app:connectedDebugAndroidTest \
+# A wedged emulator codec must fail with collected test logs, not hold the runner indefinitely.
+timeout --kill-after=30s 10m gradle --no-daemon :app:connectedDebugAndroidTest \
   -Pandroid.testInstrumentationRunnerArguments.class=com.hebi.quickcut.media.NativeSmartCutInstrumentedTest
 rm -rf quickcut-main10-preflight
 adb pull /data/local/tmp/quickcut-main10 quickcut-main10-preflight
@@ -213,7 +214,7 @@ python3 scripts/verify-android-main10.py quickcut-main10-preflight
 # full-suite gate. Only generated instrumentation output is removed.
 rm -rf app/build/outputs/androidTest-results/connected
 adb shell rm -rf /data/local/tmp/quickcut-main10
-gradle --no-daemon :app:connectedDebugAndroidTest
+timeout --kill-after=30s 15m gradle --no-daemon :app:connectedDebugAndroidTest
 rm -rf quickcut-main10-full
 adb pull /data/local/tmp/quickcut-main10 quickcut-main10-full
 python3 scripts/verify-android-main10.py quickcut-main10-full
@@ -235,8 +236,8 @@ for report in sorted(results.rglob('TEST-*.xml')):
         if any(case.find(field) is not None for field in ('failure', 'error', 'skipped')):
             raise SystemExit(f'Full instrumentation test did not pass: {key}')
         cases.add(key)
-if len(cases) < 99:
-    raise SystemExit(f'Expected at least 99 distinct full-suite tests, found {len(cases)}')
+if len(cases) < 152:
+    raise SystemExit(f'Expected at least 152 distinct full-suite tests, found {len(cases)}')
 print(f'Full instrumentation suite verified: {len(cases)} distinct tests, no failures, errors, or skips')
 PYCODE
 # UiAutomation may return no bitmap. This optional review image must not turn

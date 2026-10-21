@@ -51,7 +51,7 @@ class FastCutExportInstrumentedTest {
         }
     }
 
-    @Test fun fractionalKeyframeConsentPreservesExactPacketAndMedia3Coordinates() = runBlocking {
+    @Test fun fractionalKeyframeConsentPreservesExactPacketAndMedia3Coordinates(): Unit = runBlocking {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
         val file = File(context.cacheDir, "fractional-review-source.mp4")

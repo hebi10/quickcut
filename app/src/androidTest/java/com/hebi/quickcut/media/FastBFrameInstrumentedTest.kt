@@ -171,12 +171,12 @@ class FastBFrameInstrumentedTest {
         }
     }
 
-    private fun digest(file: File): String = MessageDigest.getInstance("SHA-256")
+    internal fun digest(file: File): String = MessageDigest.getInstance("SHA-256")
         .digest(file.readBytes()).joinToString("") { "%02x".format(it.toInt() and 0xff) }
 
-    private data class Sample(val timeUs: Long, val flags: Int, val digest: String)
+    internal data class Sample(val timeUs: Long, val flags: Int, val digest: String)
 
-    private fun samples(file: File, mimePrefix: String, seekUs: Long? = null): List<Sample> {
+    internal fun samples(file: File, mimePrefix: String, seekUs: Long? = null): List<Sample> {
         val extractor = MediaExtractor()
         return try {
             extractor.setDataSource(file.absolutePath)
@@ -202,7 +202,7 @@ class FastBFrameInstrumentedTest {
         }
     }
 
-    private fun assertCopiedSamples(source: List<Sample>, output: List<Sample>, startUs: Long) {
+    internal fun assertCopiedSamples(source: List<Sample>, output: List<Sample>, startUs: Long) {
         assertTrue("Fixture must have retained samples", source.isNotEmpty())
         assertEquals("Every retained packet, including the final B-frame, must survive", source.size, output.size)
         source.zip(output).forEachIndexed { index, (before, after) ->

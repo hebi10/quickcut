@@ -1,6 +1,7 @@
 package com.hebi.quickcut.media
 
 import android.content.Context
+import android.os.Build
 import android.util.Log
 import androidx.annotation.OptIn
 import androidx.media3.common.ColorInfo
@@ -46,8 +47,14 @@ internal fun softwareVideoAssetLoaderFactory(context: Context): AssetLoader.Fact
     val decoder = DefaultDecoderFactory.Builder(context)
         .setMediaCodecSelector { mime, secure, tunneling ->
             val available = MediaCodecSelector.DEFAULT.getDecoderInfos(mime, secure, tunneling)
-            if (mime.startsWith("video/")) available.filter { it.softwareOnly }.also { software ->
-                Log.i("QuickCutExport", "exact_retry_video_mime=$mime software_candidates=" +
+            if (mime.startsWith("video/")) available.filter {
+                isSoftwareVideoDecoder(Build.VERSION.SDK_INT, it.name, it.softwareOnly,
+                    it.hardwareAccelerated, it.vendor)
+            }.also { software ->
+                Log.i("QuickCutExport", "exact_retry_video_mime=$mime candidates=" +
+                    available.joinToString(",", limit = 16) {
+                        "${it.name}[software=${it.softwareOnly},hardware=${it.hardwareAccelerated},vendor=${it.vendor}]"
+                    } + " software_candidates=" +
                     software.joinToString(",") { it.name })
             } else available
         }

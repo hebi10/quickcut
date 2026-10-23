@@ -7,6 +7,8 @@ on:
       - ".github/workflows/emulator-smoke.yml"
       - "scripts/android-emulator-check.sh"
       - "scripts/test-emulator-failure.py"
+      - "scripts/test-emulator-flow.py"
+      - "scripts/android-instrumentation-check.sh"
       - "scripts/verify-android-main10.py"
       - "scripts/build-native-smartcut.sh"
       - "scripts/native-smartcut-sources.json"
@@ -26,6 +28,8 @@ on:
       - ".github/workflows/emulator-smoke.yml"
       - "scripts/android-emulator-check.sh"
       - "scripts/test-emulator-failure.py"
+      - "scripts/test-emulator-flow.py"
+      - "scripts/android-instrumentation-check.sh"
       - "scripts/verify-android-main10.py"
       - "scripts/build-native-smartcut.sh"
       - "scripts/native-smartcut-sources.json"
@@ -51,6 +55,10 @@ jobs:
   emulator:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [29, 35, 36]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v5
@@ -72,15 +80,18 @@ jobs:
           sudo apt-get clean
           echo "Available disk after cleanup:"
           df -h /
-      - name: Install test-video encoder
+      - name: Install native build tools and test-video encoder
+        timeout-minutes: 10
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y ffmpeg
-      - name: Install native build tools
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y cmake nasm pkg-config
-          sdkmanager --install "ndk;27.3.13750724"
+          # A slow streaming Azure mirror can exceed the step limit without an APT timeout.
+          # Keep the runner's existing signed Ubuntu sources and official HTTPS fallbacks.
+          if [[ -f /etc/apt/apt-mirrors.txt ]] && grep -q '^https://archive\.ubuntu\.com/ubuntu/' /etc/apt/apt-mirrors.txt; then
+            sudo sed -i '\|^http://azure\.archive\.ubuntu\.com/ubuntu/[[:space:]]*priority:1$|d' /etc/apt/apt-mirrors.txt
+          fi
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update -qq
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends cmake nasm pkg-config ffmpeg
+      - name: Install Android NDK
+        run: sdkmanager --install "ndk;27.3.13750724"
       - name: Restore native build cache
         id: native_cache
         uses: actions/cache/restore@v4
@@ -119,12 +130,15 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-      - name: Validate bounded failure diagnostics
-        run: python3 scripts/test-emulator-failure.py
-      - name: Launch QuickCut on API 35 emulator
+      - name: Validate bounded diagnostics and instrumentation control flow
+        run: |
+          bash -n scripts/android-emulator-check.sh scripts/android-instrumentation-check.sh
+          python3 scripts/test-emulator-failure.py
+          python3 scripts/test-emulator-flow.py
+      - name: Launch QuickCut on API ${{ matrix.api }} emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 35
+          api-level: ${{ matrix.api }}
           target: google_apis
           arch: x86_64
           profile: pixel_6
@@ -139,7 +153,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: quickcut-emulator-start
+          name: quickcut-emulator-start-api-${{ matrix.api }}
           path: |
             quickcut-start.png
             quickcut-tablet-start.png
@@ -149,21 +163,28 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: quickcut-instrumentation-results
+          name: quickcut-instrumentation-results-api-${{ matrix.api }}
           path: app/build/outputs/androidTest-results/connected/
+          if-no-files-found: ignore
+      - name: Upload native preflight results separately
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quickcut-native-preflight-results-api-${{ matrix.api }}
+          path: quickcut-native-preflight-results/
           if-no-files-found: ignore
       - name: Upload native failure diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: quickcut-native-diagnostics
+          name: quickcut-native-diagnostics-api-${{ matrix.api }}
           path: quickcut-native-diagnostics/
           if-no-files-found: ignore
       - name: Upload Android Main10 decoding evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: quickcut-android-main10
+          name: quickcut-android-main10-api-${{ matrix.api }}
           path: |
             quickcut-main10-preflight/
             quickcut-main10-full/

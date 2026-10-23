@@ -96,6 +96,16 @@ fn supported_sps_profile(nal: &[u8]) -> bool {
     nal.len() >= 4 && matches!(nal[1], 66 | 77 | 100)
 }
 
+/// Validate the same fixed decoder configuration that the final remux writes.
+/// Copying does not require spare IDs or a boundary-encoder reference buffer.
+pub(crate) fn validate_configuration(input: &ff::format::context::Input, video: usize) -> Result<()> {
+    let (_, original) = configuration(input, video)?;
+    let mut sets = Sets::default();
+    for nal in original { sets.add(&nal)?; }
+    sets.avcc()?;
+    Ok(())
+}
+
 pub fn unused_ids(path: &str, count: usize) -> Result<(Vec<u8>, u32)> {
     let input = smartcut_core::input::open_local(path)?;
     let video = input.streams().best(ff::media::Type::Video).context("missing video")?.index();
@@ -107,6 +117,9 @@ pub fn unused_ids(path: &str, count: usize) -> Result<(Vec<u8>, u32)> {
         "unsupported source AVC profile requires the exact fallback");
     let source_config = crate::avc_sps::DecoderConfig::read(
         sets.iter().find(|s| s[0] & 31 == 7).unwrap())?;
+    // A zero-reference SPS is valid for copying all-intra pictures. x264's
+    // boundary encoder needs reference storage and cannot splice into it.
+    ensure!(source_config.references > 0, "zero-reference SPS requires copy-only processing");
     let mut used = BTreeSet::new();
     let mut sps_count = 0;
     for set in sets {

@@ -23,4 +23,13 @@ class ExportDiagnosticFactsTest {
         assertFalse(text.contains("secret"))
         assertFalse(text.contains("password"))
     }
+    @Test fun unavailableOptionalMetadataCannotSuppressTheCompletedDiagnostic() {
+        val sanitized = ExportDiagnosticFacts("0.4.10", "Device", 36, 1, 1000, 1000000, 1,
+            videoMime = "content://private/secret.mp4", width = -1, frameRate = Double.NaN).sanitized()
+        assertTrue(sanitized.isValid())
+        assertNull(sanitized.videoMime)
+        assertNull(sanitized.width)
+        assertNull(sanitized.frameRate)
+    }
+
 }

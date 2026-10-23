@@ -26,7 +26,7 @@ class EmulatorFailureDiagnosticsTest(unittest.TestCase):
                 '  [ "$DIAGNOSTIC_DEVICE_STATE" != offline ] || exit 1\n'
                 "  echo device\n  exit 0\nfi\n"
                 'if [ "$DIAGNOSTIC_DEVICE_STATE" = online ]; then\n'
-                "  echo diagnostic-output\n  exit 0\nfi\n"
+                "  echo diagnostic-output \"$*\"\n  exit 0\nfi\n"
                 "exec sleep 60\n",
                 encoding="utf-8",
             )
@@ -51,7 +51,9 @@ class EmulatorFailureDiagnosticsTest(unittest.TestCase):
         self.run_failure("offline", 3)
 
     def test_available_diagnostics_keep_the_original_failure_status(self):
-        self.assertIn("diagnostic-output", self.run_failure("online", 3))
+        output = self.run_failure("online", 3)
+        self.assertIn("diagnostic-output", output)
+        self.assertIn("/data/local/tmp/quickcut-native-diagnostics", output)
 
     def test_device_lost_after_probe_has_bounded_diagnostics(self):
         self.run_failure("disconnected", 25)

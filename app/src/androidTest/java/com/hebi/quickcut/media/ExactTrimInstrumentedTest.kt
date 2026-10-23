@@ -2,6 +2,8 @@ package com.hebi.quickcut.media
 
 import android.content.Context
 import android.graphics.Color
+import android.media.MediaExtractor
+import android.media.MediaFormat
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Build
@@ -33,9 +35,9 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
-import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -135,7 +137,14 @@ class ExactTrimInstrumentedTest {
                 assertEquals(1, reports)
                 assertTrue("Reporting must run on Main", deliveredOnMain)
                 assertTrue("The output must be published before reporting", wasPublished)
-                assertEquals(ExportMethod.ORIGINAL_COPY, report?.method)
+                // Android 10 routes the late AAC start through native video copy.
+                // A reporting failure must preserve its committed output too.
+                val expectedMethod = if (Build.VERSION.SDK_INT == 29)
+                    ExportMethod.AUDIO_REENCODE else ExportMethod.ORIGINAL_COPY
+                assertEquals(expectedMethod, report?.method)
+                if (Build.VERSION.SDK_INT == 29) {
+                    assertEquals(FastExportReason.AUDIO_TIMESTAMPS, report?.diagnostics?.copyReason)
+                }
                 MediaReader.validateExport(context, saved, clip.sourceDurationMs - 2_000L, true)
             } finally {
                 output?.let { context.contentResolver.delete(it, null, null) }
@@ -167,11 +176,11 @@ class ExactTrimInstrumentedTest {
     }
 
     @Test
-    fun sameDeviceEncodedSourceUsesPartialEncodingWithoutMovingTheRequestedStart() = runBlocking {
+    fun sameDeviceEncodedSourceKeepsExactRangeAndUsesPartialEncodingWhenSupported() = runBlocking {
         // Matching the device encoder's CSD still permits the existing Media3
-        // optimization when the native path declines this device's bitstream.
-        assumeTrue("The known encoder-matching fixture runs on SDK 33+ emulators",
-            Build.VERSION.SDK_INT >= 33 && Util.isRunningOnEmulator())
+        // optimization on known matching encoders. Other devices must still
+        // produce the requested range safely through the exact fallback.
+        val knownMatchingEncoder = Build.VERSION.SDK_INT >= 33 && Util.isRunningOnEmulator()
         withFixture { context, _, clip ->
             val encoded = File(context.cacheDir, "exact_matching_encoder_${UUID.randomUUID()}.mp4")
             var output: Uri? = null
@@ -179,7 +188,11 @@ class ExactTrimInstrumentedTest {
             try {
                 withTimeout(120_000L) {
                     encodeWithDefaultDeviceEncoder(context, clip, encoded)
+                    val sourceBytes = encoded.readBytes()
                     val encodedUri = Uri.fromFile(encoded)
+                    assertExactVideoClock(context, encodedUri, 180)
+                    assertRed(centerColor(context, encodedUri, 1_966_667L), "The encoded fixture must retain the final red picture")
+                    assertBlue(centerColor(context, encodedUri, 2_000_000L), "The encoded fixture must change to blue at two seconds")
                     val metadata = MediaReader.validateExport(encoded, clip.durationMs, true)
                     val requested = clip.copy(
                         uri = encodedUri.toString(),
@@ -188,8 +201,10 @@ class ExactTrimInstrumentedTest {
                         endMs = 4_500L,
                     )
                     requestedTimeline = EditTimeline(listOf(requested))
-                    assertTrue("The same-device fixture must safely permit partial encoding",
-                        ExactTrimOptimization.canOptimize(context, requested))
+                    if (knownMatchingEncoder) {
+                        assertTrue("The known matching fixture must safely permit partial encoding",
+                            ExactTrimOptimization.canOptimize(context, requested))
+                    }
                     var report: ExportReport? = null
                     val saved = VideoExporter(context).export(
                         EditTimeline(listOf(requested)), {}, {},
@@ -197,15 +212,26 @@ class ExactTrimInstrumentedTest {
                         onReport = { report = it },
                     )
                     output = saved
-                    assertEquals(ExportMethod.PARTIAL_REENCODE, report?.method)
-                    assertTrue("A native partial result has no Media3 status; a Media3 partial result must succeed",
-                        report?.optimizationResult == null ||
-                            report?.optimizationResult == ExportResult.OPTIMIZATION_SUCCEEDED)
-                    assertRed(centerColor(context, saved, 0L), "Partial encoding must retain the chosen red start")
+                    assertTrue("The non-sync cut must use partial or exact full video encoding",
+                        report?.method in setOf(ExportMethod.PARTIAL_REENCODE, ExportMethod.VIDEO_REENCODE))
+                    if (knownMatchingEncoder) {
+                        assertEquals(ExportMethod.PARTIAL_REENCODE, report?.method)
+                        assertTrue("A native partial result has no Media3 status; a Media3 partial result must succeed",
+                            report?.optimizationResult == null ||
+                                report?.optimizationResult == ExportResult.OPTIMIZATION_SUCCEEDED)
+                    }
+                    assertExactVideoClock(context, saved, 120)
+                    assertRed(centerColor(context, saved, 0L), "Encoding must retain the chosen red start")
+                    assertRed(centerColor(context, saved, 1_466_667L), "The picture before the source change must stay red")
+                    assertBlue(centerColor(context, saved, 1_500_000L), "The source change must remain at 1.5 seconds")
+                    assertBlue(centerColor(context, saved, 3_966_667L), "The final retained picture must stay blue")
                     val result = MediaReader.validateExport(context, saved, requested.durationMs, true)
                     assertTrue(abs(result.durationMs - requested.durationMs) <= 34L)
+                    NativeSmartCutInstrumentedTest().assertAudibleContinuousAudio(
+                        context, saved, 4_000L, mapOf(1 to 440, 9 to 880))
                     assertEquals(500L, requested.startMs)
                     assertEquals(4_500L, requested.endMs)
+                    assertArrayEquals("Encoding must leave the source bytes intact", sourceBytes, encoded.readBytes())
                 }
             } catch (failure: Throwable) {
                 requestedTimeline?.let { SmartCutFailureDiagnostics.capture(context, "same-device", it, output, failure) }
@@ -234,6 +260,13 @@ class ExactTrimInstrumentedTest {
             suspendCancellableCoroutine<Unit> { continuation ->
                 val delegate = DefaultEncoderFactory.Builder(context).build()
                 val transformer = Transformer.Builder(context)
+                    // The fixture exercises this device's encoder, not the API29
+                    // surface decoder which is separately tested by real exports.
+                    .apply {
+                        if (Build.VERSION.SDK_INT == 29) {
+                            setAssetLoaderFactory(softwareVideoAssetLoaderFactory(context))
+                        }
+                    }
                     .setEncoderFactory(object : Codec.EncoderFactory by delegate {
                         override fun videoNeedsEncoding() = true
                     })
@@ -257,6 +290,7 @@ class ExactTrimInstrumentedTest {
                     if (Looper.myLooper() == Looper.getMainLooper()) stop.run()
                     else Handler(Looper.getMainLooper()).post(stop)
                 }
+                if (!continuation.isActive) return@suspendCancellableCoroutine
                 try {
                     transformer.start(CompositionFactory.editedClip(clip), output.absolutePath)
                 } catch (error: Exception) {
@@ -307,8 +341,37 @@ class ExactTrimInstrumentedTest {
         }
     }
 
+    private fun assertExactVideoClock(context: Context, uri: Uri, expectedFrames: Int) {
+        val extractor = MediaExtractor()
+        try {
+            extractor.setDataSource(context, uri, null)
+            val track = (0 until extractor.trackCount).single {
+                extractor.getTrackFormat(it).getString(MediaFormat.KEY_MIME)?.startsWith("video/") == true
+            }
+            extractor.selectTrack(track)
+            assertTrue("The video track duration must match its exact retained frame span",
+                abs(extractor.getTrackFormat(track).getLong(MediaFormat.KEY_DURATION) -
+                    expectedFrames * 1_000_000L / 30L) <= 1_000L)
+            val timestamps = mutableListOf<Long>()
+            while (extractor.sampleTrackIndex >= 0) {
+                timestamps += extractor.sampleTime
+                if (!extractor.advance()) break
+            }
+            assertEquals("Every requested 30fps picture must be retained", expectedFrames, timestamps.size)
+            timestamps.sorted().forEachIndexed { frame, timeUs ->
+                assertTrue("Retained picture $frame moved to $timeUs us",
+                    abs(timeUs - frame * 1_000_000L / 30L) <= 1_000L)
+            }
+        } finally { extractor.release() }
+    }
+
     private fun assertRed(color: Int, message: String) {
         assertTrue("$message: red=${Color.red(color)} blue=${Color.blue(color)}",
             Color.red(color) > 150 && Color.red(color) > Color.blue(color) + 100)
+    }
+
+    private fun assertBlue(color: Int, message: String) {
+        assertTrue("$message: red=${Color.red(color)} blue=${Color.blue(color)}",
+            Color.blue(color) > 150 && Color.blue(color) > Color.red(color) + 100)
     }
 }

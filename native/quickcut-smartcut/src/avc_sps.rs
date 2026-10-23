@@ -113,7 +113,7 @@ impl DecoderConfig {
             _ => anyhow::bail!("invalid SPS picture order"),
         }
         let references = bits.ue()?;
-        ensure!((1..=16).contains(&references), "unsupported SPS reference-buffer size");
+        ensure!(references <= 16, "unsupported SPS reference-buffer size");
         bits.u(1)?;
         let width_mbs = bits.ue()?; let height_map_units = bits.ue()?;
         ensure!(width_mbs < 1024 && height_map_units < 1024, "unsupported SPS dimensions");

@@ -17,18 +17,42 @@ fn configuration(bytes: &[u8], channels: i32, sample_rate: i32) -> Result<()> {
     Ok(())
 }
 
+fn validate_parameters(parameters: &ff::codec::Parameters) -> Result<()> {
+    ensure!(parameters.id() == ff::codec::Id::AAC, "expected AAC output");
+    unsafe {
+        let raw = parameters.as_ptr();
+        ensure!(!(*raw).extradata.is_null() && (*raw).extradata_size >= 2,
+            "missing AAC output configuration");
+        configuration(std::slice::from_raw_parts((*raw).extradata, (*raw).extradata_size as usize),
+            (*raw).ch_layout.nb_channels, (*raw).sample_rate)?;
+    }
+    Ok(())
+}
+
 pub(crate) fn validate(input: &ff::format::context::Input) -> Result<()> {
     for stream in input.streams() {
         let parameters = stream.parameters();
-        if parameters.medium() != ff::media::Type::Audio { continue; }
-        ensure!(parameters.id() == ff::codec::Id::AAC, "expected AAC output");
-        unsafe {
-            let raw = parameters.as_ptr();
-            ensure!(!(*raw).extradata.is_null() && (*raw).extradata_size >= 2,
-                "missing AAC output configuration");
-            configuration(std::slice::from_raw_parts((*raw).extradata, (*raw).extradata_size as usize),
-                (*raw).ch_layout.nb_channels, (*raw).sample_rate)?;
-        }
+        if parameters.medium() == ff::media::Type::Audio { validate_parameters(&parameters)?; }
+    }
+    Ok(())
+}
+
+/// Ask the same encoder used by export for its output configuration. Source
+/// channel counts alone cannot distinguish standard AAC from a PCE layout
+/// that Android refuses. Muted exports have no output audio to validate.
+pub(crate) fn validate_export(source: &smartcut_core::Source, muted: bool) -> Result<()> {
+    if muted || source.audios.is_empty() { return Ok(()); }
+    let input = smartcut_core::input::open_local(&source.path)?;
+    for audio in &source.audios {
+        let parameters = input.stream(audio.stream_index)
+            .ok_or_else(|| anyhow::anyhow!("missing audio stream"))?.parameters();
+        let derived_rate = match audio.channels { 0 | 1 => 96_000, 2 => 192_000, n => 64_000 * n as usize };
+        let bit_rate = if parameters.id() == ff::codec::Id::AAC {
+            audio.bit_rate.unwrap_or(derived_rate.max(192_000))
+        } else { derived_rate };
+        let encoder = smartcut_core::audio::Reencoder::new(parameters, ff::codec::Id::AAC,
+            None, audio, audio.channels, audio.sample_rate, bit_rate, None)?;
+        validate_parameters(&encoder.parameters())?;
     }
     Ok(())
 }

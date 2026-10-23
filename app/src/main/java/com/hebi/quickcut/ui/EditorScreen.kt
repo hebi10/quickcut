@@ -10,6 +10,9 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -62,6 +65,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -83,6 +87,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.transformer.CompositionPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import com.hebi.quickcut.editor.EditTimeline
 import com.hebi.quickcut.editor.EditorViewModel
 import com.hebi.quickcut.editor.TrimInput
 import com.hebi.quickcut.editor.TrimInput.secondsText
@@ -121,67 +126,106 @@ fun EditorScreen(
     var showMove by rememberSaveable { mutableStateOf(false) }
     var showDelete by rememberSaveable { mutableStateOf(false) }
     var isPlaying by remember { mutableStateOf(false) }
+    val selectedClip = model.selectedClip
+    // Keep raw drafts above adaptive layout branches. Showing the keyboard can replace the
+    // compact/normal TrimEditor instance while the user is still editing the same clip.
+    var trimStartText by rememberSaveable(showTrim, selectedClip?.id, selectedClip?.uri,
+        selectedClip?.startMs, selectedClip?.endMs) {
+        mutableStateOf(selectedClip?.let { secondsText(it.startMs) }.orEmpty())
+    }
+    var trimEndText by rememberSaveable(showTrim, selectedClip?.id, selectedClip?.uri,
+        selectedClip?.startMs, selectedClip?.endMs) {
+        mutableStateOf(selectedClip?.let { secondsText(it.endMs) }.orEmpty())
+    }
+    val onTrimDraftChange: (String, String) -> Unit = { start, end ->
+        trimStartText = start
+        trimEndText = end
+    }
+    val preview = remember(player, model) {
+        EditorPreviewCoordinator(
+            object : EditorPreviewPlayback {
+                override val positionMs get() = player.currentPosition
+                override val playing get() = player.isPlaying
+                override val ended get() = player.playbackState == Player.STATE_ENDED
+                override fun pause() = player.pause()
+                override fun play() = player.play()
+                override fun stop() = player.stop()
+                override fun seekTo(positionMs: Long) = player.seekTo(positionMs)
+                override fun replace(timeline: EditTimeline, positionMs: Long) {
+                    player.setComposition(CompositionFactory.from(timeline), positionMs)
+                    player.prepare()
+                }
+            },
+            timeline = { model.timeline },
+            modelPosition = { model.playPositionMs },
+            publishPosition = model::seek,
+        )
+    }
+    SideEffect { preview.onModelChanged() }
 
-    DisposableEffect(player) {
+    DisposableEffect(player, model, preview) {
         val listener = object : Player.Listener {
             override fun onPlayerError(error: PlaybackException) {
                 model.reportError("미리보기 재생에 실패했습니다. 다른 영상을 선택하거나 다시 시도해 주세요.")
             }
             override fun onIsPlayingChanged(playing: Boolean) {
                 isPlaying = playing
+                if (!playing) preview.synchronizePosition()
+            }
+            override fun onPositionDiscontinuity(
+                oldPosition: Player.PositionInfo,
+                newPosition: Player.PositionInfo,
+                reason: Int,
+            ) {
+                preview.synchronizePosition()
+            }
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_ENDED) preview.synchronizePosition()
             }
         }
         player.addListener(listener)
         onDispose {
+            preview.pause()
             player.removeListener(listener)
             player.release()
         }
     }
 
-    DisposableEffect(player, lifecycleOwner) {
+    DisposableEffect(player, lifecycleOwner, preview, model) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_STOP) player.pause()
+            if (event == Lifecycle.Event.ON_STOP) {
+                preview.pause()
+                model.saveSessionOnStop()
+            }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    LaunchedEffect(model.timeline) {
-        if (model.timeline.isEmpty) {
-            player.stop()
-        } else {
-            delay(160)
-            try {
-                player.pause()
-                player.setComposition(
-                    CompositionFactory.from(model.timeline),
-                    model.playPositionMs,
-                )
-                player.prepare()
-            } catch (_: Exception) {
-                model.reportError("현재 영상 구성을 미리 볼 수 없습니다.")
-            }
+    val timeline = model.timeline
+    LaunchedEffect(preview, timeline) {
+        preview.onModelChanged()
+        if (!timeline.isEmpty) delay(160)
+        try {
+            preview.replaceTimeline(timeline)
+        } catch (_: Exception) {
+            model.reportError("현재 영상 구성을 미리 볼 수 없습니다.")
         }
     }
 
-    LaunchedEffect(player) {
+    LaunchedEffect(preview) {
         while (isActive) {
             delay(120)
-            if (player.isPlaying) {
-                model.seek(player.currentPosition)
-            }
+            if (player.isPlaying) preview.synchronizePosition()
         }
     }
 
-    val onSeek: (Long) -> Unit = { ms ->
-        model.seek(ms)
-        player.seekTo(model.playPositionMs)
-    }
+    val onSeek: (Long) -> Unit = preview::seek
     val onSelect: (Long) -> Unit = { id ->
         if (id != model.selectedId && model.timeline.clipAt(id) != null)
             model.setTrimInputValidity(true)
         model.selectClip(id)
-        player.seekTo(model.playPositionMs)
+        preview.seek(model.playPositionMs)
     }
     val onClipMoved: (Long, Int) -> Unit = { id, direction ->
         model.moveClip(id, direction)
@@ -195,22 +239,22 @@ fun EditorScreen(
                 model.setTrimInputValidity(true)
                 showTrim = !showTrim
             }
-            "split" -> model.splitSelected()
+            "split" -> {
+                preview.pause()
+                model.splitSelected()
+            }
             "delete" -> showDelete = true
             "move" -> showMove = true
             "mute" -> model.toggleMute()
         }
     }
-    val onPlay = {
-        if (player.playbackState == Player.STATE_ENDED) onSeek(0)
-        if (player.isPlaying) player.pause() else player.play()
-    }
+    val onPlay = preview::togglePlayback
 
     Column(modifier = Modifier.fillMaxSize()) {
         EditorHeader(
             onBack = model::requestExit,
             onAdd = addVideos,
-            onSave = { if (model.canStartExport) { player.pause(); save() } },
+            onSave = { if (model.canStartExport) { preview.pause(); save() } },
             onUndo = model::undo,
             onRedo = model::redo,
             canUndo = model.canUndo,
@@ -230,9 +274,15 @@ fun EditorScreen(
         }
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val availableWidth = maxWidth
-            val compactHeight = maxHeight < 480.dp
+            val density = LocalDensity.current
+            val keyboardInset = (WindowInsets.ime.getBottom(density) -
+                WindowInsets.navigationBars.getBottom(density)).coerceAtLeast(0)
+            val keyboardVisible = keyboardInset > 0
+            // IME resize must not replace the focused field with another layout's instance.
+            val layoutHeight = maxHeight + with(density) { keyboardInset.toDp() }
+            val compactHeight = layoutHeight < 480.dp
             val wide = availableWidth >= 840.dp && !compactHeight
-            val selected = model.selectedClip
+            val selected = selectedClip
 
             when {
                 compactHeight -> {
@@ -261,7 +311,8 @@ fun EditorScreen(
                                     showTrim = showTrim,
                                 )
                                 if (showTrim && selected != null) {
-                                    TrimEditor(selected, model::trimSelected, model::beginTrim,
+                                    TrimEditor(selected, trimStartText, trimEndText, onTrimDraftChange,
+                                        model::trimSelected, model::beginTrim,
                                         model::finishTrim, model::setTrimInputValidity)
                                 }
                             }
@@ -317,7 +368,8 @@ fun EditorScreen(
                                 )
                                 if (showTrim && selected != null) {
                                     Spacer(Modifier.height(8.dp))
-                                    TrimEditor(selected, model::trimSelected, model::beginTrim,
+                                    TrimEditor(selected, trimStartText, trimEndText, onTrimDraftChange,
+                                        model::trimSelected, model::beginTrim,
                                         model::finishTrim, model::setTrimInputValidity)
                                 }
                             }
@@ -336,7 +388,10 @@ fun EditorScreen(
                     }
                 }
                 else -> {
-                    Column(Modifier.fillMaxSize()) {
+                    val inputScroll = rememberScrollState()
+                    Column(Modifier.fillMaxSize().then(
+                        if (keyboardVisible) Modifier.verticalScroll(inputScroll) else Modifier,
+                    )) {
                         PreviewPanel(
                             player = player,
                             playing = isPlaying,
@@ -344,7 +399,8 @@ fun EditorScreen(
                             currentPosition = model.playPositionMs,
                             onPlay = onPlay,
                             onSeek = onSeek,
-                            modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 12.dp),
+                            modifier = (if (keyboardVisible) Modifier.height(0.dp).clipToBounds()
+                                else Modifier.weight(1f)).fillMaxWidth().padding(horizontal = 12.dp),
                             compact = false,
                         )
                         TimelineStrip(
@@ -361,6 +417,9 @@ fun EditorScreen(
                         if (showTrim && selected != null) {
                             TrimEditor(
                                 selected,
+                                trimStartText,
+                                trimEndText,
+                                onTrimDraftChange,
                                 model::trimSelected,
                                 model::beginTrim,
                                 model::finishTrim,
@@ -627,18 +686,15 @@ private fun ToolButtons(
 @Composable
 private fun TrimEditor(
     clip: VideoClip,
+    startText: String,
+    endText: String,
+    onDraftChange: (String, String) -> Unit,
     onTrim: (Long, Long) -> Unit,
     onBeginTrim: () -> Unit,
     onEndTrim: () -> Unit,
     onValidityChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var startText by rememberSaveable(clip.id, clip.uri, clip.startMs, clip.endMs) {
-        mutableStateOf(secondsText(clip.startMs))
-    }
-    var endText by rememberSaveable(clip.id, clip.uri, clip.startMs, clip.endMs) {
-        mutableStateOf(secondsText(clip.endMs))
-    }
     fun inputRange(start: String, end: String) {
         val range = TrimInput.selectedRange(start, end, clip.sourceDurationMs)
         onValidityChange(range != null)
@@ -657,8 +713,7 @@ private fun TrimEditor(
                 val start = range.start.roundToLong().coerceIn(0L, clip.sourceDurationMs)
                 val end = range.endInclusive.roundToLong().coerceIn(0L, clip.sourceDurationMs)
                 if (TrimInput.range(start, end, clip.sourceDurationMs) != null) {
-                    startText = secondsText(start)
-                    endText = secondsText(end)
+                    onDraftChange(secondsText(start), secondsText(end))
                     onValidityChange(true)
                     onBeginTrim()
                     onTrim(start, end)
@@ -675,12 +730,12 @@ private fun TrimEditor(
         }
         BoxWithConstraints(Modifier.fillMaxWidth()) {
             val changeStart: (String) -> Unit = {
-                startText = it
-                inputRange(startText, endText)
+                onDraftChange(it, endText)
+                inputRange(it, endText)
             }
             val changeEnd: (String) -> Unit = {
-                endText = it
-                inputRange(startText, endText)
+                onDraftChange(startText, it)
+                inputRange(startText, it)
             }
             if (maxWidth < 320.dp || LocalDensity.current.fontScale >= 1.5f) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {

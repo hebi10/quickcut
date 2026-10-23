@@ -8,17 +8,26 @@ import android.os.Build
 import android.os.Environment
 import android.os.StatFs
 import android.os.SystemClock
+import java.util.UUID
+import java.io.IOException
+import kotlinx.coroutines.CancellationException
 import com.hebi.quickcut.editor.EditTimeline
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-/** One bounded, local report. SharedPreferences atomically replaces the previous operation. */
+/** Bounded reports stay on this device. Diagnostic persistence never gates export. */
 internal object ExportDiagnosticStore {
     private const val PREFERENCES = "export_diagnostics"
-    private const val KEY = "latest"
-    fun latest(context: Context): String? = runCatching {
-        context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).getString(KEY, null)?.take(8_192)
-    }.getOrNull()
+    private const val HISTORY_KEY = "history_v1"
+
+    fun latest(context: Context): String? = history(context).recent.firstOrNull()?.text
+
+    @Synchronized fun history(context: Context): ExportDiagnosticHistory = runCatching {
+        ExportDiagnosticCodec.decode(context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+            .getString(HISTORY_KEY, null))
+    }.getOrDefault(ExportDiagnosticHistory())
+
+    fun record(context: Context, operationId: String): ExportDiagnosticRecord? = history(context).record(operationId)
 
     fun begin(context: Context, timeline: EditTimeline): ExportDiagnosticSession {
         @Suppress("DEPRECATION")
@@ -29,20 +38,51 @@ internal object ExportDiagnosticStore {
         return ExportDiagnosticSession(context.applicationContext, facts).also { it.stage(ExportStage.PREPARING) }
     }
 
-    internal fun save(context: Context, text: String) {
-        runCatching { context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).edit().putString(KEY, text.take(8_192)).apply() }
+    @Synchronized internal fun save(context: Context, record: ExportDiagnosticRecord) {
+        runCatching {
+            val updated = history(context).updated(record)
+            context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).edit()
+                .putString(HISTORY_KEY, ExportDiagnosticCodec.encode(updated))
+                .remove("latest").apply()
+        }
     }
 }
 
 internal class ExportDiagnosticSession(private val context: Context, private var facts: ExportDiagnosticFacts) {
-    private val startedAt = SystemClock.elapsedRealtime()
+    val operationId: String = UUID.randomUUID().toString()
+    private val timing = ExportStageTiming(SystemClock::elapsedRealtime)
     private var currentStage = ExportStage.PREPARING
     private var reasons = ExportDiagnostics()
     private var method: String? = null
-    @Synchronized fun stage(stage: ExportStage) { currentStage = stage; persist("처리 중") }
-    @Synchronized fun reasons(value: ExportDiagnostics) { reasons = value; persist("처리 중") }
-    @Synchronized fun report(value: ExportReport) { method = value.method.name }
-    @Synchronized fun finish(status: String, error: Throwable? = null) { persist(status, error?.javaClass?.simpleName) }
+    private var completed = false
+    @Synchronized fun stage(stage: ExportStage) {
+        if (completed) return
+        timing.stage(stage); currentStage = stage; persist()
+    }
+    @Synchronized fun reasons(value: ExportDiagnostics) { if (!completed) { reasons = value; persist() } }
+    @Synchronized fun report(value: ExportReport) { if (!completed) method = value.method.name }
+    @Synchronized fun finish(status: String, error: Throwable? = null) {
+        if (completed) return
+        completed = true
+        timing.finish()
+        val outcome = when (status) {
+            "완료" -> ExportDiagnosticStatus.COMPLETE
+            "취소" -> ExportDiagnosticStatus.CANCELLED
+            else -> ExportDiagnosticStatus.FAILED
+        }
+        // Never retain arbitrary exception subclasses, messages, causes, or stack traces.
+        val failureType = when (error) {
+            null -> null
+            is ReencodeRequiredException -> "ReencodeRequiredException"
+            is CancellationException -> "CancellationException"
+            is SecurityException -> "SecurityException"
+            is IllegalArgumentException -> "IllegalArgumentException"
+            is IllegalStateException -> "IllegalStateException"
+            is IOException -> "IOException"
+            else -> "Exception"
+        }
+        persist(outcome, failureType)
+    }
 
     suspend fun inspect(timeline: EditTimeline) = withContext(Dispatchers.IO) {
         val uri = timeline.clips.firstOrNull()?.uri?.let(Uri::parse) ?: return@withContext
@@ -76,13 +116,14 @@ internal class ExportDiagnosticSession(private val context: Context, private var
                     audioChannels = audio.integer(MediaFormat.KEY_CHANNEL_COUNT), audioSampleRate = audio.integer(MediaFormat.KEY_SAMPLE_RATE),
                     cacheAvailableBytes = runCatching { StatFs(context.cacheDir.absolutePath).availableBytes }.getOrNull(),
                     galleryAvailableBytes = gallery)
-                persist("처리 중")
+                persist()
             }
         } finally { runCatching { extractor.release() } }
     }
 
-    private fun persist(status: String, failureType: String? = null) {
-        ExportDiagnosticStore.save(context, facts.text(currentStage, status,
-            SystemClock.elapsedRealtime() - startedAt, reasons, method, failureType))
+    private fun persist(status: ExportDiagnosticStatus = ExportDiagnosticStatus.RUNNING, failureType: String? = null) {
+        val times = timing.snapshot()
+        ExportDiagnosticStore.save(context, ExportDiagnosticRecord(operationId, status, currentStage,
+            times.elapsedMs, times.stageMs, facts.sanitized(), reasons, method, failureType))
     }
 }

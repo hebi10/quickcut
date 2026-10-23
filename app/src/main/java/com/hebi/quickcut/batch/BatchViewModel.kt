@@ -5,8 +5,6 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.OpenableColumns
-import android.provider.MediaStore
-import android.os.Environment
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableLongStateOf
@@ -58,6 +56,7 @@ data class BatchFile(
     val outputExpectedAudio: Boolean? = null,
     val outputExpectedDateMs: Long? = null,
     val exportReport: ExportReport? = null,
+    val diagnosticId: String? = null,
 )
 
 data class BatchExportOverview(
@@ -81,7 +80,10 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
     private val settings = QuickCutSettings(application)
     private val lastDraft = settings.loadBatch()
     private val sessionStore = BatchSessionStore(application)
-    private val restored = sessionStore.load()
+    private val initialLoad = runCatching { sessionStore.load() }
+    private val restored = initialLoad.getOrNull()
+    private var journalUnreadable by mutableStateOf(initialLoad.isFailure)
+    private var persistenceFailed by mutableStateOf(false)
     private var activeTemplate: BatchTemplate? = restored?.template
     private var activeDateMode = restored?.dateMode ?: settings.loadSaveDate()
     internal var reviewGeneration by mutableLongStateOf(0L)
@@ -126,7 +128,7 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
     ): BatchExportOverview {
         invalidateReview()
         val generation = reviewGeneration
-        check(!isRecovering && !isImporting && !isRunning) {
+        check(!isRecovering && !isImporting && !isRunning && !hasUnresolvedRecovery) {
             "파일을 확인하거나 저장 중입니다. 잠시 후 다시 시도해 주세요."
         }
         val reviewedState = reviewState(retryOnly)
@@ -214,7 +216,7 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
         val review = pendingReview
         return review != null && review.overview === overview &&
             review.generation == reviewGeneration &&
-            review.state == reviewState(retryOnly) && !isRunning && !isRecovering && !isImporting
+            review.state == reviewState(retryOnly) && !isRunning && !isRecovering && !isImporting && !hasUnresolvedRecovery
     }
 
     private fun requireCurrentReview(overview: BatchExportOverview, retryOnly: Boolean): Boolean {
@@ -294,7 +296,8 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
         private set
     var isImporting by mutableStateOf(false)
         private set
-    var notification by mutableStateOf<String?>(null)
+    var notification by mutableStateOf<String?>(if (journalUnreadable)
+        "이전 일괄 작업 기록을 읽을 수 없습니다. 저장 공간과 파일 접근을 확인한 뒤 다시 시도해 주세요." else null)
         private set
     var completedCount by mutableStateOf(0)
         private set
@@ -341,17 +344,7 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
     private var sourceUrisSavedThisRun by mutableStateOf<List<String>>(emptyList())
 
     init {
-        restored?.let { snapshot ->
-            snapshot.template?.let {
-                draftName = it.name
-                draftMode = it.mode
-                draftLeadingSeconds = formatSeconds(it.leadingMs)
-                draftTrailingSeconds = formatSeconds(it.trailingMs)
-                draftMute = it.muteAudio
-                selectedTemplateId = it.id
-            }
-            saveDateMode = snapshot.dateMode
-        }
+        restored?.let(::restoreSnapshotSettings)
         if (restored != null) viewModelScope.launch {
             try {
                 files = withContext(Dispatchers.IO) { restored.files.map { recoverFile(application, it) } }
@@ -376,16 +369,34 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }.distinctUntilChanged().collect {
                 settings.saveBatch(it)
-                if (!isRunning && !isRecovering) runCatching { persistSession() }
+                if (!isRunning && !isRecovering && !journalUnreadable && !persistenceFailed) runCatching { persistSession() }
                     .onFailure { notification = "작업 목록을 기록하지 못했습니다. 저장 공간을 확인해 주세요." }
             }
         }
         viewModelScope.launch {
             snapshotFlow { saveDateMode }.distinctUntilChanged().collect {
                 settings.saveSaveDate(it)
-                if (!isRunning && !isRecovering) runCatching { persistSession() }
+                if (!isRunning && !isRecovering && !journalUnreadable && !persistenceFailed) runCatching { persistSession() }
             }
         }
+    }
+
+    /** A corrupt/unwritten journal must never be overwritten by initial settings observers. */
+    val hasUnresolvedRecovery: Boolean
+        get() = journalUnreadable || persistenceFailed || files.any { it.hasUnresolvedOutput() }
+
+    private fun restoreSnapshotSettings(snapshot: BatchSessionSnapshot) {
+        activeTemplate = snapshot.template
+        activeDateMode = snapshot.dateMode
+        snapshot.template?.let {
+            draftName = it.name
+            draftMode = it.mode
+            draftLeadingSeconds = formatSeconds(it.leadingMs)
+            draftTrailingSeconds = formatSeconds(it.trailingMs)
+            draftMute = it.muteAudio
+            selectedTemplateId = it.id
+        }
+        saveDateMode = snapshot.dateMode
     }
 
     val isRunning: Boolean get() = runState == BatchRunState.RUNNING
@@ -490,6 +501,7 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
 
     fun addVideos(context: Context, selected: List<Uri>) {
         if (isRunning || isRecovering || isImporting || selected.isEmpty()) return
+        if (journalUnreadable || persistenceFailed) { recoveryNotice(); return }
         invalidateReview()
         if (files.size + selected.distinctBy { it.toString() }.count { uri -> files.none { it.uri == uri.toString() } } > 250) {
             notification = "한 번에 최대 250개의 영상을 선택할 수 있습니다."
@@ -533,10 +545,14 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 val refreshed = newRows.associateBy { it.uri }.toMutableMap()
                 files = files.map { previous ->
-                    refreshed.remove(previous.uri)?.copy(savedOutputUri = previous.savedOutputUri,
+                    refreshed.remove(previous.uri)?.let { fresh -> fresh.copy(
+                        status = if (previous.hasUnresolvedOutput()) BatchFileStatus.SKIPPED else fresh.status,
+                        reason = if (previous.hasUnresolvedOutput()) previous.reason else fresh.reason,
+                        savedOutputUri = previous.savedOutputUri,
                         outputExpectedDurationMs = previous.outputExpectedDurationMs,
                         outputExpectedAudio = previous.outputExpectedAudio,
-                        outputExpectedDateMs = previous.outputExpectedDateMs) ?: previous
+                        outputExpectedDateMs = previous.outputExpectedDateMs,
+                        diagnosticId = previous.diagnosticId) } ?: previous
                 } + refreshed.values
                 persistSession()
                 if (runState == BatchRunState.FINISHED) runState = BatchRunState.SETUP
@@ -553,6 +569,7 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
 
     fun removeVideo(uri: String) {
         if (isRunning || isRecovering || isImporting) return
+        if (journalUnreadable || persistenceFailed) { recoveryNotice(); return }
         val row = files.firstOrNull { it.uri == uri } ?: return
         invalidateReview()
         isImporting = true
@@ -591,6 +608,7 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
         reviewedExports: Map<String, BatchReviewedExport>? = null,
     ) {
         if (isRunning || isRecovering || isImporting) return
+        if (hasUnresolvedRecovery) { recoveryNotice(); return }
         invalidateReview()
         if (ExportWorkMonitor.isRunning) {
             notification = "다른 영상 저장이 진행 중입니다. 완료 후 다시 시작해 주세요."
@@ -653,6 +671,8 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
                         update(row.uri) { recovered }
                         row = recovered
                     }
+                    // Uncertain handles remain tracked and can never create a duplicate output.
+                    if (row.hasUnresolvedOutput()) continue
                     // Previously completed files are never exported twice.
                     if (row.status == BatchFileStatus.SAVED) continue
                     if (retryOnly && row.status != BatchFileStatus.FAILED && row.status != BatchFileStatus.SKIPPED) continue
@@ -701,6 +721,9 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
                                 var committedOutput: Uri? = null
                                 val result = VideoExporter(context.applicationContext).export(
                                     timeline = timeline,
+                                    onDiagnosticStarted = { operationId ->
+                                        update(row.uri) { it.copy(diagnosticId = operationId) }
+                                    },
                                     onProgress = { percent ->
                                         update(row.uri, persist = false) { it.copy(progress=percent) }
                                         ExportWorkMonitor.update(workId, "${completedCount + 1}/${files.size} · ${row.displayName}", percent)
@@ -851,10 +874,13 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
 
     fun resetBatch() {
         if (isRunning || isRecovering || isImporting) return
+        if (journalUnreadable || persistenceFailed) { recoveryNotice(); return }
         invalidateReview()
         val tracked = files.filter { it.status != BatchFileStatus.SAVED && it.savedOutputUri != null }
         if (tracked.isEmpty()) {
-            clearBatch()
+            runCatching { clearBatch() }.onFailure {
+                notification = "이전 작업 기록을 정리하지 못했습니다. 저장 공간을 확인한 뒤 다시 시도해 주세요."
+            }
             return
         }
         isImporting = true
@@ -872,6 +898,8 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun clearBatch() {
+        // Do not discard the in-memory retry handles if clearing the journal fails.
+        sessionStore.clear()
         files = emptyList()
         sourceUrisSavedThisRun = emptyList()
         completedCount = 0
@@ -880,65 +908,50 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
         performedOriginalAction = OriginalAction.KEEP
         originalStatus = OriginalActionStatus.NONE
         notification = null
-        sessionStore.clear()
     }
 
     private fun persistSession() {
-        sessionStore.save(BatchSessionSnapshot(files,
-            if (isRunning) activeTemplate else previewTemplate() ?: activeTemplate,
-            if (isRunning) activeDateMode else saveDateMode, runState))
+        check(!journalUnreadable) { "이전 일괄 작업 기록을 읽을 수 없습니다." }
+        try {
+            sessionStore.save(BatchSessionSnapshot(files,
+                if (isRunning) activeTemplate else previewTemplate() ?: activeTemplate,
+                if (isRunning) activeDateMode else saveDateMode, runState))
+            persistenceFailed = false
+        } catch (error: Exception) {
+            persistenceFailed = true
+            throw error
+        }
     }
 
-    private fun recoverFile(context: Context, row: BatchFile): BatchFile {
-        val output = row.savedOutputUri?.let(Uri::parse)
-        var state = BatchOutputState.ABSENT
-        if (output != null) {
-            var queryConfirmed = false
-            state = runCatching {
-                context.contentResolver.query(output, arrayOf(MediaStore.Video.Media.IS_PENDING,
-                    MediaStore.Video.Media.OWNER_PACKAGE_NAME, MediaStore.Video.Media.RELATIVE_PATH),
-                    null, null, null)?.use { cursor ->
-                    if (!cursor.moveToFirst()) { queryConfirmed = true; return@use BatchOutputState.ABSENT }
-                    if (cursor.getInt(0) == 1) {
-                        // Only unfinished outputs in our own output folder may be deleted.
-                        val safeToDelete = cursor.getString(1) == context.packageName &&
-                            cursor.getString(2)?.trimEnd('/') == Environment.DIRECTORY_MOVIES + "/QuickCut"
-                        if (!safeToDelete) return@use BatchOutputState.INVALID
-                        queryConfirmed = true
-                        return@use BatchOutputState.PENDING
-                    }
-                    // Published outputs retain their URI when moved to another folder.
-                    queryConfirmed = true
-                    MediaReader.validateExport(context, output, row.outputExpectedDurationMs, row.outputExpectedAudio)
-                    row.outputExpectedDateMs?.let { expected ->
-                        val actual = OriginalMediaDates.resolve(context, output)?.epochMs
-                        check(actual != null && kotlin.math.abs(actual - expected) <= 3_000L)
-                    }
-                    BatchOutputState.VERIFIED
-                } ?: BatchOutputState.ABSENT.also { queryConfirmed = true }
-            }.getOrDefault(BatchOutputState.INVALID)
-            if (!queryConfirmed) return row.copy(status=BatchFileStatus.SKIPPED, durationMs=0L,
-                reason="이전 출력에 접근할 수 없습니다. 파일 접근을 확인한 뒤 다시 시도해 주세요.", progress=null,
-                exportReport=null)
-        }
-        val action = BatchRecoveryPolicy.decide(row.status == BatchFileStatus.SAVED, state)
-        if (action == BatchRecoveryAction.KEEP_SAVED || action == BatchRecoveryAction.ADOPT_SAVED)
-            return row.copy(status=BatchFileStatus.SAVED, progress=100, reason=null)
-        if (action == BatchRecoveryAction.REMOVE_PENDING) {
-            val deleted = runCatching { context.contentResolver.delete(output!!, null, null) > 0 }.getOrDefault(false)
-            if (!deleted) return row.copy(status=BatchFileStatus.SKIPPED,
-                durationMs=0L, reason="미완성 파일을 정리하지 못했습니다. 파일 권한을 확인하고 다시 선택해 주세요.", progress=null,
-                exportReport=null)
-        }
-        val metadata = runCatching { MediaReader.metadata(context, Uri.parse(row.uri)) }.getOrNull()
-        if (metadata == null) return row.copy(status=BatchFileStatus.SKIPPED, durationMs=0L,
-            reason="원본에 접근할 수 없습니다. 영상을 다시 선택해 주세요.", savedOutputUri=null, progress=null,
-            exportReport=null)
-        return row.copy(status=BatchFileStatus.SKIPPED, durationMs=metadata.durationMs, hasAudio=metadata.hasAudio,
-            originalDate=OriginalMediaDates.resolve(context, Uri.parse(row.uri)), savedOutputUri=null, progress=null,
-            reason="이전 작업이 중단됐거나 완료 파일을 확인할 수 없습니다. 설정 확인 후 다시 시작해 주세요.",
-            exportReport=null)
+    private fun recoveryNotice() {
+        notification = "이전 작업의 확인을 완료하지 못했습니다. 파일 접근과 저장 공간을 확인한 뒤 다시 시도해 주세요."
     }
+
+    /** Explicit recheck keeps every journal handle until output and persistence are verified. */
+    fun retryRecovery() {
+        if (isRunning || isRecovering || isImporting) return
+        invalidateReview()
+        isRecovering = true
+        viewModelScope.launch {
+            try {
+                val snapshot = if (journalUnreadable) withContext(Dispatchers.IO) { sessionStore.load() } else null
+                if (journalUnreadable) {
+                    files = snapshot?.files ?: emptyList()
+                    snapshot?.let(::restoreSnapshotSettings)
+                    runState = if (snapshot == null) BatchRunState.SETUP else BatchRunState.FINISHED
+                    journalUnreadable = false
+                }
+                files = withContext(Dispatchers.IO) { files.map { recoverFile(getApplication(), it) } }
+                persistSession()
+                completedCount = files.count { it.status != BatchFileStatus.WAITING && it.status != BatchFileStatus.RUNNING }
+                if (hasUnresolvedRecovery) recoveryNotice() else notification = "이전 작업 확인을 완료했습니다."
+            } catch (_: Exception) { recoveryNotice() }
+            finally { isRecovering = false }
+        }
+    }
+
+    private fun recoverFile(context: Context, row: BatchFile): BatchFile =
+        BatchFileRecovery(context).recover(row)
 
     private fun formatSeconds(ms: Long): String =
         if (ms % 1_000L == 0L) (ms / 1_000L).toString()

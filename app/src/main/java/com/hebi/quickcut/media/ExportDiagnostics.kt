@@ -36,6 +36,7 @@ enum class FastExportReason(val nativeCode: Long?, val explanation: String) {
     UNSAFE_START(null, "시작 지점 앞의 프레임이 재생 순서에 섞여 있어 해당 위치에서 복사할 수 없습니다."),
     REORDERED_END(null, "프레임의 저장·재생 순서가 달라 선택한 끝 지점까지 단순 복사할 수 없습니다."),
     AUDIO_CODEC(null, "소리 코덱이 원본 복사에서 지원하는 AAC가 아닙니다."),
+    AUDIO_TIMESTAMPS(null, "이 Android 버전의 원본 복사는 선택한 소리 시작 시간을 보존할 수 없어 다른 고속 경로를 확인합니다."),
     COPY_COLOR_FORMAT(null, "원본 복사 경로에서 이 색상·밝기 정보를 보존할 수 없습니다."),
     ;
 

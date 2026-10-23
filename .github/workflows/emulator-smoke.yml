@@ -83,6 +83,11 @@ jobs:
       - name: Install native build tools and test-video encoder
         timeout-minutes: 10
         run: |
+          # A slow streaming Azure mirror can exceed the step limit without an APT timeout.
+          # Keep the runner's existing signed Ubuntu sources and official HTTPS fallbacks.
+          if [[ -f /etc/apt/apt-mirrors.txt ]] && grep -q '^https://archive\.ubuntu\.com/ubuntu/' /etc/apt/apt-mirrors.txt; then
+            sudo sed -i '\|^http://azure\.archive\.ubuntu\.com/ubuntu/[[:space:]]*priority:1$|d' /etc/apt/apt-mirrors.txt
+          fi
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update -qq
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends cmake nasm pkg-config ffmpeg
       - name: Install Android NDK

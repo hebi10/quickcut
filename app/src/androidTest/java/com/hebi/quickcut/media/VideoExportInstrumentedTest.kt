@@ -178,7 +178,9 @@ class VideoExportInstrumentedTest {
                     checkNotNull(context.contentResolver.openInputStream(output)).use { input ->
                         copiedOutput.outputStream().use { input.copyTo(it) }
                     }
-                    MediaReader.validateExport(copiedOutput, clip.durationMs, true)
+                    val exported = MediaReader.validateExport(copiedOutput, clip.durationMs, true)
+                    assertTrue(abs(exported.durationMs - clip.durationMs) <= 250L)
+                    assertTrue(exported.hasAudio)
                     val outputVideo = packets.samples(copiedOutput, "video/")
                     packets.assertCopiedSamples(retainedVideo, outputVideo, clip.startUs)
                     assertEquals(120, outputVideo.size)

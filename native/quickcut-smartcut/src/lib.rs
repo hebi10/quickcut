@@ -131,10 +131,9 @@ fn check_plan(plan: &RangePlan, start_us: i64, end_us: i64) -> Result<()> {
     Ok(())
 }
 
-fn check_source(source: &Source, end_us: i64, muted: bool) -> Result<()> {
-    let video = &source.video;
-    ensure_fast!(source.read_whole && source.leading_known, SourceUnreadable, "incomplete source index");
-    ensure_fast!(source.joins.is_empty() && source.input.range.is_none() && source.input.parts.is_empty(), Container, "compound input");
+// Preserve the stable source eligibility reasons before codec-specific
+// payload inspection, then recheck after the index supplies cadence facts.
+fn check_video(video: &smartcut_core::VideoInfo) -> Result<()> {
     ensure_fast!(matches!(video.codec.as_str(), "h264" | "hevc"), VideoCodec, "only H.264/HEVC is supported");
     let main10 = video.codec == "hevc"
         && video.shape.pix_fmt == ff::ffi::AVPixelFormat::AV_PIX_FMT_YUV420P10LE as i32;
@@ -150,6 +149,13 @@ fn check_source(source: &Source, end_us: i64, muted: bool) -> Result<()> {
     ensure_fast!(!extended_color || (main10 && video.shape.primaries == 9
         && [9, 10].contains(&video.shape.matrix) && [14, 16, 18].contains(&video.shape.transfer)),
         ColorFormat, "unsupported HDR or wide-gamut configuration");
+    Ok(())
+}
+
+fn check_source(source: &Source, end_us: i64, muted: bool) -> Result<()> {
+    ensure_fast!(source.read_whole && source.leading_known, SourceUnreadable, "incomplete source index");
+    ensure_fast!(source.joins.is_empty() && source.input.range.is_none() && source.input.parts.is_empty(), Container, "compound input");
+    check_video(&source.video)?;
     ensure_fast!(source.audios.len() <= 1, TrackLayout, "multiple audio tracks");
     ensure_fast!(muted || source.audios.iter().all(|a| matches!(a.codec.as_str(),
         "aac" | "mp3" | "ac3" | "eac3" | "opus" | "flac" | "alac"

@@ -37,7 +37,7 @@ struct PacketInspector<'a> {
 impl<'a> PacketInspector<'a> {
     fn new(video: &'a smartcut_core::VideoInfo, start_time: f64,
         input: &ff::format::context::Input, callbacks: &'a dyn Callbacks) -> Result<Self> {
-        ensure_fast!(matches!(video.codec.as_str(), "h264" | "hevc"), VideoCodec, "only H.264/HEVC is supported");
+        check_video(video)?;
         ensure_fast!(input.format().name().split(',').any(|n| n == "mp4"), Container, "input is not MP4");
         ensure_fast!(input.streams().filter(|s| s.parameters().medium() == ff::media::Type::Video).count() == 1
             && input.streams().filter(|s| s.parameters().medium() == ff::media::Type::Audio).count() <= 1

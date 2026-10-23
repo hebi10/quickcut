@@ -137,7 +137,14 @@ class ExactTrimInstrumentedTest {
                 assertEquals(1, reports)
                 assertTrue("Reporting must run on Main", deliveredOnMain)
                 assertTrue("The output must be published before reporting", wasPublished)
-                assertEquals(ExportMethod.ORIGINAL_COPY, report?.method)
+                // Android 10 routes the late AAC start through native video copy.
+                // A reporting failure must preserve its committed output too.
+                val expectedMethod = if (Build.VERSION.SDK_INT == 29)
+                    ExportMethod.AUDIO_REENCODE else ExportMethod.ORIGINAL_COPY
+                assertEquals(expectedMethod, report?.method)
+                if (Build.VERSION.SDK_INT == 29) {
+                    assertEquals(FastExportReason.AUDIO_TIMESTAMPS, report?.diagnostics?.copyReason)
+                }
                 MediaReader.validateExport(context, saved, clip.sourceDurationMs - 2_000L, true)
             } finally {
                 output?.let { context.contentResolver.delete(it, null, null) }

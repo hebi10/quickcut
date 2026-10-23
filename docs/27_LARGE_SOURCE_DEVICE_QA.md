@@ -33,7 +33,7 @@ python3 scripts/benchmark-large-source.py --source /local/private/source.mp4 \
 
 `--source`는 로컬 일반 파일만 받는다. 기본 결과는 git에서 제외되는 `build/large-source-benchmark/run-*/`에 남는다. 이름, 경로, URI, 영상 내용, 원시 오류, 해시는 `summary.json`에 기록하지 않는다. 다만 합성 입력과 내보낸 영상 자체는 해당 로컬 작업 폴더에 남으므로, 필요한 검증 후 그 실행 폴더만 직접 지운다. 원본이 지원되지 않으면 실패하며 정확 모드로 자동 전환하지 않는다.
 
-각 실행은 새로운 프로세스에서 최초 추천, 같은 프로세스의 재추천, 추천 구간 복사 저장을 순서대로 측정한다. `initial_recommendation_ms`, `repeated_recommendation_ms`, `copy_export_ms`는 벽시계 시간이다. 재스캔 여부는 분석 시작 progress(0) 관찰값이다. 이는 내부 단계별 CPU 프로파일이 아니며 OS 디스크 캐시는 초기화하지 않는다. 컴파일·합성 입력 준비·원본 불변 확인 해싱·독립 디코딩 시간은 저장 시간에 포함하지 않는다. `preparation_ms`, `independent_decode_ms`는 별도로 기록한다. 영상 재인코딩 패킷은 0이어야 하며, 저장 구간은 추천된 안전 경계에 맞춰 바뀔 수 있다.
+각 실행은 새로운 프로세스에서 최초 추천, 같은 프로세스의 재추천, 추천 구간 복사 저장을 순서대로 측정한다. `initial_recommendation_ms`, `repeated_recommendation_ms`, `copy_export_ms`는 벽시계 시간이다. 재스캔 여부는 분석 시작 progress(0) 관찰값이다. 이는 내부 단계별 CPU 프로파일이 아니며 OS 디스크 캐시는 초기화하지 않는다. 원본 불변 확인 해싱이 측정 전에 전체 입력을 읽으므로 첫 실행의 디스크 캐시도 데워질 수 있다. 앱 분석 캐시의 최초 비용과 물리 저장소의 cold-cache 비용을 구분한다. 컴파일·합성 입력 준비·원본 불변 확인 해싱·독립 디코딩 시간은 저장 시간에 포함하지 않는다. `preparation_ms`, `independent_decode_ms`는 별도로 기록한다. 영상 재인코딩 패킷은 0이어야 하며, 저장 구간은 추천된 안전 경계에 맞춰 바뀔 수 있다.
 
 보고서는 성공한 모든 출력의 전체 영상/오디오를 별도 FFmpeg로 디코딩하고 길이 오차를 100ms 이내로 검사한다. 출력 픽셀·음질·HDR 메타데이터의 동일성을 보증하는 검사는 아니므로 관련 네이티브/Android 회귀 검사를 함께 실행한다. 실행 전후 원본 SHA-256을 메모리에서 비교하되 보고서에는 `source_unchanged`만 남긴다. `--prepare-only --duration-seconds 24`는 도구와 작은 fixture 생성만 확인하며 엔진 통과로 표시하지 않는다.
 

@@ -216,3 +216,23 @@ fn source_analysis_reuses_completed_packet_facts_without_another_scan() {
     incomplete.leading_known = false;
     assert!(crate::check_source(&incomplete, 0, true).is_err());
 }
+
+#[test]
+fn cancellation_during_packet_inspection_never_publishes_partial_facts() {
+    use std::sync::atomic::AtomicUsize;
+    struct CancelAfterChecks(AtomicUsize);
+    impl Callbacks for CancelAfterChecks {
+        fn is_cancelled(&self) -> bool { self.0.fetch_add(1, Ordering::Relaxed) >= 3 }
+        fn progress(&self, _: i32) {}
+    }
+    let fixture = Fixture::new("mid-inspection-cancel");
+    let store = Mutex::new(AnalysisCache::new(MAX_ENTRIES, MAX_RETAINED_BYTES));
+    let callbacks = CancelAfterChecks(AtomicUsize::new(0));
+    let progress = std::sync::atomic::AtomicBool::new(false);
+    let result = load_with_cache(&fixture.input, &callbacks, &|p| {
+        if p == 100 { progress.store(true, Ordering::Relaxed); }
+    }, &store);
+    assert!(result.is_err());
+    assert!(!progress.load(Ordering::Relaxed), "cancellation must stop before the final completion callback");
+    assert!(store.lock().unwrap().entries.is_empty());
+}

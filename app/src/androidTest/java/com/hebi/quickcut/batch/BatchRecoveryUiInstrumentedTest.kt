@@ -7,7 +7,8 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.hasText
 import androidx.lifecycle.ViewModelStore
 import androidx.test.platform.app.InstrumentationRegistry
 import com.hebi.quickcut.media.SaveDateMode
@@ -70,7 +71,8 @@ class BatchRecoveryUiInstrumentedTest {
         compose.waitUntil(10_000L) { !vm.isRecovering }
         compose.runOnIdle { vm.clearNotification() }
         show(vm)
-        compose.onNodeWithText("저장 진단").performScrollTo().performClick()
+        compose.onNodeWithTag("batch-file-list").performScrollToNode(hasText("저장 진단"))
+        compose.onNodeWithText("저장 진단").performClick()
         compose.onNodeWithText("이 작업의 진단은 보관 개수를 넘었거나 기록을 읽을 수 없어 표시할 수 없습니다.\n")
             .assertExists()
     }

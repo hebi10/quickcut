@@ -7,6 +7,8 @@ on:
       - ".github/workflows/emulator-smoke.yml"
       - "scripts/android-emulator-check.sh"
       - "scripts/test-emulator-failure.py"
+      - "scripts/test-emulator-flow.py"
+      - "scripts/android-instrumentation-check.sh"
       - "scripts/verify-android-main10.py"
       - "scripts/build-native-smartcut.sh"
       - "scripts/native-smartcut-sources.json"
@@ -26,6 +28,8 @@ on:
       - ".github/workflows/emulator-smoke.yml"
       - "scripts/android-emulator-check.sh"
       - "scripts/test-emulator-failure.py"
+      - "scripts/test-emulator-flow.py"
+      - "scripts/android-instrumentation-check.sh"
       - "scripts/verify-android-main10.py"
       - "scripts/build-native-smartcut.sh"
       - "scripts/native-smartcut-sources.json"
@@ -123,8 +127,11 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-      - name: Validate bounded failure diagnostics
-        run: python3 scripts/test-emulator-failure.py
+      - name: Validate bounded diagnostics and instrumentation control flow
+        run: |
+          bash -n scripts/android-emulator-check.sh scripts/android-instrumentation-check.sh
+          python3 scripts/test-emulator-failure.py
+          python3 scripts/test-emulator-flow.py
       - name: Launch QuickCut on API ${{ matrix.api }} emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -155,6 +162,13 @@ jobs:
         with:
           name: quickcut-instrumentation-results-api-${{ matrix.api }}
           path: app/build/outputs/androidTest-results/connected/
+          if-no-files-found: ignore
+      - name: Upload native preflight results separately
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quickcut-native-preflight-results-api-${{ matrix.api }}
+          path: quickcut-native-preflight-results/
           if-no-files-found: ignore
       - name: Upload native failure diagnostics
         if: always()

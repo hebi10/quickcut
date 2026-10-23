@@ -7,7 +7,7 @@ on_failure() {
     echo "::error::QuickCut emulator smoke test failed (exit $status)"
     if [ "$(timeout --kill-after=2s 5s adb get-state 2>/dev/null)" = device ]; then
       timeout --kill-after=2s 10s adb logcat -d -s AndroidRuntime:E | tail -100 || true
-      if ! timeout --kill-after=2s 10s adb pull /sdcard/Android/data/com.hebi.quickcut/files/native-diagnostics quickcut-native-diagnostics; then
+      if ! timeout --kill-after=2s 10s adb pull /data/local/tmp/quickcut-native-diagnostics quickcut-native-diagnostics; then
         echo "::warning::Native failure diagnostics were unavailable; the original failure is unchanged."
       fi
     else
@@ -201,50 +201,4 @@ ffmpeg -hide_banner -loglevel error -y \
   app/src/androidTest/assets/quickcut_unequal_tail.mp4
 rm -rf "$fixture_work"
 
-# Run the native boundary checks first to collect focused failures quickly.
-# The unfiltered suite below remains mandatory after this preflight succeeds.
-adb shell rm -rf /data/local/tmp/quickcut-main10
-# A wedged emulator codec must fail with collected test logs, not hold the runner indefinitely.
-timeout --kill-after=30s 10m gradle --no-daemon :app:connectedDebugAndroidTest \
-  -Pandroid.testInstrumentationRunnerArguments.class=com.hebi.quickcut.media.NativeSmartCutInstrumentedTest
-rm -rf quickcut-main10-preflight
-adb pull /data/local/tmp/quickcut-main10 quickcut-main10-preflight
-python3 scripts/verify-android-main10.py quickcut-main10-preflight
-# Remove preflight results so an up-to-date task or stale XML cannot satisfy the
-# full-suite gate. Only generated instrumentation output is removed.
-rm -rf app/build/outputs/androidTest-results/connected
-adb shell rm -rf /data/local/tmp/quickcut-main10
-timeout --kill-after=30s 15m gradle --no-daemon :app:connectedDebugAndroidTest
-rm -rf quickcut-main10-full
-adb pull /data/local/tmp/quickcut-main10 quickcut-main10-full
-python3 scripts/verify-android-main10.py quickcut-main10-full
-python3 - <<'PYCODE'
-from pathlib import Path
-import xml.etree.ElementTree as ET
-
-results = Path('app/build/outputs/androidTest-results/connected')
-cases = set()
-for report in sorted(results.rglob('TEST-*.xml')):
-    root = ET.parse(report).getroot()
-    for suite in root.iter('testsuite'):
-        if any(int(suite.get(field, '0')) for field in ('failures', 'errors', 'skipped')):
-            raise SystemExit(f'Full instrumentation suite has failed or skipped tests: {report}')
-    for case in root.iter('testcase'):
-        key = (case.get('classname'), case.get('name'))
-        if not all(key):
-            raise SystemExit(f'Instrumentation test has no stable identity: {report}')
-        if any(case.find(field) is not None for field in ('failure', 'error', 'skipped')):
-            raise SystemExit(f'Full instrumentation test did not pass: {key}')
-        cases.add(key)
-if len(cases) < 152:
-    raise SystemExit(f'Expected at least 152 distinct full-suite tests, found {len(cases)}')
-print(f'Full instrumentation suite verified: {len(cases)} distinct tests, no failures, errors, or skips')
-PYCODE
-# UiAutomation may return no bitmap. This optional review image must not turn
-# a successful instrumentation run into a test failure.
-if ! adb pull /sdcard/Android/data/com.hebi.quickcut/files/quickcut-fast-review.png quickcut-fast-review.png; then
-  echo "::warning::Optional fast-review screenshot was unavailable; instrumentation results are unchanged."
-fi
-echo "QuickCut Android export instrumentation tests passed"
-
-
+bash "$(dirname -- "${BASH_SOURCE[0]}")/android-instrumentation-check.sh"

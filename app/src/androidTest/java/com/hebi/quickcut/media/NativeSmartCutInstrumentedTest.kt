@@ -504,13 +504,15 @@ class NativeSmartCutInstrumentedTest {
 
     @Test
     fun unsupportedMultiClipTimelineFallsBackOnceWithoutMovingEitherBoundary() = runBlocking {
-        withSource("quickcut_exact_boundary.mp4") { context, _, original ->
+        withSource("quickcut_exact_boundary.mp4") { context, source, original ->
             val timeline = EditTimeline(listOf(
                 original.copy(startMs = 500L, endMs = 1_500L),
                 original.copy(id = 2L, startMs = 2_500L, endMs = 3_500L),
             ))
             val unchanged = timeline.copy(clips = timeline.clips.map { it.copy() })
             withExport(context, timeline) { saved, report ->
+                // Collect both streams before a video/audio assertion can stop this test.
+                fallbackAudioEvidence(context, source, saved)
                 assertColor(context, saved, 0L, red = true)
                 assertColor(context, saved, 900_000L, red = true)
                 assertColor(context, saved, 1_100_000L, red = false)
@@ -640,6 +642,150 @@ class NativeSmartCutInstrumentedTest {
         }
     }
 
+    private fun fallbackAudioEvidence(context: Context, source: Uri, output: Uri) {
+        runCatching { persistFallbackFixtures(context, source, output) }
+            .onFailure { Log.e("FallbackAudioEvidence", "Could not preserve fixtures", it) }
+        for ((label, uri, ranges) in listOf(
+            Triple("source", source, listOf(500_000L until 1_500_000L, 2_500_000L until 3_500_000L)),
+            Triple("output", output, listOf(0L until 1_000_000L, 1_000_000L until 2_000_000L)),
+        )) {
+            runCatching { decodedAudioEvidence(context, label, uri, ranges) }
+                .onFailure { Log.e("FallbackAudioEvidence", "$label decode failed", it) }
+        }
+    }
+
+    /** Preserve real files before Gradle uninstalls the app, without changing export behavior. */
+    private fun persistFallbackFixtures(context: Context, source: Uri, output: Uri) {
+        val id = UUID.randomUUID().toString()
+        val staging = File(requireNotNull(context.getExternalFilesDir(null)), "fallback_$id")
+        check(staging.mkdirs())
+        fun shell(command: String): String {
+            val descriptor = InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand(command)
+            return ParcelFileDescriptor.AutoCloseInputStream(descriptor).bufferedReader().use { it.readText() }
+        }
+        try {
+            val destination = "/data/local/tmp/quickcut-native-diagnostics/fallback_$id"
+            shell("mkdir -p $destination")
+            for ((label, uri) in listOf("source" to source, "output" to output)) {
+                val staged = File(staging, "$label.mp4")
+                checkNotNull(context.contentResolver.openInputStream(uri)).use { input ->
+                    staged.outputStream().use { input.copyTo(it) }
+                }
+                require(staged.absolutePath.matches(Regex("[A-Za-z0-9_./-]+")))
+                shell("cp ${staged.absolutePath} $destination/${staged.name}")
+                val expected = MessageDigest.getInstance("SHA-256").digest(staged.readBytes())
+                    .joinToString("") { "%02x".format(it.toInt() and 0xff) }
+                val actual = shell("sha256sum $destination/${staged.name}").trim().substringBefore(' ')
+                check(expected == actual) { "Incomplete preserved $label fixture" }
+                Log.i("FallbackAudioEvidence", "saved=$destination/${staged.name} sha256=$actual")
+            }
+        } finally { staging.deleteRecursively() }
+    }
+
+    /** Diagnostics only: observe actual decoder trimming, sample clocks and retained source PCM. */
+    private fun decodedAudioEvidence(context: Context, label: String, uri: Uri, ranges: List<LongRange>) {
+        val extractor = MediaExtractor()
+        var decoder: MediaCodec? = null
+        try {
+            extractor.setDataSource(context, uri, null)
+            val track = (0 until extractor.trackCount).first {
+                extractor.getTrackFormat(it).getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true
+            }
+            val format = extractor.getTrackFormat(track)
+            Log.i("FallbackAudioEvidence", "$label input=$format")
+            extractor.selectTrack(track)
+            format.setInteger(MediaFormat.KEY_PCM_ENCODING, AudioFormat.ENCODING_PCM_16BIT)
+            val codec = MediaCodec.createDecoderByType(format.getString(MediaFormat.KEY_MIME)!!)
+            decoder = codec
+            codec.configure(format, null, null, 0)
+            codec.start()
+            var rate = format.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+            var channels = format.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+            val info = MediaCodec.BufferInfo()
+            var inputEnded = false
+            var outputEnded = false
+            var frames = 0L
+            var firstUs: Long? = null
+            var endUs: Long? = null
+            var firstSignalUs: Long? = null
+            var lastSignalUs: Long? = null
+            var minGapUs = 0L
+            var maxGapUs = 0L
+            val rangeFrames = LongArray(ranges.size)
+            val packetTimes = mutableListOf<Long>()
+            val deadline = SystemClock.elapsedRealtime() + 20_000L
+            while (!outputEnded) {
+                check(SystemClock.elapsedRealtime() < deadline) { "Audio evidence decode timed out" }
+                if (!inputEnded) {
+                    val index = codec.dequeueInputBuffer(5_000L)
+                    if (index >= 0) {
+                        val buffer = checkNotNull(codec.getInputBuffer(index))
+                        buffer.clear()
+                        val size = if (extractor.sampleTrackIndex >= 0) extractor.readSampleData(buffer, 0) else -1
+                        if (size < 0) {
+                            codec.queueInputBuffer(index, 0, 0, 0L, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                            inputEnded = true
+                        } else {
+                            if (packetTimes.size < 320) packetTimes.add(extractor.sampleTime)
+                            codec.queueInputBuffer(index, 0, size, extractor.sampleTime, 0)
+                            extractor.advance()
+                        }
+                    }
+                }
+                when (val index = codec.dequeueOutputBuffer(info, 5_000L)) {
+                    MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                        val actual = codec.outputFormat
+                        Log.i("FallbackAudioEvidence", "$label decodedFormat=$actual")
+                        rate = actual.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+                        channels = actual.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+                        check(!actual.containsKey(MediaFormat.KEY_PCM_ENCODING) ||
+                            actual.getInteger(MediaFormat.KEY_PCM_ENCODING) == AudioFormat.ENCODING_PCM_16BIT)
+                    }
+                    else -> if (index >= 0) {
+                        try {
+                            if (info.size > 0 && info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG == 0) {
+                                if (firstUs == null) firstUs = info.presentationTimeUs
+                                endUs?.let { previous ->
+                                    val gapUs = info.presentationTimeUs - previous
+                                    minGapUs = minOf(minGapUs, gapUs)
+                                    maxGapUs = maxOf(maxGapUs, gapUs)
+                                }
+                                val buffer = checkNotNull(codec.getOutputBuffer(index)).duplicate()
+                                    .order(ByteOrder.LITTLE_ENDIAN)
+                                buffer.position(info.offset)
+                                buffer.limit(info.offset + info.size)
+                                val count = info.size / (2 * channels)
+                                repeat(count) { frame ->
+                                    val timeUs = info.presentationTimeUs + frame * 1_000_000L / rate
+                                    var amplitude = 0
+                                    repeat(channels) { amplitude = maxOf(amplitude, abs(buffer.short.toInt())) }
+                                    if (amplitude > 100) {
+                                        if (firstSignalUs == null) firstSignalUs = timeUs
+                                        lastSignalUs = timeUs
+                                    }
+                                    ranges.forEachIndexed { range, bounds ->
+                                        if (timeUs in bounds) rangeFrames[range]++
+                                    }
+                                }
+                                frames += count
+                                endUs = info.presentationTimeUs + count * 1_000_000L / rate
+                            }
+                            outputEnded = info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
+                        } finally { codec.releaseOutputBuffer(index, false) }
+                    }
+                }
+            }
+            packetTimes.chunked(40).forEachIndexed { chunk, pts ->
+                Log.i("FallbackAudioEvidence", "$label packetPts[$chunk]=$pts")
+            }
+            Log.i("FallbackAudioEvidence", "$label pcmFrames=$frames rate=$rate channels=$channels " +
+                "firstUs=$firstUs endUs=$endUs firstSignalUs=$firstSignalUs lastSignalUs=$lastSignalUs " +
+                "minGapUs=$minGapUs maxGapUs=$maxGapUs ranges=$ranges rangeFrames=${rangeFrames.toList()}")
+        } finally {
+            try { decoder?.release() } finally { extractor.release() }
+        }
+    }
+
     /** This fixture retains exactly 30 red pictures followed by 30 blue pictures. */
     private fun assertFallbackVideoAndAudioBoundaries(context: Context, uri: Uri) {
         val expectedUs = 2_000_000L
@@ -696,8 +842,11 @@ class NativeSmartCutInstrumentedTest {
         assertTrue("The padding budget requires measured 1024-sample AAC access units",
             audioSteps.all { abs(it - aacFrameUs) <= 1L })
         val measuredFrameUs = audioSteps.max()
-        assertTrue("AAC must begin at the requested boundary, allowing one priming frame",
-            audioTimes.first() in -measuredFrameUs..1_000L)
+        val delaySamples = if (formats[audio].containsKey(MediaFormat.KEY_ENCODER_DELAY))
+            formats[audio].getInteger(MediaFormat.KEY_ENCODER_DELAY) else 0
+        val delayUs = delaySamples * 1_000_000L / sampleRate
+        assertTrue("AAC must begin at zero after its declared encoder delay: first=${audioTimes.first()} delay=$delayUs",
+            abs(audioTimes.first() + delayUs) <= 1_000L)
         val audioEndUs = audioTimes.last() + measuredFrameUs
         assertTrue("AAC must cover both ranges with at most priming and final-frame padding",
             audioEndUs in (expectedUs - 1_000L)..(expectedUs + 2 * measuredFrameUs))

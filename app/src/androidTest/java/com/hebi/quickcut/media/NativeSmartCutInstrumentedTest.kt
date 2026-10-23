@@ -514,7 +514,7 @@ class NativeSmartCutInstrumentedTest {
                 assertColor(context, saved, 0L, red = true)
                 assertColor(context, saved, 900_000L, red = true)
                 assertColor(context, saved, 1_100_000L, red = false)
-                assertDurationAndAudio(context, saved, 2_000L)
+                assertFallbackVideoAndAudioBoundaries(context, saved)
                 assertEquals("Unsupported compositions must retain the normal full fallback",
                     ExportMethod.VIDEO_REENCODE, report.method)
                 assertEquals(unchanged, timeline)
@@ -638,6 +638,78 @@ class NativeSmartCutInstrumentedTest {
         } finally {
             outputs.distinct().forEach { context.contentResolver.delete(it, null, null) }
         }
+    }
+
+    /** This fixture retains exactly 30 red pictures followed by 30 blue pictures. */
+    private fun assertFallbackVideoAndAudioBoundaries(context: Context, uri: Uri) {
+        val expectedUs = 2_000_000L
+        val extractor = MediaExtractor()
+        val formats: List<MediaFormat>
+        val times: List<MutableList<Long>>
+        try {
+            extractor.setDataSource(context, uri, null)
+            formats = (0 until extractor.trackCount).map { extractor.getTrackFormat(it) }
+            times = formats.map { mutableListOf<Long>() }
+            formats.indices.forEach { extractor.selectTrack(it) }
+            while (extractor.sampleTrackIndex >= 0) {
+                times[extractor.sampleTrackIndex].add(extractor.sampleTime)
+                if (!extractor.advance()) break
+            }
+        } finally {
+            extractor.release()
+        }
+        // Keep bounded clock evidence in logcat: Gradle can uninstall the app before
+        // the runner retrieves the separate failure-diagnostics files.
+        formats.forEachIndexed { track, format ->
+            val pts = times[track].sorted()
+            val steps = pts.zipWithNext { a, b -> b - a }
+            Log.i("FallbackBoundaryCheck", "track=$track format=$format samples=${pts.size} " +
+                "firstUs=${pts.firstOrNull()} lastUs=${pts.lastOrNull()} " +
+                "minStepUs=${steps.minOrNull()} maxStepUs=${steps.maxOrNull()}")
+        }
+        val video = formats.indices.single {
+            formats[it].getString(MediaFormat.KEY_MIME)?.startsWith("video/") == true
+        }
+        val videoTimes = times[video].sorted()
+        assertEquals("Fallback must retain exactly both one-second video ranges", 60, videoTimes.size)
+        videoTimes.forEachIndexed { index, timeUs ->
+            assertTrue("Fallback video picture $index moved: $timeUs us",
+                abs(timeUs - index * 1_000_000L / 30L) <= 1_000L)
+        }
+        assertTrue("Video track duration must remain exactly two seconds",
+            abs(formats[video].getLong(MediaFormat.KEY_DURATION) - expectedUs) <= 1_000L)
+        assertDecodedPictures(context, uri, 60)
+        assertColor(context, uri, 966_667L, red = true)
+        assertColor(context, uri, 1_000_000L, red = false)
+        assertColor(context, uri, 1_966_667L, red = false)
+
+        val audio = formats.indices.single {
+            formats[it].getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true
+        }
+        assertEquals("Only AAC encoding permits this padding allowance", "audio/mp4a-latm",
+            formats[audio].getString(MediaFormat.KEY_MIME))
+        val sampleRate = formats[audio].getInteger(MediaFormat.KEY_SAMPLE_RATE)
+        val audioTimes = times[audio].sorted()
+        val audioSteps = audioTimes.zipWithNext { a, b -> b - a }
+        assertTrue("The fallback must emit AAC packets", audioSteps.isNotEmpty())
+        val aacFrameUs = 1_024_000_000L / sampleRate
+        assertTrue("The padding budget requires measured 1024-sample AAC access units",
+            audioSteps.all { abs(it - aacFrameUs) <= 1L })
+        val measuredFrameUs = audioSteps.max()
+        assertTrue("AAC must begin at the requested boundary, allowing one priming frame",
+            audioTimes.first() in -measuredFrameUs..1_000L)
+        val audioEndUs = audioTimes.last() + measuredFrameUs
+        assertTrue("AAC must cover both ranges with at most priming and final-frame padding",
+            audioEndUs in (expectedUs - 1_000L)..(expectedUs + 2 * measuredFrameUs))
+        // The container can include one encoder-priming access unit and the final
+        // partially filled AAC unit. Video timing above has no such allowance.
+        val metadata = MediaReader.validateExport(context, uri, 2_000L, expectAudio = true)
+        Log.i("FallbackBoundaryCheck", "containerMs=${metadata.durationMs} " +
+            "audioEndUs=$audioEndUs measuredAacFrameUs=$measuredFrameUs")
+        val paddingMs = (2 * measuredFrameUs + 999L) / 1_000L
+        assertTrue("Container duration must be explained by measured AAC framing: ${metadata.durationMs} ms",
+            metadata.durationMs in 2_000L..(2_000L + paddingMs))
+        assertAudibleContinuousAudio(context, uri, 2_000L, mapOf(1 to 440, 6 to 440))
     }
 
     private fun assertDurationAndAudio(context: Context, uri: Uri, expectedMs: Long, tones: Map<Int, Int> = emptyMap()) {

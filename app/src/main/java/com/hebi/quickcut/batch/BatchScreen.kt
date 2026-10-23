@@ -29,6 +29,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
@@ -109,7 +110,7 @@ fun BatchScreen(
     var inspectedPercent by remember { mutableStateOf<Int?>(null) }
     var showStopConfirmation by rememberSaveable { mutableStateOf(false) }
     val requestExport: (Boolean) -> Unit = { retry ->
-        if (!inspecting && !model.isRunning && !model.isRecovering) {
+        if (!inspecting && !model.isRunning && !model.isRecovering && !model.hasUnresolvedRecovery) {
             inspecting = true
             inspectedCount = 0
             inspectedTotal = 0
@@ -428,7 +429,8 @@ private fun BatchReviewFile(
     choice: BatchExportChoice,
     onChoice: (BatchExportChoice) -> Unit,
 ) {
-    Column(Modifier.fillMaxWidth().border(1.dp, borderColor, RoundedCornerShape(4.dp)).padding(12.dp),
+    Column(Modifier.fillMaxWidth().selectableGroup()
+        .border(1.dp, borderColor, RoundedCornerShape(4.dp)).padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(file.displayName, fontWeight = FontWeight.SemiBold)
         file.requested?.let { requested ->
@@ -512,14 +514,16 @@ private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
             fontWeight = FontWeight.SemiBold,
         )
         Text("편집 방식", color = secondary, fontSize = 13.sp)
-        listOf(
-            BatchClipMode.REMOVE_EDGES to "앞뒤 구간 삭제",
-            BatchClipMode.KEEP_FIRST to "처음 구간만 남기기",
-            BatchClipMode.KEEP_LAST to "마지막 구간만 남기기",
-            BatchClipMode.JOIN_EDGES to "처음 + 마지막 구간 연결",
-        ).forEach { (mode, title) ->
-            ChoiceOption(title, model.draftMode == mode, !disabled) {
-                model.draftMode = mode
+        Column(Modifier.selectableGroup(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            listOf(
+                BatchClipMode.REMOVE_EDGES to "앞뒤 구간 삭제",
+                BatchClipMode.KEEP_FIRST to "처음 구간만 남기기",
+                BatchClipMode.KEEP_LAST to "마지막 구간만 남기기",
+                BatchClipMode.JOIN_EDGES to "처음 + 마지막 구간 연결",
+            ).forEach { (mode, title) ->
+                ChoiceOption(title, model.draftMode == mode, !disabled) {
+                    model.draftMode = mode
+                }
             }
         }
         val useLeading = model.draftMode.usesLeading
@@ -621,11 +625,13 @@ private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
         }
 
         Text("결과 저장 날짜", color = onSurface, fontWeight = FontWeight.SemiBold)
-        ChoiceOption("현재 날짜로 저장 (최신 파일)", model.saveDateMode == SaveDateMode.CURRENT, !disabled) {
-            model.saveDateMode = SaveDateMode.CURRENT
-        }
-        ChoiceOption("원본 날짜 유지", model.saveDateMode == SaveDateMode.ORIGINAL, !disabled) {
-            model.saveDateMode = SaveDateMode.ORIGINAL
+        Column(Modifier.selectableGroup(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            ChoiceOption("현재 날짜로 저장 (최신 파일)", model.saveDateMode == SaveDateMode.CURRENT, !disabled) {
+                model.saveDateMode = SaveDateMode.CURRENT
+            }
+            ChoiceOption("원본 날짜 유지", model.saveDateMode == SaveDateMode.ORIGINAL, !disabled) {
+                model.saveDateMode = SaveDateMode.ORIGINAL
+            }
         }
         Text(
             "원본 날짜 유지는 직접 고속 복사를 지원하지 않아 저장 시간이 늘어날 수 있습니다. " +
@@ -635,16 +641,18 @@ private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
         )
 
         Text("저장 후 원본 처리", color = onSurface, fontWeight = FontWeight.SemiBold)
-        ChoiceOption("원본 유지 (기본값)", model.originalAction == OriginalAction.KEEP, !disabled) {
-            model.originalAction = OriginalAction.KEEP
-        }
-        ChoiceOption("저장 성공한 원본만 휴지통으로 이동",
-            model.originalAction == OriginalAction.TRASH, !disabled) {
-            model.originalAction = OriginalAction.TRASH
-        }
-        ChoiceOption("저장 성공한 원본 영구 삭제",
-            model.originalAction == OriginalAction.DELETE, !disabled) {
-            model.originalAction = OriginalAction.DELETE
+        Column(Modifier.selectableGroup(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            ChoiceOption("원본 유지 (기본값)", model.originalAction == OriginalAction.KEEP, !disabled) {
+                model.originalAction = OriginalAction.KEEP
+            }
+            ChoiceOption("저장 성공한 원본만 휴지통으로 이동",
+                model.originalAction == OriginalAction.TRASH, !disabled) {
+                model.originalAction = OriginalAction.TRASH
+            }
+            ChoiceOption("저장 성공한 원본 영구 삭제",
+                model.originalAction == OriginalAction.DELETE, !disabled) {
+                model.originalAction = OriginalAction.DELETE
+            }
         }
         Text(
             "원본 삭제는 자동 실행하지 않으며 완료 후 앱 확인과 Android 승인이 필요합니다.",
@@ -716,7 +724,8 @@ private fun ChoiceOption(
 ) {
     Row(
         modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
-            .clickable(enabled = enabled, onClick = onChoose),
+            .selectable(selected = selected, enabled = enabled, role = Role.RadioButton,
+                onClick = onChoose),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         RadioButton(selected = selected, onClick = null, enabled = enabled)
@@ -733,12 +742,21 @@ private fun BatchActions(
 ) {
     val context = LocalContext.current
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (model.hasUnresolvedRecovery && !model.isRunning) {
+            Text("이전 저장 파일이나 작업 기록을 확인하지 못했습니다. 파일 접근과 저장 공간을 확인한 뒤 다시 확인해 주세요.",
+                color = secondary, style = MaterialTheme.typography.bodySmall)
+            OutlinedButton(onClick = model::retryRecovery,
+                enabled = !model.isRunning && !model.isRecovering && !model.isImporting && !inspecting,
+                modifier = Modifier.fillMaxWidth().testTag("batch-recovery-retry")) {
+                Text(if (model.isRecovering) "이전 작업 확인 중" else "이전 작업 다시 확인")
+            }
+        }
         when (model.runState) {
             BatchRunState.SETUP -> {
                 Button(
                     onClick = { requestExport(false) },
                     enabled = model.files.isNotEmpty() && model.previewTemplate() != null &&
-                        !model.isImporting && !model.isRecovering && !inspecting,
+                        !model.isImporting && !model.isRecovering && !model.hasUnresolvedRecovery && !inspecting,
                     modifier = Modifier.fillMaxWidth().height(52.dp),
                     shape = RoundedCornerShape(4.dp),
                 ) { Text("일괄 편집 및 저장 시작") }
@@ -767,7 +785,7 @@ private fun BatchActions(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(
                         onClick = { requestExport(true) },
-                        enabled = !model.isRecovering && !inspecting && model.previewTemplate() != null &&
+                        enabled = !model.isRecovering && !model.hasUnresolvedRecovery && !inspecting && model.previewTemplate() != null &&
                             (model.failures > 0 || model.skips > 0),
                         shape = RoundedCornerShape(4.dp),
                     ) { Text("실패 작업 재시도") }
@@ -857,6 +875,9 @@ private fun BatchFileRow(
         )
         if (file.status == BatchFileStatus.SAVED) {
             Text(exportReportText(file.exportReport), color = secondary, fontSize = 12.sp)
+        }
+        file.diagnosticId?.let { operationId ->
+            ExportDiagnosticButton(operationId = operationId, label = "저장 진단")
         }
     }
 }

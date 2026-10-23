@@ -51,6 +51,10 @@ jobs:
   emulator:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [29, 35, 36]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v5
@@ -121,10 +125,10 @@ jobs:
           sudo udevadm trigger --name-match=kvm
       - name: Validate bounded failure diagnostics
         run: python3 scripts/test-emulator-failure.py
-      - name: Launch QuickCut on API 35 emulator
+      - name: Launch QuickCut on API ${{ matrix.api }} emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 35
+          api-level: ${{ matrix.api }}
           target: google_apis
           arch: x86_64
           profile: pixel_6
@@ -139,7 +143,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: quickcut-emulator-start
+          name: quickcut-emulator-start-api-${{ matrix.api }}
           path: |
             quickcut-start.png
             quickcut-tablet-start.png
@@ -149,21 +153,21 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: quickcut-instrumentation-results
+          name: quickcut-instrumentation-results-api-${{ matrix.api }}
           path: app/build/outputs/androidTest-results/connected/
           if-no-files-found: ignore
       - name: Upload native failure diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: quickcut-native-diagnostics
+          name: quickcut-native-diagnostics-api-${{ matrix.api }}
           path: quickcut-native-diagnostics/
           if-no-files-found: ignore
       - name: Upload Android Main10 decoding evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: quickcut-android-main10
+          name: quickcut-android-main10-api-${{ matrix.api }}
           path: |
             quickcut-main10-preflight/
             quickcut-main10-full/

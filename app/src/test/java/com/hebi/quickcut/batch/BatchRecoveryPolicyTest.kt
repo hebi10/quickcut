@@ -19,10 +19,10 @@ class BatchRecoveryPolicyTest {
             BatchRecoveryPolicy.decide(false, BatchOutputState.PENDING))
     }
 
-    @Test fun missingOrInvalidPublishedOutputRequiresExplicitRetry() {
+    @Test fun missingOutputRequiresExplicitRetryAndUnknownOutputRemainsBlocked() {
         assertEquals(BatchRecoveryAction.RETRY,
             BatchRecoveryPolicy.decide(true, BatchOutputState.ABSENT))
-        assertEquals(BatchRecoveryAction.RETRY,
+        assertEquals(BatchRecoveryAction.BLOCKED,
             BatchRecoveryPolicy.decide(false, BatchOutputState.INVALID))
     }
 }

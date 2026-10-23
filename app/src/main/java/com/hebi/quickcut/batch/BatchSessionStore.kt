@@ -9,6 +9,7 @@ import com.hebi.quickcut.media.ExportReport
 import com.hebi.quickcut.media.ExportDiagnostics
 import com.hebi.quickcut.media.FastExportReason
 import java.io.File
+import java.io.IOException
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -19,17 +20,33 @@ data class BatchSessionSnapshot(
     val runState: BatchRunState,
 )
 
-class BatchSessionStore(context: Context) {
-    private val file = AtomicFile(File(context.applicationContext.filesDir, "quickcut_batch_session_v1.json"))
+class BatchSessionStore internal constructor(
+    private val base: File,
+    private val file: AtomicFile = AtomicFile(base),
+    private val sync: (java.io.FileOutputStream) -> Unit = { it.fd.sync() },
+) {
+    constructor(context: Context) : this(File(context.applicationContext.filesDir, "quickcut_batch_session_v1.json"))
 
     @Synchronized
-    fun load(): BatchSessionSnapshot? = runCatching {
+    fun hasRecord(): Boolean {
+        val directory = base.parentFile
+        if (directory == null || !directory.isDirectory || !directory.canRead()) return true
+        return listOf(base, File(base.path + ".bak"), File(base.path + ".new")).any { it.exists() }
+    }
+
+    @Synchronized
+    fun load(): BatchSessionSnapshot? {
+        if (!hasRecord()) return null
+        // Corruption, denied reads and interrupted first writes must retain the journal.
+
         val data = JSONObject(file.openRead().bufferedReader(Charsets.UTF_8).use { it.readText() })
         require(data.getInt("schemaVersion") == 1)
         val rows = data.getJSONArray("files")
         require(rows.length() in 1..250)
         val files = (0 until rows.length()).map { index ->
             val row = rows.getJSONObject(index)
+            require(listOf("uri", "name", "duration", "hasAudio", "status", "output",
+                "expectedDuration", "expectedAudio", "expectedDate").all(row::has))
             BatchFile(
                 uri = row.getString("uri"),
                 displayName = row.getString("name"),
@@ -39,11 +56,12 @@ class BatchSessionStore(context: Context) {
                     OriginalTimestamp(row.getLong("originalDate"), row.optString("dateSource", "복구 기록")),
                 status = BatchFileStatus.valueOf(row.getString("status")),
                 reason = row.optString("reason").takeIf { it.isNotBlank() && it != "null" },
-                savedOutputUri = row.optString("output").takeIf { it.isNotBlank() && it != "null" },
+                savedOutputUri = if (row.isNull("output")) null else row.getString("output").also { require(it.isNotBlank()) },
                 outputExpectedDurationMs = if (row.isNull("expectedDuration")) null else row.getLong("expectedDuration"),
                 outputExpectedAudio = if (row.isNull("expectedAudio")) null else row.getBoolean("expectedAudio"),
                 outputExpectedDateMs = if (row.isNull("expectedDate")) null else row.getLong("expectedDate"),
                 exportReport = readReport(row.optJSONObject("exportReport")),
+                diagnosticId = safeDiagnosticId(row.optString("diagnosticId")),
             ).also { require(it.durationMs >= 0L && it.uri.isNotBlank()) }
         }
         require(files.map { it.uri }.distinct().size == files.size)
@@ -54,9 +72,9 @@ class BatchSessionStore(context: Context) {
                 require(template.checkValidity() == null)
             }
         }
-        BatchSessionSnapshot(files, plan, SaveDateMode.valueOf(data.getString("dateMode")),
+        return BatchSessionSnapshot(files, plan, SaveDateMode.valueOf(data.getString("dateMode")),
             BatchRunState.valueOf(data.getString("runState")))
-    }.getOrNull()
+    }
 
     @Synchronized
     fun save(snapshot: BatchSessionSnapshot) {
@@ -76,6 +94,7 @@ class BatchSessionStore(context: Context) {
                 put("status", row.status.name)
                 put("reason", row.reason ?: JSONObject.NULL)
                 put("output", row.savedOutputUri ?: JSONObject.NULL)
+                put("diagnosticId", safeDiagnosticId(row.diagnosticId) ?: JSONObject.NULL)
                 put("expectedDuration", row.outputExpectedDurationMs ?: JSONObject.NULL)
                 put("expectedAudio", row.outputExpectedAudio ?: JSONObject.NULL)
                 put("expectedDate", row.outputExpectedDateMs ?: JSONObject.NULL)
@@ -106,10 +125,15 @@ class BatchSessionStore(context: Context) {
                 }
             } ?: JSONObject.NULL)
         }
+        val encoded = data.toString()
         val stream = file.startWrite()
         try {
-            stream.write(data.toString().toByteArray(Charsets.UTF_8))
+            stream.write(encoded.toByteArray(Charsets.UTF_8))
+            sync(stream)
             file.finishWrite(stream)
+            // AtomicFile can log a failed sync/rename without throwing.
+            val committed = file.openRead().bufferedReader(Charsets.UTF_8).use { it.readText() }
+            if (committed != encoded) throw IOException("일괄 작업 기록을 확인하지 못했습니다.")
         } catch (error: Throwable) {
             file.failWrite(stream)
             throw error
@@ -117,7 +141,15 @@ class BatchSessionStore(context: Context) {
     }
 
     @Synchronized
-    fun clear() { file.delete() }
+    fun clear() {
+        file.delete()
+        if (hasRecord()) throw IOException("이전 일괄 작업 기록을 정리하지 못했습니다.")
+    }
+
+    // Optional local telemetry must never invalidate a recovery record or retain source text.
+    private fun safeDiagnosticId(value: String?): String? = value?.takeIf {
+        it.matches(Regex("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"))
+    }?.let { runCatching { java.util.UUID.fromString(it).toString() }.getOrNull() }
 
     private fun readReport(data: JSONObject?): ExportReport? {
         if (data == null) return null // Version 0.4.2 journals have no report.

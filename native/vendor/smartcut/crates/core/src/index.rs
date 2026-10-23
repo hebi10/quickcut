@@ -124,10 +124,37 @@ impl IndexSource for PacketScan {
 pub fn walk(
     video: &VideoInfo,
     start_time: f64,
+    ictx: crate::input::Demux,
+    on: Option<OnProgress>,
+    entry: impl FnMut(&ff::Packet) -> Result<()>,
+    stop: Option<&(dyn Fn() -> bool + Sync)>,
+) -> Result<Index> {
+    walk_inspecting(video, start_time, ictx, on, entry, stop, None)
+}
+
+/// Build the packet index and inspect every demuxed packet in the same pass.
+/// Unlike the ordinary index-only walk, all streams remain enabled and the
+/// first read error fails the walk. An observer error aborts immediately;
+/// neither partial observations nor a partial index certify a complete read.
+pub fn walk_observed(
+    video: &VideoInfo,
+    start_time: f64,
+    ictx: crate::input::Demux,
+    on: Option<OnProgress>,
+    mut observe: impl FnMut(&ff::Packet) -> Result<()>,
+    stop: Option<&(dyn Fn() -> bool + Sync)>,
+) -> Result<Index> {
+    walk_inspecting(video, start_time, ictx, on, |_| Ok(()), stop, Some(&mut observe))
+}
+
+fn walk_inspecting(
+    video: &VideoInfo,
+    start_time: f64,
     mut ictx: crate::input::Demux,
     on: Option<OnProgress>,
     mut entry: impl FnMut(&ff::Packet) -> Result<()>,
     stop: Option<&(dyn Fn() -> bool + Sync)>,
+    mut observe: Option<&mut dyn FnMut(&ff::Packet) -> Result<()>>,
 ) -> Result<Index> {
     let stream_index = video.stream_index;
     let time_base = video.time_base;
@@ -138,7 +165,12 @@ pub fn walk(
     // left switched on costs the pictures. Nothing seeks in this pass, so
     // there is no seek for this to get in front of; see
     // [`crate::input::keep_only`].
-    crate::input::keep_only(&mut ictx, &[stream_index]);
+    if observe.is_none() {
+        crate::input::keep_only(&mut ictx, &[stream_index]);
+    } else {
+        let streams: Vec<_> = ictx.streams().map(|s| s.index()).collect();
+        crate::input::keep_only(&mut ictx, &streams);
+    }
 
     // How far there is to read. Asked of the byte stream rather than of
     // the file, because what is open is not always a file: a DVD title is
@@ -198,7 +230,8 @@ pub fn walk(
     // Whether the leading reference pictures of each entry point are needed
     // by what follows them; see [`crate::leadrefs`].
     let mut judge = crate::leadrefs::Judge::new(&codec, framing);
-    let mut reading = ictx.read_packets();
+    let strict = observe.is_some();
+    let mut reading = ictx.read_packets().fail_fast(strict);
     for (s, p) in reading.by_ref() {
         seen += 1;
         if seen.is_multiple_of(256) {
@@ -216,6 +249,7 @@ pub fn walk(
                 }
             }
         }
+        if let Some(inspect) = observe.as_mut() { inspect(&p)?; }
         if s.index() != stream_index {
             continue;
         }
@@ -276,6 +310,7 @@ pub fn walk(
         }
         packets.push(view);
     }
+    if strict { reading.finished()?; }
     let whole = reading.finished().is_ok();
     drop(reading);
     for (id, free) in judge.finish(whole) {

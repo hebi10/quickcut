@@ -39,3 +39,9 @@ not alter the first output picture or intact source IDRs.
 Cut statistics also expose actual copied-segment output times after retained-frame
 placement, so off-frame requested cuts do not misidentify a splice by using the
 requested duration instead of the written picture clock.
+
+Review follow-up: `index::walk_observed` offers every video/audio packet to an
+adapter validator during the existing index traversal. This mode retains all
+streams and fails on the first demux read error; the original index-only and
+thumbnail paths retain their previous behavior. QuickCut uses it to preserve
+full payload/HDR/timestamp validation without reading the entire source twice.

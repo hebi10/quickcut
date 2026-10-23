@@ -44,8 +44,10 @@ class VideoExporter(private val context: Context) {
         onReport: (ExportReport) -> Unit = {},
         onDiagnostics: (ExportDiagnostics) -> Unit = {},
         onStage: (ExportStage) -> Unit = {},
+        onDiagnosticStarted: (String) -> Unit = {},
     ): Uri {
         val diagnostic = ExportDiagnosticStore.begin(context, timeline)
+        runCatching { onDiagnosticStarted(diagnostic.operationId) }
         val main = Handler(Looper.getMainLooper())
         val stage: (ExportStage) -> Unit = { value ->
             diagnostic.stage(value)

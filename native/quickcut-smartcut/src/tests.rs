@@ -340,3 +340,83 @@ fn android_aac_media_duration_keeps_the_full_requested_eof_range() {
     }
     std::fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn all_intra_avc_copy_ranges_and_suggestions_preserve_every_picture() {
+    use std::process::Command;
+    let directory = std::env::temp_dir().join(format!("quickcut-all-intra-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    let input = directory.join("source.mp4");
+    assert!(Command::new("ffmpeg").args(["-v", "error", "-y", "-f", "lavfi", "-i",
+        "testsrc2=size=160x96:rate=30:duration=2", "-an", "-c:v", "libx264",
+        "-threads", "1", "-g", "1", "-pix_fmt", "yuv420p"]).arg(&input).status().unwrap().success());
+    let input = input.to_str().unwrap();
+    let ranges = [(0, 1_000_000), (1_500_000, 2_000_000)];
+    let proposed = suggest_copy_ranges(input, &ranges, 2_000_000, false,
+        Arc::new(Observer::default())).unwrap();
+    assert_eq!(proposed, ranges);
+    let output = directory.join("copy.mp4");
+    let _ = std::fs::remove_file(&output);
+    let report = cut_ranges_copy_video(input, output.to_str().unwrap(), &proposed, false,
+        Arc::new(Observer::default())).unwrap();
+    assert_eq!(report, Report { copied_video_packets: 45, encoded_video_packets: 0 });
+    let source_vcl = vcl_packets(input);
+    let expected: Vec<_> = source_vcl[..30].iter().chain(&source_vcl[45..60]).cloned().collect();
+    assert_eq!(vcl_packets(output.to_str().unwrap()), expected);
+    let decoded = Command::new("ffmpeg").args(["-v", "error", "-xerror", "-i"])
+        .arg(&output).args(["-map", "0:v:0", "-f", "framemd5", "-"]).output().unwrap();
+    assert!(decoded.status.success());
+    let hashes = |bytes: Vec<u8>| -> Vec<String> {
+        String::from_utf8(bytes).unwrap().lines().filter(|l| !l.starts_with('#') && !l.is_empty())
+            .map(|line| line.rsplit(',').next().unwrap().trim().to_owned()).collect()
+    };
+    let output_hashes = hashes(decoded.stdout);
+    assert_eq!(output_hashes.len(), 45);
+    let decoded_source = Command::new("ffmpeg").args(["-v", "error", "-xerror", "-i", input,
+        "-map", "0:v:0", "-f", "framemd5", "-"]).output().unwrap();
+    assert!(decoded_source.status.success());
+    let source_hashes = hashes(decoded_source.stdout);
+    let expected_hashes: Vec<_> = source_hashes[..30].iter().chain(&source_hashes[45..60]).cloned().collect();
+    assert_eq!(output_hashes, expected_hashes, "independent decoded pictures retain both selected ranges");
+    assert!(avc1::unused_ids(input, 1).is_err(), "zero-reference copy sources cannot create a reencoded splice");
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn suggestions_decline_avc_configurations_that_saving_cannot_support() {
+    check_suggestion_eligibility("lossless", &["-an", "-c:v", "libx264", "-qp", "0"], 14);
+}
+
+#[test]
+fn suggestions_decline_audio_configurations_that_saving_cannot_support() {
+    check_suggestion_eligibility("seven-channel", &["-f", "lavfi", "-i", "anullsrc=r=48000:cl=6.1",
+        "-shortest", "-c:v", "libx264", "-c:a", "aac"], 8);
+}
+
+fn check_suggestion_eligibility(name: &str, args: &[&str], reason: i64) {
+    use std::process::Command;
+    let directory = std::env::temp_dir().join(format!("quickcut-suggestion-eligibility-{name}-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    {
+        let input = directory.join(format!("{name}.mp4"));
+        assert!(Command::new("ffmpeg").args(["-v", "error", "-y", "-f", "lavfi", "-i",
+            "testsrc2=size=160x96:rate=30:duration=4"]).args(args)
+            .args(["-threads", "1", "-g", "60", "-keyint_min", "60", "-sc_threshold", "0", "-pix_fmt", "yuv420p"])
+            .arg(&input).status().unwrap().success());
+        let input = input.to_str().unwrap();
+        let error = suggest_copy_ranges(input, &[(0, 2_000_000)], 4_000_000, false,
+            Arc::new(Observer::default())).expect_err("suggestions must apply export configuration eligibility");
+        assert_eq!(decline::code(&error), reason, "{error:#}");
+        let output = directory.join(format!("{name}-copy.mp4"));
+        let _ = std::fs::remove_file(&output);
+        let error = cut_ranges_copy_video(input, output.to_str().unwrap(), &[(0, 2_000_000)], false,
+            Arc::new(Observer::default())).unwrap_err();
+        assert_eq!(decline::code(&error), reason, "{error:#}");
+        assert!(!output.exists());
+        if name == "seven-channel" {
+            assert!(suggest_copy_ranges(input, &[(0, 2_000_000)], 4_000_000, true,
+                Arc::new(Observer::default())).is_ok(), "muting removes the unsupported output audio");
+        }
+    }
+    std::fs::remove_dir_all(directory).unwrap();
+}

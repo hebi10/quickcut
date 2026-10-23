@@ -26,6 +26,7 @@ mod hevc_hdr;
 mod hevc_splice;
 mod decline;
 mod analysis_cache;
+mod packet_inspection;
 mod candidates;
 use decline::{explain, Reason};
 
@@ -192,89 +193,6 @@ impl PacketFacts {
     }
 }
 
-/// Inspect every access-unit payload, HDR/parameter change and actual clock
-/// once, independently of requested ranges. Only complete scans are reusable.
-fn inspect_source_packets(source: &Source, callbacks: &dyn Callbacks,
-    progress: &(dyn Fn(f64) + Sync)) -> Result<PacketFacts> {
-    let mut input = smartcut_core::input::open_local(&source.path)?;
-    ensure_fast!(input.format().name().split(',').any(|n| n == "mp4"), Container, "input is not MP4");
-    ensure_fast!(input.nb_streams() as usize == 1 + source.audios.len(), TrackLayout, "additional streams");
-    let stream = input.stream(source.video.stream_index).context("missing video stream")?;
-    let static_hdr = source.video.codec == "hevc" && [16, 18].contains(&source.video.shape.transfer);
-    ensure_fast!(stream.metadata().get("rotate").is_none(), Rotation, "rotation metadata");
-    ensure_fast!(!stream.side_data().any(|d| d.kind() != ff::codec::packet::side_data::Type::DisplayMatrix
-        && unsupported_side_data(d.kind(), static_hdr)), Metadata, "unsupported video metadata");
-    let parameters = stream.parameters();
-    let extradata = unsafe {
-        let raw = parameters.as_ptr();
-        ensure_fast!(!(*raw).extradata.is_null() && (*raw).extradata_size > 0, CodecConfiguration, "missing AVC configuration");
-        std::slice::from_raw_parts((*raw).extradata, (*raw).extradata_size as usize)
-    };
-    let is_hevc = source.video.codec == "hevc";
-    if is_hevc { explain(hevc::validate_configuration(extradata), Reason::CodecConfiguration)?; }
-    let mut hdr = if is_hevc { Some(explain(hevc_hdr::Guard::new(extradata, static_hdr,
-        source.video.shape.transfer), Reason::Metadata)?) } else { None };
-    if let Some(guard) = &mut hdr {
-        for side in stream.side_data() {
-            explain(guard.observe_side_data(side.kind(), side.data()), Reason::Metadata)?;
-        }
-    }
-    let original_sets = smartcut_core::bitstream::parameter_sets(&source.video.codec, extradata);
-    ensure_fast!(!original_sets.is_empty(), CodecConfiguration, "missing AVC parameter sets");
-    let length_width = match source.video.framing {
-        smartcut_core::bitstream::NalFraming::Length(width) => width,
-        _ => anyhow::bail!("MP4 AVC length prefixes required"),
-    };
-    let mut picture_times_us = Vec::new();
-    let mut idr_times_us = Vec::new();
-    let mut packets = 0u64;
-    let mut last_progress = 0.0f64;
-    let mut clock = PictureClock::new(source.video.frame_rate, source.video.time_base);
-    loop {
-        if packets % 64 == 0 { ensure!(!callbacks.is_cancelled(), "cancelled"); }
-        let mut packet = ff::Packet::empty();
-        match packet.read(&mut input) {
-            Ok(()) => (),
-            Err(ff::Error::Eof) => break,
-            Err(error) => return Err(error.into()),
-        }
-        packets += 1;
-        ensure_fast!(!packet.flags().contains(ff::codec::packet::Flags::CORRUPT), PacketStructure, "corrupt source packet");
-        ensure_fast!(!packet.side_data().any(|d| unsupported_side_data(d.kind(), static_hdr)), Metadata, "changing codec configuration or unsupported packet metadata");
-        if packet.stream() != source.video.stream_index { continue; }
-        if let Some(guard) = &mut hdr {
-            for side in packet.side_data() {
-                explain(guard.observe_side_data(side.kind(), side.data()), Reason::Metadata)?;
-            }
-        }
-        let bytes = packet.data().context("empty video packet")?;
-        let nals = if is_hevc { hevc::nals(bytes, length_width)? } else { avc_nals(bytes, length_width)? };
-        if let Some(guard) = &mut hdr { explain(guard.inspect(&nals), Reason::Metadata)?; }
-        let kind = |nal: &[u8]| if is_hevc { (nal[0] >> 1) & 63 } else { nal[0] & 31 };
-        let idr = nals.iter().any(|nal| if is_hevc { matches!(kind(nal), 19 | 20) } else { kind(nal) == 5 });
-        ensure_fast!(nals.iter().any(|nal| if is_hevc { kind(nal) <= 31 } else { (1..=5).contains(&kind(nal)) }), PacketStructure, "packet without a coded picture");
-        if clock.origin.is_none() { ensure_fast!(idr, UnsafeSplice, "source does not begin at an IDR picture"); }
-        ensure_fast!(nals.iter().filter(|nal| if is_hevc { matches!(kind(nal), 32..=34) } else { matches!(kind(nal), 7 | 8) }).all(|nal|
-            original_sets.iter().any(|original| original.as_slice() == *nal)), Metadata, "parameters change inside the source");
-        let pts = explain(packet.pts().context("video packet has no presentation timestamp"), Reason::Timestamps)?;
-        let at = pts as f64 * source.video.time_base - source.start_time;
-        clock.add(at)?;
-        let at_us = micros(at);
-        picture_times_us.push(at_us);
-        if idr { idr_times_us.push(at_us); }
-        if packets % 64 == 0 && source.duration > 0.0 {
-            last_progress = last_progress.max((at / source.duration).clamp(0.0, 1.0));
-            progress(last_progress);
-        }
-    }
-    clock.finish()?;
-    ensure_fast!(!picture_times_us.is_empty(), NoCopySegment, "source has no video pictures");
-    ensure!(!callbacks.is_cancelled(), "cancelled");
-    picture_times_us.sort_unstable();
-    idr_times_us.sort_unstable();
-    Ok(PacketFacts { picture_times_us: picture_times_us.into_boxed_slice(),
-        idr_times_us: idr_times_us.into_boxed_slice() })
-}
 
 pub fn cut(input: &str, output: &str, start_us: i64, end_us: i64, muted: bool,
     callbacks: Arc<dyn Callbacks>) -> Result<Report> {
@@ -309,6 +227,7 @@ pub fn suggest_copy_ranges(input: &str, ranges: &[(i64, i64)], source_end_us: i6
     let lease = analysis_cache::load(input, callbacks.as_ref(), &progress)?;
     let source = &lease.source;
     for &(_, end) in ranges { check_source(source, end, muted)?; }
+    explain(audio_config::validate_export(source, muted), Reason::AudioFormat)?;
     let mut points = Vec::new();
     for (index, point) in source.points.iter().enumerate() {
         if index % 256 == 0 { ensure!(!callbacks.is_cancelled(), "cancelled"); }
@@ -357,6 +276,7 @@ fn cut_ranges_impl(input: &str, output: &str, ranges: &[(i64, i64)], muted: bool
         let lease = analysis_cache::load(input, callbacks.as_ref(), &progress)?;
         let source = &lease.source;
         for &(_, end) in ranges { check_source(source, end, muted)?; }
+        explain(audio_config::validate_export(source, muted), Reason::AudioFormat)?;
         let options = PlanOptions { allow_open_gop: false, ..Default::default() };
         // plan_on adjusts coarse-frame clocks. A single plain MP4 needs no join
         // handling, so use plan_range and verify its coordinates unchanged.
@@ -373,7 +293,7 @@ fn cut_ranges_impl(input: &str, output: &str, ranges: &[(i64, i64)], muted: bool
             "fast-only consent does not allow video encoding");
         let expected = explain(lease.analysis.packets.check_plans(&plans), Reason::PacketStructure)?;
         let display = &lease.analysis.display;
-        let (parameter_set_ids, reference_frames) = if source.video.codec == "h264" {
+        let (parameter_set_ids, reference_frames) = if source.video.codec == "h264" && encoded_segments > 0 {
             let (ids, refs) = explain(avc1::unused_ids(input, encoded_segments), Reason::CodecConfiguration)?;
             (ids, Some(refs))
         } else { (Vec::new(), None) };

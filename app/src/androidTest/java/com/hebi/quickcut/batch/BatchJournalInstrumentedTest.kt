@@ -164,13 +164,115 @@ class BatchJournalInstrumentedTest {
         }
     }
 
+    @Test fun nullProviderResponseRetainsOutputAndBlocksRetryAfterAddingSources() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val input = fixture(context)
+        val additional = fixture(context)
+        val output = Uri.parse("content://media/external/video/media/123456789")
+        val provider = OwnerMismatchProvider(context.contentResolver, output, nullQuery = true)
+        provider.attachInfo(context, ProviderInfo().apply { authority = "media"; exported = true })
+        try {
+            seed(context, input, output, 2_000L, true)
+            val restored = restore(context, ResolverApplication(context, ContentResolver.wrap(provider)))
+            assertEquals(output.toString(), restored.files.single().savedOutputUri)
+            withContext(Dispatchers.Main) { restored.addVideos(context, listOf(Uri.fromFile(additional))) }
+            withTimeout(30_000L) { while (restored.isImporting) delay(50L) }
+            assertEquals(output.toString(), restored.files.first { it.uri == Uri.fromFile(input).toString() }.savedOutputUri)
+            withContext(Dispatchers.Main) { restored.start(context, retryOnly = true) }
+            assertFalse("An unresolved output must block another writer", restored.isRunning)
+            withContext(Dispatchers.Main) { restored.resetBatch() }
+            withTimeout(30_000L) { while (restored.isImporting) delay(50L) }
+            assertEquals(2, restored.files.size)
+            assertEquals(0, provider.deleteAttempts)
+            assertEquals(output.toString(), BatchSessionStore(context).load()!!.files.first().savedOutputUri)
+        } finally { input.delete(); additional.delete() }
+    }
+
+    @Test fun corruptJournalSurvivesInitialObserversImportResetAndRetry() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val base = File(context.filesDir, "quickcut_batch_session_v1.json")
+        BatchSessionStore(context).clear()
+        base.writeText("{truncated")
+        val input = fixture(context)
+        try {
+            val restored = restore(context)
+            withContext(Dispatchers.Main) {
+                restored.draftName = "변경된 설정"
+                restored.addVideos(context, listOf(Uri.fromFile(input)))
+                restored.resetBatch()
+                restored.start(context, retryOnly = true)
+            }
+            delay(400L)
+            assertFalse(restored.isRunning)
+            assertTrue(restored.files.isEmpty())
+            assertEquals("{truncated", base.readText())
+        } finally { input.delete() }
+    }
+
+    @Test fun repairedJournalRetryRestoresRecipeAndDateBeforePersisting() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        BatchSessionStore(context).clear()
+        File(context.filesDir, "quickcut_batch_session_v1.json").writeText("{truncated")
+        val restored = restore(context)
+        val template = BatchTemplate(id = "recovered-recipe", name = "복구한 사용자 설정",
+            mode = BatchClipMode.JOIN_EDGES, leadingMs = 1_250L, trailingMs = 750L, muteAudio = true)
+        val snapshot = BatchSessionSnapshot(listOf(BatchFile("content://missing/source/42", "source")),
+            template, SaveDateMode.ORIGINAL, BatchRunState.FINISHED)
+        BatchSessionStore(context).save(snapshot)
+        withContext(Dispatchers.Main) { restored.retryRecovery() }
+        withTimeout(30_000L) { while (restored.isRecovering) delay(50L) }
+        assertEquals(template.name, restored.draftName)
+        assertEquals(template.mode, restored.draftMode)
+        assertEquals("1.25", restored.draftLeadingSeconds)
+        assertEquals("0.75", restored.draftTrailingSeconds)
+        assertTrue(restored.draftMute)
+        assertEquals(template.id, restored.selectedTemplateId)
+        assertEquals(SaveDateMode.ORIGINAL, restored.saveDateMode)
+        assertEquals(template, BatchSessionStore(context).load()!!.template)
+        assertEquals(SaveDateMode.ORIGINAL, BatchSessionStore(context).load()!!.dateMode)
+    }
+
+    @Test fun corruptJournalReadIsNotAbsence() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        BatchSessionStore(context).clear()
+        val base = File(context.filesDir, "quickcut_batch_session_v1.json")
+        base.writeText("{truncated")
+        assertTrue(runCatching { BatchSessionStore(context).load() }.isFailure)
+        assertEquals("{truncated", base.readText())
+    }
+
+    @Test fun foreignPublishedOwnerAndUnknownPendingStateRetainRecoveryHandles() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val input = fixture(context)
+        val output = GalleryWriter(context).save(input)
+        try {
+            for ((owner, pendingState) in listOf("com.example.otherowner" to 0,
+                context.packageName to 2, context.packageName to -1)) {
+                val provider = OwnerMismatchProvider(context.contentResolver, output,
+                    reportedOwner = owner, pendingState = pendingState)
+                provider.attachInfo(context, ProviderInfo().apply { authority = "media"; exported = true })
+                seed(context, input, output, 2_000L, true)
+                assertProtectedTrackedOutput(context, output,
+                    ResolverApplication(context, ContentResolver.wrap(provider)))
+                assertEquals(0, provider.deleteAttempts)
+                withContext(Dispatchers.Main) {
+                    model?.let { ViewModelStore().apply { put("test", it) }.clear() }
+                }
+                model = null
+            }
+        } finally { context.contentResolver.delete(output, null, null); input.delete() }
+    }
+
     private class ResolverApplication(base: Context, private val resolver: ContentResolver) : Application() {
         init { attachBaseContext(base) }
         override fun getContentResolver(): ContentResolver = resolver
     }
 
     /** Keep real MediaStore rows visible, changing only the ownership reported for the pending output. */
-    private class OwnerMismatchProvider(private val real: ContentResolver, private val output: Uri) : ContentProvider() {
+    private class OwnerMismatchProvider(private val real: ContentResolver, private val output: Uri,
+        private val nullQuery: Boolean = false,
+        private val reportedOwner: String = "com.example.otherowner",
+        private val pendingState: Int? = null) : ContentProvider() {
         var deleteAttempts = 0
         var ownerReads = 0
         override fun onCreate() = true
@@ -184,13 +286,24 @@ class BatchJournalInstrumentedTest {
         }
         override fun query(uri: Uri, projection: Array<out String>?, selection: String?,
             selectionArgs: Array<out String>?, sortOrder: String?): Cursor? {
+            if (uri == output && nullQuery) return null
             val cursor = real.query(uri, projection, selection, selectionArgs, sortOrder) ?: return null
             if (uri != output) return cursor
             return object : CursorWrapper(cursor) {
+                override fun getInt(columnIndex: Int): Int {
+                    if (getColumnName(columnIndex) == MediaStore.Video.Media.IS_PENDING && pendingState != null)
+                        return pendingState
+                    return super.getInt(columnIndex)
+                }
+                override fun isNull(columnIndex: Int): Boolean {
+                    if (getColumnName(columnIndex) == MediaStore.Video.Media.IS_PENDING && pendingState == -1)
+                        return true
+                    return super.isNull(columnIndex)
+                }
                 override fun getString(columnIndex: Int): String? {
                     if (getColumnName(columnIndex) == MediaStore.Video.Media.OWNER_PACKAGE_NAME) {
                         ownerReads++
-                        return "com.example.otherowner"
+                        return reportedOwner
                     }
                     return super.getString(columnIndex)
                 }

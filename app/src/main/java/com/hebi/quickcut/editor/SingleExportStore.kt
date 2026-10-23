@@ -53,16 +53,20 @@ class SingleExportStore internal constructor(
             // A writer may continue only after the exact new URI is committed.
             stream.fd.sync()
             file.finishWrite(stream)
-            if (load() != snapshot) throw IOException("저장 상태 기록을 확인하지 못했습니다.")
         } catch (error: Throwable) {
             file.failWrite(stream)
             throw error
         }
+        // Readback can restore the .bak on older Android releases. A second
+        // failWrite would then delete the restored committed record.
+        if (load() != snapshot) throw IOException("저장 상태 기록을 확인하지 못했습니다.")
     }
 
     @Synchronized
     override fun clear() {
         file.delete()
+        // API 29's AtomicFile does not know about a newer implementation's .new.
+        listOf(File(base.path + ".bak"), File(base.path + ".new")).forEach { it.delete() }
         if (hasRecord()) throw IOException("이전 저장 기록을 정리하지 못했습니다.")
     }
 }

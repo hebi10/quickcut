@@ -34,5 +34,21 @@ class FastMp4TrimmerTest {
     fun startOfVideoIsEligibleWhenTheFirstFrameIsASyncSample() {
         assertTrue(FastMp4Trimmer.isAcceptableStart(0L, 0L, 3_000_000L))
     }
+
+    @Test
+    fun androidTenCannotPreserveALateFirstAudioPacket() {
+        assertFalse(FastMp4Trimmer.canMuxAudioStart(29, 4_000_000L, 4_017_052L))
+        assertTrue(FastMp4Trimmer.canMuxAudioStart(29, 4_000_000L, 4_000_000L))
+        assertTrue(FastMp4Trimmer.canMuxAudioStart(30, 4_000_000L, 4_017_052L))
+    }
+
+    @Test
+    fun missingOrPrerollAudioCannotEstablishASafeRetainedStart() {
+        assertFalse(FastMp4Trimmer.canMuxAudioStart(29, 4_000_000L, null))
+        assertFalse(FastMp4Trimmer.canMuxAudioStart(29, 0L, -23_220L))
+        assertFalse(FastMp4Trimmer.canMuxAudioStart(30, 4_000_000L, 3_999_999L))
+        assertFalse(FastMp4Trimmer.canMuxAudioStart(29, -1L, 0L))
+    }
+
 }
 

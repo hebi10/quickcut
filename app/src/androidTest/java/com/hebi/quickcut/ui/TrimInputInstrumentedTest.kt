@@ -7,15 +7,23 @@ import androidx.activity.result.ActivityResultRegistryOwner
 import androidx.activity.result.contract.ActivityResultContract
 import androidx.activity.compose.LocalActivityResultRegistryOwner
 import androidx.core.app.ActivityOptionsCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.test.onNodeWithContentDescription
 import android.app.Application
 import android.net.Uri
+import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import androidx.activity.ComponentActivity
 import androidx.annotation.OptIn
+import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -371,6 +379,7 @@ class TrimInputInstrumentedTest {
         showApp()
         composeRule.onNodeWithText("자르기").performClick()
         composeRule.onAllNodes(hasSetTextAction())[0].performTextReplacement("-")
+        assertInvalidDetailedDraft()
 
         composeRule.onNodeWithText("저장", substring = false).assertIsNotEnabled()
     }
@@ -381,6 +390,7 @@ class TrimInputInstrumentedTest {
         showApp()
         composeRule.onNodeWithText("자르기").performClick()
         composeRule.onAllNodes(hasSetTextAction())[0].performTextReplacement("-")
+        assertInvalidDetailedDraft()
         composeRule.onNode(hasClickAction() and hasText(formatTime(model.timeline.totalDurationMs))).performClick()
         composeRule.onNodeWithText("저장", substring = false).assertIsNotEnabled()
     }
@@ -406,6 +416,7 @@ class TrimInputInstrumentedTest {
         showApp()
         composeRule.onNodeWithText("자르기").performClick()
         composeRule.onAllNodes(hasSetTextAction())[0].performTextReplacement("-")
+        assertInvalidDetailedDraft()
         composeRule.onNodeWithText("저장", substring = false).assertIsNotEnabled()
 
         composeRule.onNodeWithTag("detailed-trim-range").performTouchInput {
@@ -413,6 +424,66 @@ class TrimInputInstrumentedTest {
         }
         composeRule.onNodeWithText("저장", substring = false).assertIsEnabled()
         composeRule.onAllNodes(hasSetTextAction())[0].assertIsDisplayed()
+    }
+
+    @Test
+    fun showingAndHidingTheKeyboardKeepsTheInvalidDetailedDraft() {
+        composeRule.runOnUiThread { model.changeQuickMode(false) }
+        showApp()
+        composeRule.onNodeWithText("자르기").performClick()
+        composeRule.onAllNodes(hasSetTextAction())[0].performClick().performTextReplacement("-")
+        waitForKeyboard(visible = true)
+        composeRule.onAllNodes(hasSetTextAction())[0].assertIsFocused()
+        assertInvalidDetailedDraft()
+
+        // Dismissing the keyboard must not trigger a focus-restoration/show loop.
+        InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+        waitForKeyboard(visible = false)
+        assertInvalidDetailedDraft()
+    }
+
+    private fun waitForKeyboard(visible: Boolean) {
+        composeRule.waitUntil(10_000L) {
+            composeRule.runOnIdle {
+                ViewCompat.getRootWindowInsets(composeRule.activity.window.decorView)
+                    ?.isVisible(WindowInsetsCompat.Type.ime()) == visible
+            }
+        }
+    }
+
+    @kotlin.OptIn(ExperimentalTestApi::class)
+    @Test
+    fun detailedInvalidDraftSurvivesCompactAndNormalLayoutChanges() {
+        val height = mutableStateOf(800.dp)
+        composeRule.runOnUiThread { model.changeQuickMode(false) }
+        val lastValidTimeline = model.timeline
+        composeRule.setContent {
+            DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(411.dp, height.value))) {
+                QuickCutTheme { EditorScreen(model, {}, {}) }
+            }
+        }
+        composeRule.onNodeWithText("자르기").performClick()
+        composeRule.onAllNodes(hasSetTextAction())[0].performTextReplacement("-")
+        assertInvalidDetailedDraft()
+
+        // Test an actual window-height change, independently of the IME-height compensation.
+        waitForKeyboard(visible = true)
+        InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+        waitForKeyboard(visible = false)
+        assertInvalidDetailedDraft()
+        composeRule.runOnUiThread { height.value = 320.dp }
+        assertInvalidDetailedDraft()
+        composeRule.runOnUiThread { height.value = 800.dp }
+        assertInvalidDetailedDraft()
+        composeRule.runOnIdle { assertEquals(lastValidTimeline, model.timeline) }
+    }
+
+    private fun assertInvalidDetailedDraft() {
+        composeRule.onAllNodes(hasSetTextAction())[0].assert(
+            SemanticsMatcher.expectValue(SemanticsProperties.EditableText, AnnotatedString("-")),
+        )
+        composeRule.runOnIdle { assertEquals(false, model.isTrimInputValid) }
+        composeRule.onNodeWithText("저장", substring = false).assertIsNotEnabled()
     }
 
     @Test

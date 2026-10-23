@@ -47,14 +47,20 @@ class BatchSessionStoreInstrumentedTest {
         val normal = BatchSessionStore(base)
         val previous = snapshot()
         normal.save(previous)
+        var rollbackAfterFinish = false
         val failedCommit = object : AtomicFile(base) {
             override fun finishWrite(stream: FileOutputStream?) { stream?.close() }
+            override fun failWrite(stream: FileOutputStream?) {
+                rollbackAfterFinish = true
+                super.failWrite(stream)
+            }
         }
         try {
             val failure = runCatching {
                 BatchSessionStore(base, failedCommit).save(snapshot("content://media/external/video/media/123"))
             }.exceptionOrNull()
             assertTrue(failure is IOException)
+            assertFalse("Readback may restore the API 29 backup; it must not roll back twice", rollbackAfterFinish)
             assertEquals(previous, normal.load())
         } finally { normal.clear() }
     }
@@ -88,6 +94,22 @@ class BatchSessionStoreInstrumentedTest {
                 assertTrue(base.exists())
             }
         } finally { store.clear() }
+    }
+
+    @Test fun clearRemovesOnlyTheOwnedJournalAndBothAtomicCompanionsOnEveryApi() {
+        val base = File.createTempFile("batch_atomic_clear", ".json", context.cacheDir).apply { delete() }
+        val companions = listOf(base, File(base.path + ".bak"), File(base.path + ".new"))
+        val unrelated = File(base.path + ".source").apply { writeText("original") }
+        try {
+            companions.forEach { it.writeText("interrupted journal") }
+            val store = BatchSessionStore(base)
+            store.clear()
+            assertFalse(store.hasRecord())
+            assertTrue(companions.none { it.exists() })
+            assertEquals("original", unrelated.readText())
+            // Clearing an already empty journal is idempotent.
+            store.clear()
+        } finally { companions.forEach { it.delete() }; unrelated.delete() }
     }
 
     @Test fun interruptedReplacementRestoresLastCompleteSnapshot() {

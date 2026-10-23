@@ -101,14 +101,20 @@ class SingleExportRecoveryInstrumentedTest {
         val normal = SingleExportStore(base)
         val original = SingleExportSnapshot(null, 1_000L, false, null, 1_000_000L)
         normal.save(original)
+        var rollbackAfterFinish = false
         val failedRename = object : android.util.AtomicFile(base) {
             override fun finishWrite(stream: java.io.FileOutputStream?) { stream?.close() }
+            override fun failWrite(stream: java.io.FileOutputStream?) {
+                rollbackAfterFinish = true
+                super.failWrite(stream)
+            }
         }
         try {
             val failure = runCatching {
                 SingleExportStore(base, failedRename).save(original.copy(outputUri = "content://media/external/video/media/123"))
             }.exceptionOrNull()
             assertTrue(failure is IOException)
+            assertFalse("Readback may restore the API 29 backup; it must not roll back twice", rollbackAfterFinish)
             assertEquals(original, normal.load())
         } finally { normal.clear() }
     }
@@ -300,6 +306,21 @@ class SingleExportRecoveryInstrumentedTest {
             is SingleExportRecoveryResult.Blocked)
         assertTrue(file.exists())
         assertEquals(edit, session.load())
+    }
+
+    @Test fun clearRemovesOnlyTheOwnedJournalAndBothAtomicCompanionsOnEveryApi() {
+        val base = File.createTempFile("single_export_atomic_clear", ".json", context.cacheDir).apply { delete() }
+        val companions = listOf(base, File(base.path + ".bak"), File(base.path + ".new"))
+        val unrelated = File(base.path + ".source").apply { writeText("original") }
+        try {
+            companions.forEach { it.writeText("interrupted journal") }
+            val store = SingleExportStore(base)
+            store.clear()
+            assertFalse(store.hasRecord())
+            assertTrue(companions.none { it.exists() })
+            assertEquals("original", unrelated.readText())
+            store.clear()
+        } finally { companions.forEach { it.delete() }; unrelated.delete() }
     }
 
     @Test fun atomicJournalReadsLastCompleteRecordAfterInterruptedReplacement() {

@@ -131,18 +131,22 @@ class BatchSessionStore internal constructor(
             stream.write(encoded.toByteArray(Charsets.UTF_8))
             sync(stream)
             file.finishWrite(stream)
-            // AtomicFile can log a failed sync/rename without throwing.
-            val committed = file.openRead().bufferedReader(Charsets.UTF_8).use { it.readText() }
-            if (committed != encoded) throw IOException("일괄 작업 기록을 확인하지 못했습니다.")
         } catch (error: Throwable) {
             file.failWrite(stream)
             throw error
         }
+        // Readback may restore the .bak on older Android releases. Never call
+        // failWrite after that read: it would delete the restored committed base.
+        val committed = file.openRead().bufferedReader(Charsets.UTF_8).use { it.readText() }
+        if (committed != encoded) throw IOException("일괄 작업 기록을 확인하지 못했습니다.")
     }
 
     @Synchronized
     fun clear() {
         file.delete()
+        // Older AtomicFile implementations delete only base/.bak, while newer
+        // ones also manage .new. Clear only this journal's fixed companions.
+        listOf(File(base.path + ".bak"), File(base.path + ".new")).forEach { it.delete() }
         if (hasRecord()) throw IOException("이전 일괄 작업 기록을 정리하지 못했습니다.")
     }
 

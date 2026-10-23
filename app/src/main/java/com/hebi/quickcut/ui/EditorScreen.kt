@@ -10,6 +10,9 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -62,6 +65,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -122,6 +126,21 @@ fun EditorScreen(
     var showMove by rememberSaveable { mutableStateOf(false) }
     var showDelete by rememberSaveable { mutableStateOf(false) }
     var isPlaying by remember { mutableStateOf(false) }
+    val selectedClip = model.selectedClip
+    // Keep raw drafts above adaptive layout branches. Showing the keyboard can replace the
+    // compact/normal TrimEditor instance while the user is still editing the same clip.
+    var trimStartText by rememberSaveable(showTrim, selectedClip?.id, selectedClip?.uri,
+        selectedClip?.startMs, selectedClip?.endMs) {
+        mutableStateOf(selectedClip?.let { secondsText(it.startMs) }.orEmpty())
+    }
+    var trimEndText by rememberSaveable(showTrim, selectedClip?.id, selectedClip?.uri,
+        selectedClip?.startMs, selectedClip?.endMs) {
+        mutableStateOf(selectedClip?.let { secondsText(it.endMs) }.orEmpty())
+    }
+    val onTrimDraftChange: (String, String) -> Unit = { start, end ->
+        trimStartText = start
+        trimEndText = end
+    }
     val preview = remember(player, model) {
         EditorPreviewCoordinator(
             object : EditorPreviewPlayback {
@@ -255,9 +274,15 @@ fun EditorScreen(
         }
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val availableWidth = maxWidth
-            val compactHeight = maxHeight < 480.dp
+            val density = LocalDensity.current
+            val keyboardInset = (WindowInsets.ime.getBottom(density) -
+                WindowInsets.navigationBars.getBottom(density)).coerceAtLeast(0)
+            val keyboardVisible = keyboardInset > 0
+            // IME resize must not replace the focused field with another layout's instance.
+            val layoutHeight = maxHeight + with(density) { keyboardInset.toDp() }
+            val compactHeight = layoutHeight < 480.dp
             val wide = availableWidth >= 840.dp && !compactHeight
-            val selected = model.selectedClip
+            val selected = selectedClip
 
             when {
                 compactHeight -> {
@@ -286,7 +311,8 @@ fun EditorScreen(
                                     showTrim = showTrim,
                                 )
                                 if (showTrim && selected != null) {
-                                    TrimEditor(selected, model::trimSelected, model::beginTrim,
+                                    TrimEditor(selected, trimStartText, trimEndText, onTrimDraftChange,
+                                        model::trimSelected, model::beginTrim,
                                         model::finishTrim, model::setTrimInputValidity)
                                 }
                             }
@@ -342,7 +368,8 @@ fun EditorScreen(
                                 )
                                 if (showTrim && selected != null) {
                                     Spacer(Modifier.height(8.dp))
-                                    TrimEditor(selected, model::trimSelected, model::beginTrim,
+                                    TrimEditor(selected, trimStartText, trimEndText, onTrimDraftChange,
+                                        model::trimSelected, model::beginTrim,
                                         model::finishTrim, model::setTrimInputValidity)
                                 }
                             }
@@ -361,7 +388,10 @@ fun EditorScreen(
                     }
                 }
                 else -> {
-                    Column(Modifier.fillMaxSize()) {
+                    val inputScroll = rememberScrollState()
+                    Column(Modifier.fillMaxSize().then(
+                        if (keyboardVisible) Modifier.verticalScroll(inputScroll) else Modifier,
+                    )) {
                         PreviewPanel(
                             player = player,
                             playing = isPlaying,
@@ -369,7 +399,8 @@ fun EditorScreen(
                             currentPosition = model.playPositionMs,
                             onPlay = onPlay,
                             onSeek = onSeek,
-                            modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 12.dp),
+                            modifier = (if (keyboardVisible) Modifier.height(0.dp).clipToBounds()
+                                else Modifier.weight(1f)).fillMaxWidth().padding(horizontal = 12.dp),
                             compact = false,
                         )
                         TimelineStrip(
@@ -386,6 +417,9 @@ fun EditorScreen(
                         if (showTrim && selected != null) {
                             TrimEditor(
                                 selected,
+                                trimStartText,
+                                trimEndText,
+                                onTrimDraftChange,
                                 model::trimSelected,
                                 model::beginTrim,
                                 model::finishTrim,
@@ -652,18 +686,15 @@ private fun ToolButtons(
 @Composable
 private fun TrimEditor(
     clip: VideoClip,
+    startText: String,
+    endText: String,
+    onDraftChange: (String, String) -> Unit,
     onTrim: (Long, Long) -> Unit,
     onBeginTrim: () -> Unit,
     onEndTrim: () -> Unit,
     onValidityChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var startText by rememberSaveable(clip.id, clip.uri, clip.startMs, clip.endMs) {
-        mutableStateOf(secondsText(clip.startMs))
-    }
-    var endText by rememberSaveable(clip.id, clip.uri, clip.startMs, clip.endMs) {
-        mutableStateOf(secondsText(clip.endMs))
-    }
     fun inputRange(start: String, end: String) {
         val range = TrimInput.selectedRange(start, end, clip.sourceDurationMs)
         onValidityChange(range != null)
@@ -682,8 +713,7 @@ private fun TrimEditor(
                 val start = range.start.roundToLong().coerceIn(0L, clip.sourceDurationMs)
                 val end = range.endInclusive.roundToLong().coerceIn(0L, clip.sourceDurationMs)
                 if (TrimInput.range(start, end, clip.sourceDurationMs) != null) {
-                    startText = secondsText(start)
-                    endText = secondsText(end)
+                    onDraftChange(secondsText(start), secondsText(end))
                     onValidityChange(true)
                     onBeginTrim()
                     onTrim(start, end)
@@ -700,12 +730,12 @@ private fun TrimEditor(
         }
         BoxWithConstraints(Modifier.fillMaxWidth()) {
             val changeStart: (String) -> Unit = {
-                startText = it
-                inputRange(startText, endText)
+                onDraftChange(it, endText)
+                inputRange(it, endText)
             }
             val changeEnd: (String) -> Unit = {
-                endText = it
-                inputRange(startText, endText)
+                onDraftChange(startText, it)
+                inputRange(startText, it)
             }
             if (maxWidth < 320.dp || LocalDensity.current.fontScale >= 1.5f) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {

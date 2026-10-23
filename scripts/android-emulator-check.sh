@@ -171,10 +171,11 @@ ffmpeg -hide_banner -loglevel error -y \
   -c:a aac -b:a 64k -shortest \
   app/src/androidTest/assets/quickcut_open_gop.mp4
 
-# Color changes exactly at the 2s keyframe; a 1.95s trim must retain a red frame.
+# Color and tone change at the 2s keyframe. Retained clips must keep their source identity.
+# A 1.95s trim must retain a red frame; the fallback joins 440Hz red and 880Hz blue clips.
 ffmpeg -hide_banner -loglevel error -y \
   -f lavfi -i color=c=red:size=320x240:rate=30 \
-  -f lavfi -i sine=frequency=440:sample_rate=44100 \
+  -f lavfi -i 'aevalsrc=0.125*sin(2*PI*if(lt(t\,2)\,440\,880)*t):s=44100' \
   -vf "drawbox=x=0:y=0:w=iw:h=ih:color=blue:t=fill:enable='gte(t,2)'" \
   -t 6 -c:v libx264 -preset ultrafast -pix_fmt yuv420p \
   -bf 0 -g 60 -keyint_min 60 -sc_threshold 0 \

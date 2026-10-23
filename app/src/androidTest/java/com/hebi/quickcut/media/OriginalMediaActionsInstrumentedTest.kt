@@ -2,12 +2,14 @@ package com.hebi.quickcut.media
 
 import android.content.Context
 import android.net.Uri
+import android.os.Build
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.hebi.quickcut.editor.OriginalAction
 import java.io.File
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -59,19 +61,26 @@ class OriginalMediaActionsInstrumentedTest {
         }
         val sourceUri = GalleryWriter(context).save(source)
         try {
+            val originalBytes = checkNotNull(context.contentResolver.openInputStream(sourceUri)).use { it.readBytes() }
             val outputUri = Uri.parse("content://media/external/video/media/987654321")
             for (action in listOf(OriginalAction.TRASH, OriginalAction.DELETE)) {
-                val request = OriginalMediaActions.prepareRequest(
-                    context = context,
-                    originalSources = listOf(sourceUri.toString(), sourceUri.toString()),
-                    savedOutput = outputUri,
-                    action = action,
-                )
-                assertNotNull("System confirmation is required", request.intentSender)
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+                    assertThrows(UnsupportedOperationException::class.java) {
+                        OriginalMediaActions.prepareRequest(context,
+                            listOf(sourceUri.toString(), sourceUri.toString()), outputUri, action)
+                    }
+                } else {
+                    val request = OriginalMediaActions.prepareRequest(context,
+                        listOf(sourceUri.toString(), sourceUri.toString()), outputUri, action)
+                    assertNotNull("System confirmation is required", request.intentSender)
+                }
                 assertTrue(
-                    "Creating an OS confirmation must not delete the source",
+                    "Preparing or declining $action must not delete the source",
                     MediaReader.metadata(context, sourceUri).durationMs > 0L,
                 )
+                val retainedBytes = checkNotNull(context.contentResolver.openInputStream(sourceUri)).use { it.readBytes() }
+                assertArrayEquals("Preparing or declining $action must leave every source byte intact",
+                    originalBytes, retainedBytes)
             }
         } finally {
             context.contentResolver.delete(sourceUri, null, null)

@@ -318,7 +318,28 @@ class VideoExporter(private val context: Context) {
         onProgress: (Int?) -> Unit,
         outputTimestampMs: Long,
         optimizeTrim: Boolean,
+    ): ExportResult = recoverExactExportFrames { softwareVideo ->
+        if (softwareVideo) {
+            Log.w("QuickCutExport", "Retrying exact export after observed video frame loss")
+            withContext(Dispatchers.IO) {
+                if (file.exists() && !file.delete()) {
+                    throw IOException("완료되지 않은 저장 시도의 임시 파일을 정리할 수 없습니다.")
+                }
+            }
+        }
+        transformAttempt(timeline, file, onProgress, outputTimestampMs,
+            optimizeTrim = optimizeTrim && !softwareVideo, softwareVideo = softwareVideo)
+    }
+
+    private suspend fun transformAttempt(
+        timeline: EditTimeline,
+        file: File,
+        onProgress: (Int?) -> Unit,
+        outputTimestampMs: Long,
+        optimizeTrim: Boolean,
+        softwareVideo: Boolean,
     ): ExportResult = suspendCancellableCoroutine { continuation ->
+        val frameGuard = ExactExportFrameGuard()
         val main = Handler(Looper.getMainLooper())
         val progress = ProgressHolder()
         lateinit var transformer: Transformer
@@ -350,6 +371,8 @@ class VideoExporter(private val context: Context) {
                     )
                 )
             }
+            .setVideoFrameProcessorFactory(GuardedVideoFrameProcessorFactory(frameGuard))
+            .apply { if (softwareVideo) setAssetLoaderFactory(softwareVideoAssetLoaderFactory(context)) }
             .experimentalSetTrimOptimizationEnabled(optimizeTrim)
             .addListener(object : Transformer.Listener {
                 override fun onCompleted(composition: Composition, exportResult: ExportResult) {
@@ -360,7 +383,18 @@ class VideoExporter(private val context: Context) {
                             " videoProcess=" + exportResult.videoConversionProcess +
                             " audioProcess=" + exportResult.audioConversionProcess,
                     )
-                    if (continuation.isActive) continuation.resume(exportResult)
+                    if (continuation.isActive) {
+                        try {
+                            frameGuard.verify(exportResult.videoFrameCount,
+                                fullyTranscoded = exportResult.videoConversionProcess ==
+                                    ExportResult.CONVERSION_PROCESS_TRANSCODED)
+                            continuation.resume(exportResult)
+                        } catch (missing: ExactExportFrameCountException) {
+                            Log.w("QuickCutExport", "Exact export frame mismatch expected=" +
+                                missing.expectedFrames + " output=" + missing.outputFrames, missing)
+                            continuation.resumeWithException(missing)
+                        }
+                    }
                 }
 
                 override fun onError(
@@ -383,6 +417,9 @@ class VideoExporter(private val context: Context) {
             else main.post(stop)
         }
 
+        // The cancellation callback runs immediately for an already cancelled continuation.
+        // On this main-thread path, do not start a transformer that was just cancelled.
+        if (!continuation.isActive) return@suspendCancellableCoroutine
         try {
             if (timeline.clips.size == 1) {
                 transformer.start(CompositionFactory.editedClip(timeline.clips.first()), file.absolutePath)

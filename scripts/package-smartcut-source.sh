@@ -4,6 +4,7 @@ set -euo pipefail
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 python3 - "$repo_root" "${1:-$repo_root/build/source-delivery}" <<'PY'
 import hashlib
+import importlib.util
 import io
 import json
 import os
@@ -13,8 +14,6 @@ import subprocess
 import sys
 import tarfile
 import tempfile
-import urllib.error
-import urllib.request
 import xml.etree.ElementTree as ET
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
@@ -196,25 +195,31 @@ gradle.projectsEvaluated {
     run(gradle + ["--no-daemon", "-I", str(init_script),
          "-PquickcutSourceDependencyDir=" + str(dependency_dir), ":app:collectQuickCutReleaseSources"])
     resolution = json.loads((dependency_dir / "resolution.json").read_text())
+    # Read the helper and pinned cache from the frozen checkout, not mutable
+    # worktree/environment cache contents. Only exact current source hashes match.
+    sys.dont_write_bytecode = True  # Do not add generated .pyc files to the source archive.
+    metadata_spec = importlib.util.spec_from_file_location(
+        "runtime_publication_metadata", stage / "scripts/runtime-publication-metadata.py")
+    publication_metadata = importlib.util.module_from_spec(metadata_spec)
+    metadata_spec.loader.exec_module(publication_metadata)
+    metadata_cache = publication_metadata.PublicationMetadataCache(
+        stage / "third_party/runtime-publication-metadata/manifest.json")
     metadata_dir = dependency_dir / "maven-metadata"
     metadata_dir.mkdir()
     def collect_metadata(row):
         group, artifact, version = row["component"].split(":")
-        repository = "https://dl.google.com/dl/android/maven2/" if group.startswith("androidx.") else "https://repo.maven.apache.org/maven2/"
-        base = repository + group.replace(".", "/") + "/" + artifact + "/" + version + "/"
+        base = publication_metadata.publication_base(row["component"])
         stem = artifact + "-" + version
         prefix = group + "__" + stem
         row["sourceArtifactUrl"] = base + row["sourceArtifact"] if row["sourceArtifact"] else None
         row["metadata"] = {}
+        current_source_sha256 = sha256(dependency_dir / row["source"])
         for extension in ("pom", "module"):
             url = base + stem + "." + extension
-            try:
-                with urllib.request.urlopen(url, timeout=60) as response:
-                    data = response.read()
-            except urllib.error.HTTPError as error:
-                if extension == "module" and error.code == 404:
-                    continue  # Older Maven publications legitimately have no Gradle module metadata.
-                raise
+            data = metadata_cache.fetch(row["component"], extension,
+                                        source_sha256=current_source_sha256)
+            if data is None:
+                continue  # Only an explicitly observed module HTTP404 permits omission.
             path = metadata_dir / (prefix + "." + extension)
             path.write_bytes(data)
             row["metadata"][extension] = {"file": "maven-metadata/" + path.name,

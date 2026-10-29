@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "description": "Exact public publication metadata from the verified corresponding-source artifact; current Gradle resolution and source SHA256 remain authoritative.",
+  "archive": {
+    "file": "publication-metadata.zip",
+    "sha256": "fe894d036c0eea74f4deb47b43ddc5138a2887250d3c4f869032fe88d370f363"
+  },
+  "provenance": {
+    "source_artifact_id": 12877618545,
+    "source_artifact_sha256": "0ba6b24a1c67fcfeb722a630e3ab5ff96859a0e4d8c7908b754d8e8bbb6ff902",
+    "source_workflow_run_id": 40827787240,
+    "source_workflow_head": "20b145f7d5dc787d5aeac6ad600f80584fd931f2",
+    "source_archive_commit": "c311e250f33f03f89f1012fa85397266a88a79c3",
+    "source_archive_tree": "7251a89aa8e17c724f4c59e1af29cdad5bf3ac4f",
+    "source_resolution_sha256": "82d856dff79c158faad3e47a4e3a780d5a4b9e15fcbc47ec77548ce43d97c27b",
+    "module_absence_evidence": "The successful source archive has no module metadata for these 16 exact components. Its packaging script accepts a missing module only after HTTP404; no other HTTP error permits omission.",
+    "components": 96,
+    "publication_files": 176,
+    "explicit_module_404_records": 16
+  }
+}

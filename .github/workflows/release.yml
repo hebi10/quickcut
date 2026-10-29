@@ -137,7 +137,7 @@ jobs:
             trap 'rm -f "$QUICKCUT_KEYSTORE_PATH"' EXIT
             printf '%s' "$QUICKCUT_KEYSTORE_BASE64" | base64 --decode > "$QUICKCUT_KEYSTORE_PATH"
           fi
-          gradle --no-daemon -PquickcutTestVersionCode="$RELEASE_VERSION_CODE" :app:testReleaseUnitTest :app:lintRelease :app:assembleRelease
+          gradle --no-daemon -PquickcutTestVersionCode="$RELEASE_VERSION_CODE" :app:testDebugUnitTest :app:lintRelease :app:assembleRelease
           if [[ "$SIGNING_MODE" == signed ]]; then
             apk=app/build/outputs/apk/release/app-release.apk
             bash scripts/verify-release-apk.sh "$apk"
@@ -146,7 +146,7 @@ jobs:
             test -s "$apk"
           fi
           # Both outputs must retain the version declared in this source.
-          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$apk" > "$RUNNER_TEMP/apk-badging.txt"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt2" dump badging "$apk" > "$RUNNER_TEMP/apk-badging.txt"
           grep -F "versionCode='$RELEASE_VERSION_CODE'" "$RUNNER_TEMP/apk-badging.txt"
           grep -F "versionName='$RELEASE_VERSION'" "$RUNNER_TEMP/apk-badging.txt"
       - name: Package corresponding source

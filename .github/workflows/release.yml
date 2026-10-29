@@ -66,6 +66,28 @@ jobs:
         with:
           ref: ${{ needs.gate.outputs.sha }}
           persist-credentials: false
+      - name: Select configured signing or offline preparation
+        id: signing
+        env:
+          QUICKCUT_KEYSTORE_BASE64: ${{ secrets.QUICKCUT_KEYSTORE_BASE64 }}
+          QUICKCUT_KEYSTORE_PASSWORD: ${{ secrets.QUICKCUT_KEYSTORE_PASSWORD }}
+          QUICKCUT_KEY_ALIAS: ${{ secrets.QUICKCUT_KEY_ALIAS }}
+          QUICKCUT_KEY_PASSWORD: ${{ secrets.QUICKCUT_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          configured=0
+          for name in QUICKCUT_KEYSTORE_BASE64 QUICKCUT_KEYSTORE_PASSWORD QUICKCUT_KEY_ALIAS QUICKCUT_KEY_PASSWORD; do
+            if [[ -n "${!name}" ]]; then configured=$((configured + 1)); fi
+          done
+          if [[ "$configured" -eq 4 ]]; then
+            echo 'mode=signed' >> "$GITHUB_OUTPUT"
+          elif [[ "$configured" -eq 0 ]]; then
+            echo 'mode=offline' >> "$GITHUB_OUTPUT"
+            echo 'Signing credentials are absent: preparing unsigned APK and tools for offline signing. No release will be published.' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo '::error::Partial signing configuration. Configure all four credentials or leave all four absent for offline preparation.'
+            exit 1
+          fi
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
@@ -100,61 +122,103 @@ jobs:
         with:
           gradle-version: "9.4.1"
           cache-disabled: true
-      - name: Build with persistent release identity
+      - name: Build release for configured signing mode
         env:
+          SIGNING_MODE: ${{ steps.signing.outputs.mode }}
           QUICKCUT_KEYSTORE_BASE64: ${{ secrets.QUICKCUT_KEYSTORE_BASE64 }}
           QUICKCUT_KEYSTORE_PASSWORD: ${{ secrets.QUICKCUT_KEYSTORE_PASSWORD }}
           QUICKCUT_KEY_ALIAS: ${{ secrets.QUICKCUT_KEY_ALIAS }}
           QUICKCUT_KEY_PASSWORD: ${{ secrets.QUICKCUT_KEY_PASSWORD }}
         run: |
           set -euo pipefail
-          for name in QUICKCUT_KEYSTORE_BASE64 QUICKCUT_KEYSTORE_PASSWORD QUICKCUT_KEY_ALIAS QUICKCUT_KEY_PASSWORD; do
-            if [ -z "${!name}" ]; then
-              echo "::error::Missing release signing secret: $name. No replacement key will be generated."
-              exit 1
-            fi
-          done
-          umask 077
-          export QUICKCUT_KEYSTORE_PATH="$RUNNER_TEMP/quickcut-release.p12"
-          trap 'rm -f "$QUICKCUT_KEYSTORE_PATH"' EXIT
-          printf '%s' "$QUICKCUT_KEYSTORE_BASE64" | base64 --decode > "$QUICKCUT_KEYSTORE_PATH"
+          if [[ "$SIGNING_MODE" == signed ]]; then
+            umask 077
+            export QUICKCUT_KEYSTORE_PATH="$RUNNER_TEMP/quickcut-release.p12"
+            trap 'rm -f "$QUICKCUT_KEYSTORE_PATH"' EXIT
+            printf '%s' "$QUICKCUT_KEYSTORE_BASE64" | base64 --decode > "$QUICKCUT_KEYSTORE_PATH"
+          fi
           gradle --no-daemon -PquickcutTestVersionCode="$RELEASE_VERSION_CODE" :app:testReleaseUnitTest :app:lintRelease :app:assembleRelease
-          bash scripts/verify-release-apk.sh app/build/outputs/apk/release/app-release.apk
-          # Verify the signed APK retains the version declared in this source.
-          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging app/build/outputs/apk/release/app-release.apk > "$RUNNER_TEMP/apk-badging.txt"
+          if [[ "$SIGNING_MODE" == signed ]]; then
+            apk=app/build/outputs/apk/release/app-release.apk
+            bash scripts/verify-release-apk.sh "$apk"
+          else
+            apk=app/build/outputs/apk/release/app-release-unsigned.apk
+            test -s "$apk"
+          fi
+          # Both outputs must retain the version declared in this source.
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$apk" > "$RUNNER_TEMP/apk-badging.txt"
           grep -F "versionCode='$RELEASE_VERSION_CODE'" "$RUNNER_TEMP/apk-badging.txt"
           grep -F "versionName='$RELEASE_VERSION'" "$RUNNER_TEMP/apk-badging.txt"
       - name: Package corresponding source
         run: bash scripts/package-smartcut-source.sh
       - name: Assemble release assets and checksums
+        env:
+          SIGNING_MODE: ${{ steps.signing.outputs.mode }}
         run: |
           set -euo pipefail
           test -s "docs/releases/$RELEASE_VERSION.md"
           mkdir -p build/release-delivery
-          cp app/build/outputs/apk/release/app-release.apk "build/release-delivery/QuickCut-$RELEASE_TAG-release.apk"
+          if [[ "$SIGNING_MODE" == signed ]]; then
+            cp app/build/outputs/apk/release/app-release.apk "build/release-delivery/QuickCut-$RELEASE_TAG-release.apk"
+          else
+            cp app/build/outputs/apk/release/app-release-unsigned.apk "build/release-delivery/QuickCut-$RELEASE_TAG-unsigned.apk"
+            tooling="$RUNNER_TEMP/quickcut-signing-tools"
+            mkdir -p "$tooling"
+            cp "$ANDROID_HOME/build-tools/36.0.0/lib/apksigner.jar" "$tooling/apksigner.jar"
+            cp "$ANDROID_HOME/build-tools/36.0.0/zipalign" "$tooling/zipalign"
+            cp -a "$ANDROID_HOME/build-tools/36.0.0/lib64" "$tooling/lib64"
+            export QUICKCUT_SIGNING_TOOLS="$tooling"
+            python3 - <<'PYTOOLS'
+          import os
+          from pathlib import Path
+          import zipfile
+          root = Path(os.environ['QUICKCUT_SIGNING_TOOLS'])
+          destination = Path('build/release-delivery') / ('QuickCut-' + os.environ['RELEASE_TAG'] + '-tooling.zip')
+          with zipfile.ZipFile(destination, 'w', zipfile.ZIP_DEFLATED) as archive:
+              for path in sorted(root.rglob('*')):
+                  if path.is_file():
+                      archive.write(path, path.relative_to(root))
+          PYTOOLS
+          fi
           cp "build/source-delivery/quickcut-corresponding-source-${RELEASE_SHA:0:12}.tar.gz" "build/release-delivery/QuickCut-$RELEASE_TAG-source.tar.gz"
           {
             printf '# QuickCut %s corresponding source\n\nCommit: `%s`\n\n' "$RELEASE_TAG" "$RELEASE_SHA"
+            printf 'CI preparation: https://github.com/%s/actions/runs/%s\n\n' "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
+            if [[ "$SIGNING_MODE" == offline ]]; then
+              printf 'Status: awaiting offline signing. The unsigned APK is not installable. No tag or release was created by this preparation.\n\n'
+              printf 'Before publication, align and sign with the existing QuickCut key, verify the pinned certificate using scripts/verify-release-apk.sh, verify versionName/versionCode, and regenerate SHA256SUMS for the final signed delivery.\n\n'
+            fi
             cat docs/20_NATIVE_SMART_CUT.md
             printf '\n\n## Source identity\n\n```json\n'
             cat build/source-delivery/source-identity.json
             printf '\n```\n\n'
             cat build/source-delivery/UPSTREAM-SOURCE-LOCATIONS.md
           } > "build/release-delivery/QuickCut-$RELEASE_TAG-source-guide.md"
-          (cd build/release-delivery && sha256sum -- *.apk *.tar.gz *.md > SHA256SUMS && sha256sum --check SHA256SUMS)
-      - name: Retain verified release delivery
+          (
+            cd build/release-delivery
+            files=( *.apk *.tar.gz *.md )
+            if [[ "$SIGNING_MODE" == offline ]]; then files+=( *.zip ); fi
+            sha256sum -- "${files[@]}" > SHA256SUMS
+            sha256sum --check SHA256SUMS
+          )
+      - name: Retain release delivery or unsigned offline preparation
         uses: actions/upload-artifact@v4
         with:
           name: quickcut-release-${{ needs.gate.outputs.tag }}
           path: build/release-delivery/*
           if-no-files-found: error
+      - name: Report offline signing handoff
+        if: steps.signing.outputs.mode == 'offline'
+        run: |
+          printf '## Awaiting offline signing\n\nUnsigned APK, matching source, checksums, and SDK tooling are in artifact `quickcut-release-%s`. This run has not published a release. Verify the existing pinned certificate after local signing.\n' "$RELEASE_TAG" >> "$GITHUB_STEP_SUMMARY"
       - name: Recheck CI, current main, and absent version immediately before publishing
+        if: steps.signing.outputs.mode == 'signed'
         id: final_gate
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/verify-release-gate.py
       - name: Publish immutable signed APK and corresponding source
-        if: steps.final_gate.outputs.ready == 'true'
+        if: steps.signing.outputs.mode == 'signed' && steps.final_gate.outputs.ready == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

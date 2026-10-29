@@ -131,6 +131,10 @@ internal object FastMp4Trimmer {
                 }
             }
 
+            if (!copyToEndOfSource && !hasSafeEnd(extractor, video, endUs)) {
+                return unavailable(UnavailableReason.REORDERED_END)
+            }
+
             if (Build.VERSION.SDK_INT == 29 && keepAudio) {
                 extractor.unselectTrack(videoTrack)
                 extractor.selectTrack(audioTrack)
@@ -158,6 +162,8 @@ internal object FastMp4Trimmer {
                 rotationDegrees = rotation,
                 copyToEndOfSource = copyToEndOfSource,
             ), null)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (error: Exception) {
             Log.d(TAG, "Fast MP4 eligibility check skipped: " + error.javaClass.simpleName)
             return unavailable(UnavailableReason.SOURCE_UNREADABLE)
@@ -167,6 +173,45 @@ internal object FastMp4Trimmer {
     }
 
     private fun unavailable(reason: UnavailableReason) = Inspection(null, reason)
+
+    /**
+     * Inspect the indexed GOP containing the end, rather than inferring its
+     * ordering from the beginning of the clip. Stop only at EOS or a closed IDR
+     * at/after the requested end. A sync flag may represent an open GOP / CRA.
+     * No fence within the resource budget means use the validated native path.
+     */
+    private fun hasSafeEnd(extractor: MediaExtractor, format: MediaFormat, endUs: Long): Boolean {
+        val budget = FastTrimBoundary.Budget(SystemClock.elapsedRealtime())
+        extractor.seekTo(endUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+        var previousUs = Long.MIN_VALUE
+        while (extractor.sampleTrackIndex >= 0) {
+            if (Thread.currentThread().isInterrupted) throw CancellationException("End inspection cancelled")
+            val timeUs = extractor.sampleTime
+            if (timeUs < previousUs || !budget.include(extractor.sampleSize, SystemClock.elapsedRealtime())) {
+                return false
+            }
+            previousUs = timeUs
+            if (timeUs >= endUs && isClosedSyncSample(extractor, format)) {
+                return budget.withinTime(SystemClock.elapsedRealtime())
+            }
+            if (!extractor.advance()) break
+        }
+        return budget.withinTime(SystemClock.elapsedRealtime())
+    }
+
+    private fun isClosedSyncSample(extractor: MediaExtractor, format: MediaFormat): Boolean {
+        val flags = extractor.sampleFlags
+        if (flags and MediaExtractor.SAMPLE_FLAG_SYNC == 0 ||
+            flags and (MediaExtractor.SAMPLE_FLAG_ENCRYPTED or MediaExtractor.SAMPLE_FLAG_PARTIAL_FRAME) != 0
+        ) return false
+        val size = extractor.sampleSize
+        if (size <= 0L || size > MAX_SAMPLE_BYTES) return false
+        val packet = ByteBuffer.allocate(size.toInt())
+        if (extractor.readSampleData(packet, 0).toLong() != size) return false
+        packet.position(0)
+        packet.limit(size.toInt())
+        return FastTrimBoundary.isClosedRandomAccess(packet, format.getString(MediaFormat.KEY_MIME) ?: "")
+    }
 
     suspend fun write(
         context: Context,
@@ -203,6 +248,8 @@ internal object FastMp4Trimmer {
             var lastProgress = -1
             var lastVideoTimeUs = -1L
             var lastAudioTimeUs = -1L
+            var endProbeBudget: FastTrimBoundary.Budget? = null
+            val videoFormat = extractor.getTrackFormat(plan.videoTrack)
             val spanUs = plan.endUs - plan.startUs
 
             while (true) {
@@ -231,6 +278,28 @@ internal object FastMp4Trimmer {
                     continue
                 }
                 if (!plan.copyToEndOfSource && timeUs >= plan.endUs) {
+                    if (index == plan.videoTrack) {
+                        // The first excluded PTS is not a decode-order boundary:
+                        // it can be followed by a retained B-frame. Prove the
+                        // boundary using this exact cursor, never a separate seek
+                        // which could skip the omitted picture. Reversal above
+                        // declines before any such frame can be silently lost.
+                        val budget = endProbeBudget ?: FastTrimBoundary.Budget(
+                            SystemClock.elapsedRealtime()).also { endProbeBudget = it }
+                        if (!budget.include(extractor.sampleSize, SystemClock.elapsedRealtime())) {
+                            throw FastTrimUnavailableException("Could not prove video end within lookahead budget")
+                        }
+                        val closedFence = isClosedSyncSample(extractor, videoFormat)
+                        currentCoroutineContext().ensureActive()
+                        if (!budget.withinTime(SystemClock.elapsedRealtime())) {
+                            throw FastTrimUnavailableException("Video end proof exceeded lookahead time budget")
+                        }
+                        if (!closedFence) {
+                            extractor.advance()
+                            continue
+                        }
+                        endProbeBudget = null
+                    }
                     // A shorter track may already be at EOS, so waiting for every
                     // track to cross endUs would scan the other track's entire tail.
                     // Unselect changes the current sample to a remaining track;
@@ -287,6 +356,9 @@ internal object FastMp4Trimmer {
                 extractor.advance()
             }
             currentCoroutineContext().ensureActive()
+            if (endProbeBudget?.withinTime(SystemClock.elapsedRealtime()) == false) {
+                throw FastTrimUnavailableException("Video end proof exceeded lookahead time budget")
+            }
             if (videoSamples == 0 || (plan.audioTrack != null && audioSamples == 0)) {
                 throw FastTrimUnavailableException("Output is missing a required track")
             }

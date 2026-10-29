@@ -80,6 +80,7 @@ jobs:
           bash -n scripts/android-emulator-check.sh scripts/android-instrumentation-check.sh scripts/verify-release-apk.sh scripts/build-native-smartcut.sh
           python3 scripts/test-emulator-failure.py
           python3 scripts/test-emulator-flow.py
+          python3 scripts/test-release-gate.py
       - name: Unit tests, lint, and builds
         run: gradle --no-daemon :app:testDebugUnitTest :app:lintDebug :app:lintRelease :app:assembleDebug :app:assembleDebugAndroidTest :app:assembleRelease
       - name: Package corresponding source

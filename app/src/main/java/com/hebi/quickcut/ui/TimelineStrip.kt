@@ -5,11 +5,11 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -18,12 +18,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -60,6 +60,7 @@ fun TimelineStrip(
     modifier: Modifier = Modifier,
 ) {
     var zoom by rememberSaveable { mutableFloatStateOf(1f) }
+    val totalDurationMs = remember(timeline) { timeline.totalDurationMs }
     Column(modifier.background(CutColors.surface).padding(vertical = 10.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
@@ -67,7 +68,7 @@ fun TimelineStrip(
         ) {
             Text("00:00", fontSize = 11.sp, color = CutColors.mutedText)
             Text(
-                "전체 " + formatTime(timeline.totalDurationMs),
+                "전체 " + formatTime(totalDurationMs),
                 fontSize = 11.sp,
                 color = CutColors.mutedText,
             )
@@ -81,115 +82,114 @@ fun TimelineStrip(
             }
         }
         Spacer(Modifier.height(8.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
-                .padding(horizontal = 12.dp),
+        LazyRow(
+            modifier = Modifier.fillMaxWidth(),
+            contentPadding = PaddingValues(horizontal = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            timeline.clips.forEachIndexed { index, clip ->
-                key(clip.id) {
-                    val selected = selectedId == clip.id
-                    val clipStart = timeline.startOf(index)
-                    val isActive = playheadMs >= clipStart &&
-                        (playheadMs < clipStart + clip.durationMs || index == timeline.clips.lastIndex)
-                    val baseWidth = if (selected) 190f
-                        else (clip.durationMs / 200f).coerceIn(108f, 260f)
-                    val tileWidth = (baseWidth * zoom).coerceAtMost(3_200f).dp
-                    val tilePx = with(LocalDensity.current) { tileWidth.toPx() }
-                    val currentClip by rememberUpdatedState(clip)
-                    val currentMove by rememberUpdatedState(onMove)
-                    val currentTrim by rememberUpdatedState(onTrim)
-                    var dragOffsetPx by remember(clip.id) { mutableFloatStateOf(0f) }
+            itemsIndexed(timeline.clips, key = { _, clip -> clip.id }) { index, clip ->
+                val selected = selectedId == clip.id
+                val clipStart = timeline.startOf(index)
+                val isActive = playheadMs >= clipStart &&
+                    (playheadMs < clipStart + clip.durationMs || index == timeline.clips.lastIndex)
+                val baseWidth = if (selected) 190f
+                    else (clip.durationMs / 200f).coerceIn(108f, 260f)
+                val tileWidth = (baseWidth * zoom).coerceAtMost(3_200f).dp
+                val tilePx = with(LocalDensity.current) { tileWidth.toPx() }
+                val currentTilePx by rememberUpdatedState(tilePx)
+                val currentClip by rememberUpdatedState(clip)
+                val currentMove by rememberUpdatedState(onMove)
+                val currentTrim by rememberUpdatedState(onTrim)
+                var dragOffsetPx by remember(clip.id) { mutableFloatStateOf(0f) }
 
-                    BoxWithConstraints(
-                        modifier = Modifier
-                            .offset { IntOffset(dragOffsetPx.roundToInt(), 0) }
-                            .width(tileWidth).height(86.dp)
-                            .border(
-                                width = if (selected) 2.dp else 1.dp,
-                                color = if (selected) CutColors.accent else CutColors.border,
-                            )
-                            .pointerInput(clip.id) {
-                                detectDragGesturesAfterLongPress(
-                                    onDragEnd = {
-                                        if (abs(dragOffsetPx) >=
-                                            minOf(tilePx * 0.3f, 128.dp.toPx())
-                                        ) {
-                                            currentMove(clip.id, if (dragOffsetPx > 0f) 1 else -1)
-                                        }
-                                        dragOffsetPx = 0f
-                                    },
-                                    onDragCancel = { dragOffsetPx = 0f },
-                                    onDrag = { change, dragAmount ->
-                                        change.consume()
-                                        dragOffsetPx += dragAmount.x
-                                    },
-                                )
-                            }
-                            .clickable { onSelect(clip.id) },
-                    ) {
-                        ClipThumbnail(
-                            uri = clip.uri,
-                            timeMs = clip.startMs + clip.durationMs / 2L,
-                            modifier = Modifier.fillMaxWidth().fillMaxHeight(),
+                BoxWithConstraints(
+                    modifier = Modifier
+                        .offset { IntOffset(dragOffsetPx.roundToInt(), 0) }
+                        .width(tileWidth).height(86.dp)
+                        .border(
+                            width = if (selected) 2.dp else 1.dp,
+                            color = if (selected) CutColors.accent else CutColors.border,
                         )
-                        if (isActive) {
-                            val fraction = ((playheadMs - clipStart).toFloat() / clip.durationMs)
-                                .coerceIn(0f, 1f)
-                            Box(
-                                Modifier.offset(x = maxWidth * fraction)
-                                    .width(2.dp).fillMaxHeight().background(Color.White),
+                        .pointerInput(clip.id) {
+                            detectDragGesturesAfterLongPress(
+                                onDragEnd = {
+                                    if (abs(dragOffsetPx) >=
+                                        minOf(currentTilePx * 0.3f, 128.dp.toPx())
+                                    ) {
+                                        currentMove(clip.id, if (dragOffsetPx > 0f) 1 else -1)
+                                    }
+                                    dragOffsetPx = 0f
+                                },
+                                onDragCancel = { dragOffsetPx = 0f },
+                                onDrag = { change, dragAmount ->
+                                    change.consume()
+                                    dragOffsetPx += dragAmount.x
+                                },
                             )
                         }
+                        .clickable { onSelect(clip.id) },
+                ) {
+                    ClipThumbnail(
+                        uri = clip.uri,
+                        timeMs = clip.startMs + clip.durationMs / 2L,
+                        modifier = Modifier.fillMaxWidth().fillMaxHeight(),
+                    )
+                    if (isActive) {
+                        val fraction = ((playheadMs - clipStart).toFloat() / clip.durationMs)
+                            .coerceIn(0f, 1f)
+                        Box(
+                            Modifier.offset(x = maxWidth * fraction)
+                                .width(2.dp).fillMaxHeight().background(Color.White),
+                        )
+                    }
+                    Text(
+                        formatTime(clip.durationMs),
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.align(Alignment.BottomStart)
+                            .background(Color.Black.copy(alpha = 0.75f))
+                            .padding(horizontal = 5.dp, vertical = 3.dp),
+                    )
+                    if (clip.muted) {
                         Text(
-                            formatTime(clip.durationMs),
+                            "무음",
                             color = Color.White,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium,
-                            modifier = Modifier.align(Alignment.BottomStart)
+                            fontSize = 11.sp,
+                            modifier = Modifier.align(Alignment.TopEnd)
                                 .background(Color.Black.copy(alpha = 0.75f))
-                                .padding(horizontal = 5.dp, vertical = 3.dp),
+                                .padding(horizontal = 4.dp, vertical = 2.dp),
                         )
-                        if (clip.muted) {
-                            Text(
-                                "무음",
-                                color = Color.White,
-                                fontSize = 11.sp,
-                                modifier = Modifier.align(Alignment.TopEnd)
-                                    .background(Color.Black.copy(alpha = 0.75f))
-                                    .padding(horizontal = 4.dp, vertical = 2.dp),
-                            )
-                        }
-                        if (selected) {
-                            TrimHandle(
-                                clipId = clip.id,
-                                start = true,
-                                modifier = Modifier.align(Alignment.CenterStart),
-                                onDragStart = onTrimStart,
-                                onDragEnd = onTrimEnd,
-                                onDragAmount = { dx ->
-                                    val c = currentClip
-                                    val deltaMs = (dx / tilePx * c.durationMs).roundToLong()
-                                    val next = (c.startMs + deltaMs)
-                                        .coerceIn(0L, c.endMs - 100L)
-                                    if (next != c.startMs) currentTrim(c.id, next, c.endMs)
-                                },
-                            )
-                            TrimHandle(
-                                clipId = clip.id,
-                                start = false,
-                                modifier = Modifier.align(Alignment.CenterEnd),
-                                onDragStart = onTrimStart,
-                                onDragEnd = onTrimEnd,
-                                onDragAmount = { dx ->
-                                    val c = currentClip
-                                    val deltaMs = (dx / tilePx * c.durationMs).roundToLong()
-                                    val next = (c.endMs + deltaMs)
-                                        .coerceIn(c.startMs + 100L, c.sourceDurationMs)
-                                    if (next != c.endMs) currentTrim(c.id, c.startMs, next)
-                                },
-                            )
-                        }
+                    }
+                    if (selected) {
+                        TrimHandle(
+                            clipId = clip.id,
+                            start = true,
+                            modifier = Modifier.align(Alignment.CenterStart),
+                            onDragStart = onTrimStart,
+                            onDragEnd = onTrimEnd,
+                            onDragAmount = { dx ->
+                                val c = currentClip
+                                val deltaMs = (dx / tilePx * c.durationMs).roundToLong()
+                                val next = (c.startMs + deltaMs)
+                                    .coerceIn(0L, c.endMs - 100L)
+                                if (next != c.startMs) currentTrim(c.id, next, c.endMs)
+                            },
+                        )
+                        TrimHandle(
+                            clipId = clip.id,
+                            start = false,
+                            modifier = Modifier.align(Alignment.CenterEnd),
+                            onDragStart = onTrimStart,
+                            onDragEnd = onTrimEnd,
+                            onDragAmount = { dx ->
+                                val c = currentClip
+                                val deltaMs = (dx / tilePx * c.durationMs).roundToLong()
+                                val next = (c.endMs + deltaMs)
+                                    .coerceIn(c.startMs + 100L, c.sourceDurationMs)
+                                if (next != c.endMs) currentTrim(c.id, c.startMs, next)
+                            },
+                        )
                     }
                 }
             }

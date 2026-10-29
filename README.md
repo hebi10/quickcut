@@ -4,7 +4,7 @@
 
 스마트폰과 태블릿에서 영상을 선택해 필요한 장면만 편집하고 갤러리에 저장합니다. 디자인은 2026-10-08 확정한 다크 톤의 스마트폰 세로·가로 및 태블릿 가로 화면 시안을 기반으로 구현합니다.
 
-> 현재 버전: **Android 0.4.10**. 고속 저장 추천 위치를 정밀하게 유지하고 요청·추천 경계와 연결부를 미리 볼 수 있습니다. 일괄 저장은 파일마다 현재 위치 유지·추천 위치 사용·제외를 선택합니다. 중단된 단일 저장 복구, 변경 감지 분석 캐시, 처리 단계와 기기 내 진단을 보강했습니다. [0.4.10 변경과 검증](docs/26_RELIABILITY_FAST_REVIEW.md)을 참고하세요. 모든 영상의 고속 처리를 보장하지 않으며, 사용자가 보고한 3시간 원본의 개별 오류는 아직 재현하지 못했습니다. 빌드·JVM 검사·Lint·네이티브 출력 검사와 Android 계측 검사는 [Actions](../../actions)에서 실행합니다.
+> 현재 버전: **Android 0.4.11**. [0.4.11 변경 사항](docs/releases/0.4.11.md)을 참고하세요. 고속 저장 추천 위치를 정밀하게 유지하고 요청·추천 경계와 연결부를 미리 볼 수 있습니다. 일괄 저장은 파일마다 현재 위치 유지·추천 위치 사용·제외를 선택합니다. 중단된 단일 저장 복구, 변경 감지 분석 캐시, 처리 단계와 기기 내 진단을 보강했습니다. [0.4.10 변경과 검증](docs/26_RELIABILITY_FAST_REVIEW.md)을 참고하세요. 모든 영상의 고속 처리를 보장하지 않으며, 사용자가 보고한 3시간 원본의 개별 오류는 아직 재현하지 못했습니다. 빌드·JVM 검사·Lint·네이티브 출력 검사와 Android 계측 검사는 [Actions](../../actions)에서 실행합니다.
 
 ## 사용 흐름
 
@@ -114,13 +114,16 @@
 | AndroidX Media3 | 1.11.1 |
 | Android API | minSdk 29, targetSdk 36, compileSdk 36 |
 
-Android Studio에서 저장소 루트의 Gradle 프로젝트를 여세요. 공식 Gradle 9.4.1 Wrapper(`gradlew`, `gradlew.bat`, Wrapper JAR)가 저장소에 포함되어 있으므로 별도 Gradle 설치 없이 빌드할 수 있습니다. JDK 17 및 Android SDK API 36은 필요합니다.
+이 저장소는 Android 앱을 빌드하기 전에 Rust·FFmpeg·x264·x265 네이티브 엔진을 생성해야 합니다. 현재 네이티브 빌드 스크립트는 **Linux x86_64**를 지원합니다. Windows에서는 WSL2의 Linux 환경에서 Android용 Linux SDK/NDK를 준비하고 아래 작업을 실행하세요. Android Studio의 Windows Gradle 명령만으로는 깨끗한 저장소를 빌드할 수 없습니다.
 
-```powershell
-.\gradlew.bat :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
+JDK 17, Android SDK API 36, Build Tools 36.0.0, NDK 27.3.13750724, Python 3.12 이상, C/C++ 빌드 도구, CMake, Make, NASM, pkg-config, rustup·Cargo가 필요합니다. `ANDROID_HOME`을 Linux SDK 위치로 설정하세요. 스크립트는 고정한 Rust 툴체인과 네이티브 소스를 검사해 엔진을 생성합니다. 준비 절차와 라이선스는 [네이티브 빌드 안내](docs/20_NATIVE_SMART_CUT.md#소스에서-빌드하고-본인-키로-설치하기)를 참고하세요.
+
+```bash
+bash scripts/build-native-smartcut.sh
+./gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
 ```
 
-설치된 Android SDK에서 API 36과 Build Tools 36.0.0을 사용합니다. 원격 빌드는 [Actions](../../actions)에서 Gradle 9.4.1을 설정해 실행하도록 구성했습니다.
+공식 Gradle 9.4.1 Wrapper를 포함하므로 별도 Gradle 설치는 필요하지 않습니다. 호스트 영상 검사까지 실행하려면 FFmpeg CLI를 설치하고 네이티브 빌드에 `--host-tests`를 추가하세요. 원격 빌드·기기 검사는 [Actions](../../actions), 설치용 APK는 [Releases](../../releases)에서 확인할 수 있습니다.
 
 ## 프로젝트 구조
 

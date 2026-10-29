@@ -491,9 +491,13 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
         if (isRunning || isRecovering) return
         invalidateReview()
         val id = selectedTemplateId ?: return
-        templates = TemplateStore(context).remove(id)
-        selectedTemplateId = null
-        notification = "템플릿을 삭제했습니다. 현재 편집값은 유지됩니다."
+        try {
+            templates = TemplateStore(context).remove(id)
+            selectedTemplateId = null
+            notification = "템플릿을 삭제했습니다. 현재 편집값은 유지됩니다."
+        } catch (e: Exception) {
+            notification = e.localizedMessage ?: "템플릿을 삭제하지 못했습니다."
+        }
     }
 
     fun clearNotification() { notification = null }

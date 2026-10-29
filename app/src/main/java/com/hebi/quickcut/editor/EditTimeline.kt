@@ -49,6 +49,10 @@ data class VideoClip(
 data class TimelinePosition(val index: Int, val offsetMs: Long)
 
 data class EditTimeline(val clips: List<VideoClip> = emptyList()) {
+    // Timelines are replaced on edits; playback can reuse every prefix in constant time.
+    private val clipOffsetsMs: List<Long> by lazy {
+        clips.runningFold(0L) { offset, clip -> offset + clip.durationMs }
+    }
     val totalDurationUs: Long get() = clips.fold(0L) { total, clip -> Math.addExact(total, clip.durationUs) }
     val totalDurationMs: Long get() = if (clips.any { it.preciseRange != null })
         ceilMilliseconds(totalDurationUs) else clips.sumOf { it.durationMs }
@@ -96,7 +100,10 @@ data class EditTimeline(val clips: List<VideoClip> = emptyList()) {
     fun toggleMute(id: Long): EditTimeline =
         copy(clips = clips.map { if (it.id == id) it.copy(muted = !it.muted) else it })
 
-    fun startOf(index: Int): Long = clips.take(index).sumOf { it.durationMs }
+    fun startOf(index: Int): Long {
+        require(index >= 0) { "클립 위치는 0 이상이어야 합니다." }
+        return clipOffsetsMs[index.coerceAtMost(clips.size)]
+    }
 
     fun positionFor(globalPositionMs: Long): TimelinePosition {
         if (clips.isEmpty()) return TimelinePosition(0, 0)

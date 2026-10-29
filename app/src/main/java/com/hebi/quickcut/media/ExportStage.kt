@@ -34,12 +34,15 @@ internal data class ExportDiagnosticFacts(
     val galleryAvailableBytes: Long? = null,
 ) {
     fun text(stage: ExportStage, status: String, elapsedMs: Long,
-             reasons: ExportDiagnostics, method: String?, failureType: String?): String = buildString {
+             reasons: ExportDiagnostics, method: String?, failureType: String?,
+             operationId: String? = null, stageMs: Map<ExportStage, Long> = emptyMap()): String = buildString {
         appendLine("QuickCut 기기 내 저장 진단")
+        operationId?.let { appendLine("작업 ID: $it") }
         appendLine("앱: ${safeLabel(app)}")
         appendLine("기기: ${safeLabel(device)} / Android API $androidApi")
         appendLine("상태: ${safeLabel(status)} / 단계: ${stage.label}")
         appendLine("경과 시간(ms): $elapsedMs")
+        stageMs.forEach { (stage, milliseconds) -> appendLine("단계 시간(ms) ${stage.label}: $milliseconds") }
         appendLine("원본 수: $sourceCount / 구간 수: $clipCount")
         appendLine("첫 원본 길이(ms): $sourceDurationMs / 저장 길이(us): $retainedDurationUs")
         appendLine("첫 원본 크기(bytes): ${sourceBytes ?: "확인 불가"}")
@@ -53,6 +56,26 @@ internal data class ExportDiagnosticFacts(
         failureType?.let { appendLine("오류 종류: ${safeLabel(it)}") }
         append("원본 경로·이름·내용은 기록하지 않습니다. 이 기록은 자동 전송되지 않습니다.")
     }
+    /** Optional malformed metadata must not hide a final operation outcome. */
+    internal fun sanitized(): ExportDiagnosticFacts = copy(
+        app = safeLabel(app), device = safeLabel(device),
+        sourceBytes = sourceBytes?.takeIf { it >= 0 },
+        videoMime = videoMime?.takeIf { it == safeMime(it) },
+        audioMime = audioMime?.takeIf { it == safeMime(it) },
+        width = width?.takeIf { it >= 0 }, height = height?.takeIf { it >= 0 },
+        frameRate = frameRate?.takeIf { it.toDouble().isFinite() && it.toDouble() in 0.0..1000.0 },
+        audioChannels = audioChannels?.takeIf { it >= 0 }, audioSampleRate = audioSampleRate?.takeIf { it >= 0 },
+        cacheAvailableBytes = cacheAvailableBytes?.takeIf { it >= 0 },
+        galleryAvailableBytes = galleryAvailableBytes?.takeIf { it >= 0 })
+
+    internal fun isValid(): Boolean = androidApi in 1..999 && sourceCount >= 0 && clipCount >= 0 &&
+        sourceDurationMs >= 0 && retainedDurationUs >= 0 && app.length <= 96 && device.length <= 96 &&
+        !app.contains('/') && !device.contains('/') && !app.contains('\n') && !device.contains('\n') &&
+        listOf(sourceBytes, cacheAvailableBytes, galleryAvailableBytes).all { it == null || it >= 0 } &&
+        listOf(width, height, audioChannels, audioSampleRate).all { it == null || it >= 0 } &&
+        (frameRate == null || (frameRate.toDouble().isFinite() && frameRate.toDouble() in 0.0..1000.0)) &&
+        listOf(videoMime, audioMime).all { it == null || it == safeMime(it) }
+
     companion object {
         private fun safeLabel(value: String) = value.replace(Regex("[^\\p{L}\\p{N} ._+()-]"), "_").take(96)
         private fun safeMime(value: String?): String = value?.takeIf {

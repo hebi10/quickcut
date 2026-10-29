@@ -2,6 +2,7 @@ package com.hebi.quickcut.media
 
 import android.content.Context
 import android.net.Uri
+import android.os.Build
 import android.os.SystemClock
 import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -12,8 +13,10 @@ import java.io.File
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlin.math.abs
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -142,6 +145,56 @@ class VideoExportInstrumentedTest {
                 endMs = metadata.durationMs,
                 hasAudio = metadata.hasAudio,
             )
+            if (Build.VERSION.SDK_INT == 29) {
+                val packets = FastBFrameInstrumentedTest()
+                val source = File(checkNotNull(uri.path))
+                val sourceDigest = packets.digest(source)
+                val retainedVideo = packets.samples(source, "video/").filter { it.timeUs >= clip.startUs }
+                assertEquals("The four-second tail must contain 120 source pictures", 120, retainedVideo.size)
+                assertTrue("The fixture must expose Android 10's nonzero AAC start offset",
+                    packets.samples(source, "audio/").first { it.timeUs >= clip.startUs }.timeUs > clip.startUs)
+                val inspection = FastMp4Trimmer.inspect(context, clip)
+                assertNull("The framework muxer must not shift the first AAC packet", inspection.plan)
+                assertEquals(FastMp4Trimmer.UnavailableReason.AUDIO_TIMESTAMPS, inspection.reason)
+                val timeline = EditTimeline(listOf(clip))
+                val assessment = ExportPlanner.analyze(context, timeline, SaveDateMode.CURRENT)
+                assertTrue("Native video copy must remain available for the requested range", assessment.fastAvailable)
+                assertFalse("Do not advertise the unsafe framework muxer", assessment.directCopy)
+                assertNull("The safe native route must not adjust either boundary", assessment.suggestion)
+                val copiedOutput = File.createTempFile("keyframe_audio_reencode_", ".mp4", context.cacheDir)
+                var saved: Uri? = null
+                var report: ExportReport? = null
+                try {
+                    val output = withTimeout(120_000L) {
+                        VideoExporter(context).export(
+                            timeline, {}, {},
+                            exportMode = ExportMode.FAST_ONLY,
+                            onReport = { report = it },
+                        )
+                    }
+                    saved = output
+                    assertEquals(ExportMethod.AUDIO_REENCODE, report?.method)
+                    assertEquals(FastExportReason.AUDIO_TIMESTAMPS, report?.diagnostics?.copyReason)
+                    checkNotNull(context.contentResolver.openInputStream(output)).use { input ->
+                        copiedOutput.outputStream().use { input.copyTo(it) }
+                    }
+                    val exported = MediaReader.validateExport(copiedOutput, clip.durationMs, true)
+                    assertTrue(abs(exported.durationMs - clip.durationMs) <= 250L)
+                    assertTrue(exported.hasAudio)
+                    val outputVideo = packets.samples(copiedOutput, "video/")
+                    packets.assertCopiedSamples(retainedVideo, outputVideo, clip.startUs)
+                    assertEquals(120, outputVideo.size)
+                    val decoded = NativeSmartCutInstrumentedTest()
+                    decoded.assertDecodedPictures(context, output, 120)
+                    decoded.assertAudibleContinuousAudio(context, output,
+                        clip.durationMs, mapOf(1 to 880, 8 to 880, 14 to 880))
+                    assertEquals("Export must leave the source unchanged", sourceDigest, packets.digest(source))
+                } finally {
+                    saved?.let { context.contentResolver.delete(it, null, null) }
+                    copiedOutput.delete()
+                }
+                return@withFixture
+            }
             val plan = FastMp4Trimmer.prepare(context, clip)
                 ?: throw AssertionError("Four-second keyframe trim should be eligible")
             val output = GalleryWriter(context).saveDirect(

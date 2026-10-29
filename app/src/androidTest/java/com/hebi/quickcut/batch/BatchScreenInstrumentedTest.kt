@@ -1,5 +1,12 @@
 package com.hebi.quickcut.batch
 
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -88,6 +95,39 @@ class BatchScreenInstrumentedTest {
         composeRule.onNodeWithText("앞뒤 구간 삭제").performScrollTo().performClick()
         leading.assertIsEnabled()
         trailing.assertIsEnabled()
+    }
+
+    @Test
+    fun batchChoicesExposeIndependentGroupsAndSelectedRadioRows() {
+        val model = (composeRule.activity.application as QuickCutApplication).batchModel
+        val previous = composeRule.runOnIdle {
+            Triple(model.draftMode, model.saveDateMode, model.originalAction)
+        }
+        try {
+            composeRule.onNodeWithText("일괄 편집 · 여러 영상").performClick()
+            composeRule.onNodeWithText("앞뒤 구간 삭제").performScrollTo().performClick()
+                .assertIsSelected()
+                .assert(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.RadioButton))
+            composeRule.onNodeWithText("처음 구간만 남기기").performScrollTo().performClick().assertIsSelected()
+            composeRule.onNodeWithText("앞뒤 구간 삭제").assertIsNotSelected()
+            composeRule.onNodeWithText("템플릿·저장 옵션 펼치기").performScrollTo().performClick()
+            composeRule.onAllNodes(SemanticsMatcher.expectValue(SemanticsProperties.SelectableGroup, Unit))
+                .assertCountEquals(3)
+            composeRule.onNodeWithText("현재 날짜로 저장 (최신 파일)").performScrollTo().performClick()
+                .assertIsSelected()
+            composeRule.onNodeWithText("원본 날짜 유지").performScrollTo().performClick().assertIsSelected()
+            composeRule.onNodeWithText("현재 날짜로 저장 (최신 파일)").assertIsNotSelected()
+            composeRule.onNodeWithText("원본 유지 (기본값)").performScrollTo().performClick().assertIsSelected()
+            composeRule.onNodeWithText("저장 성공한 원본만 휴지통으로 이동")
+                .performScrollTo().performClick().assertIsSelected()
+            composeRule.onNodeWithText("원본 유지 (기본값)").assertIsNotSelected()
+        } finally {
+            composeRule.runOnIdle {
+                model.draftMode = previous.first
+                model.saveDateMode = previous.second
+                model.originalAction = previous.third
+            }
+        }
     }
 
     @Test

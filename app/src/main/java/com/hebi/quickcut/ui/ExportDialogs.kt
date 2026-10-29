@@ -1,6 +1,7 @@
 package com.hebi.quickcut.ui
 
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -21,6 +22,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import com.hebi.quickcut.editor.OriginalAction
 import com.hebi.quickcut.media.ExportAssessment
@@ -47,19 +49,23 @@ internal fun SaveOptionsDialog(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Text("저장 완료 후 원본 동영상 처리", color = CutColors.primaryText)
-                listOf(
-                    OriginalAction.KEEP to "원본 유지 (기본값)",
-                    OriginalAction.TRASH to "원본 휴지통으로 이동",
-                    OriginalAction.DELETE to "원본 영구 삭제",
-                ).forEach { (action, label) ->
-                    SaveChoiceRow(label, originalAction == action) { onOriginalActionChange(action) }
+                Column(Modifier.selectableGroup(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(
+                        OriginalAction.KEEP to "원본 유지 (기본값)",
+                        OriginalAction.TRASH to "원본 휴지통으로 이동",
+                        OriginalAction.DELETE to "원본 영구 삭제",
+                    ).forEach { (action, label) ->
+                        SaveChoiceRow(label, originalAction == action) { onOriginalActionChange(action) }
+                    }
                 }
                 Text("저장 날짜", color = CutColors.primaryText)
-                listOf(
-                    SaveDateMode.CURRENT to "현재 날짜로 저장 (최신 영상)",
-                    SaveDateMode.ORIGINAL to "원본 날짜 유지",
-                ).forEach { (mode, label) ->
-                    SaveChoiceRow(label, dateMode == mode) { onDateModeChange(mode) }
+                Column(Modifier.selectableGroup(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(
+                        SaveDateMode.CURRENT to "현재 날짜로 저장 (최신 영상)",
+                        SaveDateMode.ORIGINAL to "원본 날짜 유지",
+                    ).forEach { (mode, label) ->
+                        SaveChoiceRow(label, dateMode == mode) { onDateModeChange(mode) }
+                    }
                 }
                 if (dateMode == SaveDateMode.ORIGINAL) {
                     Text(
@@ -97,7 +103,8 @@ internal fun SaveOptionsDialog(
 @Composable
 private fun SaveChoiceRow(label: String, selected: Boolean, onSelect: () -> Unit) {
     Row(
-        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(onClick = onSelect),
+        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+            .selectable(selected = selected, role = Role.RadioButton, onClick = onSelect),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         RadioButton(selected = selected, onClick = null)

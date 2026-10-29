@@ -96,6 +96,40 @@ class EditTimelineTest {
         }
     }
 
+    @Test fun clipStartsTrackTrimReorderAndDeletionWithoutStaleOffsets() {
+        val first = source.copy(endMs = 3_000L)
+        val second = source.copy(id = 2L, startMs = 5_000L, endMs = 7_000L)
+        val third = source.copy(id = 3L, endMs = 1_000L)
+        val original = EditTimeline(listOf(first, second, third))
+        assertEquals(listOf(0L, 3_000L, 5_000L, 6_000L), (0..3).map(original::startOf))
+
+        val trimmed = original.updateRange(1L, 1_000L, 3_000L)
+        assertEquals(listOf(0L, 2_000L, 4_000L, 5_000L), (0..3).map(trimmed::startOf))
+        val moved = trimmed.move(3L, -2)
+        assertEquals(listOf(0L, 1_000L, 3_000L, 5_000L), (0..3).map(moved::startOf))
+        assertEquals(listOf(0L, 1_000L, 3_000L), (0..2).map(moved.delete(1L)::startOf))
+        assertEquals(5_000L, original.startOf(2))
+    }
+
+    @Test fun repeatedClipStartLookupsDoNotRescanTheTimeline() {
+        var clipReads = 0
+        val clips = object : AbstractList<VideoClip>() {
+            override val size = 1_000
+            override fun get(index: Int): VideoClip {
+                clipReads++
+                return source.copy(id = index.toLong(), endMs = 1_000L)
+            }
+        }
+        val timeline = EditTimeline(clips)
+        assertEquals(999_000L, timeline.startOf(999))
+        val initialReads = clipReads
+        repeat(10) {
+            assertEquals(500_000L, timeline.startOf(500))
+            assertEquals(999_000L, timeline.startOf(999))
+        }
+        assertEquals("Playback must reuse computed clip offsets", initialReads, clipReads)
+    }
+
     @Test fun timecodeIsStable() {
         assertEquals("01:23.4", formatTime(83_400))
         assertEquals("01:01:01.0", formatTime(3_661_000))

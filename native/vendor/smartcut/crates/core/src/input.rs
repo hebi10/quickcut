@@ -498,6 +498,7 @@ pub struct Packets<'a> {
     failures: u32,
     failed: Option<String>,
     read: u32,
+    fail_fast: bool,
 }
 
 thread_local! {
@@ -561,6 +562,12 @@ fn asked_to_stop() -> bool {
 }
 
 impl Packets<'_> {
+    /// Payload validators cannot recover by silently skipping a read error.
+    pub(crate) fn fail_fast(mut self, enabled: bool) -> Self {
+        self.fail_fast = enabled;
+        self
+    }
+
     /// Whether the reading got to the end of the file, or was stopped by the
     /// errors described above. For the loops that write: a share that went
     /// away left a cut that ended there and said it had succeeded.
@@ -617,7 +624,7 @@ impl<'a> Iterator for Packets<'a> {
                         ff::Error::Other { errno } if errno == libc_eagain()
                     );
                     self.failures += if again { 1 } else { EAGAIN_WORTH };
-                    if self.failures >= MOST_FAILURES * EAGAIN_WORTH {
+                    if self.fail_fast || self.failures >= MOST_FAILURES * EAGAIN_WORTH {
                         self.failed = Some(e.to_string());
                         // Only inside a pass that asks: a thread from a pool
                         // with no pass on it would keep the mark for the next.
@@ -656,7 +663,7 @@ pub trait ReadPackets {
 
 impl ReadPackets for ff::format::context::Input {
     fn read_packets(&mut self) -> Packets<'_> {
-        Packets { ctx: self, failures: 0, failed: None, read: 0 }
+        Packets { ctx: self, failures: 0, failed: None, read: 0, fail_fast: false }
     }
 }
 

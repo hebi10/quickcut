@@ -4,6 +4,7 @@ import android.content.Context
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.net.Uri
+import android.os.Build
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.hebi.quickcut.editor.EditTimeline
@@ -27,19 +28,69 @@ class FastBFrameInstrumentedTest {
             val sourceVideo = samples(source, "video/").filter { it.timeUs >= 4_000_000L }
             assertTrue("Fixture must contain reordered presentation timestamps",
                 sourceVideo.zipWithNext().any { (first, second) -> second.timeUs < first.timeUs })
-            val plan = FastMp4Trimmer.prepare(context, retained)
-                ?: throw AssertionError("B-frames with the complete tail should support fast copy")
+            val sourceDigest = digest(source)
             val output = File.createTempFile("fast_bframe_output_", ".mp4", context.cacheDir)
+            var saved: Uri? = null
             try {
-                FileOutputStream(output).use { FastMp4Trimmer.write(context, plan, it.fd) {} }
-                MediaReader.validateExport(output, retained.durationMs, true)
-                assertCopiedSamples(sourceVideo, samples(output, "video/"), plan.startUs)
-                assertCopiedSamples(
-                    samples(source, "audio/").filter { it.timeUs >= plan.startUs },
-                    samples(output, "audio/"),
-                    plan.startUs,
-                )
+                if (Build.VERSION.SDK_INT == 29) {
+                    val sourceAudio = samples(source, "audio/").filter { it.timeUs >= retained.startUs }
+                    assertTrue("The fixture must expose Android 10's nonzero AAC start offset",
+                        sourceAudio.first().timeUs > retained.startUs)
+                    val inspection = FastMp4Trimmer.inspect(context, retained)
+                    assertNull("Do not publish the Android 10 muxer's shifted first audio packet", inspection.plan)
+                    assertEquals(FastMp4Trimmer.UnavailableReason.AUDIO_TIMESTAMPS, inspection.reason)
+                    val mutedPlan = FastMp4Trimmer.prepare(context, retained.copy(muted = true))
+                        ?: throw AssertionError("Removing audio must preserve the safe video copy path")
+                    val audioTrack = MediaExtractor().let { extractor ->
+                        try {
+                            extractor.setDataSource(source.absolutePath)
+                            (0 until extractor.trackCount).single {
+                                extractor.getTrackFormat(it).getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true
+                            }
+                        } finally { extractor.release() }
+                    }
+                    val unsafeWrite = runCatching {
+                        FileOutputStream(output).use {
+                            FastMp4Trimmer.write(context, mutedPlan.copy(audioTrack = audioTrack), it.fd) {}
+                        }
+                    }.exceptionOrNull()
+                    assertTrue("Writer must independently reject a stale or manually constructed unsafe plan",
+                        unsafeWrite is FastTrimUnavailableException)
+                    val timeline = EditTimeline(listOf(retained))
+                    val assessment = ExportPlanner.analyze(context, timeline, SaveDateMode.CURRENT)
+                    assertTrue("Native copy must remain available at the exact requested range", assessment.fastAvailable)
+                    assertFalse("Do not advertise the unsafe framework muxer", assessment.directCopy)
+                    assertNull("The safe native alternative must not move either boundary", assessment.suggestion)
+                    var report: ExportReport? = null
+                    val result = VideoExporter(context).export(timeline, {}, {},
+                        exportMode = ExportMode.FAST_ONLY, onReport = { report = it })
+                    saved = result
+                    assertEquals(ExportMethod.AUDIO_REENCODE, report?.method)
+                    assertEquals(FastExportReason.AUDIO_TIMESTAMPS, report?.diagnostics?.copyReason)
+                    checkNotNull(context.contentResolver.openInputStream(result)).use { input ->
+                        output.outputStream().use { input.copyTo(it) }
+                    }
+                    MediaReader.validateExport(output, retained.durationMs, true)
+                    assertCopiedSamples(sourceVideo, samples(output, "video/"), retained.startUs)
+                    assertEquals(120, samples(output, "video/").size)
+                    NativeSmartCutInstrumentedTest().assertDecodedPictures(context, result, 120)
+                    NativeSmartCutInstrumentedTest().assertAudibleContinuousAudio(context, result,
+                        retained.durationMs, mapOf(1 to 880, 9 to 1100, 14 to 1100))
+                } else {
+                    val plan = FastMp4Trimmer.prepare(context, retained)
+                        ?: throw AssertionError("B-frames with the complete tail should support fast copy")
+                    FileOutputStream(output).use { FastMp4Trimmer.write(context, plan, it.fd) {} }
+                    MediaReader.validateExport(output, retained.durationMs, true)
+                    assertCopiedSamples(sourceVideo, samples(output, "video/"), plan.startUs)
+                    assertCopiedSamples(
+                        samples(source, "audio/").filter { it.timeUs >= plan.startUs },
+                        samples(output, "audio/"),
+                        plan.startUs,
+                    )
+                }
+                assertEquals("Every route must leave the source unchanged", sourceDigest, digest(source))
             } finally {
+                saved?.let { context.contentResolver.delete(it, null, null) }
                 output.delete()
             }
         }
@@ -120,9 +171,12 @@ class FastBFrameInstrumentedTest {
         }
     }
 
-    private data class Sample(val timeUs: Long, val flags: Int, val digest: String)
+    internal fun digest(file: File): String = MessageDigest.getInstance("SHA-256")
+        .digest(file.readBytes()).joinToString("") { "%02x".format(it.toInt() and 0xff) }
 
-    private fun samples(file: File, mimePrefix: String, seekUs: Long? = null): List<Sample> {
+    internal data class Sample(val timeUs: Long, val flags: Int, val digest: String)
+
+    internal fun samples(file: File, mimePrefix: String, seekUs: Long? = null): List<Sample> {
         val extractor = MediaExtractor()
         return try {
             extractor.setDataSource(file.absolutePath)
@@ -148,13 +202,13 @@ class FastBFrameInstrumentedTest {
         }
     }
 
-    private fun assertCopiedSamples(source: List<Sample>, output: List<Sample>, startUs: Long) {
+    internal fun assertCopiedSamples(source: List<Sample>, output: List<Sample>, startUs: Long) {
         assertTrue("Fixture must have retained samples", source.isNotEmpty())
         assertEquals("Every retained packet, including the final B-frame, must survive", source.size, output.size)
         source.zip(output).forEachIndexed { index, (before, after) ->
             assertEquals("Compressed packet $index must be copied without reencoding", before.digest, after.digest)
             assertEquals("Packet $index sync flag must be preserved", before.flags, after.flags)
-            assertTrue("Packet $index presentation timestamp must retain its source offset",
+            assertTrue("Packet $index presentation timestamp must retain its source offset: expected=${before.timeUs - startUs} actual=${after.timeUs}",
                 abs((before.timeUs - startUs) - after.timeUs) <= 1_000L)
             assertTrue("The removed head must not survive as hidden preroll", after.timeUs >= 0L)
         }

@@ -161,3 +161,78 @@ fn cache_enforces_byte_and_entry_limits_and_evicts_least_recently_used() {
     assert!(too_small.entries.is_empty(), "oversized analysis is useful for this call but not cached");
     assert_eq!(too_small.bytes, 0);
 }
+
+#[test]
+fn payload_corruption_after_valid_index_entries_is_rejected_and_never_cached() {
+    use ffmpeg_next as ff;
+    let fixture = Fixture::new("late-payload");
+    let mut input = ff::format::input(&fixture.input).unwrap();
+    let video = input.streams().best(ff::media::Type::Video).unwrap().index();
+    let mut late_nal = None;
+    for (stream, packet) in input.packets() {
+        if stream.index() != video { continue; }
+        let bytes = packet.data().unwrap();
+        let mut at = 0;
+        while at + 4 < bytes.len() {
+            let size = u32::from_be_bytes(bytes[at..at + 4].try_into().unwrap()) as usize;
+            if matches!(bytes[at + 4] & 31, 1 | 5) {
+                late_nal = Some((packet.position() as u64 + at as u64 + 4, bytes[at + 4] | 0x80));
+                break;
+            }
+            at += 4 + size;
+        }
+    }
+    drop(input);
+    let (offset, corrupt) = late_nal.unwrap();
+    let mut file = std::fs::OpenOptions::new().write(true).open(&fixture.input).unwrap();
+    file.seek(SeekFrom::Start(offset)).unwrap();
+    file.write_all(&[corrupt]).unwrap();
+    drop(file);
+    let store = Mutex::new(AnalysisCache::new(MAX_ENTRIES, MAX_RETAINED_BYTES));
+    let error = match load_with_cache(&fixture.input, &Observer::default(), &|_| {}, &store) {
+        Ok(_) => panic!("the packet index is not a substitute for full payload inspection"),
+        Err(error) => error,
+    };
+    assert_eq!(crate::decline::code(&error), 19, "{error:#}");
+    assert!(store.lock().unwrap().entries.is_empty());
+}
+
+#[test]
+fn source_analysis_reuses_completed_packet_facts_without_another_scan() {
+    let fixture = Fixture::new("reuse");
+    let observer = Observer::default();
+    let store = Mutex::new(AnalysisCache::new(MAX_ENTRIES, MAX_RETAINED_BYTES));
+    let first = load_with_cache(&fixture.input, &observer, &|p| observer.progress(p), &store).unwrap();
+    assert_eq!(first.analysis.packets.picture_times_us.len(), 180);
+    assert_eq!(first.analysis.packets.idr_times_us.len(), 3);
+    observer.progress.lock().unwrap().clear();
+    let second = load_with_cache(&fixture.input, &observer, &|p| observer.progress(p), &store).unwrap();
+    assert!(Arc::ptr_eq(&first.analysis, &second.analysis));
+    assert_eq!(*observer.progress.lock().unwrap(), vec![100]);
+    let mut incomplete = first.source.clone();
+    incomplete.read_whole = false;
+    assert!(crate::check_source(&incomplete, 0, true).is_err());
+    incomplete.read_whole = true;
+    incomplete.leading_known = false;
+    assert!(crate::check_source(&incomplete, 0, true).is_err());
+}
+
+#[test]
+fn cancellation_during_packet_inspection_never_publishes_partial_facts() {
+    use std::sync::atomic::AtomicUsize;
+    struct CancelAfterChecks(AtomicUsize);
+    impl Callbacks for CancelAfterChecks {
+        fn is_cancelled(&self) -> bool { self.0.fetch_add(1, Ordering::Relaxed) >= 3 }
+        fn progress(&self, _: i32) {}
+    }
+    let fixture = Fixture::new("mid-inspection-cancel");
+    let store = Mutex::new(AnalysisCache::new(MAX_ENTRIES, MAX_RETAINED_BYTES));
+    let callbacks = CancelAfterChecks(AtomicUsize::new(0));
+    let progress = std::sync::atomic::AtomicBool::new(false);
+    let result = load_with_cache(&fixture.input, &callbacks, &|p| {
+        if p == 100 { progress.store(true, Ordering::Relaxed); }
+    }, &store);
+    assert!(result.is_err());
+    assert!(!progress.load(Ordering::Relaxed), "cancellation must stop before the final completion callback");
+    assert!(store.lock().unwrap().entries.is_empty());
+}

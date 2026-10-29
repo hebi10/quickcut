@@ -6,6 +6,7 @@ import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.media.MediaMuxer
 import android.net.Uri
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -42,6 +43,7 @@ internal object FastMp4Trimmer {
         COLOR_FORMAT("원본 복사 경로에서 색상·밝기 정보를 보존할 수 없습니다."),
         ROTATION("영상 회전 정보가 고속 저장의 지원 범위와 다릅니다."),
         AUDIO_CODEC("현재 고속 복사는 AAC 소리를 지원합니다. 다른 소리 형식은 정확한 위치로 자동 저장을 선택해 주세요."),
+        AUDIO_TIMESTAMPS("이 Android 버전의 원본 복사는 선택한 소리 시작 시간을 보존할 수 없습니다. 영상 복사가 가능한 다른 고속 경로를 확인합니다."),
         KEYFRAME("자르기 시작 위치가 키프레임(재생 기준 프레임)과 맞지 않습니다."),
         UNSAFE_START("시작 지점 앞의 프레임이 재생 순서에 섞여 있어 해당 위치에서 고속 저장을 사용할 수 없습니다."),
         REORDERED_END("B프레임처럼 재생 순서가 다른 영상의 끝부분을 자르려면 정확한 위치로 자동 저장을 선택해 주세요. 끝부분을 유지하면 고속 복사가 가능할 수 있습니다."),
@@ -52,6 +54,13 @@ internal object FastMp4Trimmer {
 
     fun isAcceptableStart(requestedUs: Long, syncUs: Long, endUs: Long): Boolean =
         requestedUs >= 0L && syncUs == requestedUs && endUs - syncUs >= 100_000L
+
+    // Android 10 MPEG4Writer adds a late track's offset to its first sample
+    // duration (writeSttsBox), leaving that sample at zero. Android 11 uses an
+    // empty edit to preserve the offset. Never compensate by moving input PTS.
+    internal fun canMuxAudioStart(sdkInt: Int, startUs: Long, firstAudioUs: Long?): Boolean =
+        startUs >= 0L && firstAudioUs != null && firstAudioUs >= startUs &&
+            (sdkInt >= 30 || firstAudioUs == startUs)
 
     fun prepare(context: Context, clip: VideoClip): Plan? = inspect(context, clip).plan
 
@@ -122,6 +131,28 @@ internal object FastMp4Trimmer {
                 }
             }
 
+            if (!copyToEndOfSource && !hasSafeEnd(extractor, video, endUs)) {
+                return unavailable(UnavailableReason.REORDERED_END)
+            }
+
+            if (Build.VERSION.SDK_INT == 29 && keepAudio) {
+                extractor.unselectTrack(videoTrack)
+                extractor.selectTrack(audioTrack)
+                extractor.seekTo(syncUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+                // AAC priming may be negative; only a retained sample can establish
+                // the output start. Exhaustion is identified by track index, not PTS.
+                while (extractor.sampleTrackIndex >= 0 && extractor.sampleTime < syncUs) {
+                    if (!extractor.advance()) break
+                }
+                val firstAudioUs = extractor.sampleTime.takeIf {
+                    extractor.sampleTrackIndex == audioTrack &&
+                        (copyToEndOfSource || it < endUs)
+                }
+                if (!canMuxAudioStart(Build.VERSION.SDK_INT, syncUs, firstAudioUs)) {
+                    return unavailable(UnavailableReason.AUDIO_TIMESTAMPS)
+                }
+            }
+
             return Inspection(Plan(
                 source = Uri.parse(clip.uri),
                 videoTrack = videoTrack,
@@ -131,6 +162,8 @@ internal object FastMp4Trimmer {
                 rotationDegrees = rotation,
                 copyToEndOfSource = copyToEndOfSource,
             ), null)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (error: Exception) {
             Log.d(TAG, "Fast MP4 eligibility check skipped: " + error.javaClass.simpleName)
             return unavailable(UnavailableReason.SOURCE_UNREADABLE)
@@ -140,6 +173,45 @@ internal object FastMp4Trimmer {
     }
 
     private fun unavailable(reason: UnavailableReason) = Inspection(null, reason)
+
+    /**
+     * Inspect the indexed GOP containing the end, rather than inferring its
+     * ordering from the beginning of the clip. Stop only at EOS or a closed IDR
+     * at/after the requested end. A sync flag may represent an open GOP / CRA.
+     * No fence within the resource budget means use the validated native path.
+     */
+    private fun hasSafeEnd(extractor: MediaExtractor, format: MediaFormat, endUs: Long): Boolean {
+        val budget = FastTrimBoundary.Budget(SystemClock.elapsedRealtime())
+        extractor.seekTo(endUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+        var previousUs = Long.MIN_VALUE
+        while (extractor.sampleTrackIndex >= 0) {
+            if (Thread.currentThread().isInterrupted) throw CancellationException("End inspection cancelled")
+            val timeUs = extractor.sampleTime
+            if (timeUs < previousUs || !budget.include(extractor.sampleSize, SystemClock.elapsedRealtime())) {
+                return false
+            }
+            previousUs = timeUs
+            if (timeUs >= endUs && isClosedSyncSample(extractor, format)) {
+                return budget.withinTime(SystemClock.elapsedRealtime())
+            }
+            if (!extractor.advance()) break
+        }
+        return budget.withinTime(SystemClock.elapsedRealtime())
+    }
+
+    private fun isClosedSyncSample(extractor: MediaExtractor, format: MediaFormat): Boolean {
+        val flags = extractor.sampleFlags
+        if (flags and MediaExtractor.SAMPLE_FLAG_SYNC == 0 ||
+            flags and (MediaExtractor.SAMPLE_FLAG_ENCRYPTED or MediaExtractor.SAMPLE_FLAG_PARTIAL_FRAME) != 0
+        ) return false
+        val size = extractor.sampleSize
+        if (size <= 0L || size > MAX_SAMPLE_BYTES) return false
+        val packet = ByteBuffer.allocate(size.toInt())
+        if (extractor.readSampleData(packet, 0).toLong() != size) return false
+        packet.position(0)
+        packet.limit(size.toInt())
+        return FastTrimBoundary.isClosedRandomAccess(packet, format.getString(MediaFormat.KEY_MIME) ?: "")
+    }
 
     suspend fun write(
         context: Context,
@@ -176,6 +248,8 @@ internal object FastMp4Trimmer {
             var lastProgress = -1
             var lastVideoTimeUs = -1L
             var lastAudioTimeUs = -1L
+            var endProbeBudget: FastTrimBoundary.Budget? = null
+            val videoFormat = extractor.getTrackFormat(plan.videoTrack)
             val spanUs = plan.endUs - plan.startUs
 
             while (true) {
@@ -204,6 +278,28 @@ internal object FastMp4Trimmer {
                     continue
                 }
                 if (!plan.copyToEndOfSource && timeUs >= plan.endUs) {
+                    if (index == plan.videoTrack) {
+                        // The first excluded PTS is not a decode-order boundary:
+                        // it can be followed by a retained B-frame. Prove the
+                        // boundary using this exact cursor, never a separate seek
+                        // which could skip the omitted picture. Reversal above
+                        // declines before any such frame can be silently lost.
+                        val budget = endProbeBudget ?: FastTrimBoundary.Budget(
+                            SystemClock.elapsedRealtime()).also { endProbeBudget = it }
+                        if (!budget.include(extractor.sampleSize, SystemClock.elapsedRealtime())) {
+                            throw FastTrimUnavailableException("Could not prove video end within lookahead budget")
+                        }
+                        val closedFence = isClosedSyncSample(extractor, videoFormat)
+                        currentCoroutineContext().ensureActive()
+                        if (!budget.withinTime(SystemClock.elapsedRealtime())) {
+                            throw FastTrimUnavailableException("Video end proof exceeded lookahead time budget")
+                        }
+                        if (!closedFence) {
+                            extractor.advance()
+                            continue
+                        }
+                        endProbeBudget = null
+                    }
                     // A shorter track may already be at EOS, so waiting for every
                     // track to cross endUs would scan the other track's entire tail.
                     // Unselect changes the current sample to a remaining track;
@@ -213,6 +309,11 @@ internal object FastMp4Trimmer {
                 }
 
                 val isVideo = index == plan.videoTrack
+                if (!isVideo && audioSamples == 0 &&
+                    !canMuxAudioStart(Build.VERSION.SDK_INT, plan.startUs, timeUs)
+                ) {
+                    throw FastTrimUnavailableException("Framework muxer cannot preserve the first audio timestamp")
+                }
                 if (isVideo && videoSamples == 0 &&
                     (extractor.sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC) == 0
                 ) throw FastTrimUnavailableException("First video sample is not a keyframe")
@@ -255,6 +356,9 @@ internal object FastMp4Trimmer {
                 extractor.advance()
             }
             currentCoroutineContext().ensureActive()
+            if (endProbeBudget?.withinTime(SystemClock.elapsedRealtime()) == false) {
+                throw FastTrimUnavailableException("Video end proof exceeded lookahead time budget")
+            }
             if (videoSamples == 0 || (plan.audioTrack != null && audioSamples == 0)) {
                 throw FastTrimUnavailableException("Output is missing a required track")
             }

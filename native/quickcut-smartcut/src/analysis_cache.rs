@@ -1,7 +1,7 @@
 //! Only completed, immutable source analysis is retained. No descriptor or
 //! provider path outlives the call which granted it, and a cache hit still has
 //! to pass the caller's exact range, audio and output validation rules.
-use crate::{check_source, display::Display, inspect_source_packets, Callbacks, PacketFacts};
+use crate::{check_source, display::Display, packet_inspection::InspectingScan, Callbacks, PacketFacts};
 use crate::decline::{explain, Reason};
 use anyhow::{ensure, Result};
 use smartcut_core::Source;
@@ -177,15 +177,14 @@ fn load_with_cache(input: &str, callbacks: &dyn Callbacks,
     progress(0);
     ensure!(!callbacks.is_cancelled(), "cancelled");
     let stopped = || callbacks.is_cancelled();
-    let scanning = |value: f64| progress((value * 45.0).clamp(0.0, 45.0) as i32);
-    let source = explain(smartcut_core::scan_stoppable(input, &smartcut_core::index::PacketScan,
+    let scanning = |value: f64| progress((value * 95.0).clamp(0.0, 95.0) as i32);
+    let scan = InspectingScan { callbacks, facts: std::cell::RefCell::new(None) };
+    let source = explain(smartcut_core::scan_stoppable(input, &scan,
         Some(&scanning), Some(&stopped)), Reason::SourceUnreadable)?;
-    // Audio compatibility and the requested end remain per-operation checks.
-    // Structural, codec and complete-index restrictions are source-wide.
+    // Range/audio rules remain per-operation. The completed index and payload
+    // facts come from one full traversal, and both must have completed.
     check_source(&source, 0, true)?;
-    progress(45);
-    let inspecting = |value: f64| progress(45 + (value * 50.0).clamp(0.0, 50.0) as i32);
-    let packets = explain(inspect_source_packets(&source, callbacks, &inspecting), Reason::PacketStructure)?;
+    let packets = scan.facts.into_inner().ok_or_else(|| anyhow::anyhow!("missing packet inspection"))?;
     let display = explain(Display::read(input), Reason::Rotation)?;
     let analysis = Arc::new(AnalyzedSource::new(source, packets, display));
     let source = analysis.bind(input);

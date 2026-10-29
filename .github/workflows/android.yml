@@ -27,11 +27,18 @@ jobs:
           packages: platform-tools
       - name: Install Android SDK
         run: sdkmanager --install "platforms;android-36" "build-tools;36.0.0"
-      - name: Install native build tools
+      - name: Install native build tools and test-video encoder
+        timeout-minutes: 10
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y cmake nasm pkg-config ffmpeg
-          sdkmanager --install "ndk;27.3.13750724"
+          # A slow streaming Azure mirror can exceed the step limit without an APT timeout.
+          # Keep the runner's existing signed Ubuntu sources and official HTTPS fallbacks.
+          if [[ -f /etc/apt/apt-mirrors.txt ]] && grep -q '^https://archive\.ubuntu\.com/ubuntu/' /etc/apt/apt-mirrors.txt; then
+            sudo sed -i '\|^http://azure\.archive\.ubuntu\.com/ubuntu/[[:space:]]*priority:1$|d' /etc/apt/apt-mirrors.txt
+          fi
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update -qq
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends cmake nasm pkg-config ffmpeg
+      - name: Install Android NDK
+        run: sdkmanager --install "ndk;27.3.13750724"
       - name: Restore native build cache
         id: native_cache
         uses: actions/cache/restore@v4
@@ -69,7 +76,11 @@ jobs:
         with:
           gradle-version: "9.4.1"
       - name: Validate emulator test script
-        run: bash -n scripts/android-emulator-check.sh scripts/verify-release-apk.sh scripts/build-native-smartcut.sh
+        run: |
+          bash -n scripts/android-emulator-check.sh scripts/android-instrumentation-check.sh scripts/verify-release-apk.sh scripts/build-native-smartcut.sh
+          python3 scripts/test-emulator-failure.py
+          python3 scripts/test-emulator-flow.py
+          python3 scripts/test-release-gate.py
       - name: Unit tests, lint, and builds
         run: gradle --no-daemon :app:testDebugUnitTest :app:lintDebug :app:lintRelease :app:assembleDebug :app:assembleDebugAndroidTest :app:assembleRelease
       - name: Package corresponding source

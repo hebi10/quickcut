@@ -48,7 +48,7 @@ class TemplateRemovalInstrumentedTest {
                 assertEquals(selected.id, subject.selectedTemplateId)
                 assertEquals(draft, subject.previewTemplate())
                 assertNotNull("A failed deletion must be reported", subject.notification)
-                assertEquals(listOf(selected, other), TemplateStore(context).load())
+                assertEquals(listOf(other), TemplateStore(context).load())
 
                 context.failTemplateCommit = false
                 subject.removeTemplate(context)
@@ -66,7 +66,7 @@ class TemplateRemovalInstrumentedTest {
         }
     }
 
-    /** Only the template disk commit fails; normal preferences and ViewModel code stay real. */
+    /** A false commit result retains real preference side effects and ViewModel code. */
     private class FailingTemplateContext(base: Context) : ContextWrapper(base) {
         private val prefix = "template_failure_${UUID.randomUUID()}_"
         private val preferenceNames = mutableSetOf<String>()
@@ -90,7 +90,10 @@ class TemplateRemovalInstrumentedTest {
                             editor.putString(key, value)
                             return this
                         }
-                        override fun commit(): Boolean = !failTemplateCommit && editor.commit()
+                        override fun commit(): Boolean {
+                            val committed = editor.commit()
+                            return committed && !failTemplateCommit
+                        }
                     }
                 }
             }

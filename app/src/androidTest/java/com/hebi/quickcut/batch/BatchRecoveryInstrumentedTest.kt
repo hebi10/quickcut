@@ -36,21 +36,22 @@ class BatchRecoveryInstrumentedTest {
     private val models = mutableListOf<BatchViewModel>()
     private lateinit var oldDraft: BatchDraftSettings
     private lateinit var oldDate: SaveDateMode
+    private lateinit var oldAction: OriginalAction
     @Before fun captureSettings() {
         QuickCutSettings(InstrumentationRegistry.getInstrumentation().targetContext).let {
-            oldDraft = it.loadBatch(); oldDate = it.loadSaveDate()
+            oldDraft = it.loadBatch(); oldDate = it.loadSaveDate(); oldAction = it.loadOriginalAction()
         }
     }
     @After fun restoreSettings() = runBlocking {
         withContext(Dispatchers.Main) { models.forEach { ViewModelStore().apply { put("test", it) }.clear() } }
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         BatchSessionStore(context).clear()
-        QuickCutSettings(context).apply { saveBatch(oldDraft); saveSaveDate(oldDate) }
+        QuickCutSettings(context).apply { saveBatch(oldDraft); saveSaveDate(oldDate); saveOriginalAction(oldAction) }
         Unit
     }
 
     @Test
-    fun recreatingBatchRestoresSavedOutputAndDoesNotRestoreDeletionConsent() = runBlocking {
+    fun recreatingBatchRetainsPreferenceWithoutArmingRecoveredOutputDeletion() = runBlocking {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val application = context.applicationContext as Application
         val input = File(context.cacheDir, "quickcut_recovery_fixture.mp4")
@@ -80,8 +81,9 @@ class BatchRecoveryInstrumentedTest {
             assertEquals("저장 완료 파일을 재실행 시 복구해야 합니다", 1, recreated.files.size)
             assertEquals(BatchFileStatus.SAVED, recreated.files.single().status)
             assertEquals(saved, recreated.files.single().savedOutputUri)
-            assertEquals(OriginalAction.KEEP, recreated.originalAction)
+            assertEquals(OriginalAction.DELETE, recreated.originalAction)
             assertEquals(OriginalAction.KEEP, recreated.performedOriginalAction)
+            assertTrue(recreated.originalCandidates.isEmpty())
             withTimeout(30_000L) { while (recreated.isRecovering) delay(50L) }
             withContext(Dispatchers.Main) { recreated.start(context, exportMode = ExportMode.FAST_ONLY) }
             withTimeout(60_000L) {

@@ -29,7 +29,6 @@ import androidx.compose.material.icons.outlined.VideoLibrary
 import androidx.compose.material.icons.outlined.CheckCircleOutline
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
@@ -42,6 +41,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.rememberCoroutineScope
@@ -99,6 +99,7 @@ fun QuickCutApp(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val settings = remember(context) { QuickCutSettings(context) }
+    val lifecycleState by lifecycleOwner.lifecycle.currentStateFlow.collectAsState()
     val coroutineScope = rememberCoroutineScope()
     var showBatch by rememberSaveable { mutableStateOf(false) }
     var showLastSettings by rememberSaveable { mutableStateOf(false) }
@@ -110,7 +111,9 @@ fun QuickCutApp(
     var inspectionJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     var showExportCancelConfirmation by rememberSaveable { mutableStateOf(false) }
     var showSaveOptions by rememberSaveable { mutableStateOf(false) }
-    var selectedSaveAction by remember { mutableStateOf(OriginalAction.KEEP) }
+    val selectedSaveAction by remember(settings) { settings.observeOriginalAction() }
+        .collectAsState(initial = settings.loadOriginalAction())
+    var pendingOriginalAction by rememberSaveable { mutableStateOf<OriginalAction?>(null) }
     var selectedSaveDateMode by rememberSaveable {
         mutableStateOf(settings.loadSaveDate())
     }
@@ -153,7 +156,6 @@ fun QuickCutApp(
                             reviewedDate,
                             ExportMode.FAST_ONLY,
                         )
-                        selectedSaveAction = OriginalAction.KEEP
                     } else {
                         exportReview = ExportReview(assessment, reviewedTimeline,
                             reviewedAction, reviewedDate)
@@ -191,18 +193,26 @@ fun QuickCutApp(
             exportReview = null
             showSaveOptions = false
         }
-        if (model.page == QuickCutPage.PICKER) selectedSaveAction = OriginalAction.KEEP
     }
     val originalActionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartIntentSenderForResult()
     ) { result ->
         model.onOriginalSystemResult(result.resultCode == Activity.RESULT_OK)
     }
-    LaunchedEffect(model.completedUri, model.originalActionStatus) {
-        if (model.page == QuickCutPage.COMPLETED &&
-            model.originalActionStatus == OriginalActionStatus.READY
-        ) {
-            model.showOriginalDeletionConfirmation()
+    LaunchedEffect(model.completedUri, model.originalActionStatus, lifecycleState, showBatch) {
+        if (!showBatch && model.page == QuickCutPage.COMPLETED &&
+            model.originalActionStatus == OriginalActionStatus.READY &&
+            lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+            try {
+                val output = model.completedUri ?: error("저장 결과를 확인할 수 없습니다.")
+                val request = OriginalMediaActions.prepareRequest(context,
+                    model.originalsFromSavedTimeline, output, model.originalAction)
+                model.markOriginalSystemPrompt()
+                originalActionLauncher.launch(request)
+            } catch (error: Exception) {
+                model.markOriginalUnsupported("편집 결과는 저장됐지만 원본은 삭제하지 않았습니다. " +
+                    (error.localizedMessage ?: "이 파일의 원본 처리가 지원되지 않습니다."))
+            }
         }
     }
     val quickPicker = rememberLauncherForActivityResult(
@@ -266,7 +276,6 @@ fun QuickCutApp(
                             savedOutput = outputUri,
                             action = action,
                         )
-                        batchModel.launchingOriginalApproval()
                         batchOriginalLauncher.launch(request)
                     } catch (error: Exception) {
                         batchModel.originalApprovalUnsupported(
@@ -314,9 +323,8 @@ fun QuickCutApp(
                 title = model.exportStage.label,
                 subtitle = (if (model.isFinalizing)
                     "결과물을 확인하고 갤러리에 등록하고 있습니다. 완료 단계에서는 취소할 수 없습니다."
-                else if (model.requestedExportMode == ExportMode.FAST_ONLY)
-                    "압축된 영상 데이터를 복사하고 있습니다. 다른 앱을 사용하거나 화면을 꺼도 저장은 계속됩니다."
-                else "요청한 구간을 유지하며 저장합니다. 복사·최적화가 안 되면 재인코딩하며, 처리 시간은 영상과 기기에 따라 달라집니다. 다른 앱을 사용하거나 화면을 꺼도 저장은 계속됩니다.") +
+                else "현재 처리 단계의 진행률입니다. 처리 방식에 따라 진행률이 다시 시작될 수 있으며, " +
+                    "실제 저장 방식은 완료 후 표시합니다. 다른 앱을 사용하거나 화면을 꺼도 저장은 계속됩니다.") +
                     model.exportDiagnostics.explanation().let { if (it.isBlank()) "" else "\n\n$it" },
                 progress = if (model.isFinalizing) null else model.progressPercent,
                 onCancel = if (model.isFinalizing) null
@@ -344,7 +352,7 @@ fun QuickCutApp(
                 exportReport = model.completedExportReport,
                 originalStatus = model.originalActionStatus,
                 originalCount = model.originalsFromSavedTimeline.size,
-                onRetryOriginalAction = model::showOriginalDeletionConfirmation,
+                onRetryOriginalAction = model::retryOriginalApproval,
             )
         }
     }
@@ -378,7 +386,10 @@ fun QuickCutApp(
     if (showSaveOptions && model.page == QuickCutPage.EDITOR) {
         SaveOptionsDialog(
             originalAction = selectedSaveAction,
-            onOriginalActionChange = { selectedSaveAction = it },
+            onOriginalActionChange = { action ->
+                if (action == OriginalAction.KEEP) settings.saveOriginalAction(action)
+                else if (action != selectedSaveAction) pendingOriginalAction = action
+            },
             dateMode = draftSaveDateMode,
             onDateModeChange = { draftSaveDateMode = it },
             canSave = model.canStartExport && !inspectingExport,
@@ -391,7 +402,6 @@ fun QuickCutApp(
             },
             onDismiss = {
                 showSaveOptions = false
-                selectedSaveAction = OriginalAction.KEEP
             },
         )
     }
@@ -434,7 +444,6 @@ fun QuickCutApp(
                     exportReview = null
                     model.startExport(context, review.originalAction, review.dateMode,
                         ExportMode.ALLOW_REENCODE)
-                    selectedSaveAction = OriginalAction.KEEP
                 }
             },
             onSuggestedCut = if (suggestion != null && !review.retryingFastExport) {
@@ -443,70 +452,22 @@ fun QuickCutApp(
                         model.applyFastCutSuggestion(suggestion)) {
                         exportReview = null
                         model.startExport(context, review.originalAction, review.dateMode, ExportMode.FAST_ONLY)
-                        selectedSaveAction = OriginalAction.KEEP
                     }
                 }
             } else null,
             onDismiss = {
                 exportReview = null
-                selectedSaveAction = OriginalAction.KEEP
             },
         )
     }
 
-    if (model.page == QuickCutPage.COMPLETED &&
-        model.originalActionStatus == OriginalActionStatus.CONFIRMING
-    ) {
-        val permanent = model.originalAction == OriginalAction.DELETE
-        val originalCount = model.originalsFromSavedTimeline.size
-        AlertDialog(
-            onDismissRequest = model::skipOriginalDeletion,
-            title = {
-                Text(if (permanent) "원본 영구 삭제 확인" else "원본 휴지통 이동 확인")
+    pendingOriginalAction?.let { action ->
+        OriginalActionEnableDialog(action,
+            onConfirm = {
+                settings.saveOriginalAction(action)
+                pendingOriginalAction = null
             },
-            text = {
-                Text(
-                    "편집 결과는 갤러리에 저장됐습니다.\n" +
-                        "원본 동영상 " + originalCount + "개를 " +
-                        (if (permanent) "영구 삭제하시겠습니까?\n삭제 후 복구할 수 없을 수 있습니다."
-                         else "휴지통으로 이동하시겠습니까?\n기기 정책에 따라 나중에 복원할 수 있습니다.") +
-                        "\nAndroid의 추가 승인 화면이 표시됩니다."
-                )
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        try {
-                            val outputUri = model.completedUri
-                                ?: throw IllegalStateException("저장 결과를 확인할 수 없습니다.")
-                            val request = OriginalMediaActions.prepareRequest(
-                                context = context,
-                                originalSources = model.originalsFromSavedTimeline,
-                                savedOutput = outputUri,
-                                action = model.originalAction,
-                            )
-                            model.markOriginalSystemPrompt()
-                            originalActionLauncher.launch(request)
-                        } catch (error: Exception) {
-                            model.markOriginalUnsupported(
-                                "편집 결과는 저장됐지만 원본은 삭제하지 않았습니다. " +
-                                    (error.localizedMessage ?: "이 파일의 원본 처리가 지원되지 않습니다.")
-                            )
-                        }
-                    },
-                    shape = RoundedCornerShape(4.dp),
-                    colors = if (permanent) ButtonDefaults.buttonColors(
-                        containerColor = androidx.compose.ui.graphics.Color(0xFFBF4545)
-                    ) else ButtonDefaults.buttonColors(),
-                ) {
-                    Text(if (permanent) "영구 삭제 요청" else "휴지통 이동 요청")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = model::skipOriginalDeletion, shape = CutShape) { Text("원본 유지") }
-            },
-            containerColor = CutColors.panel,
-            shape = RoundedCornerShape(4.dp),
+            onDismiss = { pendingOriginalAction = null },
         )
     }
 

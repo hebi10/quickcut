@@ -83,7 +83,7 @@ internal fun SaveOptionsDialog(
                 )
                 Text(
                     "저장이 실패하거나 취소되면 원본은 유지됩니다. " +
-                        "휴지통 이동·영구 삭제는 저장 후 별도 확인과 Android 승인이 필요합니다.",
+                        "활성화한 원본 처리 설정은 끌 때까지 유지되며 저장 성공 후 Android 승인이 필요합니다.",
                     color = CutColors.secondaryText,
                     style = MaterialTheme.typography.bodySmall,
                 )
@@ -95,6 +95,32 @@ internal fun SaveOptionsDialog(
         dismissButton = {
             TextButton(onClick = onDismiss, shape = CutShape) { Text("취소") }
         },
+        containerColor = CutColors.panel,
+        shape = CutShape,
+    )
+}
+
+@Composable
+internal fun OriginalActionEnableDialog(
+    action: OriginalAction,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val permanent = action == OriginalAction.DELETE
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("원본 자동 처리 활성화") },
+        text = {
+            Text(
+                "새로 저장에 성공한 원본을 " +
+                    (if (permanent) "영구 삭제" else "휴지통으로 이동") +
+                    "하도록 설정합니다. 새 작업·재편집·앱 재시작 후에도 설정을 끌 때까지 유지됩니다.\n\n" +
+                    "실패·취소·건너뜀 원본은 유지하며 매번 Android 승인이 필요합니다." +
+                    if (permanent) "\n영구 삭제 후에는 복구하지 못할 수 있습니다." else "",
+            )
+        },
+        confirmButton = { Button(onClick = onConfirm, shape = CutShape) { Text("활성화") } },
+        dismissButton = { TextButton(onClick = onDismiss, shape = CutShape) { Text("취소") } },
         containerColor = CutColors.panel,
         shape = CutShape,
     )
@@ -152,15 +178,20 @@ internal fun ExportModeDialog(
         },
         confirmButton = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    onClick = onAllowReencode, enabled = canSave,
-                    modifier = Modifier.fillMaxWidth(), shape = CutShape,
-                ) { Text("정확한 위치로 자동 저장") }
                 if (onSuggestedCut != null) {
-                    OutlinedButton(
+                    Button(
                         onClick = onSuggestedCut, enabled = canSave,
-                        modifier = Modifier.fillMaxWidth(), shape = CutShape,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp), shape = CutShape,
                     ) { Text("추천 위치로 고속 저장") }
+                    OutlinedButton(
+                        onClick = onAllowReencode, enabled = canSave,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp), shape = CutShape,
+                    ) { Text("정확한 위치로 자동 저장") }
+                } else {
+                    Button(
+                        onClick = onAllowReencode, enabled = canSave,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp), shape = CutShape,
+                    ) { Text("정확한 위치로 자동 저장") }
                 }
                 TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth(), shape = CutShape) {
                     Text("취소")

@@ -46,8 +46,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.font.FontWeight
@@ -63,6 +61,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import com.hebi.quickcut.editor.EditorViewModel
+import com.hebi.quickcut.editor.EditTimeline
 import com.hebi.quickcut.editor.TrimInput
 import com.hebi.quickcut.editor.TrimInput.millisValue
 import com.hebi.quickcut.editor.TrimInput.secondsText
@@ -88,71 +87,72 @@ fun QuickTrimScreen(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val player = remember(context) { ExoPlayer.Builder(context.applicationContext).build() }
-    // The player may outlive a timeline change until Compose disposes this screen.
-    // Only write back a position belonging to the range actually loaded in it.
-    val loadedClip = remember(player) { arrayOfNulls<VideoClip>(1) }
-    fun syncPosition() {
-        val loaded = loadedClip[0] ?: return
-        val current = model.timeline.clips.singleOrNull() ?: return
-        if (current.id == loaded.id && current.uri == loaded.uri &&
-            current.startUs == loaded.startUs && current.endUs == loaded.endUs
-        ) {
-            model.seek(player.currentPosition.coerceIn(0L, current.durationMs))
-        }
+    val preview = remember(player, model) {
+        EditorPreviewCoordinator(
+            object : EditorPreviewPlayback {
+                override val positionMs get() = player.currentPosition
+                override val playing get() = player.isPlaying
+                override val ended get() = player.playbackState == Player.STATE_ENDED
+                override fun pause() = player.pause()
+                override fun play() = player.play()
+                override fun stop() = player.stop()
+                override fun seekTo(positionMs: Long) = player.seekTo(positionMs)
+                override fun replace(timeline: EditTimeline, positionMs: Long) {
+                    player.setMediaItem(CompositionFactory.mediaItem(timeline.clips.single()))
+                    player.seekTo(positionMs)
+                    player.prepare()
+                }
+            },
+            timeline = { quickTrimPreviewTimeline(model.timeline) },
+            modelPosition = { model.playPositionMs },
+            publishPosition = model::seek,
+            initiallyActive = false,
+        )
     }
-    DisposableEffect(player, model) {
+    val previewActive = rememberPreviewActive(preview,
+        onStopped = model::saveSessionOnStop,
+        onError = { model.reportError("현재 영상을 미리 볼 수 없습니다. 다른 영상을 선택하거나 다시 시도해 주세요.") })
+    SideEffect { preview.onModelChanged() }
+    DisposableEffect(player, model, preview) {
         val listener = object : Player.Listener {
             override fun onPlayerError(error: PlaybackException) {
                 model.reportError("미리보기 재생에 실패했습니다. 다른 영상을 선택하거나 다시 시도해 주세요.")
             }
             override fun onIsPlayingChanged(isPlaying: Boolean) {
-                if (!isPlaying) syncPosition()
+                if (!isPlaying) preview.synchronizePosition()
             }
             override fun onPositionDiscontinuity(
                 oldPosition: Player.PositionInfo,
                 newPosition: Player.PositionInfo,
                 reason: Int,
             ) {
-                syncPosition()
+                preview.synchronizePosition()
             }
         }
         player.addListener(listener)
         onDispose {
-            syncPosition()
+            preview.setActive(false)
             player.removeListener(listener)
             player.release()
         }
     }
-    DisposableEffect(player, lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_STOP) {
-                syncPosition()
-                player.pause()
-                model.saveSessionOnStop()
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-    }
-    LaunchedEffect(player) {
+    LaunchedEffect(preview) {
         while (isActive) {
             delay(120L)
-            if (player.isPlaying) syncPosition()
+            if (player.isPlaying) preview.synchronizePosition()
         }
     }
-    LaunchedEffect(clip.id, clip.uri, clip.startUs, clip.endUs) {
+    val timeline = quickTrimPreviewTimeline(model.timeline)
+    LaunchedEffect(preview, timeline, previewActive) {
+        if (!previewActive) return@LaunchedEffect
         delay(200L)
-        val position = model.playPositionMs.coerceIn(0L, clip.durationMs)
-        // Ignore reset/seek callbacks until the replacement media is configured.
-        loadedClip[0] = null
-        player.pause()
         try {
-            player.setMediaItem(CompositionFactory.mediaItem(clip))
-            player.seekTo(position)
-            loadedClip[0] = clip
-            player.prepare()
+            if (!previewCanLoadMedia(lifecycleOwner)) {
+                preview.setActive(false)
+                return@LaunchedEffect
+            }
+            preview.replaceTimeline(timeline)
         } catch (_: Exception) {
-            loadedClip[0] = null
             model.reportError("현재 영상을 미리 볼 수 없습니다. 다른 영상을 선택하거나 다시 시도해 주세요.")
         }
     }
@@ -197,7 +197,7 @@ fun QuickTrimScreen(
             updateTrim(leadingText, trailingText)
         }
         if (model.canStartExport) {
-            player.pause()
+            preview.pause()
             action()
         }
     }
@@ -207,7 +207,7 @@ fun QuickTrimScreen(
         leadingText = secondsText(clip.startMs)
         trailingText = secondsText(clip.sourceDurationMs - clip.endMs)
         model.setTrimInputValidity(true)
-        player.pause()
+        preview.pause()
         onDetailedEdit()
     }
 

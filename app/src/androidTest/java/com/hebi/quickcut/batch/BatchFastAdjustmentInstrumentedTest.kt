@@ -53,6 +53,7 @@ class BatchFastAdjustmentInstrumentedTest {
     private lateinit var settings: QuickCutSettings
     private lateinit var previousDraft: BatchDraftSettings
     private lateinit var previousDate: SaveDateMode
+    private lateinit var previousAction: OriginalAction
     private lateinit var sessionStore: BatchSessionStore
     private var previousSession: BatchSessionSnapshot? = null
     private val extraSources = mutableListOf<File>()
@@ -73,6 +74,7 @@ class BatchFastAdjustmentInstrumentedTest {
         settings = QuickCutSettings(context)
         previousDraft = settings.loadBatch()
         previousDate = settings.loadSaveDate()
+        previousAction = settings.loadOriginalAction()
         sessionStore = BatchSessionStore(context)
         previousSession = sessionStore.load()
         sessionStore.clear()
@@ -116,6 +118,7 @@ class BatchFastAdjustmentInstrumentedTest {
         if (::settings.isInitialized) {
             settings.saveBatch(previousDraft)
             settings.saveSaveDate(previousDate)
+            settings.saveOriginalAction(previousAction)
         }
         if (::source.isInitialized) source.delete()
         extraSources.forEach(File::delete)
@@ -217,10 +220,10 @@ class BatchFastAdjustmentInstrumentedTest {
     }
 
     @Test
-    fun fileReviewStartsExactAndAllowsAnExplicitSkip() {
+    fun fileReviewStartsRecommendedAndAllowsAnExplicitSkip() {
         openReview()
         val uri = model.files.single().uri
-        composeRule.onNodeWithTag("batch-review-$uri-exact").performScrollTo().assertIsSelected()
+        composeRule.onNodeWithTag("batch-review-$uri-recommended").performScrollTo().assertIsSelected()
         composeRule.onNodeWithTag("batch-review-$uri-recommended").performScrollTo().assertIsEnabled()
         composeRule.onNodeWithTag("batch-review-$uri-skip").performScrollTo().performClick()
         composeRule.onNodeWithText("전체 제외 적용").performClick()
@@ -231,7 +234,7 @@ class BatchFastAdjustmentInstrumentedTest {
     }
 
     @Test
-    fun previewDoesNotSelectOrStartTheRecommendedExport() {
+    fun previewDoesNotStartOrChangeTheRecommendedDefault() {
         openReview()
         val uri = model.files.single().uri
         composeRule.onNodeWithTag("batch-review-list").performScrollToNode(
@@ -240,7 +243,7 @@ class BatchFastAdjustmentInstrumentedTest {
             hasAnyAncestor(hasTestTag("batch-review-$uri-preview"))).performClick()
         composeRule.onNodeWithTag("batch-review-list").performScrollToNode(
             hasTestTag("batch-review-$uri-exact"))
-        composeRule.onNodeWithTag("batch-review-$uri-exact").assertIsSelected()
+        composeRule.onNodeWithTag("batch-review-$uri-recommended").assertIsSelected()
         composeRule.onNodeWithTag("batch-review-submit").assertIsEnabled()
         assertFalse(model.isRunning)
         assertTrue(model.files.single().savedOutputUri == null)

@@ -35,7 +35,11 @@ data class BatchReviewedExport(
 
 object BatchExportChoicePolicy {
     fun defaults(files: List<BatchReviewedFile>): Map<String, BatchExportChoice> =
-        files.associate { it.uri to if (it.requested == null) BatchExportChoice.SKIP else BatchExportChoice.EXACT }
+        files.associate { file -> file.uri to when {
+            file.requested == null -> BatchExportChoice.SKIP
+            file.canRecommend -> BatchExportChoice.RECOMMENDED
+            else -> BatchExportChoice.EXACT
+        } }
 
     /** A missing/foreign entry or unsupported choice rejects the entire review. */
     fun resolve(

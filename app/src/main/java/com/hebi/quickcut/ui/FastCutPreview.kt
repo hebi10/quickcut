@@ -27,8 +27,6 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
@@ -66,29 +64,71 @@ private fun FastCutPreviewContent(suggestion: FastCutSuggestion) {
     val player = remember(context, suggestion) { CompositionPlayer.Builder(context.applicationContext).build() }
     var playbackError by remember { mutableStateOf(false) }
     var playingLabel by remember { mutableStateOf<String?>(null) }
-    DisposableEffect(player, lifecycleOwner) {
+    var previewTimeline by remember(player) { mutableStateOf(EditTimeline()) }
+    var previewPosition by remember(player) { mutableStateOf(0L) }
+    val preview = remember(player) {
+        EditorPreviewCoordinator(
+            object : EditorPreviewPlayback {
+                override val positionMs get() = player.currentPosition
+                override val playing get() = player.isPlaying
+                override val ended get() = player.playbackState == Player.STATE_ENDED
+                override fun pause() = player.pause()
+                override fun play() = player.play()
+                override fun stop() = player.stop()
+                override fun seekTo(positionMs: Long) = player.seekTo(positionMs)
+                override fun replace(timeline: EditTimeline, positionMs: Long) {
+                    player.setComposition(CompositionFactory.from(timeline), positionMs)
+                    player.prepare()
+                }
+            },
+            timeline = { previewTimeline },
+            modelPosition = { previewPosition },
+            publishPosition = { previewPosition = it },
+            initiallyActive = false,
+        )
+    }
+    val previewActive = rememberPreviewActive(preview, onError = { playbackError = true })
+    DisposableEffect(player, preview) {
         val listener = object : Player.Listener {
             override fun onPlayerError(error: PlaybackException) { playbackError = true }
-        }
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_STOP) player.pause()
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                if (!isPlaying) preview.synchronizePosition()
+            }
+            override fun onPositionDiscontinuity(
+                oldPosition: Player.PositionInfo,
+                newPosition: Player.PositionInfo,
+                reason: Int,
+            ) { preview.synchronizePosition() }
         }
         player.addListener(listener)
-        lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
-            lifecycleOwner.lifecycle.removeObserver(observer)
+            preview.setActive(false)
             player.removeListener(listener)
             player.release()
         }
     }
-    LaunchedEffect(target) { player.pause(); playingLabel = null; playbackError = false }
+    LaunchedEffect(target) {
+        preview.pause()
+        previewTimeline = EditTimeline()
+        previewPosition = 0L
+        preview.onModelChanged()
+        preview.replaceTimeline(previewTimeline)
+        playingLabel = null
+        playbackError = false
+    }
     fun play(timeline: EditTimeline, label: String) {
+        if (!previewCanLoadMedia(lifecycleOwner)) return
         playbackError = false
         try {
-            player.pause()
-            player.setComposition(CompositionFactory.from(FastCutPreviewPlan.window(timeline, target)), 0L)
-            player.prepare()
-            player.play()
+            preview.pause()
+            previewTimeline = FastCutPreviewPlan.window(timeline, target)
+            previewPosition = 0L
+            preview.onModelChanged()
+            preview.setActive(true)
+            if (!preview.replaceTimeline(previewTimeline)) return
+            // Each comparison click deliberately starts its window at zero.
+            preview.seek(0L)
+            preview.togglePlayback()
             playingLabel = label
         } catch (_: Exception) { playbackError = true }
     }
@@ -99,8 +139,8 @@ private fun FastCutPreviewContent(suggestion: FastCutSuggestion) {
             TextButton(onClick = { selectedIndex++ }, enabled = selectedIndex < targets.lastIndex) { Text("다음") }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            BoundaryFrame("요청", suggestion.requested, target, Modifier.weight(1f))
-            BoundaryFrame("추천", suggestion.adjusted, target, Modifier.weight(1f))
+            BoundaryFrame("요청", suggestion.requested, target, previewActive, Modifier.weight(1f))
+            BoundaryFrame("추천", suggestion.adjusted, target, previewActive, Modifier.weight(1f))
         }
         Text("위 이미지는 경계 시각에 가장 가까운 화면입니다. 아래 재생으로 실제 남길 구간을 확인하세요.",
             style = MaterialTheme.typography.bodySmall, color = CutColors.secondaryText)
@@ -131,15 +171,21 @@ private fun FastCutPreviewContent(suggestion: FastCutSuggestion) {
 }
 
 @Composable
-private fun BoundaryFrame(label: String, timeline: EditTimeline, target: FastCutPreviewTarget, modifier: Modifier) {
+private fun BoundaryFrame(label: String, timeline: EditTimeline, target: FastCutPreviewTarget,
+    active: Boolean, modifier: Modifier) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val frame = FastCutPreviewPlan.frame(timeline, target)
     var bitmap by remember(frame) { mutableStateOf<Bitmap?>(null) }
     var loading by remember(frame) { mutableStateOf(true) }
-    LaunchedEffect(frame) {
+    LaunchedEffect(frame, active) {
+        if (!active || bitmap != null || !previewCanLoadMedia(lifecycleOwner)) return@LaunchedEffect
+        loading = true
         bitmap = withContext(Dispatchers.IO) {
+            ensureActive()
             val retriever = MediaMetadataRetriever()
             try {
+                ensureActive()
                 retriever.setDataSource(context, Uri.parse(frame.first.uri))
                 ensureActive()
                 retriever.getScaledFrameAtTime(frame.second, MediaMetadataRetriever.OPTION_CLOSEST, 320, 180)

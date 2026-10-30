@@ -39,15 +39,26 @@ class BatchExportChoicePolicyTest {
         assertEquals("사용자가 제외한 영상입니다.", result[2].skipReason)
     }
 
-    @Test fun exactIsDefaultAndUnavailableFilesAreExplicitlySkipped() {
+    @Test fun eligibleRecommendationIsDefaultAndUnavailableFilesAreExplicitlySkipped() {
         val available = file(1)
         val unavailable = BatchReviewedFile("content://video/2", "2.mp4",
             requested = null, unavailableReason = "원본 날짜 없음")
         val choices = BatchExportChoicePolicy.defaults(listOf(available, unavailable))
-        assertEquals(mapOf(available.uri to BatchExportChoice.EXACT,
+        assertEquals(mapOf(available.uri to BatchExportChoice.RECOMMENDED,
             unavailable.uri to BatchExportChoice.SKIP), choices)
         val result = BatchExportChoicePolicy.resolve(listOf(available, unavailable), choices)!!
         assertEquals("원본 날짜 없음", result[1].skipReason)
+    }
+
+    @Test fun unavailableRecommendationKeepsTheRequestedRangeAsDefault() {
+        val noSuggestion = file(1, withSuggestion = false)
+        val foreignSuggestion = file(2).copy(suggestion = file(3).suggestion)
+        val choices = BatchExportChoicePolicy.defaults(listOf(noSuggestion, foreignSuggestion))
+        assertEquals(mapOf(noSuggestion.uri to BatchExportChoice.EXACT,
+            foreignSuggestion.uri to BatchExportChoice.EXACT), choices)
+        val result = BatchExportChoicePolicy.resolve(listOf(noSuggestion, foreignSuggestion), choices)!!
+        assertSame(noSuggestion.requested, result[0].timeline)
+        assertSame(foreignSuggestion.requested, result[1].timeline)
     }
 
     @Test fun rejectsMissingForeignAndDuplicateFileSelections() {

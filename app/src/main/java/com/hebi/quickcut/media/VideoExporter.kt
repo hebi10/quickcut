@@ -12,6 +12,7 @@ import androidx.media3.common.util.ExperimentalApi
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.container.Mp4TimestampData
 import androidx.media3.transformer.Composition
+import androidx.media3.transformer.DefaultEncoderFactory
 import androidx.media3.transformer.ExportException
 import androidx.media3.transformer.ExportResult
 import androidx.media3.transformer.InAppMp4Muxer
@@ -49,9 +50,16 @@ class VideoExporter(private val context: Context) {
         val diagnostic = ExportDiagnosticStore.begin(context, timeline)
         runCatching { onDiagnosticStarted(diagnostic.operationId) }
         val main = Handler(Looper.getMainLooper())
+        var displayedStage: ExportStage? = null
         val stage: (ExportStage) -> Unit = { value ->
             diagnostic.stage(value)
-            val update = Runnable { runCatching { onStage(value) } }
+            val update = Runnable {
+                if (displayedStage != value) {
+                    displayedStage = value
+                    runCatching { onProgress(null) }
+                    runCatching { onStage(value) }
+                }
+            }
             if (Looper.myLooper() == Looper.getMainLooper()) update.run() else main.post(update)
         }
         try {
@@ -186,7 +194,7 @@ class VideoExporter(private val context: Context) {
         val temporary = File(context.cacheDir, "quickcut_" + UUID.randomUUID().toString() + ".mp4")
         try {
             var nativeReason: FastExportReason? = null
-            onStage(ExportStage.PROCESSING)
+            onStage(ExportStage.NATIVE_PROCESSING)
             val nativeResult = try {
                     NativeSmartCutTrimmer.tryExport(context, timeline, temporary, onProgress,
                         onUnavailable = { nativeReason = it },
@@ -221,9 +229,9 @@ class VideoExporter(private val context: Context) {
                 val optimizeTrim = timeline.clips.singleOrNull()?.let { clip ->
                     withContext(Dispatchers.IO) { ExactTrimOptimization.canOptimize(context, clip) }
                 } ?: false
-                onStage(ExportStage.PROCESSING)
+                onStage(ExportStage.MEDIA3_PROCESSING)
                 withContext(Dispatchers.Main.immediate) {
-                    transform(timeline, temporary, onProgress, outputTimestampMs, optimizeTrim)
+                    transform(timeline, temporary, onProgress, outputTimestampMs, optimizeTrim, onStage)
                 }
             } else {
                 Log.i("QuickCutExport", "method=native_smart_cut copiedVideoPackets=" +
@@ -318,8 +326,10 @@ class VideoExporter(private val context: Context) {
         onProgress: (Int?) -> Unit,
         outputTimestampMs: Long,
         optimizeTrim: Boolean,
+        onStage: (ExportStage) -> Unit,
     ): ExportResult = recoverExactExportFrames { softwareVideo ->
         if (softwareVideo) {
+            onStage(ExportStage.RECOVERING)
             Log.w("QuickCutExport", "Retrying exact export after observed video frame loss")
             withContext(Dispatchers.IO) {
                 if (file.exists() && !file.delete()) {
@@ -327,8 +337,9 @@ class VideoExporter(private val context: Context) {
                 }
             }
         }
+        onStage(ExportStage.MEDIA3_PROCESSING)
         transformAttempt(timeline, file, onProgress, outputTimestampMs,
-            optimizeTrim = optimizeTrim && !softwareVideo, softwareVideo = softwareVideo)
+            optimizeTrim = optimizeTrim && !softwareVideo, softwareVideo = softwareVideo, onStage = onStage)
     }
 
     private suspend fun transformAttempt(
@@ -338,6 +349,7 @@ class VideoExporter(private val context: Context) {
         outputTimestampMs: Long,
         optimizeTrim: Boolean,
         softwareVideo: Boolean,
+        onStage: (ExportStage) -> Unit,
     ): ExportResult = suspendCancellableCoroutine { continuation ->
         val frameGuard = ExactExportFrameGuard()
         val main = Handler(Looper.getMainLooper())
@@ -372,7 +384,8 @@ class VideoExporter(private val context: Context) {
                 )
             }
             .setVideoFrameProcessorFactory(GuardedVideoFrameProcessorFactory(frameGuard))
-            .apply { if (softwareVideo) setAssetLoaderFactory(softwareVideoAssetLoaderFactory(context)) }
+            .setAssetLoaderFactory(exportAssetLoaderFactory(context, softwareVideo))
+            .setEncoderFactory(TrackingEncoderFactory(DefaultEncoderFactory.Builder(context).build(), onStage))
             .experimentalSetTrimOptimizationEnabled(optimizeTrim)
             .addListener(object : Transformer.Listener {
                 override fun onCompleted(composition: Composition, exportResult: ExportResult) {

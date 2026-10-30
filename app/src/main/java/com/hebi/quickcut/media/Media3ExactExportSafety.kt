@@ -44,10 +44,16 @@ internal class GuardedVideoFrameProcessorFactory(
  * An unavailable software decoder fails before publication. */
 @OptIn(UnstableApi::class)
 internal fun softwareVideoAssetLoaderFactory(context: Context): AssetLoader.Factory {
+    return exportAssetLoaderFactory(context, softwareVideo = true)
+}
+
+@OptIn(UnstableApi::class)
+internal fun exportAssetLoaderFactory(context: Context, softwareVideo: Boolean): AssetLoader.Factory {
     val decoder = DefaultDecoderFactory.Builder(context)
+        .setEnableDecoderFallback(true)
         .setMediaCodecSelector { mime, secure, tunneling ->
             val available = MediaCodecSelector.DEFAULT.getDecoderInfos(mime, secure, tunneling)
-            if (mime.startsWith("video/")) available.filter {
+            if (softwareVideo && mime.startsWith("video/")) available.filter {
                 isSoftwareVideoDecoder(Build.VERSION.SDK_INT, it.name, it.softwareOnly,
                     it.hardwareAccelerated, it.vendor)
             }.also { software ->

@@ -38,7 +38,6 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -54,6 +53,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -75,6 +75,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.hebi.quickcut.editor.OriginalAction
 import com.hebi.quickcut.editor.OriginalActionStatus
 import com.hebi.quickcut.editor.formatTime
@@ -84,6 +86,7 @@ import com.hebi.quickcut.ui.exportReportText
 import com.hebi.quickcut.ui.FastCutPreview
 import com.hebi.quickcut.ui.ExportDiagnosticButton
 import com.hebi.quickcut.ui.fastCutSuggestionText
+import com.hebi.quickcut.ui.OriginalActionEnableDialog
 import kotlinx.coroutines.launch
 
 private val onSurface = Color(0xFFF4F4F5)
@@ -99,6 +102,8 @@ fun BatchScreen(
     onApproveOriginals: (List<String>, Uri, OriginalAction) -> Unit,
 ) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val lifecycleState by lifecycleOwner.lifecycle.currentStateFlow.collectAsState()
     val activity = context as? Activity
     val scope = rememberCoroutineScope()
     var pendingOverview by remember { mutableStateOf<BatchExportOverview?>(null) }
@@ -170,7 +175,7 @@ fun BatchScreen(
                     ) {
                         items(model.files, key = { it.uri }) { file ->
                             BatchFileRow(
-                                file, model.previewTemplate(), model.saveDateMode,
+                                file, model.previewTemplate(), model.saveDateMode, model.currentExportStage,
                                 !model.isRunning && !model.isRecovering, model::removeVideo
                             )
                         }
@@ -191,7 +196,7 @@ fun BatchScreen(
                 item { BatchFileHeader(model) }
                 items(model.files, key = { it.uri }) { file ->
                     BatchFileRow(
-                        file, model.previewTemplate(), model.saveDateMode,
+                        file, model.previewTemplate(), model.saveDateMode, model.currentExportStage,
                         !model.isRunning && !model.isRecovering, model::removeVideo
                     )
                 }
@@ -276,49 +281,17 @@ fun BatchScreen(
         )
     }
 
-    if (model.originalStatus == OriginalActionStatus.CONFIRMING) {
-        val permanent = model.performedOriginalAction == OriginalAction.DELETE
-        val action = if (permanent) "영구 삭제" else "휴지통 이동"
-        val candidateUris = model.originalCandidates.toSet()
-        val selectedNames = model.files.filter { it.uri in candidateUris }
-            .take(5).joinToString("\n") { "• " + it.displayName.take(60) }
-        val remaining = (candidateUris.size - 5).coerceAtLeast(0)
-        AlertDialog(
-            onDismissRequest = model::keepOriginals,
-            title = { Text("원본 " + action + " 최종 확인") },
-            text = {
-                Text(
-                    "저장 성공 원본 " + model.originalCandidates.size + "개만 " +
-                        action + " 요청합니다. 실패·건너뜀 원본은 삭제하지 않습니다.\n\n" +
-                        "대상 파일:\n" + selectedNames +
-                        (if (remaining > 0) "\n그 외 " + remaining + "개" else "") +
-                        "\n\n영구 삭제는 복원되지 않을 수 있으며 Android 승인이 한 번 더 표시됩니다."
-                )
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        val output = model.savedOutputForConfirmation
-                        if (output == null) {
-                            model.originalApprovalUnsupported("저장 결과가 없어 삭제하지 않았습니다.")
-                        } else {
-                            onApproveOriginals(
-                                model.originalCandidates, output, model.performedOriginalAction
-                            )
-                        }
-                    },
-                    colors = if (permanent) ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFFBF4545)
-                    ) else ButtonDefaults.buttonColors(),
-                    shape = RoundedCornerShape(4.dp),
-                ) { Text(action + " 요청") }
-            },
-            dismissButton = {
-                TextButton(onClick = model::keepOriginals) { Text("원본 유지") }
-            },
-            containerColor = Color(0xFF202126),
-            shape = RoundedCornerShape(4.dp),
-        )
+    LaunchedEffect(model.originalStatus, lifecycleState) {
+        if (model.originalStatus == OriginalActionStatus.READY &&
+            lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+            val output = model.savedOutputForConfirmation
+            if (output == null) {
+                model.originalApprovalUnsupported("저장 결과가 없어 삭제하지 않았습니다.")
+            } else {
+                model.launchingOriginalApproval()
+                onApproveOriginals(model.originalCandidates, output, model.performedOriginalAction)
+            }
+        }
     }
 }
 
@@ -494,9 +467,9 @@ private fun BatchHeader(onBack: () -> Unit) {
 
 @Composable
 private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
-    val context = LocalContext.current
     val disabled = model.isRunning || model.isRecovering
     var showAdvanced by rememberSaveable { mutableStateOf(false) }
+    var pendingOriginalAction by rememberSaveable { mutableStateOf<OriginalAction?>(null) }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         OutlinedButton(
             onClick = onSelectVideos,
@@ -580,6 +553,60 @@ private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
             fontSize = 12.sp,
         )
         if (showAdvanced) {
+        Text("결과 저장 날짜", color = onSurface, fontWeight = FontWeight.SemiBold)
+        Column(Modifier.selectableGroup(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            ChoiceOption("현재 날짜로 저장 (최신 파일)", model.saveDateMode == SaveDateMode.CURRENT, !disabled) {
+                model.saveDateMode = SaveDateMode.CURRENT
+            }
+            ChoiceOption("원본 날짜 유지", model.saveDateMode == SaveDateMode.ORIGINAL, !disabled) {
+                model.saveDateMode = SaveDateMode.ORIGINAL
+            }
+        }
+        Text(
+            "원본 날짜를 유지하면서 가능한 원본 복사·부분 처리를 우선 사용합니다. " +
+                "원본 날짜는 촬영 메타데이터가 우선이며 없으면 파일 수정 날짜를 사용합니다. " +
+                "날짜 정보가 없거나 기기가 적용을 거부하면 해당 파일은 저장하지 않습니다.",
+            style = MaterialTheme.typography.bodySmall, color = secondary,
+        )
+
+        Text("저장 후 원본 처리", color = onSurface, fontWeight = FontWeight.SemiBold)
+        Column(Modifier.selectableGroup(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            ChoiceOption("원본 유지 (기본값)", model.originalAction == OriginalAction.KEEP, !disabled) {
+                model.originalAction = OriginalAction.KEEP
+            }
+            ChoiceOption("저장 성공한 원본만 휴지통으로 이동",
+                model.originalAction == OriginalAction.TRASH, !disabled) {
+                if (model.originalAction != OriginalAction.TRASH) pendingOriginalAction = OriginalAction.TRASH
+            }
+            ChoiceOption("저장 성공한 원본 영구 삭제",
+                model.originalAction == OriginalAction.DELETE, !disabled) {
+                if (model.originalAction != OriginalAction.DELETE) pendingOriginalAction = OriginalAction.DELETE
+            }
+        }
+        Text(
+            "활성화한 설정은 끌 때까지 유지됩니다. 새로 저장에 성공한 원본만 Android 승인을 요청합니다.",
+            style = MaterialTheme.typography.bodySmall, color = secondary,
+        )
+
+        }
+        PresetEditor(model, disabled)
+    }
+    pendingOriginalAction?.let { action ->
+        OriginalActionEnableDialog(action,
+            onConfirm = {
+                if (!disabled) model.originalAction = action
+                pendingOriginalAction = null
+            },
+            onDismiss = { pendingOriginalAction = null },
+        )
+    }
+}
+
+
+@Composable
+private fun PresetEditor(model: BatchViewModel, disabled: Boolean) {
+    val context = LocalContext.current
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("내 템플릿", color = onSurface, fontWeight = FontWeight.SemiBold)
         Row(
             modifier = Modifier.horizontalScroll(rememberScrollState()),
@@ -610,13 +637,20 @@ private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
             singleLine = true,
         )
 
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(
-                onClick = { model.saveTemplate(context) },
+                onClick = { model.saveTemplate(context, asNew = true) },
                 enabled = !disabled,
+                modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(4.dp),
-            ) { Text(if (model.selectedTemplateId == null) "템플릿 저장" else "템플릿 수정 저장") }
+            ) { Text("새 템플릿으로 저장") }
             if (model.selectedTemplateId != null) {
+                OutlinedButton(
+                    onClick = { model.saveTemplate(context) },
+                    enabled = !disabled,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(4.dp),
+                ) { Text("선택 템플릿 수정 저장") }
                 TextButton(
                     onClick = { model.removeTemplate(context) },
                     enabled = !disabled,
@@ -624,42 +658,6 @@ private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
             }
         }
 
-        Text("결과 저장 날짜", color = onSurface, fontWeight = FontWeight.SemiBold)
-        Column(Modifier.selectableGroup(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            ChoiceOption("현재 날짜로 저장 (최신 파일)", model.saveDateMode == SaveDateMode.CURRENT, !disabled) {
-                model.saveDateMode = SaveDateMode.CURRENT
-            }
-            ChoiceOption("원본 날짜 유지", model.saveDateMode == SaveDateMode.ORIGINAL, !disabled) {
-                model.saveDateMode = SaveDateMode.ORIGINAL
-            }
-        }
-        Text(
-            "원본 날짜 유지는 직접 고속 복사를 지원하지 않아 저장 시간이 늘어날 수 있습니다. " +
-                "원본 날짜는 촬영 메타데이터가 우선이며 없으면 파일 수정 날짜를 사용합니다. " +
-                "날짜 정보가 없거나 기기가 적용을 거부하면 해당 파일은 저장하지 않습니다.",
-            style = MaterialTheme.typography.bodySmall, color = secondary,
-        )
-
-        Text("저장 후 원본 처리", color = onSurface, fontWeight = FontWeight.SemiBold)
-        Column(Modifier.selectableGroup(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            ChoiceOption("원본 유지 (기본값)", model.originalAction == OriginalAction.KEEP, !disabled) {
-                model.originalAction = OriginalAction.KEEP
-            }
-            ChoiceOption("저장 성공한 원본만 휴지통으로 이동",
-                model.originalAction == OriginalAction.TRASH, !disabled) {
-                model.originalAction = OriginalAction.TRASH
-            }
-            ChoiceOption("저장 성공한 원본 영구 삭제",
-                model.originalAction == OriginalAction.DELETE, !disabled) {
-                model.originalAction = OriginalAction.DELETE
-            }
-        }
-        Text(
-            "원본 삭제는 자동 실행하지 않으며 완료 후 앱 확인과 Android 승인이 필요합니다.",
-            style = MaterialTheme.typography.bodySmall, color = secondary,
-        )
-
-        }
     }
 }
 
@@ -811,6 +809,7 @@ private fun BatchFileRow(
     file: BatchFile,
     template: BatchTemplate?,
     dateMode: SaveDateMode,
+    stage: com.hebi.quickcut.media.ExportStage,
     canRemove: Boolean,
     onRemove: (String) -> Unit,
 ) {
@@ -861,7 +860,7 @@ private fun BatchFileRow(
         }
         val statusText = when (file.status) {
             BatchFileStatus.WAITING -> "대기"
-            BatchFileStatus.RUNNING -> "저장 중" +
+            BatchFileStatus.RUNNING -> stage.label +
                 (file.progress?.let { " $it%" } ?: "")
             BatchFileStatus.SAVED -> "저장 완료"
             BatchFileStatus.FAILED -> "저장 실패"
@@ -923,9 +922,7 @@ private fun BatchProgress(model: BatchViewModel) {
                 OriginalActionStatus.NONE -> "원본 유지"
             }
             Text(status, color = secondary)
-            if (model.originalStatus == OriginalActionStatus.READY ||
-                model.originalStatus == OriginalActionStatus.SKIPPED
-            ) {
+            if (model.originalStatus == OriginalActionStatus.SKIPPED) {
                 OutlinedButton(
                     onClick = model::promptOriginalApproval,
                     modifier = Modifier.fillMaxWidth().height(52.dp),

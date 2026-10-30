@@ -12,6 +12,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.hebi.quickcut.export.ExportWorkMonitor
 import com.hebi.quickcut.settings.QuickTrimSettings
+import com.hebi.quickcut.settings.QuickCutSettings
 import com.hebi.quickcut.media.MediaReader
 import com.hebi.quickcut.media.VideoExporter
 import com.hebi.quickcut.media.SaveDateMode
@@ -21,6 +22,7 @@ import com.hebi.quickcut.media.ExportDiagnostics
 import com.hebi.quickcut.media.ReencodeRequiredException
 import com.hebi.quickcut.media.OriginalMediaDates
 import com.hebi.quickcut.media.OutputCleanupException
+import com.hebi.quickcut.media.exportFailureMessage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -34,6 +36,7 @@ enum class QuickCutPage {
 }
 
 class EditorViewModel(application: Application) : AndroidViewModel(application) {
+    private val settings = QuickCutSettings(application)
     private val sessionStore = EditorSessionStore(application)
     private val exportStore = SingleExportStore(application)
     private var sessionSaveJob: Job? = null
@@ -219,7 +222,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 savedDateMode = if (result.snapshot.expectedDateMs != null) SaveDateMode.ORIGINAL else SaveDateMode.CURRENT
                 finishExport(Uri.parse(requireNotNull(result.snapshot.outputUri)), emptyList())
                 if (showSuccessNotice && !hasUnresolvedExport) exportRecoveryNotice =
-                    "이전에 저장이 완료된 영상을 복구했습니다. 중복 저장하지 않았으며 원본 처리 선택은 초기화됐습니다."
+                    "이전에 저장이 완료된 영상을 복구했습니다. 중복 저장하지 않았으며 복구된 출력의 원본은 처리하지 않습니다."
             }
             is SingleExportRecoveryResult.Blocked -> {
                 hasUnresolvedExport = true
@@ -493,7 +496,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     fun startExport(
         context: Context,
-        selectedOriginalAction: OriginalAction = OriginalAction.KEEP,
+        selectedOriginalAction: OriginalAction = settings.loadOriginalAction(),
         selectedDateMode: SaveDateMode = SaveDateMode.CURRENT,
         exportMode: ExportMode = ExportMode.ALLOW_REENCODE,
     ) {
@@ -558,7 +561,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                     timeline = snapshot,
                     onProgress = {
                         progressPercent = it
-                        ExportWorkMonitor.update(workId, "영상 처리 중", it)
+                        ExportWorkMonitor.update(workId, exportStage.label, it, canCancel = !isFinalizing)
                     },
                     onFinalizing = {
                         isFinalizing = true
@@ -580,7 +583,13 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                     resolvedOriginalDate = originalDate,
                     exportMode = exportMode,
                     onDiagnostics = { exportDiagnostics = it },
-                    onStage = { exportStage = it },
+                    onStage = { stage ->
+                        if (stage != exportStage) {
+                            exportStage = stage
+                            progressPercent = null
+                            ExportWorkMonitor.update(workId, stage.label, canCancel = !isFinalizing)
+                        }
+                    },
                     onReport = { report ->
                         if (committedOutput != null && page == QuickCutPage.COMPLETED &&
                             completedUri == committedOutput) completedExportReport = report
@@ -596,7 +605,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             } catch (error: Exception) {
                 retainCleanupHandle(error)
                 reportError("저장에 실패했습니다. " +
-                    (error.localizedMessage ?: "다시 시도해 주세요.") +
+                    exportFailureMessage(error) +
                     exportDiagnostics.explanation().let { if (it.isBlank()) "" else "\n\n$it" })
                 page = QuickCutPage.EDITOR
             } finally {
@@ -653,7 +662,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         if (!isFinalizing) exportJob?.cancel()
     }
 
-    fun showOriginalDeletionConfirmation() {
+    fun retryOriginalApproval() {
         if (page == QuickCutPage.COMPLETED &&
             originalAction != OriginalAction.KEEP &&
             originalActionStatus in listOf(
@@ -662,18 +671,12 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 OriginalActionStatus.UNSUPPORTED,
             )
         ) {
-            originalActionStatus = OriginalActionStatus.CONFIRMING
-        }
-    }
-
-    fun skipOriginalDeletion() {
-        if (originalActionStatus == OriginalActionStatus.CONFIRMING) {
-            originalActionStatus = OriginalActionStatus.SKIPPED
+            originalActionStatus = OriginalActionStatus.READY
         }
     }
 
     fun markOriginalSystemPrompt() {
-        if (originalActionStatus == OriginalActionStatus.CONFIRMING) {
+        if (originalActionStatus == OriginalActionStatus.READY) {
             originalActionStatus = OriginalActionStatus.SYSTEM_PROMPT
         }
     }

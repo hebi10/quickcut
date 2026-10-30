@@ -19,6 +19,7 @@ class EditorPreviewCoordinatorTest {
         preview.pause()
         assertEquals(2_345L, position)
         assertFalse(player.playing)
+        assertTrue("A user pause keeps the visible preview ready", player.resourcesAllocated)
     }
 
     @Test fun splitUsesTheLatestPlaybackPosition() {
@@ -111,17 +112,159 @@ class EditorPreviewCoordinatorTest {
         assertEquals(0L, position)
     }
 
+    @Test fun inactivePreviewReleasesResourcesAndKeepsThePositionBeforeStopCallbacks() {
+        preview.replaceTimeline(timeline)
+        player.positionMs = 2_345L
+        player.playing = true
+        // Ignore callbacks after the snapshot while resources are being released.
+        player.duringStop = { player.positionMs = 0L; preview.synchronizePosition() }
+
+        preview.setActive(false)
+
+        assertFalse(player.resourcesAllocated)
+        assertFalse(player.playing)
+        assertEquals(2_345L, position)
+        player.positionMs = 0L
+        preview.synchronizePosition()
+        assertEquals(2_345L, position)
+    }
+
+    @Test fun returningToPreviewPreparesTheSavedPositionWithoutAutomaticPlayback() {
+        preview.replaceTimeline(timeline)
+        player.positionMs = 3_210L
+        player.playing = true
+        preview.setActive(false)
+
+        preview.setActive(true)
+
+        assertTrue(player.resourcesAllocated)
+        assertEquals(3_210L, player.positionMs)
+        assertEquals(3_210L, position)
+        assertFalse(player.playing)
+        preview.togglePlayback()
+        assertTrue(player.playing)
+    }
+
+    @Test fun backgroundTimelineChangesCannotPrepareUntilPreviewBecomesActive() {
+        preview.replaceTimeline(timeline)
+        preview.setActive(false)
+        val preparedBeforeChange = player.preparations
+        timeline = timeline.updateRange(1, 2_000L, 7_000L)
+        position = 1_234L
+
+        preview.onModelChanged()
+        assertFalse(preview.replaceTimeline(timeline))
+        preview.togglePlayback()
+        assertFalse(player.resourcesAllocated)
+        assertEquals(preparedBeforeChange, player.preparations)
+        assertFalse(player.playing)
+
+        preview.setActive(true)
+        assertEquals(timeline, player.preparedTimeline)
+        assertEquals(1_234L, player.positionMs)
+        assertEquals(1_234L, position)
+        assertEquals(preparedBeforeChange + 1, player.preparations)
+        assertFalse(player.playing)
+    }
+
+    @Test fun repeatedInactiveSignalsDoNotReplaceTheSavedPositionWithStoppedPlayerState() {
+        preview.replaceTimeline(timeline)
+        player.positionMs = 4_567L
+        preview.setActive(false)
+        preview.setActive(false)
+        preview.pause()
+        preview.synchronizePosition()
+        assertEquals(4_567L, position)
+        assertEquals(1, player.stops)
+
+        preview.setActive(true)
+        val preparedOnReturn = player.preparations
+        preview.setActive(true)
+        assertEquals(preparedOnReturn, player.preparations)
+        assertEquals(4_567L, player.positionMs)
+    }
+
+    @Test fun externalSeekWhileInactiveWinsOverTheSuspendedPlaybackPosition() {
+        preview.replaceTimeline(timeline)
+        player.positionMs = 2_000L
+        preview.setActive(false)
+        preview.seek(6_789L)
+
+        preview.setActive(true)
+
+        assertEquals(6_789L, position)
+        assertEquals(6_789L, player.positionMs)
+        assertFalse(player.playing)
+    }
+
+    @Test fun initiallyInactivePreviewCannotPrepareBeforeItsFirstVisibleActivation() {
+        val inactive = EditorPreviewCoordinator(player, { timeline }, { position },
+            { position = it }, initiallyActive = false)
+        assertFalse(inactive.replaceTimeline(timeline))
+        inactive.onModelChanged()
+        inactive.togglePlayback()
+        assertFalse(player.resourcesAllocated)
+        assertEquals(0, player.preparations)
+
+        inactive.setActive(true)
+        assertTrue(player.resourcesAllocated)
+        assertEquals(500L, player.positionMs)
+        assertFalse(player.playing)
+    }
+
+    @Test fun failedPreparationOnReturnCannotPublishTheStoppedPlayersPosition() {
+        preview.replaceTimeline(timeline)
+        player.positionMs = 3_210L
+        preview.setActive(false)
+        player.duringReplace = { error("decoder unavailable") }
+        assertThrows(IllegalStateException::class.java) { preview.setActive(true) }
+
+        player.positionMs = 0L
+        preview.synchronizePosition()
+        preview.togglePlayback()
+        assertEquals(3_210L, position)
+        assertFalse(player.playing)
+        assertFalse(player.resourcesAllocated)
+    }
+
+    @Test fun quickTrimMuteKeepsTheVisibleMediaPlayingWithoutPreparingAgain() {
+        val quickPreview = EditorPreviewCoordinator(player, { quickTrimPreviewTimeline(timeline) },
+            { position }, { position = it })
+        quickPreview.replaceTimeline(quickTrimPreviewTimeline(timeline))
+        player.playing = true
+        player.positionMs = 2_345L
+        timeline = timeline.toggleMute(1L)
+
+        quickPreview.onModelChanged()
+        quickPreview.replaceTimeline(quickTrimPreviewTimeline(timeline))
+
+        assertTrue("Quick trimming applies mute through volume without interrupting playback", player.playing)
+        assertEquals(1, player.preparations)
+        assertEquals(2_345L, player.positionMs)
+    }
+
     private class FakePlayback : EditorPreviewPlayback {
         override var positionMs = 0L
         override var playing = false
         override var ended = false
         val seeks = mutableListOf<Long>()
         var stopped = false
+        var stops = 0
+        var preparations = 0
+        var resourcesAllocated = false
+        var preparedTimeline: EditTimeline? = null
         var duringReplace: (() -> Unit)? = null
         var duringSeek: (() -> Unit)? = null
+        var duringStop: (() -> Unit)? = null
         override fun pause() { playing = false }
         override fun play() { playing = true }
-        override fun stop() { stopped = true; playing = false }
+        override fun stop() {
+            stopped = true
+            stops++
+            playing = false
+            resourcesAllocated = false
+            duringStop?.invoke()
+        }
         override fun seekTo(positionMs: Long) {
             duringSeek?.invoke()
             seeks += positionMs
@@ -130,6 +273,9 @@ class EditorPreviewCoordinatorTest {
         override fun replace(timeline: EditTimeline, positionMs: Long) {
             duringReplace?.invoke()
             this.positionMs = positionMs
+            preparedTimeline = timeline
+            preparations++
+            resourcesAllocated = true
         }
     }
 }

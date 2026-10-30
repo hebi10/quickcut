@@ -77,8 +77,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.ExperimentalApi
@@ -159,8 +157,12 @@ fun EditorScreen(
             timeline = { model.timeline },
             modelPosition = { model.playPositionMs },
             publishPosition = model::seek,
+            initiallyActive = false,
         )
     }
+    val previewActive = rememberPreviewActive(preview,
+        onStopped = model::saveSessionOnStop,
+        onError = { model.reportError("현재 영상 구성을 미리 볼 수 없습니다.") })
     SideEffect { preview.onModelChanged() }
 
     DisposableEffect(player, model, preview) {
@@ -185,28 +187,22 @@ fun EditorScreen(
         }
         player.addListener(listener)
         onDispose {
-            preview.pause()
+            preview.setActive(false)
             player.removeListener(listener)
             player.release()
         }
     }
 
-    DisposableEffect(player, lifecycleOwner, preview, model) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_STOP) {
-                preview.pause()
-                model.saveSessionOnStop()
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-    }
-
     val timeline = model.timeline
-    LaunchedEffect(preview, timeline) {
+    LaunchedEffect(preview, timeline, previewActive) {
+        if (!previewActive) return@LaunchedEffect
         preview.onModelChanged()
         if (!timeline.isEmpty) delay(160)
         try {
+            if (!previewCanLoadMedia(lifecycleOwner)) {
+                preview.setActive(false)
+                return@LaunchedEffect
+            }
             preview.replaceTimeline(timeline)
         } catch (_: Exception) {
             model.reportError("현재 영상 구성을 미리 볼 수 없습니다.")

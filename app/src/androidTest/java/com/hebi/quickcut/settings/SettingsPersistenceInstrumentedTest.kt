@@ -7,11 +7,10 @@ import com.hebi.quickcut.editor.EditTimeline
 import com.hebi.quickcut.editor.EditorSessionSnapshot
 import com.hebi.quickcut.editor.EditorSessionStore
 import com.hebi.quickcut.editor.VideoClip
+import com.hebi.quickcut.editor.OriginalAction
 import com.hebi.quickcut.media.SaveDateMode
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -24,6 +23,7 @@ class SettingsPersistenceInstrumentedTest {
         val originalQuick = store.loadQuick()
         val originalBatch = store.loadBatch()
         val originalDate = store.loadSaveDate()
+        val originalAction = store.loadOriginalAction()
         try {
             store.saveQuick(QuickTrimSettings(4_000L, 500L, true))
             store.saveBatch(
@@ -37,20 +37,21 @@ class SettingsPersistenceInstrumentedTest {
                 )
             )
             store.saveSaveDate(SaveDateMode.ORIGINAL)
+            store.saveOriginalAction(OriginalAction.DELETE)
 
             val restored = QuickCutSettings(context)
             assertEquals(QuickTrimSettings(4_000L, 500L, true), restored.loadQuick())
             assertEquals(4_000L, restored.loadBatch().leadingMs)
             assertEquals("saved-template", restored.loadBatch().selectedTemplateId)
             assertEquals(SaveDateMode.ORIGINAL, restored.loadSaveDate())
-            assertFalse(
-                context.getSharedPreferences("quickcut_last_settings_v1", 0)
-                    .contains("original_action"),
-            )
+            assertEquals(OriginalAction.DELETE, restored.loadOriginalAction())
+            restored.saveOriginalAction(OriginalAction.KEEP)
+            assertEquals(OriginalAction.KEEP, QuickCutSettings(context).loadOriginalAction())
         } finally {
             store.saveQuick(originalQuick)
             store.saveBatch(originalBatch)
             store.saveSaveDate(originalDate)
+            store.saveOriginalAction(originalAction)
         }
     }
 

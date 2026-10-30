@@ -85,6 +85,17 @@ ffmpeg -hide_banner -loglevel error -y \
   -c:a aac -b:a 64k -shortest \
   app/src/androidTest/assets/quickcut_keyframes.mp4
 
+# Long inputs keep background Media3 processing observable without multiplying
+# decoder teardown transitions. API29 goldfish may wait 20s per lost-frame input
+# before the existing exact-frame software recovery can run.
+ffmpeg -hide_banner -loglevel error -y \
+  -f lavfi -i testsrc2=size=320x240:rate=30 \
+  -f lavfi -i sine=frequency=880:sample_rate=44100 \
+  -t 40 -c:v libx264 -preset ultrafast -pix_fmt yuv420p \
+  -g 60 -keyint_min 60 -sc_threshold 0 \
+  -c:a aac -b:a 64k -shortest \
+  app/src/androidTest/assets/quickcut_background_long.mp4
+
 # Measured sync samples include microseconds which cannot be represented in ms.
 ffmpeg -hide_banner -loglevel error -y \
   -f lavfi -i testsrc2=size=320x240:rate=30000/1001 -t 8 \

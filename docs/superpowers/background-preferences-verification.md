@@ -38,10 +38,34 @@ without exception messages or source locations.
 - Android SDK, Gradle and Cargo are unavailable locally; Android/JVM/native
   validation uses repository CI. No local Android pass is claimed.
 
-## Pending validation
+## Integration and fixture investigation
 
-Whole-branch independent review and implementation CI are pending. The added
-Media3 background tests exercise genuine transform progress, another app,
-screen-off completion, and cancellation cleanup. No Fold8 device, affected
-source file or user error log is available; the original device failure has not
-been reproduced and must not be described as proven fixed.
+Whole-branch independent review found no Critical, Important or Minor findings.
+The implementation tree `32daff58d045347779249b22c332274c1b7d61ab` matched remote
+commit `2412a9351828184d685ce44cf4880cb351051379` exactly. Build `40984574357`
+passed native/JVM checks, debug/release lint, APK builds and source packaging.
+In emulator run `40984574453`, API35 and API36 each passed 192 distinct full-suite
+tests without failures or skips. API29 passed 191 and timed out in the new
+background completion test after 240 seconds.
+
+The per-test API29 log shows processing continued after display-off at
+01:27:43.555. Goldfish then lost four surface frames per short input and waited
+20 seconds per input. Twelve six-second clips accumulated these waits before
+the existing end-of-composition frame guard and software recovery could run.
+Existing foreground tests in the same artifact show the same frame loss and
+successful recovery with OMX.google.h264.decoder, so this does not establish a
+new background-only application stall.
+
+The fixture now uses two distinct 40-second input files, trimming 36 seconds
+from each. It preserves 72 seconds of real Media3 processing, genuine progress
+before backgrounding, another app, screen-off completion, the unchanged
+240-second bound, full duration/frame/audio validation, exactly one publication,
+and cancellation cleanup. It does not claim twelve-stream transition stress
+coverage. No application timeout, integrity check or retry policy was relaxed.
+Latest CI results are recorded in PR9; this file records the baseline and fixture
+investigation.
+
+## Device validation limit
+
+No Fold8 device, affected source file or user error log is available. The original
+device failure has not been reproduced and must not be described as proven fixed.

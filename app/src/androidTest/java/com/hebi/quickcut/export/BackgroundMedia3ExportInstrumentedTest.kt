@@ -76,21 +76,22 @@ class BackgroundMedia3ExportInstrumentedTest {
         repeat(2) { index ->
             val file = File(context.cacheDir, "background_media3_${suffix}_$index.mp4")
             sources += file
-            instrumentation.context.assets.open("quickcut_keyframes.mp4").use { input ->
+            instrumentation.context.assets.open("quickcut_background_long.mp4").use { input ->
                 file.outputStream().use { input.copyTo(it) }
             }
         }
         withContext(Dispatchers.Main) {
             model.startNew()
             // Distinct source URIs rule out both single-clip copying and native smart cut.
-            // Repeated six-second ranges leave time to observe processing, without sleeps
-            // or test-only delays in the actual encoder.
-            model.importVideos(context, List(12) { Uri.fromFile(sources[it % 2]) })
+            // Two long inputs preserve 72 seconds of real work and observable progress.
+            // Many short inputs accumulate API29 goldfish's per-input EOS wait before
+            // frame-loss recovery; stream-transition stress is a different contract.
+            model.importVideos(context, sources.map(Uri::fromFile))
         }
         withTimeout(30_000L) { while (model.page == QuickCutPage.IMPORTING) delay(25L) }
         assertEquals(QuickCutPage.EDITOR, model.page)
         withContext(Dispatchers.Main) {
-            model.timeline.clips.forEach { model.trimClip(it.id, 500L, 6_500L) }
+            model.timeline.clips.forEach { model.trimClip(it.id, 500L, 36_500L) }
         }
         assertEquals(2, model.timeline.clips.map { it.uri }.distinct().size)
         assertEquals(72_000L, model.timeline.totalDurationMs)

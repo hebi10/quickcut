@@ -24,7 +24,7 @@ def run_record(name, **changes):
 class ReleaseVersionTest(unittest.TestCase):
     def test_actual_gradle_declaration(self):
         gradle = SCRIPT.parent.parent / 'app/build.gradle.kts'
-        self.assertEqual(gate.parse_release_version(gradle.read_text()), ('0.4.11', '16'))
+        self.assertEqual(gate.parse_release_version(gradle.read_text()), ('0.4.12', '17'))
 
     def test_literal_version_code(self):
         self.assertEqual(gate.parse_release_version('versionName = "0.4.11"\nversionCode = 16\n'), ('0.4.11', '16'))

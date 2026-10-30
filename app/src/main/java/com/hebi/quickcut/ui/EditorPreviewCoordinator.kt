@@ -20,11 +20,30 @@ internal class EditorPreviewCoordinator(
     private val timeline: () -> EditTimeline,
     private val modelPosition: () -> Long,
     private val publishPosition: (Long) -> Unit,
+    initiallyActive: Boolean = true,
 ) {
     private var loadedTimeline: EditTimeline? = null
     private var publishedPosition = 0L
+    private var active = initiallyActive
+
+    /** User pauses keep media ready; an invisible preview relinquishes its playback resources. */
+    fun setActive(value: Boolean) {
+        if (active == value) return
+        if (!value) {
+            synchronizePosition()
+            active = false
+            // Invalidate before player callbacks can observe any stop/release state.
+            loadedTimeline = null
+            player.pause()
+            player.stop()
+        } else {
+            active = true
+            replaceTimeline(timeline())
+        }
+    }
 
     fun onModelChanged() {
+        if (!active) return
         val current = timeline()
         if (loadedTimeline != current) {
             // Invalidate before pause: pause/reset may synchronously emit player callbacks.
@@ -37,7 +56,11 @@ internal class EditorPreviewCoordinator(
     }
 
     fun replaceTimeline(replacement: EditTimeline): Boolean {
-        if (replacement != timeline()) return false
+        if (!active || replacement != timeline()) return false
+        if (loadedTimeline == replacement) {
+            onModelChanged()
+            return true
+        }
         loadedTimeline = null
         player.pause()
         if (replacement.isEmpty) {
@@ -81,7 +104,7 @@ internal class EditorPreviewCoordinator(
     }
 
     fun togglePlayback() {
-        if (loadedTimeline != timeline()) return
+        if (!active || loadedTimeline != timeline()) return
         if (player.playing) {
             pause()
         } else {

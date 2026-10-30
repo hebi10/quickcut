@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.SharedPreferences
+import android.net.Uri
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalContext
@@ -14,14 +15,18 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.lifecycle.ViewModelStore
+import androidx.lifecycle.Lifecycle
 import androidx.test.platform.app.InstrumentationRegistry
 import com.hebi.quickcut.editor.OriginalAction
+import com.hebi.quickcut.media.ExportMode
 import com.hebi.quickcut.ui.QuickCutTheme
 import java.io.File
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
@@ -35,6 +40,7 @@ class BatchPreferencesInstrumentedTest {
     private lateinit var application: Application
     private lateinit var model: BatchViewModel
     private val models = mutableListOf<BatchViewModel>()
+    private var approvalRequests = 0
 
     @Before fun setUp() {
         context = IsolatedContext(InstrumentationRegistry.getInstrumentation().targetContext)
@@ -42,7 +48,7 @@ class BatchPreferencesInstrumentedTest {
         model = newModel()
         compose.setContent {
             CompositionLocalProvider(LocalContext provides application) {
-                QuickCutTheme { BatchScreen(model, {}, {}, { _, _, _ -> }) }
+                QuickCutTheme { BatchScreen(model, {}, {}, { _, _, _ -> approvalRequests++ }) }
             }
         }
     }
@@ -50,6 +56,9 @@ class BatchPreferencesInstrumentedTest {
     @After fun tearDown() = runBlocking {
         withContext(Dispatchers.Main) {
             models.forEach { ViewModelStore().apply { put("batch", it) }.clear() }
+        }
+        models.flatMap { it.files }.mapNotNull { it.savedOutputUri }.distinct().forEach { output ->
+            context.contentResolver.delete(Uri.parse(output), null, null)
         }
         context.cleanUp()
     }
@@ -130,6 +139,35 @@ class BatchPreferencesInstrumentedTest {
         compose.runOnIdle { assertEquals(copy.id, model.selectedTemplateId) }
     }
 
+    @Test fun publishedOriginalRequestWaitsForResumeAndIsNotRepeated() = runBlocking {
+        val source = File(context.filesDir, "original.mp4")
+        InstrumentationRegistry.getInstrumentation().context.assets.open("quickcut_keyframes.mp4")
+            .use { input -> source.outputStream().use { input.copyTo(it) } }
+        withContext(Dispatchers.Main) {
+            model.draftMode = BatchClipMode.KEEP_FIRST
+            model.draftLeadingSeconds = "2"
+            model.originalAction = OriginalAction.TRASH
+            model.addVideos(application, listOf(Uri.fromFile(source)))
+        }
+        withTimeout(30_000L) { while (model.isImporting) delay(25L) }
+        compose.activityRule.scenario.moveToState(Lifecycle.State.STARTED)
+        withContext(Dispatchers.Main) { model.start(application, exportMode = ExportMode.FAST_ONLY) }
+        withTimeout(60_000L) { while (model.isRunning) delay(25L) }
+        assertEquals(1, model.successes)
+        assertEquals(0, approvalRequests)
+        compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
+        compose.waitUntil(10_000L) { approvalRequests == 1 }
+        compose.activityRule.scenario.moveToState(Lifecycle.State.STARTED)
+        compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
+        compose.waitForIdle()
+        assertEquals(1, approvalRequests)
+        compose.runOnIdle { model.originalApprovalResult(false) }
+        compose.waitForIdle()
+        assertEquals(1, approvalRequests)
+        compose.runOnIdle { model.promptOriginalApproval() }
+        compose.waitUntil(10_000L) { approvalRequests == 2 }
+    }
+
     /** Real preferences and journals, isolated from other instrumentation tests. */
     private class IsolatedContext(base: Context) : ContextWrapper(base) {
         private val prefix = "batch_preferences_${UUID.randomUUID()}_"
@@ -143,7 +181,7 @@ class BatchPreferencesInstrumentedTest {
             return baseContext.getSharedPreferences(isolatedName, mode)
         }
         fun cleanUp() {
-            preferenceNames.forEach(baseContext::deleteSharedPreferences)
+            preferenceNames.forEach { baseContext.deleteSharedPreferences(it) }
             directory.deleteRecursively()
         }
     }

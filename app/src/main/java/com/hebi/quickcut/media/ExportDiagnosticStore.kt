@@ -3,6 +3,10 @@ package com.hebi.quickcut.media
 import android.content.Context
 import android.media.MediaExtractor
 import android.media.MediaFormat
+import android.media.MediaCodec
+import androidx.annotation.OptIn
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.transformer.ExportException
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -54,31 +58,46 @@ internal class ExportDiagnosticSession(private val context: Context, private var
     private var currentStage = ExportStage.PREPARING
     private var reasons = ExportDiagnostics()
     private var method: String? = null
+    private var engine: ExportEngine? = null
+    private var failureEvidence: ExportFailureEvidence? = null
     private var completed = false
     @Synchronized fun stage(stage: ExportStage) {
         if (completed) return
+        engine = when (stage) {
+            ExportStage.COPYING -> ExportEngine.COPY
+            ExportStage.NATIVE_PROCESSING -> ExportEngine.NATIVE
+            ExportStage.MEDIA3_PROCESSING, ExportStage.VIDEO_ENCODING,
+            ExportStage.AUDIO_ENCODING, ExportStage.RECOVERING -> ExportEngine.MEDIA3
+            else -> engine
+        }
         timing.stage(stage); currentStage = stage; persist()
     }
     @Synchronized fun reasons(value: ExportDiagnostics) { if (!completed) { reasons = value; persist() } }
     @Synchronized fun report(value: ExportReport) { if (!completed) method = value.method.name }
+    @OptIn(UnstableApi::class)
     @Synchronized fun finish(status: String, error: Throwable? = null) {
         if (completed) return
         completed = true
         timing.finish()
+        val causes = ExportFailureEvidence.boundedCauses(error)
+        failureEvidence = ExportFailureEvidence.capture(error)
+        if (causes.any { it is ExportException }) engine = ExportEngine.MEDIA3
         val outcome = when (status) {
             "완료" -> ExportDiagnosticStatus.COMPLETE
             "취소" -> ExportDiagnosticStatus.CANCELLED
             else -> ExportDiagnosticStatus.FAILED
         }
         // Never retain arbitrary exception subclasses, messages, causes, or stack traces.
-        val failureType = when (error) {
-            null -> null
-            is ReencodeRequiredException -> "ReencodeRequiredException"
-            is CancellationException -> "CancellationException"
-            is SecurityException -> "SecurityException"
-            is IllegalArgumentException -> "IllegalArgumentException"
-            is IllegalStateException -> "IllegalStateException"
-            is IOException -> "IOException"
+        val failureType = when {
+            error == null -> null
+            error is CancellationException -> "CancellationException"
+            causes.any { it is ExportException } -> "ExportException"
+            causes.any { it is MediaCodec.CodecException } -> "MediaCodecException"
+            error is ReencodeRequiredException -> "ReencodeRequiredException"
+            error is SecurityException -> "SecurityException"
+            error is IllegalArgumentException -> "IllegalArgumentException"
+            error is IllegalStateException -> "IllegalStateException"
+            error is IOException -> "IOException"
             else -> "Exception"
         }
         persist(outcome, failureType)
@@ -124,6 +143,6 @@ internal class ExportDiagnosticSession(private val context: Context, private var
     private fun persist(status: ExportDiagnosticStatus = ExportDiagnosticStatus.RUNNING, failureType: String? = null) {
         val times = timing.snapshot()
         ExportDiagnosticStore.save(context, ExportDiagnosticRecord(operationId, status, currentStage,
-            times.elapsedMs, times.stageMs, facts.sanitized(), reasons, method, failureType))
+            times.elapsedMs, times.stageMs, facts.sanitized(), reasons, method, failureType, engine, failureEvidence))
     }
 }

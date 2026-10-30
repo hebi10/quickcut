@@ -26,6 +26,7 @@ import com.hebi.quickcut.media.ExportStage
 import com.hebi.quickcut.media.ExportReport
 import com.hebi.quickcut.media.ExportDiagnostics
 import com.hebi.quickcut.media.ReencodeRequiredException
+import com.hebi.quickcut.media.exportFailureMessage
 import com.hebi.quickcut.settings.QuickCutSettings
 import com.hebi.quickcut.settings.BatchDraftSettings
 import java.util.UUID
@@ -328,10 +329,16 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
     var saveDateMode: SaveDateMode
         get() = saveDateState
         set(value) { if (value != saveDateState) { invalidateReview(); saveDateState = value } }
-    private var originalActionState by mutableStateOf(OriginalAction.KEEP)
+    private var originalActionState by mutableStateOf(settings.loadOriginalAction())
     var originalAction: OriginalAction
         get() = originalActionState
-        set(value) { if (value != originalActionState) { invalidateReview(); originalActionState = value } }
+        set(value) {
+            if (value != originalActionState) {
+                invalidateReview()
+                settings.saveOriginalAction(value)
+                originalActionState = value
+            }
+        }
     var performedOriginalAction by mutableStateOf(OriginalAction.KEEP)
         private set
     var originalStatus by mutableStateOf(OriginalActionStatus.NONE)
@@ -344,13 +351,21 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
     private var sourceUrisSavedThisRun by mutableStateOf<List<String>>(emptyList())
 
     init {
+        viewModelScope.launch {
+            settings.observeOriginalAction().collect { action ->
+                if (action != originalActionState) {
+                    invalidateReview()
+                    originalActionState = action
+                }
+            }
+        }
         restored?.let(::restoreSnapshotSettings)
         if (restored != null) viewModelScope.launch {
             try {
                 files = withContext(Dispatchers.IO) { restored.files.map { recoverFile(application, it) } }
                 completedCount = files.count { it.status != BatchFileStatus.WAITING && it.status != BatchFileStatus.RUNNING }
                 persistSession()
-                notification = "이전 일괄 작업을 복구했습니다. 완료 파일은 유지되며 남은 작업은 설정을 확인한 뒤 다시 시작해 주세요. 원본 처리 선택은 초기화됐습니다."
+                notification = "이전 일괄 작업을 복구했습니다. 완료 파일은 유지되며 남은 작업은 설정을 확인한 뒤 다시 시작해 주세요. 복구된 이전 출력의 원본은 처리하지 않습니다."
             } catch (error: Exception) {
                 notification = "이전 작업 확인에 실패했습니다. " + (error.localizedMessage ?: "파일을 다시 선택해 주세요.")
             } finally {
@@ -466,7 +481,7 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
         return currentDraft()?.checkValidity()
     }
 
-    fun saveTemplate(context: Context) {
+    fun saveTemplate(context: Context, asNew: Boolean = false) {
         if (isRunning || isRecovering) return
         invalidateReview()
         val proposed = currentDraft()
@@ -479,8 +494,9 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         try {
-            templates = TemplateStore(context).save(proposed)
-            selectedTemplateId = proposed.id
+            val saved = if (asNew) proposed.copy(id = UUID.randomUUID().toString()) else proposed
+            templates = TemplateStore(context).save(saved)
+            selectedTemplateId = saved.id
             notification = "템플릿을 저장했습니다."
         } catch (e: Exception) {
             notification = e.localizedMessage ?: "템플릿을 저장하지 못했습니다."
@@ -718,7 +734,8 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
                             }
                             isFinalizing = false
                             currentExportStage = ExportStage.PREPARING
-                            ExportWorkMonitor.update(workId, "${completedCount + 1}/${files.size} · ${row.displayName}")
+                            val runPosition = completedCount + 1
+                            ExportWorkMonitor.update(workId, "$runPosition/${files.size} · ${currentExportStage.label}")
                             var diagnostics = ExportDiagnostics()
                             try {
                                 val expectedAudio = timeline.clips.any { it.hasAudio && !it.muted }
@@ -730,7 +747,9 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
                                     },
                                     onProgress = { percent ->
                                         update(row.uri, persist = false) { it.copy(progress=percent) }
-                                        ExportWorkMonitor.update(workId, "${completedCount + 1}/${files.size} · ${row.displayName}", percent)
+                                        ExportWorkMonitor.update(workId,
+                                            "$runPosition/${files.size} · ${currentExportStage.label}", percent,
+                                            canCancel = !isFinalizing)
                                     },
                                     onFinalizing = {
                                         isFinalizing = true
@@ -755,7 +774,15 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
                                     outputBaseName = row.displayName,
                                     exportMode = reviewedExport?.exportMode ?: exportMode,
                                     resolvedOriginalDate = row.originalDate,
-                                    onStage = { currentExportStage = it },
+                                    onStage = { stage ->
+                                        if (stage != currentExportStage) {
+                                            currentExportStage = stage
+                                            update(row.uri, persist = false) { it.copy(progress = null) }
+                                            ExportWorkMonitor.update(workId,
+                                                "$runPosition/${files.size} · ${stage.label}",
+                                                canCancel = !isFinalizing)
+                                        }
+                                    },
                                     onDiagnostics = { details ->
                                         diagnostics = details
                                         update(row.uri, persist = false) {
@@ -795,7 +822,7 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
                             } catch (failure: Exception) {
                                 update(row.uri) {
                                     it.copy(status=BatchFileStatus.FAILED,progress=null,
-                                        reason=(failure.localizedMessage ?: "영상 저장 실패") +
+                                        reason=exportFailureMessage(failure) +
                                             diagnostics.explanation().let { text -> if (text.isBlank()) "" else "\n$text" })
                                 }
                             } finally {
@@ -812,7 +839,7 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
                     } else it
                 }
             } catch (error: Exception) {
-                notification = "일괄 작업을 완료하지 못했습니다. " + (error.localizedMessage ?: "다시 시도해 주세요.")
+                notification = "일괄 작업을 완료하지 못했습니다. " + exportFailureMessage(error)
                 files = files.map {
                     if (it.status == BatchFileStatus.WAITING || it.status == BatchFileStatus.RUNNING)
                         it.copy(status=BatchFileStatus.FAILED, progress=null, reason=notification)
@@ -820,9 +847,6 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
                 }
             } finally {
                 isFinalizing = false
-                // Keep the selected action visible during rendering. The next
-                // batch always resets to KEEP even if the prior run selected trash.
-                originalAction = OriginalAction.KEEP
                 runState = BatchRunState.FINISHED
                 completedCount = files.count { it.status != BatchFileStatus.WAITING && it.status != BatchFileStatus.RUNNING }
                 originalStatus = if (performedOriginalAction != OriginalAction.KEEP &&
@@ -851,17 +875,12 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
 
     fun promptOriginalApproval() {
         if (runState == BatchRunState.FINISHED &&
-            originalStatus in listOf(OriginalActionStatus.READY, OriginalActionStatus.SKIPPED)
-        ) originalStatus = OriginalActionStatus.CONFIRMING
-    }
-
-    fun keepOriginals() {
-        if (originalStatus == OriginalActionStatus.CONFIRMING)
-            originalStatus = OriginalActionStatus.SKIPPED
+            originalCandidates.isNotEmpty() && originalStatus == OriginalActionStatus.SKIPPED
+        ) originalStatus = OriginalActionStatus.READY
     }
 
     fun launchingOriginalApproval() {
-        if (originalStatus == OriginalActionStatus.CONFIRMING)
+        if (originalStatus == OriginalActionStatus.READY)
             originalStatus = OriginalActionStatus.SYSTEM_PROMPT
     }
 
@@ -908,7 +927,6 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
         sourceUrisSavedThisRun = emptyList()
         completedCount = 0
         runState = BatchRunState.SETUP
-        originalAction = OriginalAction.KEEP
         performedOriginalAction = OriginalAction.KEEP
         originalStatus = OriginalActionStatus.NONE
         notification = null

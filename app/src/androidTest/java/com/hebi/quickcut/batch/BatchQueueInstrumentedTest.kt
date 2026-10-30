@@ -42,6 +42,8 @@ class BatchQueueInstrumentedTest {
         val settings = com.hebi.quickcut.settings.QuickCutSettings(context)
         val oldDraft = settings.loadBatch()
         val oldDate = settings.loadSaveDate()
+        val oldAction = settings.loadOriginalAction()
+        settings.saveOriginalAction(OriginalAction.KEEP)
         BatchSessionStore(context).clear()
         val vm = withContext(Dispatchers.Main) { BatchViewModel(context.applicationContext as android.app.Application) }
         try {
@@ -110,7 +112,7 @@ class BatchQueueInstrumentedTest {
             }
             assertEquals(3, vm.successes)
             assertEquals(originalOutputs, vm.files.take(2).map(BatchFile::savedOutputUri))
-            assertEquals(OriginalAction.KEEP, vm.originalAction)
+            assertEquals(OriginalAction.TRASH, vm.originalAction)
             assertEquals(OriginalAction.TRASH, vm.performedOriginalAction)
             assertEquals(OriginalActionStatus.READY, vm.originalStatus)
             assertEquals(listOf(Uri.fromFile(inputs[2]).toString()), vm.originalCandidates)
@@ -124,6 +126,7 @@ class BatchQueueInstrumentedTest {
             withContext(Dispatchers.Main) { vm.resetBatch(); ViewModelStore().apply { put("test", vm) }.clear() }
             settings.saveBatch(oldDraft)
             settings.saveSaveDate(oldDate)
+            settings.saveOriginalAction(oldAction)
             inputs.forEach(File::delete)
         }
     }

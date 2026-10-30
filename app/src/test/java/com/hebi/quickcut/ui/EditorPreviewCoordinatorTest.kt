@@ -19,6 +19,7 @@ class EditorPreviewCoordinatorTest {
         preview.pause()
         assertEquals(2_345L, position)
         assertFalse(player.playing)
+        assertTrue("A user pause keeps the visible preview ready", player.resourcesAllocated)
     }
 
     @Test fun splitUsesTheLatestPlaybackPosition() {
@@ -115,9 +116,8 @@ class EditorPreviewCoordinatorTest {
         preview.replaceTimeline(timeline)
         player.positionMs = 2_345L
         player.playing = true
-        // Player.stop() may synchronously publish its reset state. That reset is
-        // not a user seek and must not overwrite the position we are preserving.
-        player.duringStop = { preview.synchronizePosition() }
+        // Ignore callbacks after the snapshot while resources are being released.
+        player.duringStop = { player.positionMs = 0L; preview.synchronizePosition() }
 
         preview.setActive(false)
 
@@ -197,6 +197,52 @@ class EditorPreviewCoordinatorTest {
         assertFalse(player.playing)
     }
 
+    @Test fun initiallyInactivePreviewCannotPrepareBeforeItsFirstVisibleActivation() {
+        val inactive = EditorPreviewCoordinator(player, { timeline }, { position },
+            { position = it }, initiallyActive = false)
+        assertFalse(inactive.replaceTimeline(timeline))
+        inactive.onModelChanged()
+        inactive.togglePlayback()
+        assertFalse(player.resourcesAllocated)
+        assertEquals(0, player.preparations)
+
+        inactive.setActive(true)
+        assertTrue(player.resourcesAllocated)
+        assertEquals(500L, player.positionMs)
+        assertFalse(player.playing)
+    }
+
+    @Test fun failedPreparationOnReturnCannotPublishTheStoppedPlayersPosition() {
+        preview.replaceTimeline(timeline)
+        player.positionMs = 3_210L
+        preview.setActive(false)
+        player.duringReplace = { error("decoder unavailable") }
+        assertThrows(IllegalStateException::class.java) { preview.setActive(true) }
+
+        player.positionMs = 0L
+        preview.synchronizePosition()
+        preview.togglePlayback()
+        assertEquals(3_210L, position)
+        assertFalse(player.playing)
+        assertFalse(player.resourcesAllocated)
+    }
+
+    @Test fun quickTrimMuteKeepsTheVisibleMediaPlayingWithoutPreparingAgain() {
+        val quickPreview = EditorPreviewCoordinator(player, { quickTrimPreviewTimeline(timeline) },
+            { position }, { position = it })
+        quickPreview.replaceTimeline(quickTrimPreviewTimeline(timeline))
+        player.playing = true
+        player.positionMs = 2_345L
+        timeline = timeline.toggleMute(1L)
+
+        quickPreview.onModelChanged()
+        quickPreview.replaceTimeline(quickTrimPreviewTimeline(timeline))
+
+        assertTrue("Quick trimming applies mute through volume without interrupting playback", player.playing)
+        assertEquals(1, player.preparations)
+        assertEquals(2_345L, player.positionMs)
+    }
+
     private class FakePlayback : EditorPreviewPlayback {
         override var positionMs = 0L
         override var playing = false
@@ -217,7 +263,6 @@ class EditorPreviewCoordinatorTest {
             stops++
             playing = false
             resourcesAllocated = false
-            positionMs = 0L
             duringStop?.invoke()
         }
         override fun seekTo(positionMs: Long) {

@@ -2,7 +2,12 @@ package com.hebi.quickcut.settings
 
 import android.content.Context
 import com.hebi.quickcut.batch.BatchClipMode
+import com.hebi.quickcut.editor.OriginalAction
 import com.hebi.quickcut.media.SaveDateMode
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 
 data class QuickTrimSettings(
     val leadingMs: Long = 4_000L,
@@ -20,7 +25,7 @@ data class BatchDraftSettings(
 )
 
 /**
- * Last-used non-destructive preferences. Source deletion is deliberately excluded.
+ * Last-used preferences. The UI confirms destructive original handling before saving it.
  * Named batch templates remain in the existing TemplateStore.
  */
 class QuickCutSettings(context: Context) {
@@ -51,6 +56,25 @@ class QuickCutSettings(context: Context) {
     fun saveSaveDate(mode: SaveDateMode) {
         preferences.edit().putString("save_date_mode", mode.name).apply()
     }
+
+    fun loadOriginalAction(): OriginalAction = runCatching {
+        OriginalAction.valueOf(preferences.getString("original_action", OriginalAction.KEEP.name)!!)
+    }.getOrDefault(OriginalAction.KEEP)
+
+    /** Call only after activation confirmation, or to immediately disable the preference. */
+    fun saveOriginalAction(action: OriginalAction) {
+        preferences.edit().putString("original_action", action.name).apply()
+    }
+
+    /** Both editors observe one preference without changing an active export's choice. */
+    fun observeOriginalAction(): Flow<OriginalAction> = callbackFlow {
+        val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == "original_action") trySend(loadOriginalAction())
+        }
+        preferences.registerOnSharedPreferenceChangeListener(listener)
+        trySend(loadOriginalAction())
+        awaitClose { preferences.unregisterOnSharedPreferenceChangeListener(listener) }
+    }.distinctUntilChanged()
 
     fun loadBatch(): BatchDraftSettings = BatchDraftSettings(
         name = preferences.getString("batch_name", "앞뒤 3초 삭제")

@@ -119,7 +119,9 @@ class BatchScreenInstrumentedTest {
             composeRule.onNodeWithText("현재 날짜로 저장 (최신 파일)").assertIsNotSelected()
             composeRule.onNodeWithText("원본 유지 (기본값)").performScrollTo().performClick().assertIsSelected()
             composeRule.onNodeWithText("저장 성공한 원본만 휴지통으로 이동")
-                .performScrollTo().performClick().assertIsSelected()
+                .performScrollTo().performClick()
+            composeRule.onNodeWithText("활성화").performClick()
+            composeRule.onNodeWithText("저장 성공한 원본만 휴지통으로 이동").assertIsSelected()
             composeRule.onNodeWithText("원본 유지 (기본값)").assertIsNotSelected()
         } finally {
             composeRule.runOnIdle {
@@ -135,7 +137,7 @@ class BatchScreenInstrumentedTest {
         composeRule.onNodeWithText("일괄 편집 · 여러 영상").performClick()
         composeRule.onNodeWithText("템플릿·저장 옵션 펼치기").performScrollTo().performClick()
         composeRule.onNodeWithText("직접 설정").performScrollTo().performClick()
-        composeRule.onNodeWithText("템플릿 저장").performScrollTo().performClick()
+        composeRule.onNodeWithText("새 템플릿으로 저장").performScrollTo().performClick()
         composeRule.onNodeWithText("템플릿을 저장했습니다.").assertExists()
     }
 }

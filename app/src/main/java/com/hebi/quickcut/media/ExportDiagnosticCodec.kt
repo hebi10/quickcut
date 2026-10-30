@@ -32,6 +32,14 @@ internal object ExportDiagnosticCodec {
         put("elapsed", record.elapsedMs)
         put("times", JSONObject().apply { record.stageMs.forEach { (stage, ms) -> put(stage.name, ms) } })
         put("method", record.method); put("error", record.failureType)
+        put("engine", record.engine?.name)
+        record.failureEvidence?.sanitized()?.let { value ->
+            put("failure", JSONObject().apply {
+                put("media3", value.media3ErrorCode); put("codec", value.codecName)
+                put("kind", value.codecKind?.name); put("codecError", value.codecErrorCode)
+                put("recoverable", value.recoverable); put("transient", value.transient)
+            })
+        }
         put("copyReason", record.reasons.copyReason?.name); put("smartReason", record.reasons.smartCutReason?.name)
         put("facts", JSONObject().apply {
             val f = record.facts
@@ -51,6 +59,14 @@ internal object ExportDiagnosticCodec {
         fun JSONObject.string(key: String): String? = if (has(key) && !isNull(key)) getString(key) else null
         fun JSONObject.long(key: String): Long? = if (has(key) && !isNull(key)) getLong(key) else null
         fun JSONObject.int(key: String): Int? = if (has(key) && !isNull(key)) getInt(key) else null
+        fun JSONObject.boolean(key: String): Boolean? = if (has(key) && !isNull(key)) getBoolean(key) else null
+        val evidence = runCatching {
+            json.optJSONObject("failure")?.let {
+                ExportFailureEvidence(it.int("media3"), it.string("codec"),
+                    it.string("kind")?.let(ExportCodecKind::valueOf), it.int("codecError"),
+                    it.boolean("recoverable"), it.boolean("transient")).sanitized()
+            }
+        }.getOrNull()
         return ExportDiagnosticRecord(json.getString("id"), ExportDiagnosticStatus.valueOf(json.getString("status")),
             ExportStage.valueOf(json.getString("stage")), json.getLong("elapsed"),
             times.keys().asSequence().associate { key -> ExportStage.valueOf(key) to times.getLong(key) },
@@ -60,6 +76,7 @@ internal object ExportDiagnosticCodec {
                 if (f.has("fps")) f.getDouble("fps") else null, f.int("standard"), f.int("transfer"),
                 f.string("audio"), f.int("channels"), f.int("rate"), f.long("cache"), f.long("gallery")),
             ExportDiagnostics(FastExportReason.fromStoredName(json.string("copyReason")),
-                FastExportReason.fromStoredName(json.string("smartReason"))), json.string("method"), json.string("error"))
+                FastExportReason.fromStoredName(json.string("smartReason"))), json.string("method"), json.string("error"),
+            runCatching { json.string("engine")?.let(ExportEngine::valueOf) }.getOrNull(), evidence)
     }
 }

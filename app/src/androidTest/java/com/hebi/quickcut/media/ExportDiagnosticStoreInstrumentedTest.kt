@@ -52,6 +52,24 @@ class ExportDiagnosticStoreInstrumentedTest {
         }
     }
 
+    @Test fun corruptOptionalCodecEvidenceCannotDiscardTheFailureOrLeakPrivateStrings() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val session = ExportDiagnosticStore.begin(context, EditTimeline())
+        session.finish("실패", java.io.IOException("private-source.mp4"))
+        val encoded = org.json.JSONObject(ExportDiagnosticCodec.encode(ExportDiagnosticStore.history(context)))
+        val row = encoded.getJSONArray("recent").getJSONObject(0)
+        row.put("engine", "content://private/engine")
+        row.put("failure", org.json.JSONObject()
+            .put("media3", 7002).put("codec", "/storage/private/source.mp4")
+            .put("codecError", 999999))
+        val restored = checkNotNull(ExportDiagnosticCodec.decode(encoded.toString()).record(session.operationId))
+        assertEquals(ExportDiagnosticStatus.FAILED, restored.status)
+        assertTrue(restored.text.contains("ERROR_CODE_MUXING_TIMEOUT"))
+        assertFalse(restored.text.contains("source.mp4"))
+        assertFalse(restored.text.contains("999999"))
+        assertFalse(restored.text.contains("content://"))
+    }
+
     @Test fun persistedFailureSurvivesSuccessAndNeverIncludesSourceOrExceptionMessage() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val timeline = EditTimeline(listOf(VideoClip(1, "content://private/secret-source.mp4", 1000)))

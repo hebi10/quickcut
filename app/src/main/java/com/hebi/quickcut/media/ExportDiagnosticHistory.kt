@@ -17,21 +17,28 @@ internal data class ExportDiagnosticRecord(
     val reasons: ExportDiagnostics,
     val method: String?,
     val failureType: String?,
+    val engine: ExportEngine? = null,
+    val failureEvidence: ExportFailureEvidence? = null,
 ) {
-    val text: String get() = facts.text(stage, status.label, elapsedMs, reasons, method, failureType,
-        operationId, stageMs)
+    val text: String get() = buildString {
+        append(facts.text(stage, status.label, elapsedMs, reasons, method, failureType, operationId, stageMs))
+        engine?.let { append("\n저장 엔진: ${it.name}") }
+        failureEvidence?.text?.takeIf(String::isNotBlank)?.let { append("\n$it") }
+    }
 
     fun isValid(): Boolean = runCatching {
         UUID.fromString(operationId).toString() == operationId && elapsedMs >= 0 &&
             stageMs.values.all { it >= 0 && it <= elapsedMs } &&
             stageMs.values.fold(0L) { sum, value -> Math.addExact(sum, value) } == elapsedMs &&
             (failureType == null || failureType in FAILURE_TYPES) &&
-            (method == null || method in METHODS) && facts.isValid()
+            (method == null || method in METHODS) && facts.isValid() &&
+            (failureEvidence == null || failureEvidence == failureEvidence.sanitized())
     }.getOrDefault(false)
 
     companion object {
         val FAILURE_TYPES = setOf("ReencodeRequiredException", "IOException", "SecurityException",
-            "IllegalArgumentException", "IllegalStateException", "CancellationException", "Exception")
+            "IllegalArgumentException", "IllegalStateException", "CancellationException", "Exception",
+            "ExportException", "MediaCodecException")
         private val METHODS = setOf("ORIGINAL_COPY", "PARTIAL_REENCODE", "AUDIO_REENCODE", "VIDEO_REENCODE", "UNKNOWN")
     }
 }

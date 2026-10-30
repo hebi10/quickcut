@@ -6,7 +6,7 @@ import org.json.JSONObject
 
 /**
  * A small local-only template store. Never persists source deletion choices.
- * Recreating the app should not enable source deletion automatically.
+ * Confirmed source-handling preferences live separately in QuickCutSettings.
  */
 class TemplateStore(context: Context) {
     private val prefs = context.applicationContext.getSharedPreferences(

@@ -1,6 +1,9 @@
 package com.hebi.quickcut.media
 
 import android.content.Context
+import androidx.annotation.OptIn
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.transformer.ExportException
 import androidx.test.platform.app.InstrumentationRegistry
 import com.hebi.quickcut.editor.EditTimeline
 import com.hebi.quickcut.editor.VideoClip
@@ -8,6 +11,47 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ExportDiagnosticStoreInstrumentedTest {
+    @OptIn(UnstableApi::class)
+    @Test fun media3FailureRetainsCodecAndErrorCodeWithoutPrivateFormatOrMessage() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val timeline = EditTimeline(listOf(VideoClip(1, "content://private/secret-source.mp4", 1000)))
+        val session = ExportDiagnosticStore.begin(context, timeline)
+        session.stage(ExportStage.PROCESSING)
+        val failure = ExportException.createForCodec(
+            IllegalStateException("/storage/private/secret-message.mp4"),
+            ExportException.ERROR_CODE_DECODING_FAILED,
+            ExportException.CodecInfo("content://private/secret-format.mp4", true, true,
+                "c2.android.avc.decoder"),
+        )
+        session.finish("실패", failure)
+        val record = checkNotNull(ExportDiagnosticStore.record(context, session.operationId))
+        assertTrue(record.text.contains("ERROR_CODE_DECODING_FAILED"))
+        assertTrue(record.text.contains("c2.android.avc.decoder"))
+        assertTrue(record.text.contains("MEDIA3"))
+        val persisted = context.getSharedPreferences("export_diagnostics", Context.MODE_PRIVATE)
+            .getString("history_v1", "").orEmpty()
+        for (secret in listOf("secret-source", "secret-message", "secret-format", "content://", "/storage/")) {
+            assertFalse(record.text.contains(secret))
+            assertFalse(persisted.contains(secret))
+        }
+    }
+
+    @OptIn(UnstableApi::class)
+    @Test fun media3PermissionFailureAndMuxTimeoutRemainDistinguishableAfterReload() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        for ((code, expected) in listOf(
+            ExportException.ERROR_CODE_IO_NO_PERMISSION to "ERROR_CODE_IO_NO_PERMISSION",
+            ExportException.ERROR_CODE_MUXING_TIMEOUT to "ERROR_CODE_MUXING_TIMEOUT",
+        )) {
+            val session = ExportDiagnosticStore.begin(context, EditTimeline())
+            session.finish("실패", ExportException.createForAssetLoader(
+                java.io.IOException("content://private/secret.mp4"), code))
+            val restored = checkNotNull(ExportDiagnosticStore.record(context, session.operationId))
+            assertTrue(restored.text.contains(expected))
+            assertFalse(restored.text.contains("secret.mp4"))
+        }
+    }
+
     @Test fun persistedFailureSurvivesSuccessAndNeverIncludesSourceOrExceptionMessage() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val timeline = EditTimeline(listOf(VideoClip(1, "content://private/secret-source.mp4", 1000)))

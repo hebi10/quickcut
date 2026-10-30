@@ -20,9 +20,25 @@ trap on_failure EXIT
 
 # An older version-code fixture uses this runner's same debug key. This checks
 # Android's update/data retention path, not compatibility with old distributed APKs.
-gradle --no-daemon -PquickcutTestVersionCode=15 :app:assembleDebug
+repo_dir=$(cd -- "$(dirname -- "$0")/.." && pwd)
+current_version_code=$(python3 - "$repo_dir" <<'PYVERSION'
+import importlib.util
+from pathlib import Path
+import sys
+root = Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location('quickcut_release_version', root / 'scripts/verify-release-gate.py')
+gate = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(gate)
+_, code = gate.parse_release_version((root / 'app/build.gradle.kts').read_text())
+if int(code) <= 1:
+    raise ValueError('The update fixture requires a positive preceding version code')
+print(code)
+PYVERSION
+)
+older_version_code=$((current_version_code - 1))
+gradle --no-daemon -PquickcutTestVersionCode="$older_version_code" :app:assembleDebug
 adb install -r -d app/build/outputs/apk/debug/app-debug.apk
-if [[ ! $(adb shell dumpsys package com.hebi.quickcut) =~ versionCode=15[[:space:]] ]]; then
+if [[ ! $(adb shell dumpsys package com.hebi.quickcut) =~ versionCode=${older_version_code}[[:space:]] ]]; then
   echo "::error::Older-version update fixture was not installed"
   exit 1
 fi
@@ -30,7 +46,7 @@ adb shell run-as com.hebi.quickcut mkdir -p files
 printf 'quickcut-update-data' | adb shell run-as com.hebi.quickcut sh -c '"cat > files/update-sentinel"'
 gradle --no-daemon :app:assembleDebug
 adb install -r app/build/outputs/apk/debug/app-debug.apk
-if [[ ! $(adb shell dumpsys package com.hebi.quickcut) =~ versionCode=16[[:space:]] ]]; then
+if [[ ! $(adb shell dumpsys package com.hebi.quickcut) =~ versionCode=${current_version_code}[[:space:]] ]]; then
   echo "::error::Update candidate was not installed"
   exit 1
 fi
@@ -39,7 +55,7 @@ if [ "$(adb shell run-as com.hebi.quickcut cat files/update-sentinel | tr -d '\r
   exit 1
 fi
 adb shell run-as com.hebi.quickcut rm files/update-sentinel
-echo "Same-signature version-code 15 to 16 update retained application data"
+echo "Same-signature version-code $older_version_code to $current_version_code update retained application data"
 adb shell am force-stop com.google.android.apps.nexuslauncher
 adb shell am start -W -n com.hebi.quickcut/.MainActivity
 sleep 3

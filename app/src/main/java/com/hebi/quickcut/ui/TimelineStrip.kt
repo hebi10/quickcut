@@ -31,6 +31,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
@@ -61,7 +62,7 @@ fun TimelineStrip(
 ) {
     var zoom by rememberSaveable { mutableFloatStateOf(1f) }
     val totalDurationMs = remember(timeline) { timeline.totalDurationMs }
-    Column(modifier.background(CutColors.surface).padding(vertical = 10.dp)) {
+    Column(modifier.background(CutColors.surface, CutPanelShape).padding(vertical = 10.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -70,13 +71,15 @@ fun TimelineStrip(
             Text(
                 "전체 " + formatTime(totalDurationMs),
                 fontSize = 11.sp,
-                color = CutColors.mutedText,
+                color = CutColors.secondaryText,
             )
             Row(verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = { zoom = (zoom / 2f).coerceAtLeast(1f) },
                     enabled = zoom > 1f, shape = CutShape) { Text("−") }
                 Text(zoom.toInt().toString() + "배", fontSize = 11.sp,
-                    color = CutColors.primaryText)
+                    color = CutColors.accent,
+                    modifier = Modifier.background(CutColors.accentMuted, CutSmallShape)
+                        .padding(horizontal = 6.dp, vertical = 4.dp))
                 TextButton(onClick = { zoom = (zoom * 2f).coerceAtMost(16f) },
                     enabled = zoom < 16f, shape = CutShape) { Text("+") }
             }
@@ -109,6 +112,7 @@ fun TimelineStrip(
                         .border(
                             width = if (selected) 2.dp else 1.dp,
                             color = if (selected) CutColors.accent else CutColors.border,
+                            shape = CutSmallShape,
                         )
                         .pointerInput(clip.id) {
                             detectDragGesturesAfterLongPress(
@@ -132,32 +136,32 @@ fun TimelineStrip(
                     ClipThumbnail(
                         uri = clip.uri,
                         timeMs = clip.startMs + clip.durationMs / 2L,
-                        modifier = Modifier.fillMaxWidth().fillMaxHeight(),
+                        modifier = Modifier.fillMaxWidth().fillMaxHeight().clip(CutSmallShape),
                     )
                     if (isActive) {
                         val fraction = ((playheadMs - clipStart).toFloat() / clip.durationMs)
                             .coerceIn(0f, 1f)
                         Box(
                             Modifier.offset(x = maxWidth * fraction)
-                                .width(2.dp).fillMaxHeight().background(Color.White),
+                                .width(2.dp).fillMaxHeight().background(CutColors.secondaryAccent),
                         )
                     }
                     Text(
                         formatTime(clip.durationMs),
-                        color = Color.White,
+                        color = if (selected) CutColors.accent else CutColors.primaryText,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Medium,
                         modifier = Modifier.align(Alignment.BottomStart)
-                            .background(Color.Black.copy(alpha = 0.75f))
+                            .background(Color.Black.copy(alpha = 0.82f), CutSmallShape)
                             .padding(horizontal = 5.dp, vertical = 3.dp),
                     )
                     if (clip.muted) {
                         Text(
                             "무음",
-                            color = Color.White,
+                            color = CutColors.secondaryAccent,
                             fontSize = 11.sp,
                             modifier = Modifier.align(Alignment.TopEnd)
-                                .background(Color.Black.copy(alpha = 0.75f))
+                                .background(Color.Black.copy(alpha = 0.82f), CutSmallShape)
                                 .padding(horizontal = 4.dp, vertical = 2.dp),
                         )
                     }
@@ -233,8 +237,13 @@ private fun TrimHandle(
         contentAlignment = if (start) Alignment.CenterStart else Alignment.CenterEnd,
     ) {
         Box(
-            modifier = Modifier.width(8.dp).fillMaxHeight().background(Color.White),
-        )
+            modifier = Modifier.width(8.dp).fillMaxHeight()
+                .background(CutColors.accent, CutSmallShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            Box(Modifier.width(2.dp).height(22.dp)
+                .background(CutColors.onAccent, CutSmallShape))
+        }
     }
 }
 

@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -24,12 +25,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
-import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.CallSplit
 import androidx.compose.material.icons.outlined.ContentCut
 import androidx.compose.material.icons.outlined.DeleteOutline
@@ -65,6 +64,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -246,7 +246,7 @@ fun EditorScreen(
     }
     val onPlay = preview::togglePlayback
 
-    Column(modifier = Modifier.fillMaxSize()) {
+    Column(modifier = Modifier.fillMaxSize().background(CutColors.background)) {
         EditorHeader(
             onBack = model::requestExit,
             onAdd = addVideos,
@@ -296,7 +296,7 @@ fun EditorScreen(
                             )
                             Column(
                                 Modifier.width(if (availableWidth < 600.dp) 128.dp else 160.dp).fillMaxHeight()
-                                    .background(CutColors.surface).verticalScroll(rememberScrollState())
+                                    .background(CutColors.surface, CutPanelShape).verticalScroll(rememberScrollState())
                                     .padding(6.dp),
                             ) {
                                 ToolButtons(
@@ -342,17 +342,17 @@ fun EditorScreen(
                             )
                             Column(
                                 Modifier.width(310.dp).fillMaxHeight()
-                                    .background(CutColors.surface)
+                                    .background(CutColors.surface, CutPanelShape)
                                     .verticalScroll(rememberScrollState())
                                     .padding(14.dp),
                             ) {
                                 selected?.let {
-                                    Text("선택 클립", color = CutColors.secondaryText, fontSize = 12.sp)
+                                    Text("선택 클립", color = CutColors.secondaryAccent, fontSize = 12.sp)
                                     Spacer(Modifier.height(8.dp))
                                     Text("클립 " + (model.timeline.clips.indexOf(it) + 1),
                                         color = CutColors.primaryText,
                                         fontWeight = FontWeight.SemiBold)
-                                    Text(formatTime(it.durationMs), color = CutColors.secondaryText)
+                                    Text(formatTime(it.durationMs), color = CutColors.accent)
                                 }
                                 Spacer(Modifier.height(12.dp))
                                 ToolButtons(
@@ -421,7 +421,7 @@ fun EditorScreen(
                                 model::finishTrim,
                                 model::setTrimInputValidity,
                                 modifier = Modifier.fillMaxWidth()
-                                    .background(CutColors.surface)
+                                    .background(CutColors.surface, CutPanelShape)
                                     .padding(horizontal = 14.dp),
                             )
                         }
@@ -449,14 +449,14 @@ fun EditorScreen(
                         model.deleteSelected()
                         showDelete = false
                     },
-                    shape = RoundedCornerShape(4.dp),
+                    shape = CutShape,
                 ) { Text("삭제") }
             },
             dismissButton = {
                 TextButton(onClick = { showDelete = false }, shape = CutShape) { Text("취소") }
             },
             containerColor = CutColors.panel,
-            shape = RoundedCornerShape(4.dp),
+            shape = CutPanelShape,
         )
     }
 
@@ -471,12 +471,12 @@ fun EditorScreen(
                     OutlinedButton(
                         enabled = index > 0,
                         onClick = { model.moveSelected(-1); showMove = false },
-                        shape = RoundedCornerShape(4.dp),
+                        shape = CutShape,
                     ) { Text("앞으로") }
                     Button(
                         enabled = index >= 0 && index < model.timeline.clips.lastIndex,
                         onClick = { model.moveSelected(1); showMove = false },
-                        shape = RoundedCornerShape(4.dp),
+                        shape = CutShape,
                     ) { Text("뒤로") }
                 }
             },
@@ -484,7 +484,7 @@ fun EditorScreen(
                 TextButton(onClick = { showMove = false }, shape = CutShape) { Text("닫기") }
             },
             containerColor = CutColors.panel,
-            shape = RoundedCornerShape(4.dp),
+            shape = CutPanelShape,
         )
     }
 }
@@ -501,7 +501,8 @@ private fun EditorHeader(
     canSave: Boolean,
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 8.dp),
+        modifier = Modifier.fillMaxWidth().height(56.dp)
+            .background(CutColors.background).padding(horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
@@ -518,9 +519,13 @@ private fun EditorHeader(
         IconButton(onClick = onAdd, modifier = Modifier.size(48.dp)) {
             Icon(Icons.Outlined.Add, contentDescription = "영상 추가")
         }
-        TextButton(onClick = onSave, enabled = canSave,
-            modifier = Modifier.heightIn(min = 48.dp), shape = CutShape) {
-            Text("저장", color = if (canSave) CutColors.accent else CutColors.mutedText,
+        Button(onClick = onSave, enabled = canSave,
+            modifier = Modifier.heightIn(min = 48.dp), shape = CutShape,
+            contentPadding = PaddingValues(horizontal = 14.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = CutColors.accent, contentColor = CutColors.onAccent,
+            )) {
+            Text("저장",
                 fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
         }
     }
@@ -540,7 +545,9 @@ private fun PreviewPanel(
 ) {
     Column(modifier.background(CutColors.background)) {
         Box(
-            modifier = Modifier.weight(1f).fillMaxWidth().background(Color.Black),
+            modifier = Modifier.weight(1f).fillMaxWidth()
+                .clip(CutPanelShape).background(Color.Black)
+                .border(1.dp, CutColors.border, CutPanelShape),
             contentAlignment = Alignment.Center,
         ) {
             AndroidView(
@@ -559,12 +566,12 @@ private fun PreviewPanel(
                 IconButton(
                     onClick = onPlay,
                     modifier = Modifier.size(if (compact) 54.dp else 72.dp)
-                        .background(Color.Black.copy(alpha = 0.55f), CircleShape),
+                        .background(CutColors.accent, CircleShape),
                 ) {
                     Icon(
                         Icons.Outlined.PlayArrow,
                         contentDescription = "재생",
-                        tint = Color.White,
+                        tint = CutColors.onAccent,
                         modifier = Modifier.size(if (compact) 32.dp else 42.dp),
                     )
                 }
@@ -581,7 +588,7 @@ private fun PreviewPanel(
                     contentDescription = if (playing) "일시정지" else "재생",
                 )
             }
-            if (!compact) Text(formatTime(currentPosition), fontSize = 12.sp)
+            if (!compact) Text(formatTime(currentPosition), color = CutColors.accent, fontSize = 12.sp)
             Slider(
                 value = currentPosition.toFloat().coerceIn(0f, timelineDuration.coerceAtLeast(1L).toFloat()),
                 onValueChange = { onSeek(it.roundToLong()) },
@@ -615,8 +622,9 @@ private fun ToolButtons(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(54.dp)
-                        .border(1.dp, if (active) CutColors.accent else CutColors.border)
-                        .background(CutColors.panel)
+                        .background(if (active) CutColors.accentMuted else CutColors.panel, CutShape)
+                        .border(1.dp, if (active) CutColors.accent else CutColors.border, CutShape)
+                        .clip(CutShape)
                         .clickable(enabled = enabled) { onAction(item.key) }
                         .padding(horizontal = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -653,8 +661,9 @@ private fun ToolButtons(
                 val enabled = selected != null && (item.key != "split" || model.canSplitSelected)
                 Column(
                     modifier = Modifier.width(76.dp).height(78.dp)
-                        .border(1.dp, if (active) CutColors.accent else CutColors.border)
-                        .background(CutColors.surface)
+                        .background(if (active) CutColors.accentMuted else CutColors.surface, CutShape)
+                        .border(1.dp, if (active) CutColors.accent else CutColors.border, CutShape)
+                        .clip(CutShape)
                         .clickable(enabled = enabled) { onAction(item.key) },
                     verticalArrangement = Arrangement.Center,
                     horizontalAlignment = Alignment.CenterHorizontally,
@@ -701,8 +710,8 @@ private fun TrimEditor(
     }
     val valid = TrimInput.selectedRange(startText, endText, clip.sourceDurationMs) != null
     SideEffect { onValidityChange(valid) }
-    Column(modifier.padding(vertical = 8.dp)) {
-        Text("자르기 범위", color = CutColors.primaryText, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+    Column(modifier.background(CutColors.surface, CutPanelShape).padding(vertical = 8.dp)) {
+        Text("자르기 범위", color = CutColors.accent, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
         RangeSlider(
             value = clip.startMs.toFloat()..clip.endMs.toFloat(),
             onValueChange = { range ->
@@ -771,6 +780,7 @@ private fun TrimTimeField(
         isError = isError,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
         singleLine = true,
+        shape = CutShape,
         modifier = modifier,
     )
 }

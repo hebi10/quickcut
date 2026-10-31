@@ -2,7 +2,9 @@ package com.hebi.quickcut.ui
 
 import android.view.ViewGroup
 import androidx.annotation.OptIn
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -19,12 +21,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.VolumeOff
+import androidx.compose.material.icons.outlined.VolumeUp
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -42,6 +46,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -216,7 +221,7 @@ fun QuickTrimScreen(
         val compactHeader = maxWidth < 400.dp || (fontScale >= 1.5f && maxWidth < 600.dp)
         val sideBySide = maxWidth >= 480.dp && maxWidth > maxHeight
         Column(Modifier.fillMaxSize()) {
-            Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
+            Column(Modifier.fillMaxWidth().background(CutColors.background).padding(horizontal = 8.dp)) {
                 Row(
                     Modifier.fillMaxWidth().heightIn(min = 56.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -269,7 +274,9 @@ fun QuickTrimScreen(
 
 @Composable
 private fun DetailedEditButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
-    OutlinedButton(onClick = onClick, modifier = modifier.heightIn(min = 48.dp), shape = CutShape) {
+    OutlinedButton(onClick = onClick, modifier = modifier.heightIn(min = 48.dp),
+        shape = CutShape, border = BorderStroke(1.dp, CutColors.border),
+        colors = ButtonDefaults.outlinedButtonColors(contentColor = CutColors.secondaryText)) {
         Icon(Icons.Outlined.Settings, contentDescription = null, modifier = Modifier.size(18.dp))
         Spacer(Modifier.width(6.dp))
         Text("상세 편집")
@@ -279,7 +286,8 @@ private fun DetailedEditButton(onClick: () -> Unit, modifier: Modifier = Modifie
 @OptIn(UnstableApi::class)
 @Composable
 private fun QuickPreview(player: ExoPlayer, modifier: Modifier) {
-    Box(modifier.background(Color.Black), contentAlignment = Alignment.Center) {
+    Box(modifier.clip(CutPanelShape).background(Color.Black)
+        .border(1.dp, CutColors.border, CutPanelShape), contentAlignment = Alignment.Center) {
         AndroidView(
             factory = { ctx ->
                 PlayerView(ctx).apply {
@@ -311,18 +319,22 @@ private fun QuickTrimControls(
     onSaveOptions: () -> Unit,
     modifier: Modifier,
 ) {
-    Column(modifier) {
+    Column(modifier.background(CutColors.background)) {
         Column(
             modifier = Modifier.fillMaxWidth().weight(1f)
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Column(
+                    Modifier.fillMaxWidth().background(CutColors.accentMuted, CutShape)
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
                     Text("원본 " + formatTime(clip.sourceDurationMs),
                         color = CutColors.secondaryText, fontSize = 13.sp)
                     Text("결과 " + formatTime(clip.durationMs),
-                        color = CutColors.primaryText, fontSize = 13.sp,
+                        color = CutColors.accent, fontSize = 15.sp,
                         fontWeight = FontWeight.SemiBold)
                 }
                 TrimSecondsRow(
@@ -352,7 +364,9 @@ private fun QuickTrimControls(
                         color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
                 }
                 Column(
-                    Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp),
+                    Modifier.fillMaxWidth().background(CutColors.surface, CutPanelShape)
+                        .border(1.dp, CutColors.border, CutPanelShape).padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Text(if (clip.muted) "원본 소리: 음소거" else "원본 소리: 유지",
                         color = CutColors.secondaryText, fontSize = 13.sp)
@@ -360,7 +374,15 @@ private fun QuickTrimControls(
                         modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
                         onClick = onToggleMute,
                         shape = CutShape,
+                        border = BorderStroke(1.dp, CutColors.border),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = CutColors.primaryText,
+                            containerColor = CutColors.panel,
+                        ),
                     ) {
+                        Icon(if (clip.muted) Icons.Outlined.VolumeUp else Icons.Outlined.VolumeOff,
+                            contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
                         Text(if (clip.muted) "소리 켜기" else "음소거")
                     }
                 }
@@ -372,7 +394,7 @@ private fun QuickTrimControls(
                     onClick = onSaveOptions,
                     enabled = canSave,
                     modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                    shape = RoundedCornerShape(4.dp),
+                    shape = CutShape,
                 ) { Text("저장 옵션 · 날짜 및 원본 처리") }
         }
         Button(
@@ -380,7 +402,10 @@ private fun QuickTrimControls(
                 enabled = canSave,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
                     .heightIn(min = 52.dp),
-                shape = RoundedCornerShape(4.dp),
+                shape = CutShape,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = CutColors.accent, contentColor = CutColors.onAccent,
+                ),
             ) {
                 Text("영상 저장", fontWeight = FontWeight.SemiBold)
         }
@@ -394,7 +419,9 @@ private fun TrimSecondsRow(
     onValueChange: (String) -> Unit,
     onStep: (Long) -> Unit,
 ) {
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    Column(Modifier.fillMaxWidth().background(CutColors.surface, CutPanelShape)
+        .border(1.dp, CutColors.border, CutPanelShape).padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(label, color = CutColors.primaryText, fontSize = 14.sp,
             modifier = Modifier.fillMaxWidth())
         Row(
@@ -408,7 +435,11 @@ private fun TrimSecondsRow(
             modifier = Modifier.size(48.dp).semantics {
                 contentDescription = "$label 1초 감소"
             },
-            shape = RoundedCornerShape(4.dp),
+            shape = CutShape,
+            border = BorderStroke(1.dp, CutColors.border),
+            colors = ButtonDefaults.outlinedButtonColors(
+                containerColor = CutColors.panel, contentColor = CutColors.accent,
+            ),
         ) {
             Text("−")
         }
@@ -418,6 +449,7 @@ private fun TrimSecondsRow(
             label = { Text("초") },
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+            shape = CutShape,
             modifier = Modifier.weight(1f),
         )
         OutlinedButton(
@@ -426,7 +458,11 @@ private fun TrimSecondsRow(
             modifier = Modifier.size(48.dp).semantics {
                 contentDescription = "$label 1초 증가"
             },
-            shape = RoundedCornerShape(4.dp),
+            shape = CutShape,
+            border = BorderStroke(1.dp, CutColors.border),
+            colors = ButtonDefaults.outlinedButtonColors(
+                containerColor = CutColors.panel, contentColor = CutColors.accent,
+            ),
         ) {
             Text("+")
         }

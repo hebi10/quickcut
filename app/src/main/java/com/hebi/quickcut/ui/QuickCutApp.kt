@@ -7,6 +7,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -51,6 +52,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -480,7 +482,7 @@ fun QuickCutApp(
                 TextButton(onClick = model::dismissError, shape = CutShape) { Text("확인") }
             },
             containerColor = CutColors.panel,
-            shape = RoundedCornerShape(4.dp),
+            shape = CutShape,
         )
     }
 
@@ -492,14 +494,14 @@ fun QuickCutApp(
             confirmButton = {
                 Button(
                     onClick = model::discardEditing,
-                    shape = RoundedCornerShape(4.dp),
+                    shape = CutShape,
                 ) { Text("나가기") }
             },
             dismissButton = {
                 TextButton(onClick = model::hideExitConfirmation, shape = CutShape) { Text("계속 편집") }
             },
             containerColor = CutColors.panel,
-            shape = RoundedCornerShape(4.dp),
+            shape = CutShape,
         )
     }
 }
@@ -516,81 +518,12 @@ private fun StartScreen(
     onPreferences: () -> Unit,
     onLicenses: () -> Unit,
 ) {
-    Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
-            .padding(20.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Column(
-            modifier = Modifier.widthIn(max = 480.dp).fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            Text(
-                "QuickCut",
-                color = CutColors.primaryText,
-                fontSize = 26.sp,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Text("필요한 구간만 빠르게 잘라 저장하세요.",
-                color = CutColors.secondaryText)
-            ExportDiagnosticButton()
-            Column(
-                modifier = Modifier.fillMaxWidth()
-                    .background(CutColors.surface).padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Row(
-                    Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text("마지막 사용 설정", color = CutColors.primaryText,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.weight(1f))
-                    TextButton(onClick = onPreferences, shape = CutShape) { Text("설정 변경") }
-                }
-                Text(
-                    "앞 " + (quickSettings.leadingMs / 1_000.0) +
-                        "초 삭제 · 뒤 " + (quickSettings.trailingMs / 1_000.0) + "초 삭제",
-                    color = CutColors.primaryText,
-                )
-                Text(
-                    (if (quickSettings.muteAudio) "음소거" else "소리 유지") +
-                        " · " + (if (dateMode == SaveDateMode.CURRENT)
-                            "현재 날짜 저장" else "원본 날짜 유지"),
-                    color = CutColors.secondaryText,
-                    fontSize = 13.sp,
-                )
-            }
-            Button(
-                onClick = onQuick,
-                modifier = Modifier.fillMaxWidth().height(56.dp),
-                shape = RoundedCornerShape(4.dp),
-            ) {
-                Text("빠른 자르기 · 영상 1개", fontSize = 16.sp,
-                    fontWeight = FontWeight.SemiBold)
-            }
-            OutlinedButton(
-                onClick = onBatch,
-                modifier = Modifier.fillMaxWidth().height(54.dp),
-                shape = RoundedCornerShape(4.dp),
-            ) { Text("일괄 편집 · 여러 영상") }
-            TextButton(
-                onClick = onSelect,
-                modifier = Modifier.fillMaxWidth().height(48.dp),
-                shape = CutShape,
-            ) { Text("상세 편집 (분할·연결·순서 변경)") }
-            if (canRestore) {
-                OutlinedButton(
-                    onClick = onRestore,
-                    modifier = Modifier.fillMaxWidth().height(52.dp),
-                    shape = RoundedCornerShape(4.dp),
-                ) { Text("이전 편집 이어서 진행") }
-            }
-            TextButton(onClick = onLicenses, shape = CutShape) {
-                Text("오픈소스 라이선스", color = CutColors.secondaryText)
-            }
-        }
-    }
+    StudioStartScreen(
+        onQuick = onQuick, onSelect = onSelect, onBatch = onBatch,
+        canRestore = canRestore, onRestore = onRestore,
+        quickSettings = quickSettings, dateMode = dateMode,
+        onPreferences = onPreferences, onLicenses = onLicenses,
+    )
 }
 
 @Composable
@@ -674,7 +607,7 @@ private fun LastSettingsDialog(
                     onDismiss()
                 },
                 enabled = head != null && tail != null,
-                shape = RoundedCornerShape(4.dp),
+                shape = CutShape,
             ) { Text("설정 저장") }
         },
         dismissButton = {
@@ -697,6 +630,8 @@ internal fun CenterStatus(
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        StudioBrand()
+        Spacer(Modifier.height(24.dp))
         Text(title, color = CutColors.primaryText, fontSize = 26.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(12.dp))
         Text(subtitle, color = CutColors.secondaryText)
@@ -704,7 +639,8 @@ internal fun CenterStatus(
         if (progress == null) {
             CircularProgressIndicator(modifier = Modifier.size(112.dp))
         } else {
-            Box(contentAlignment = Alignment.Center) {
+            Box(contentAlignment = Alignment.Center,
+                modifier = Modifier.background(CutColors.surface, RoundedCornerShape(80.dp)).padding(16.dp)) {
                 CircularProgressIndicator(
                     progress = { progress / 100f },
                     modifier = Modifier.size(132.dp),
@@ -723,8 +659,8 @@ internal fun CenterStatus(
             Spacer(Modifier.height(48.dp))
             OutlinedButton(
                 onClick = onCancel,
-                shape = RoundedCornerShape(4.dp),
-                modifier = Modifier.widthIn(max = 420.dp).fillMaxWidth().height(52.dp),
+                shape = CutShape,
+                modifier = Modifier.widthIn(max = 420.dp).fillMaxWidth().heightIn(min = 52.dp),
             ) { Text("취소") }
         }
     }
@@ -751,7 +687,8 @@ private fun CompletedScreen(
             Icons.Outlined.CheckCircleOutline,
             contentDescription = null,
             tint = CutColors.accent,
-            modifier = Modifier.size(80.dp),
+            modifier = Modifier.background(CutColors.accentMuted, CutPanelShape)
+                .padding(18.dp).size(56.dp),
         )
         Spacer(Modifier.height(16.dp))
         Text("저장 완료", color = CutColors.primaryText, fontSize = 28.sp, fontWeight = FontWeight.SemiBold)
@@ -767,7 +704,8 @@ private fun CompletedScreen(
             ClipThumbnail(
                 uri = videoUri,
                 timeMs = 0L,
-                modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth().height(210.dp),
+                modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth().height(210.dp)
+                    .clip(CutPanelShape).border(1.dp, CutColors.border, CutPanelShape),
             )
         }
         if (originalAction != OriginalAction.KEEP) {
@@ -792,7 +730,7 @@ private fun CompletedScreen(
                 OutlinedButton(
                     onClick = onRetryOriginalAction,
                     modifier = Modifier.height(48.dp),
-                    shape = RoundedCornerShape(4.dp),
+                    shape = CutShape,
                 ) { Text("원본 " + actionLabel + " 다시 요청") }
             }
         }
@@ -803,13 +741,13 @@ private fun CompletedScreen(
         ) {
             Button(
                 onClick = onOpen,
-                modifier = Modifier.fillMaxWidth().height(52.dp),
-                shape = RoundedCornerShape(4.dp),
+                modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
+                shape = CutShape,
             ) { Text("갤러리에서 열기", fontWeight = FontWeight.SemiBold) }
             OutlinedButton(
                 onClick = onNew,
-                modifier = Modifier.fillMaxWidth().height(52.dp),
-                shape = RoundedCornerShape(4.dp),
+                modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
+                shape = CutShape,
             ) { Text("새 영상 편집") }
         }
     }

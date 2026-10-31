@@ -172,6 +172,7 @@ jobs:
             quickcut-start.png
             quickcut-tablet-start.png
             quickcut-fast-review.png
+            quickcut-design-review/
           if-no-files-found: ignore
       - name: Upload instrumentation test results
         if: always()

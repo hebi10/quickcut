@@ -1,19 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="108dp"
-    android:height="108dp"
-    android:viewportWidth="108"
-    android:viewportHeight="108">
-    <path
-        android:fillColor="#F4F4F5"
-        android:pathData="M27,30H81V78H27Z" />
-    <path
-        android:fillColor="#151619"
-        android:pathData="M34,37H74V71H34Z" />
-    <path
-        android:fillColor="#3F8BFF"
-        android:pathData="M47,43L47,65L65,54Z" />
-    <path
-        android:fillColor="#151619"
-        android:pathData="M29,39H35V45H29ZM29,51H35V57H29ZM29,63H35V69H29ZM73,39H79V45H73ZM73,51H79V57H73ZM73,63H79V69H73Z" />
-</vector>
+<bitmap xmlns:android="http://schemas.android.com/apk/res/android"
+    android:src="@drawable/quickcut_launcher_art"
+    android:gravity="fill"
+    android:filter="true" />

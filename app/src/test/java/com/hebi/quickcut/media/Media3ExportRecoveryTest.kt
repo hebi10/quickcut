@@ -110,7 +110,9 @@ class Media3ExportRecoveryTest {
             }
             fail("Failed cleanup must escape")
         } catch (error: ExportAttemptCleanupException) {
-            assertSame(cleanup, error.cause)
+            // Coroutine stacktrace recovery can copy IOException and retain the original as its cause.
+            assertTrue("The original cleanup failure must remain in the bounded cause chain",
+                generateSequence(error.cause) { it.cause }.take(8).any { it === cleanup })
             assertArrayEquals(arrayOf(codecFailure), error.suppressed)
         }
         assertEquals(1, attempts)

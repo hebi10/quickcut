@@ -1079,6 +1079,16 @@ impl Judge {
         }
     }
 
+    /// Admit every possible result of the next feed before its infallible
+    /// pushes. Each open entry can finish once, and the current key adds one.
+    pub(crate) fn reserve(&mut self, budget: &crate::analysis_budget::AnalysisBudget) -> anyhow::Result<()> {
+        if !self.on { return Ok(()); }
+        budget.reserve(&mut self.done, self.open.len() + 1)?;
+        // feed pushes at most one entry before enforcing the fixed OPEN cap.
+        budget.reserve(&mut self.open, 1)?;
+        Ok(())
+    }
+
     /// The next packet of the picture stream. `id` names an entry point
     /// (`key`) in what is answered; `pts` is on the same clock the caller
     /// decides leading pictures on, `None` where the packet has none.

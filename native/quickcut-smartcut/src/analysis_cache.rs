@@ -4,8 +4,19 @@
 use crate::{check_source, display::Display, packet_inspection::InspectingScan, Callbacks, PacketFacts};
 use crate::decline::{explain, Reason};
 use anyhow::{ensure, Result};
-use smartcut_core::Source;
+use smartcut_core::{Source, analysis_budget::AnalysisBudget};
 use std::{collections::VecDeque, mem::size_of, sync::{Arc, Mutex, OnceLock}};
+
+// 64 MiB of requested frame-dependent metadata allocations per analysis/bind,
+// including cumulative replacement capacities and the Source duplicate. At
+// 30 fps, two hours is 216,000 pictures: PacketView (~40 B), shown (8 B), and
+// picture times (8 B) need ~28 MiB with geometric growth charges, leaving room
+// for IDRs, access/leading indices and the bound copy. Pathological all-IDR or
+// high-rate sources reach the cap sooner and use the explicitly allowed exact
+// route. The separate completed cache retains at most another 16 MiB.
+// FFmpeg demux/codec buffers and concurrent caller leases are not process-RSS
+// guarantees; this bound specifically prevents unbounded index metadata growth.
+pub(crate) const MAX_WORKING_BYTES: usize = 64 * 1024 * 1024;
 
 const MAX_ENTRIES: usize = 4;
 const MAX_RETAINED_BYTES: usize = 16 * 1024 * 1024;
@@ -55,13 +66,8 @@ impl AnalyzedSource {
         Self { source, packets, display }
     }
 
-    fn bind(&self, input: &str) -> Source {
-        let mut source = self.source.clone();
-        source.path = input.to_owned();
-        source.input.spec = input.to_owned();
-        source.input.url = input.to_owned();
-        source.input.file = input.into();
-        source
+    fn bind(&self, input: &str, budget: &AnalysisBudget) -> Result<Source> {
+        crate::source_binding::bind(&self.source, input, budget)
     }
 
     /// Count allocated capacities, including nested access-point/audio data.
@@ -131,6 +137,9 @@ impl AnalysisCache {
         while self.entries.len() >= self.max_entries || self.bytes > self.max_bytes - bytes {
             if let Some(entry) = self.entries.pop_front() { self.bytes -= entry.bytes; }
         }
+        // Caching is optional; never turn allocator pressure into a process
+        // abort after successful analysis.
+        if self.entries.try_reserve(1).is_err() { return; }
         self.bytes += bytes;
         self.entries.push_back(CacheEntry { identity, analysis, bytes });
     }
@@ -164,11 +173,17 @@ pub(crate) fn load(input: &str, callbacks: &dyn Callbacks,
 
 fn load_with_cache(input: &str, callbacks: &dyn Callbacks,
     progress: &(dyn Fn(i32) + Sync), store: &Mutex<AnalysisCache>) -> Result<AnalysisLease> {
+    let budget = AnalysisBudget::new(MAX_WORKING_BYTES);
+    load_with_budget(input, callbacks, progress, store, &budget)
+}
+
+fn load_with_budget(input: &str, callbacks: &dyn Callbacks,
+    progress: &(dyn Fn(i32) + Sync), store: &Mutex<AnalysisCache>, budget: &AnalysisBudget) -> Result<AnalysisLease> {
     ensure!(!callbacks.is_cancelled(), "cancelled");
     let identity = explain(SourceIdentity::read(input), Reason::SourceUnreadable)?;
     let cached = store.lock().unwrap_or_else(|p| p.into_inner()).get(&identity);
     if let Some(analysis) = cached {
-        let source = analysis.bind(input);
+        let source = analysis.bind(input, budget)?;
         let lease = AnalysisLease { identity, analysis, source };
         progress(100);
         lease.verify(input, callbacks)?;
@@ -178,7 +193,7 @@ fn load_with_cache(input: &str, callbacks: &dyn Callbacks,
     ensure!(!callbacks.is_cancelled(), "cancelled");
     let stopped = || callbacks.is_cancelled();
     let scanning = |value: f64| progress((value * 95.0).clamp(0.0, 95.0) as i32);
-    let scan = InspectingScan { callbacks, facts: std::cell::RefCell::new(None) };
+    let scan = InspectingScan { callbacks, budget, facts: std::cell::RefCell::new(None) };
     let source = explain(smartcut_core::scan_stoppable(input, &scan,
         Some(&scanning), Some(&stopped)), Reason::SourceUnreadable)?;
     // Range/audio rules remain per-operation. The completed index and payload
@@ -187,7 +202,7 @@ fn load_with_cache(input: &str, callbacks: &dyn Callbacks,
     let packets = scan.facts.into_inner().ok_or_else(|| anyhow::anyhow!("missing packet inspection"))?;
     let display = explain(Display::read(input), Reason::Rotation)?;
     let analysis = Arc::new(AnalyzedSource::new(source, packets, display));
-    let source = analysis.bind(input);
+    let source = analysis.bind(input, budget)?;
     let lease = AnalysisLease { identity, analysis, source };
     // A callback can cancel even at the end. Insert only after it returns and
     // identity/read completion have all been rechecked.

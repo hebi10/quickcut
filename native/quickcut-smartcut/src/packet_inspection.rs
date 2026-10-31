@@ -3,17 +3,19 @@
 //! replaced by container tables or keyframe flags.
 use super::*;
 use std::cell::RefCell;
+use smartcut_core::analysis_budget::AnalysisBudget;
 
 pub(crate) struct InspectingScan<'a> {
     pub callbacks: &'a dyn Callbacks,
+    pub budget: &'a AnalysisBudget,
     pub facts: RefCell<Option<PacketFacts>>,
 }
 impl smartcut_core::index::IndexSource for InspectingScan<'_> {
     fn name(&self) -> &'static str { "inspected packet scan" }
     fn build(&self, input: smartcut_core::index::IndexInput) -> Result<smartcut_core::index::Index> {
-        let mut inspector = PacketInspector::new(input.video, input.start_time, &input.ictx, self.callbacks)?;
-        let index = smartcut_core::index::walk_observed(input.video, input.start_time,
-            input.ictx, input.on, |packet| explain(inspector.observe(packet), Reason::PacketStructure), input.stop)?;
+        let mut inspector = PacketInspector::new(input.video, input.start_time, &input.ictx, self.callbacks, self.budget)?;
+        let index = smartcut_core::index::walk_observed_budgeted(input.video, input.start_time,
+            input.ictx, input.on, |packet| explain(inspector.observe(packet), Reason::PacketStructure), input.stop, self.budget)?;
         ensure_fast!(index.whole && index.leading_known, SourceUnreadable, "incomplete source index");
         *self.facts.borrow_mut() = Some(inspector.finish()?);
         Ok(index)
@@ -24,6 +26,7 @@ struct PacketInspector<'a> {
     video: &'a smartcut_core::VideoInfo,
     start_time: f64,
     callbacks: &'a dyn Callbacks,
+    budget: &'a AnalysisBudget,
     static_hdr: bool,
     is_hevc: bool,
     length_width: usize,
@@ -36,7 +39,7 @@ struct PacketInspector<'a> {
 }
 impl<'a> PacketInspector<'a> {
     fn new(video: &'a smartcut_core::VideoInfo, start_time: f64,
-        input: &ff::format::context::Input, callbacks: &'a dyn Callbacks) -> Result<Self> {
+        input: &ff::format::context::Input, callbacks: &'a dyn Callbacks, budget: &'a AnalysisBudget) -> Result<Self> {
         check_video(video)?;
         ensure_fast!(input.format().name().split(',').any(|n| n == "mp4"), Container, "input is not MP4");
         ensure_fast!(input.streams().filter(|s| s.parameters().medium() == ff::media::Type::Video).count() == 1
@@ -69,7 +72,7 @@ impl<'a> PacketInspector<'a> {
             smartcut_core::bitstream::NalFraming::Length(width) => width,
             _ => anyhow::bail!("MP4 AVC length prefixes required"),
         };
-        Ok(Self { video, start_time, callbacks, static_hdr, is_hevc, length_width,
+        Ok(Self { video, start_time, callbacks, budget, static_hdr, is_hevc, length_width,
             original_sets, hdr, clock: PictureClock::new(video.frame_rate, video.time_base),
             picture_times_us: Vec::new(), idr_times_us: Vec::new(), packets: 0 })
     }
@@ -98,6 +101,8 @@ impl<'a> PacketInspector<'a> {
         let at = pts as f64 * self.video.time_base - self.start_time;
         self.clock.add(at)?;
         let at_us = micros(at);
+        self.budget.reserve(&mut self.picture_times_us, 1)?;
+        if idr { self.budget.reserve(&mut self.idr_times_us, 1)?; }
         self.picture_times_us.push(at_us);
         if idr { self.idr_times_us.push(at_us); }
         Ok(())
@@ -109,8 +114,8 @@ impl<'a> PacketInspector<'a> {
         ensure!(!self.callbacks.is_cancelled(), "cancelled");
         self.picture_times_us.sort_unstable();
         self.idr_times_us.sort_unstable();
-        Ok(PacketFacts { picture_times_us: self.picture_times_us.into_boxed_slice(),
-            idr_times_us: self.idr_times_us.into_boxed_slice() })
+        Ok(PacketFacts { picture_times_us: self.picture_times_us,
+            idr_times_us: self.idr_times_us })
     }
 }
 
@@ -142,7 +147,8 @@ mod tests {
             fn name(&self) -> &'static str { "test observed walk" }
             fn build(&self, input: smartcut_core::index::IndexInput) -> Result<smartcut_core::index::Index> {
                 let callbacks = Observer;
-                let mut inspector = PacketInspector::new(input.video, input.start_time, &input.ictx, &callbacks)?;
+                let budget = AnalysisBudget::new(crate::analysis_cache::MAX_WORKING_BYTES);
+                let mut inspector = PacketInspector::new(input.video, input.start_time, &input.ictx, &callbacks, &budget)?;
                 let index = smartcut_core::index::walk_observed(input.video, input.start_time,
                     input.ictx, input.on, |packet| {
                         self.observed.borrow_mut().push((packet.stream(), packet.pts(), packet.size()));

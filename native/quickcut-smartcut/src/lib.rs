@@ -26,6 +26,7 @@ mod hevc_hdr;
 mod hevc_splice;
 mod decline;
 mod analysis_cache;
+mod source_binding;
 mod packet_inspection;
 mod candidates;
 use decline::{explain, Reason};
@@ -174,12 +175,12 @@ fn check_source(source: &Source, end_us: i64, muted: bool) -> Result<()> {
 /// Facts from a complete successful payload/clock inspection. Retain actual
 /// timestamps so fractional frame rates and repeated ranges count precisely.
 struct PacketFacts {
-    picture_times_us: Box<[i64]>,
-    idr_times_us: Box<[i64]>,
+    picture_times_us: Vec<i64>,
+    idr_times_us: Vec<i64>,
 }
 impl PacketFacts {
     fn retained_bytes(&self) -> usize {
-        (self.picture_times_us.len() + self.idr_times_us.len()) * std::mem::size_of::<i64>()
+        (self.picture_times_us.capacity() + self.idr_times_us.capacity()) * std::mem::size_of::<i64>()
     }
 
     fn check_plans(&self, plans: &[RangePlan]) -> Result<u64> {

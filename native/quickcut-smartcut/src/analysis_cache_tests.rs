@@ -236,3 +236,56 @@ fn cancellation_during_packet_inspection_never_publishes_partial_facts() {
     assert!(!progress.load(Ordering::Relaxed), "cancellation must stop before the final completion callback");
     assert!(store.lock().unwrap().entries.is_empty());
 }
+
+#[test]
+fn working_budget_declines_during_real_scan_and_never_caches_partial_facts() {
+    let fixture = Fixture::new("working-budget");
+    let store = Mutex::new(AnalysisCache::new(MAX_ENTRIES, MAX_RETAINED_BYTES));
+    let observer = Observer::default();
+    let budget = smartcut_core::analysis_budget::AnalysisBudget::new(4096);
+    let error = match load_with_budget(&fixture.input, &observer, &|_| {}, &store, &budget) {
+        Ok(_) => panic!("small working budget must decline before analysis completes"),
+        Err(error) => error,
+    };
+    assert_eq!(crate::decline::code(&error), 22);
+    assert!(budget.charged() > 0, "must exercise real admission, not an upfront fixture-size check");
+    assert!(budget.charged() <= 4096);
+    assert!(store.lock().unwrap().entries.is_empty());
+    let retry = load_with_cache(&fixture.input, &observer, &|_| {}, &store).unwrap();
+    assert_eq!(retry.analysis.packets.picture_times_us.len(), 180);
+}
+
+#[test]
+fn cached_source_binding_also_requires_fallible_budget_admission() {
+    let fixture = Fixture::new("bind-budget");
+    let store = Mutex::new(AnalysisCache::new(MAX_ENTRIES, MAX_RETAINED_BYTES));
+    let observer = Observer::default();
+    let first = load_with_cache(&fixture.input, &observer, &|_| {}, &store).unwrap();
+    let budget = smartcut_core::analysis_budget::AnalysisBudget::new(1);
+    let error = match load_with_budget(&fixture.input, &observer, &|_| {}, &store, &budget) {
+        Ok(_) => panic!("cached source clone must be budgeted too"),
+        Err(error) => error,
+    };
+    assert_eq!(crate::decline::code(&error), 22);
+    assert_eq!(budget.charged(), 0);
+    let retry = load_with_cache(&fixture.input, &observer, &|_| {}, &store).unwrap();
+    assert!(Arc::ptr_eq(&first.analysis, &retry.analysis));
+}
+
+#[test]
+fn source_binding_counts_nested_indices_without_changing_original_analysis() {
+    let fixture = Fixture::new("nested-bind-budget");
+    let store = Mutex::new(AnalysisCache::new(MAX_ENTRIES, MAX_RETAINED_BYTES));
+    let mut loaded = load_with_cache(&fixture.input, &Observer::default(), &|_| {}, &store).unwrap();
+    loaded.source.points[0].lead_indices = vec![1, 2, 3, 4];
+    let point_storage = loaded.source.points.len().max(4) * size_of::<smartcut_core::AccessPoint>();
+    let budget = AnalysisBudget::new(point_storage);
+    let error = crate::source_binding::bind(&loaded.source, &fixture.input, &budget).unwrap_err();
+    assert_eq!(crate::decline::code(&error), 22);
+    assert_eq!(budget.charged(), point_storage);
+    assert_eq!(loaded.source.points[0].lead_indices, [1, 2, 3, 4]);
+    let budget = AnalysisBudget::new(MAX_WORKING_BYTES);
+    let bound = crate::source_binding::bind(&loaded.source, &fixture.input, &budget).unwrap();
+    assert_eq!(bound.points[0].lead_indices, [1, 2, 3, 4]);
+    assert_eq!(bound.path, fixture.input);
+}

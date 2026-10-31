@@ -43,8 +43,8 @@ fn actual_pts_accept_b_frames_but_reject_vfr_duplicate_and_missing_pictures() {
 #[test]
 fn reusable_packet_facts_validate_every_copy_boundary_and_count_repeated_ranges() {
     let facts = PacketFacts { picture_times_us: vec![0, 33_367, 66_733, 100_100,
-        133_467, 166_833, 200_200].into_boxed_slice(),
-        idr_times_us: vec![0, 100_100, 200_200].into_boxed_slice() };
+        133_467, 166_833, 200_200],
+        idr_times_us: vec![0, 100_100, 200_200] };
     let plan = RangePlan { t_in: 0.1001, t_out: 0.2002,
         segments: vec![segment(SegmentKind::Copy, 0.1001, 0.2002)] };
     assert_eq!(facts.check_plans(&[plan.clone(), plan]).unwrap(), 6,

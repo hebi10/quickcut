@@ -10,6 +10,7 @@ use anyhow::{anyhow, Result};
 use ffmpeg_next as ff;
 use crate::input::ReadPackets;
 
+pub mod analysis_budget;
 pub mod aac;
 pub mod adts;
 pub mod arib;

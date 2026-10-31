@@ -18,6 +18,8 @@ import com.hebi.quickcut.media.VideoExporter
 import com.hebi.quickcut.media.SaveDateMode
 import com.hebi.quickcut.media.ExportMode
 import com.hebi.quickcut.media.ExportReport
+import com.hebi.quickcut.media.MediaOperationDiagnostics
+import com.hebi.quickcut.media.ExportStage
 import com.hebi.quickcut.media.ExportDiagnostics
 import com.hebi.quickcut.media.ReencodeRequiredException
 import com.hebi.quickcut.media.OriginalMediaDates
@@ -27,6 +29,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -97,45 +101,153 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         if (page == QuickCutPage.EDITOR) saveSessionSoon()
     }
 
+    var restoreRecoveryNotice by mutableStateOf<String?>(null)
+        private set
+    var hasSourceReconnect by mutableStateOf(false)
+        private set
+    private var reconnectSourceUri: String? = null
+    private val loadGeneration = EditorLoadGeneration()
+    private var importJob: Job? = null
+    private var pageBeforeImport = QuickCutPage.PICKER
+
+    fun dismissRestoreNotice() {
+        restoreRecoveryNotice = null
+    }
+
     fun restoreSavedSession(context: Context) {
         if (page != QuickCutPage.PICKER || isRecoveringExport || hasUnresolvedExport) return
         val old = sessionStore.load() ?: run {
             hasRestorableSession = false
-            reportError("복원 가능한 편집 내용이 없습니다.")
+            hasSourceReconnect = false
+            reconnectSourceUri = null
+            restoreRecoveryNotice = "복원 가능한 편집 내용이 없습니다."
             return
         }
+        loadSavedSession(context, old)
+    }
+
+    fun reconnectSavedSource(context: Context, replacement: Uri) {
+        if (page != QuickCutPage.PICKER || isRecoveringExport || hasUnresolvedExport) return
+        val source = reconnectSourceUri ?: return
+        val old = sessionStore.load() ?: return
+        loadSavedSession(context, old, source to replacement)
+    }
+
+    private fun loadSavedSession(
+        context: Context,
+        old: EditorSessionSnapshot,
+        replacement: Pair<String, Uri>? = null,
+    ) {
+        val appContext = context.applicationContext
+        val token = loadGeneration.begin()
+        pageBeforeImport = QuickCutPage.PICKER
         page = QuickCutPage.IMPORTING
-        viewModelScope.launch {
-            val valid = withContext(Dispatchers.IO) {
-                runCatching {
-                    old.timeline.clips.map { it.uri }.distinct().all { raw ->
-                        val expected = old.timeline.clips.first { it.uri == raw }
-                        val current = MediaReader.metadata(context.applicationContext, Uri.parse(raw))
-                        kotlin.math.abs(current.durationMs - expected.sourceDurationMs) <= 1_500L &&
-                            (!expected.hasAudio || current.hasAudio)
+        val diagnostics = runCatching {
+            MediaOperationDiagnostics.begin(appContext, ExportStage.RESTORING,
+                old.timeline.clips.map { it.uri }.distinct().size)
+        }.getOrNull()
+        importJob = viewModelScope.launch {
+            var outcome = "실패"
+            var diagnosticError: Throwable? = null
+            try {
+                val (candidate, validationError) = withContext(Dispatchers.IO) {
+                    val coroutine = currentCoroutineContext()
+                    fun metadata(raw: String): SavedSourceMetadata {
+                        coroutine.ensureActive()
+                        val meta = MediaReader.metadata(appContext, Uri.parse(raw))
+                        coroutine.ensureActive()
+                        return SavedSourceMetadata(meta.durationMs, meta.hasAudio)
                     }
-                }.getOrDefault(false)
+                    val candidate = if (replacement == null) old else {
+                        val (source, uri) = replacement
+                        val timeline = reconnectSavedTimeline(old.timeline, source, uri.toString(), metadata(uri.toString()))
+                        coroutine.ensureActive()
+                        persistReadPermission(context, uri)
+                        old.copy(timeline = timeline)
+                    }
+                    val validationError = try {
+                        validateSavedTimeline(candidate.timeline, ::metadata)
+                        null
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (error: SavedSourceUnavailableException) {
+                        error
+                    }
+                    candidate to validationError
+                }
+                if (!loadGeneration.isCurrent(token)) return@launch
+                // Commit only a validated replacement, retaining every edit attribute.
+                // A second inaccessible source can then be reconnected independently.
+                if (replacement != null) {
+                    // A replacement that becomes unreadable, or conflicts with another
+                    // clip already using that URI, must not overwrite the saved source.
+                    if (validationError?.sourceUri == replacement.second.toString())
+                        throw IllegalArgumentException("Replacement source validation failed", validationError)
+                    sessionStore.save(candidate)
+                }
+                hasRestorableSession = true
+                if (validationError != null) throw validationError
+                applyRestoredSession(candidate)
+                outcome = "완료"
+            } catch (cancelled: CancellationException) {
+                outcome = "취소"
+                diagnosticError = cancelled
+                throw cancelled
+            } catch (error: Exception) {
+                diagnosticError = error
+                if (loadGeneration.isCurrent(token)) {
+                    if (error is SavedSourceUnavailableException) reconnectSourceUri = error.sourceUri
+                    hasSourceReconnect = reconnectSourceUri != null
+                    page = QuickCutPage.PICKER
+                    restoreRecoveryNotice = runCatching {
+                        MediaOperationDiagnostics.message(ExportStage.RESTORING, error)
+                    }.getOrDefault("이전 영상에 접근할 수 없습니다. 편집 내용은 유지됩니다. 다시 시도하거나 원본 영상을 다시 연결해 주세요.")
+                }
+            } finally {
+                runCatching { diagnostics?.finish(outcome, diagnosticError) }
+                if (loadGeneration.isCurrent(token)) importJob = null
             }
-            if (!valid) {
-                runCatching { sessionStore.clear() }.onSuccess { hasRestorableSession = false }
-                page = QuickCutPage.PICKER
-                reportError("이전 영상에 접근할 수 없어 편집을 복원하지 못했습니다. 영상을 다시 선택해 주세요.")
-                return@launch
-            }
-            isTrimInputValid = true
-            timeline = old.timeline
-            selectedId = old.selectedId?.takeIf { timeline.clipAt(it) != null }
-                ?: timeline.clips.first().id
-            playPositionMs = old.playPositionMs.coerceIn(0L, timeline.totalDurationMs)
-            quickMode = old.quickMode && timeline.clips.size == 1
-            nextId = timeline.clips.maxOf { it.id } + 1L
-            history.clear()
-            activeTrim = null
-            updateHistoryButtons()
-            page = QuickCutPage.EDITOR
-            saveSessionSoon()
         }
     }
+
+    private fun applyRestoredSession(snapshot: EditorSessionSnapshot) {
+        isTrimInputValid = true
+        timeline = snapshot.timeline
+        selectedId = snapshot.selectedId?.takeIf { timeline.clipAt(it) != null }
+            ?: timeline.clips.first().id
+        playPositionMs = snapshot.playPositionMs.coerceIn(0L, timeline.totalDurationMs)
+        quickMode = snapshot.quickMode && timeline.clips.size == 1
+        nextId = timeline.clips.maxOf { it.id } + 1L
+        history.clear()
+        activeTrim = null
+        updateHistoryButtons()
+        restoreRecoveryNotice = null
+        hasSourceReconnect = false
+        reconnectSourceUri = null
+        page = QuickCutPage.EDITOR
+        saveSessionSoon()
+    }
+
+    private fun persistReadPermission(context: Context, uri: Uri) {
+        try {
+            context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        } catch (_: SecurityException) {
+            // Some providers grant only session-scoped access.
+        } catch (_: IllegalArgumentException) {
+            // Persistable access is not available from this provider.
+        }
+    }
+
+    fun cancelImport() {
+        if (page != QuickCutPage.IMPORTING) return
+        // Fence first: a blocking provider can finish after the UI has moved on.
+        loadGeneration.cancel()
+        val cancelledJob = importJob
+        importJob = null
+        page = pageBeforeImport
+        cancelledJob?.cancel()
+    }
+
     var page by mutableStateOf(QuickCutPage.PICKER)
         private set
     var timeline by mutableStateOf(EditTimeline())
@@ -317,25 +429,35 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             isRecoveringExport || hasUnresolvedExport) return
         val previousPage = if (page == QuickCutPage.EDITOR) QuickCutPage.EDITOR else QuickCutPage.PICKER
         val previousPosition = playPositionMs
+        val appContext = context.applicationContext
+        val token = loadGeneration.begin()
+        pageBeforeImport = previousPage
         page = QuickCutPage.IMPORTING
-        viewModelScope.launch {
+        val diagnostics = runCatching {
+            MediaOperationDiagnostics.begin(appContext, ExportStage.IMPORTING, uris.size)
+        }.getOrNull()
+        importJob = viewModelScope.launch {
+            var outcome = "실패"
+            var diagnosticError: Throwable? = null
             try {
                 val results = withContext(Dispatchers.IO) {
                     uris.map { uri ->
-                        runCatching {
-                            try {
-                                context.contentResolver.takePersistableUriPermission(
-                                    uri, Intent.FLAG_GRANT_READ_URI_PERMISSION,
-                                )
-                            } catch (_: SecurityException) {
-                                // Some providers grant only session-scoped access.
-                            } catch (_: IllegalArgumentException) {
-                                // Persistable access is not available from this provider.
-                            }
-                            uri to MediaReader.metadata(context.applicationContext, uri)
+                        currentCoroutineContext().ensureActive()
+                        try {
+                            persistReadPermission(context, uri)
+                            currentCoroutineContext().ensureActive()
+                            val metadata = MediaReader.metadata(appContext, uri)
+                            currentCoroutineContext().ensureActive()
+                            Result.success(uri to metadata)
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (error: Exception) {
+                            Result.failure(error)
                         }
                     }
                 }
+                if (!loadGeneration.isCurrent(token)) return@launch
+                diagnosticError = results.firstNotNullOfOrNull { it.exceptionOrNull() }
                 val valid = results.mapNotNull { it.getOrNull() }
                 if (valid.isEmpty()) {
                     reportError("선택한 영상을 열 수 없습니다. 다른 파일을 선택해 주세요.")
@@ -365,6 +487,9 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                     }
                 }
                 isTrimInputValid = true
+                restoreRecoveryNotice = null
+                hasSourceReconnect = false
+                reconnectSourceUri = null
                 val wasAppending = append
                 if (wasAppending) {
                     recordChange()
@@ -389,12 +514,22 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 page = QuickCutPage.EDITOR
                 saveSessionSoon()
+                outcome = if (diagnosticError == null) "완료" else "실패"
             } catch (cancelled: CancellationException) {
+                outcome = "취소"
+                diagnosticError = cancelled
                 throw cancelled
             } catch (error: Exception) {
-                reportError("영상을 불러올 수 없습니다. " +
-                    (error.localizedMessage ?: "다른 파일을 선택해 주세요."))
-                page = previousPage
+                diagnosticError = error
+                if (loadGeneration.isCurrent(token)) {
+                    reportError(runCatching {
+                        MediaOperationDiagnostics.message(ExportStage.IMPORTING, error)
+                    }.getOrDefault("영상을 불러올 수 없습니다. 다른 파일을 선택해 주세요."))
+                    page = previousPage
+                }
+            } finally {
+                runCatching { diagnostics?.finish(outcome, diagnosticError) }
+                if (loadGeneration.isCurrent(token)) importJob = null
             }
         }
     }
@@ -635,8 +770,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         page = QuickCutPage.COMPLETED
         errorMessage = null
         sessionSaveJob?.cancel()
-        // Publication was already verified. Persistence errors must never escape
-        // onCommitted: that would make GalleryWriter roll back a published video.
+        // Publication was already verified. Keep the completed URI and recovery
+        // handle visible even when recording completion fails.
         try {
             sessionStore.clear()
             hasRestorableSession = false
@@ -709,6 +844,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             reportError("이전 저장 파일 확인을 먼저 완료해 주세요.")
             return
         }
+        cancelImport()
         showExitConfirmation = false
         sessionSaveJob?.cancel()
         try {
@@ -735,6 +871,9 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         originalsFromSavedTimeline = emptyList()
         errorMessage = null
         exportRecoveryNotice = null
+        restoreRecoveryNotice = null
+        hasSourceReconnect = false
+        reconnectSourceUri = null
         page = QuickCutPage.PICKER
     }
 

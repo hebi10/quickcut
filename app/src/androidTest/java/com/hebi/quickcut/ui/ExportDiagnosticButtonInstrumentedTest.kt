@@ -23,7 +23,8 @@ class ExportDiagnosticButtonInstrumentedTest {
             ExportDiagnosticStore.begin(context, EditTimeline()).finish("완료")
         }
         compose.setContent { QuickCutTheme { ExportDiagnosticButton() } }
-        compose.onNodeWithText("최근 저장 진단").performClick()
+        compose.onNodeWithText("최근 작업 진단").performClick()
+        compose.onNodeWithText("편집·저장 진단 기록").assertIsDisplayed()
         compose.onNodeWithText("작업 ${failed.operationId.take(8)}", substring = true)
             .performScrollTo().performClick()
         compose.onNodeWithText("작업 ID: ${failed.operationId}", substring = true).assertIsDisplayed()
@@ -38,6 +39,7 @@ class ExportDiagnosticButtonInstrumentedTest {
         ExportDiagnosticStore.begin(context, EditTimeline()).finish("완료")
         compose.setContent { QuickCutTheme { ExportDiagnosticButton(failed.operationId, "작업 진단") } }
         compose.onNodeWithText("작업 진단").performClick()
+        compose.onNodeWithText("저장 작업 진단").assertIsDisplayed()
         compose.onNodeWithText("작업 ID: ${failed.operationId}", substring = true).assertIsDisplayed()
     }
 }

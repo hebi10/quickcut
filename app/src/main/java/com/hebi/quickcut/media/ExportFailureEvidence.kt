@@ -3,6 +3,7 @@ package com.hebi.quickcut.media
 import android.media.MediaCodec
 import androidx.annotation.OptIn
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.common.PlaybackException
 import androidx.media3.transformer.ExportException
 import java.util.Collections
 import java.util.IdentityHashMap
@@ -18,15 +19,18 @@ internal data class ExportFailureEvidence(
     val codecErrorCode: Int? = null,
     val recoverable: Boolean? = null,
     val transient: Boolean? = null,
+    val playbackErrorCode: Int? = null,
 ) {
     fun sanitized(): ExportFailureEvidence = copy(
         media3ErrorCode = media3ErrorCode?.takeIf(ERROR_NAMES::containsKey),
         codecName = codecName?.takeIf { CODEC_NAME.matches(it) },
         codecErrorCode = codecErrorCode?.takeIf { it == 1100 || it == 1101 },
+        playbackErrorCode = playbackErrorCode?.takeIf { PlaybackErrorCodes.name(it) != null },
     )
 
     val text: String get() = sanitized().let { safe -> buildString {
         safe.media3ErrorCode?.let { appendLine("Media3 오류: $it (${ERROR_NAMES[it]})") }
+        safe.playbackErrorCode?.let { appendLine("재생 오류: $it (${PlaybackErrorCodes.name(it)})") }
         safe.codecName?.let { appendLine("코덱: $it") }
         safe.codecKind?.let { appendLine("코덱 역할: ${it.name}") }
         safe.codecErrorCode?.let { appendLine("코덱 자원 오류: $it") }
@@ -55,7 +59,8 @@ internal data class ExportFailureEvidence(
             val causes = boundedCauses(error)
             val media3 = causes.filterIsInstance<ExportException>().firstOrNull()
             val codec = causes.filterIsInstance<MediaCodec.CodecException>().firstOrNull()
-            if (media3 == null && codec == null) return null
+            val playback = causes.filterIsInstance<PlaybackException>().firstOrNull()
+            if (media3 == null && codec == null && playback == null) return null
             val info = media3?.codecInfo
             return ExportFailureEvidence(media3?.errorCode, info?.name,
                 info?.let {
@@ -65,7 +70,7 @@ internal data class ExportFailureEvidence(
                         it.isDecoder -> ExportCodecKind.AUDIO_DECODER
                         else -> ExportCodecKind.AUDIO_ENCODER
                     }
-                }, codec?.errorCode, codec?.isRecoverable, codec?.isTransient).sanitized()
+                }, codec?.errorCode, codec?.isRecoverable, codec?.isTransient, playback?.errorCode).sanitized()
         }
 
         internal fun boundedCauses(error: Throwable?): List<Throwable> {

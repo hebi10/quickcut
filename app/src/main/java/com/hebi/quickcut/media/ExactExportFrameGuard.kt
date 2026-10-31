@@ -36,17 +36,8 @@ internal class ExactExportFrameCountException(
         get() = expectedFrames != null && outputFrames.toLong() < expectedFrames
 }
 
-/** Retry only observed frame loss, once. The caller uses a fresh graph and software video decoder. */
-internal suspend fun <T> recoverExactExportFrames(export: suspend (softwareVideo: Boolean) -> T): T {
-    return try {
-        export(false)
-    } catch (first: ExactExportFrameCountException) {
-        if (!first.hasMissingFrames) throw first
-        try {
-            export(true)
-        } catch (retryFailure: Exception) {
-            if (retryFailure !== first) retryFailure.addSuppressed(first)
-            throw retryFailure
-        }
+/** Compatibility entry point; frame recovery uses the same bounded, cancellable policy. */
+internal suspend fun <T> recoverExactExportFrames(export: suspend (softwareVideo: Boolean) -> T): T =
+    recoverMedia3Export(classifyCodec = { null }) { mode ->
+        export(mode == ExportRetryMode.SOFTWARE_VIDEO)
     }
-}

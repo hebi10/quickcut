@@ -72,6 +72,9 @@ import com.hebi.quickcut.editor.TrimInput.millisValue
 import com.hebi.quickcut.editor.TrimInput.secondsText
 import com.hebi.quickcut.editor.VideoClip
 import com.hebi.quickcut.editor.formatTime
+import com.hebi.quickcut.media.ExportStage
+import com.hebi.quickcut.media.MediaOperationDiagnostics
+import kotlinx.coroutines.CancellationException
 import com.hebi.quickcut.media.CompositionFactory
 import com.hebi.quickcut.settings.QuickCutSettings
 import com.hebi.quickcut.settings.QuickTrimSettings
@@ -114,24 +117,47 @@ fun QuickTrimScreen(
             initiallyActive = false,
         )
     }
+    var previewFailure by remember(player) { mutableStateOf<String?>(null) }
+    val reportPreviewFailure: (Exception) -> Unit = { error ->
+        preview.playbackFailed()
+        MediaOperationDiagnostics.recordFailure(context, ExportStage.PREVIEWING, error,
+            model.timeline.clips.map { it.uri }.distinct().size)
+        previewFailure = MediaOperationDiagnostics.message(ExportStage.PREVIEWING, error)
+    }
+    val retryPreview: () -> Unit = {
+        if (previewCanLoadMedia(lifecycleOwner)) {
+            try {
+                // Clear before prepare, so a synchronous new error remains visible.
+                previewFailure = null
+                preview.retryPlayback()
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                reportPreviewFailure(error)
+            }
+        }
+    }
     val previewActive = rememberPreviewActive(preview,
-        onStopped = model::saveSessionOnStop,
-        onError = { model.reportError("현재 영상을 미리 볼 수 없습니다. 다른 영상을 선택하거나 다시 시도해 주세요.") })
+        onStopped = model::saveSessionOnStop, onError = reportPreviewFailure)
     SideEffect { preview.onModelChanged() }
     DisposableEffect(player, model, preview) {
         val listener = object : Player.Listener {
             override fun onPlayerError(error: PlaybackException) {
-                model.reportError("미리보기 재생에 실패했습니다. 다른 영상을 선택하거나 다시 시도해 주세요.")
+                reportPreviewFailure(error)
             }
             override fun onIsPlayingChanged(isPlaying: Boolean) {
-                if (!isPlaying) preview.synchronizePosition()
+                if (player.playerError != null) preview.playbackFailed()
+                else if (!isPlaying) preview.synchronizePosition()
+            }
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_READY) previewFailure = null
             }
             override fun onPositionDiscontinuity(
                 oldPosition: Player.PositionInfo,
                 newPosition: Player.PositionInfo,
                 reason: Int,
             ) {
-                preview.synchronizePosition()
+                if (player.playerError != null) preview.playbackFailed()
+                else preview.synchronizePosition()
             }
         }
         player.addListener(listener)
@@ -157,8 +183,9 @@ fun QuickTrimScreen(
                 return@LaunchedEffect
             }
             preview.replaceTimeline(timeline)
-        } catch (_: Exception) {
-            model.reportError("현재 영상을 미리 볼 수 없습니다. 다른 영상을 선택하거나 다시 시도해 주세요.")
+        } catch (error: Exception) {
+            if (error is CancellationException) throw error
+            reportPreviewFailure(error)
         }
     }
     SideEffect { player.volume = if (clip.muted) 0f else 1f }
@@ -239,6 +266,9 @@ fun QuickTrimScreen(
                         Modifier.fillMaxWidth().padding(bottom = 8.dp))
                 }
             }
+        previewFailure?.let { message ->
+            PreviewRecoveryNotice(message, onRetry = retryPreview)
+        }
             if (sideBySide) {
                 Row(Modifier.fillMaxWidth().weight(1f)) {
                     QuickPreview(player, Modifier.weight(1f).fillMaxHeight())

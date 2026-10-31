@@ -243,6 +243,58 @@ class EditorPreviewCoordinatorTest {
         assertEquals(2_345L, player.positionMs)
     }
 
+    @Test fun retryRepreparesTheSameCompositionAtTheSavedPositionBeforePlaying() {
+        preview.replaceTimeline(timeline)
+        position = 3_456L
+        player.positionMs = 0L
+        player.resourcesAllocated = false
+
+        assertTrue(preview.retryPlayback())
+
+        assertEquals(2, player.preparations)
+        assertEquals(3_456L, player.positionMs)
+        assertEquals(3_456L, position)
+        assertTrue(player.playing)
+    }
+
+    @Test fun failedPlaybackCannotOverwriteTheSavedPositionBeforeRetry() {
+        preview.replaceTimeline(timeline)
+        player.positionMs = 2_345L
+        preview.synchronizePosition()
+        preview.playbackFailed()
+        player.positionMs = 0L
+
+        preview.synchronizePosition()
+
+        assertEquals(2_345L, position)
+        assertTrue(preview.retryPlayback())
+        assertEquals(2_345L, player.positionMs)
+    }
+
+    @Test fun failedRetryLeavesCallbacksInvalidAndRetainsTheEditPosition() {
+        preview.replaceTimeline(timeline)
+        position = 2_468L
+        player.duringReplace = { error("decoder remains unavailable") }
+
+        assertThrows(IllegalStateException::class.java) { preview.retryPlayback() }
+        player.positionMs = 0L
+        preview.synchronizePosition()
+
+        assertEquals(2_468L, position)
+        assertFalse(player.playing)
+    }
+
+    @Test fun retryWhileHiddenDoesNotAcquireDecoderResources() {
+        preview.replaceTimeline(timeline)
+        preview.setActive(false)
+
+        assertFalse(preview.retryPlayback())
+
+        assertEquals(1, player.preparations)
+        assertFalse(player.resourcesAllocated)
+        assertFalse(player.playing)
+    }
+
     private class FakePlayback : EditorPreviewPlayback {
         override var positionMs = 0L
         override var playing = false

@@ -3,10 +3,29 @@ package com.hebi.quickcut.media
 import java.io.IOException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.withContext
 import org.junit.Assert.*
 import org.junit.Test
 
 class ExactExportFrameRecoveryTest {
+    @Test fun cancellationAfterFrameLossCannotStartSoftwareRecovery() = runBlocking {
+        var attempts = 0
+        try {
+            withContext(Job()) {
+                recoverExactExportFrames<Unit> {
+                    attempts++
+                    currentCoroutineContext().cancel()
+                    throw ExactExportFrameCountException(60, 56)
+                }
+            }
+            fail("Cancellation must escape")
+        } catch (_: CancellationException) { }
+        assertEquals(1, attempts)
+    }
+
     @Test fun observedFrameLossRetriesOnceWithSoftwareRequested() = runBlocking {
         val modes = mutableListOf<Boolean>()
         val result = recoverExactExportFrames { software ->

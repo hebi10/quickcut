@@ -1,6 +1,10 @@
 package com.hebi.quickcut.media
 
 enum class ExportStage(val label: String) {
+    IMPORTING("영상 불러오기"),
+    RESTORING("편집 기록 복원"),
+    PREVIEWING("미리보기 재생"),
+    REVIEWING("저장 방식 확인"),
     PREPARING("저장 준비 중"),
     ANALYZING("원본 분석 중"),
     COPYING("원본 데이터 복사 중"),
@@ -41,7 +45,7 @@ internal data class ExportDiagnosticFacts(
     fun text(stage: ExportStage, status: String, elapsedMs: Long,
              reasons: ExportDiagnostics, method: String?, failureType: String?,
              operationId: String? = null, stageMs: Map<ExportStage, Long> = emptyMap()): String = buildString {
-        appendLine("QuickCut 기기 내 저장 진단")
+        appendLine("QuickCut 기기 내 작업 진단")
         operationId?.let { appendLine("작업 ID: $it") }
         appendLine("앱: ${safeLabel(app)}")
         appendLine("기기: ${safeLabel(device)} / Android API $androidApi")

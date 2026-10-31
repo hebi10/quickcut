@@ -4,6 +4,15 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ExportFailureEvidenceTest {
+    @Test fun playbackCodesRetainTheirOwnDomainAndRejectUnknownValues() {
+        val playback = ExportFailureEvidence(playbackErrorCode = 4003).sanitized()
+        assertNull(playback.media3ErrorCode)
+        assertEquals(4003, playback.playbackErrorCode)
+        assertTrue(playback.text.contains("재생 오류: 4003 (ERROR_CODE_DECODING_FAILED)"))
+        assertFalse(playback.text.contains("ERROR_CODE_ENCODING_FORMAT_UNSUPPORTED"))
+        assertNull(ExportFailureEvidence(playbackErrorCode = 98765).sanitized().playbackErrorCode)
+    }
+
     @Test fun onlyKnownCodecMetadataCanEnterTheReport() {
         val unsafe = ExportFailureEvidence(98765, "content://private/source.mp4",
             ExportCodecKind.VIDEO_DECODER, -123, true, false)

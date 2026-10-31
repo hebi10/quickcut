@@ -3,6 +3,7 @@ package com.hebi.quickcut.media
 import android.content.Context
 import androidx.annotation.OptIn
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.common.PlaybackException
 import androidx.media3.transformer.ExportException
 import androidx.test.platform.app.InstrumentationRegistry
 import com.hebi.quickcut.editor.EditTimeline
@@ -11,6 +12,41 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ExportDiagnosticStoreInstrumentedTest {
+    @Test fun preExportOperationFailuresHaveTheirOwnRecordAndNeverExposeSourceIdentifiers() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val saved = ExportDiagnosticStore.begin(context, EditTimeline())
+        saved.finish("완료")
+        for (stage in listOf(ExportStage.IMPORTING, ExportStage.RESTORING, ExportStage.REVIEWING)) {
+            val operation = checkNotNull(MediaOperationDiagnostics.begin(context, stage, 2))
+            operation.finish("실패", SecurityException("content://private/secret-source.mp4"))
+            val record = checkNotNull(ExportDiagnosticStore.record(context, operation.operationId))
+            assertEquals(stage, record.stage)
+            assertEquals(ExportDiagnosticStatus.FAILED, record.status)
+            assertEquals(2, record.facts.sourceCount)
+            assertEquals("SecurityException", record.failureType)
+            assertNotEquals(saved.operationId, record.operationId)
+            assertFalse(record.text.contains("secret-source"))
+            assertFalse(record.text.contains("content://"))
+        }
+    }
+
+    @OptIn(UnstableApi::class)
+    @Test fun previewFailureCodeRoundTripsWithoutBeingMistakenForTransformerEncodingFailure() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val error = PlaybackException("/storage/private/secret-source.mp4", null, 4003)
+        val id = checkNotNull(MediaOperationDiagnostics.recordFailure(context, ExportStage.PREVIEWING, error, 1))
+        val record = checkNotNull(ExportDiagnosticCodec.decode(
+            ExportDiagnosticCodec.encode(ExportDiagnosticStore.history(context))).record(id))
+        assertEquals(ExportStage.PREVIEWING, record.stage)
+        assertEquals("PlaybackException", record.failureType)
+        assertEquals(4003, record.failureEvidence?.playbackErrorCode)
+        assertNull(record.failureEvidence?.media3ErrorCode)
+        assertTrue(record.text.contains("ERROR_CODE_DECODING_FAILED"))
+        assertFalse(record.text.contains("ERROR_CODE_ENCODING_FORMAT_UNSUPPORTED"))
+        assertFalse(record.text.contains("secret-source"))
+        assertFalse(record.text.contains("/storage/"))
+    }
+
     @OptIn(UnstableApi::class)
     @Test fun media3FailureRetainsCodecAndErrorCodeWithoutPrivateFormatOrMessage() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext

@@ -113,6 +113,22 @@ internal class EditorPreviewCoordinator(
         }
     }
 
+    /** Error callbacks may already expose position zero; retain the model's last valid position. */
+    fun playbackFailed() {
+        loadedTimeline = null
+    }
+
+    /** A failed/idle player needs prepare again, even when its composition has not changed. */
+    fun retryPlayback(): Boolean {
+        if (!active || timeline().isEmpty) return false
+        loadedTimeline = null
+        player.pause()
+        player.stop()
+        if (!replaceTimeline(timeline())) return false
+        player.play()
+        return true
+    }
+
     private fun publish(positionMs: Long) {
         publishedPosition = positionMs
         publishPosition(positionMs)

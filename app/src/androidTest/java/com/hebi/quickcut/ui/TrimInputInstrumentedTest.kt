@@ -44,6 +44,9 @@ import androidx.compose.ui.test.ForcedSize
 import androidx.compose.ui.test.FontScale
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
+import androidx.media3.common.Player
+import com.hebi.quickcut.media.ExportDiagnosticStore
+import com.hebi.quickcut.media.ExportStage
 import androidx.media3.ui.PlayerView
 import androidx.media3.common.util.UnstableApi
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -517,13 +520,29 @@ class TrimInputInstrumentedTest {
     }
 
     @Test
-    fun unreadableQuickPreviewReportsAnError() {
+    fun unreadableQuickPreviewRetainsPositionAndReallyRepreparesOnRetry() {
+        val originalBytes = source.readBytes()
+        composeRule.runOnUiThread { model.seek(234L) }
         assertTrue(source.delete())
         showQuick()
-
-        composeRule.waitUntil(15_000L) { model.errorMessage != null }
-        assertNotNull("A player error must produce user feedback", model.errorMessage)
-        assertTrue(model.errorMessage!!.contains("미리보기"))
+        composeRule.waitUntil(15_000L) {
+            composeRule.onAllNodes(hasText("미리보기 다시 시도")).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.runOnIdle { assertEquals(234L, model.playPositionMs) }
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        assertEquals(ExportStage.PREVIEWING, ExportDiagnosticStore.history(context).recent.first().stage)
+        // Restore exactly the same source; play() alone leaves the failed player idle.
+        source.writeBytes(originalBytes)
+        composeRule.onNodeWithText("미리보기 다시 시도").performScrollTo().performClick()
+        composeRule.waitUntil(15_000L) {
+            composeRule.runOnIdle {
+                requirePlayerView().player!!.playbackState == Player.STATE_READY
+            }
+        }
+        composeRule.runOnIdle {
+            requirePlayerView().player!!.pause()
+            assertTrue("Retry must resume the retained edit position", model.playPositionMs >= 234L)
+        }
     }
 
     @Test

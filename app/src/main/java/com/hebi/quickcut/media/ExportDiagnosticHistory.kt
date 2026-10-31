@@ -38,7 +38,7 @@ internal data class ExportDiagnosticRecord(
     companion object {
         val FAILURE_TYPES = setOf("ReencodeRequiredException", "IOException", "SecurityException",
             "IllegalArgumentException", "IllegalStateException", "CancellationException", "Exception",
-            "ExportException", "MediaCodecException")
+            "ExportException", "MediaCodecException", "PlaybackException")
         private val METHODS = setOf("ORIGINAL_COPY", "PARTIAL_REENCODE", "AUDIO_REENCODE", "VIDEO_REENCODE", "UNKNOWN")
     }
 }

@@ -23,6 +23,7 @@ enum class FastExportReason(val nativeCode: Long?, val explanation: String) {
     PACKET_STRUCTURE(19, "영상 데이터가 손상되었거나 고속 처리에서 지원하지 않는 구조입니다."),
     OUTPUT_VALIDATION(20, "부분 처리 결과의 프레임·길이·소리·날짜 또는 MP4 저장 검증을 통과하지 못했습니다."),
     PROCESSING_FAILED(21, "부분 처리 중 오류가 발생했습니다. 세부 원인은 확인할 수 없습니다."),
+    ANALYSIS_BUDGET(22, "원본의 프레임 분석에 필요한 메모리가 고속 처리의 안전 한도를 넘거나 확보되지 않았습니다."),
     ENGINE_UNAVAILABLE(null, "이 기기에서 고속 부분 처리 엔진을 불러올 수 없습니다."),
     SOURCE_ACCESS(null, "원본 파일을 고속 처리에 필요한 직접 탐색 방식으로 읽을 수 없습니다."),
     MULTIPLE_SOURCES(null, "서로 다른 원본을 연결하는 편집은 고속 부분 처리에서 지원하지 않습니다."),

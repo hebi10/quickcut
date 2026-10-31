@@ -77,6 +77,8 @@ import com.hebi.quickcut.media.ExportMode
 import com.hebi.quickcut.media.ExportPlanner
 import com.hebi.quickcut.media.ExportAssessment
 import com.hebi.quickcut.media.ExportReport
+import com.hebi.quickcut.media.ExportStage
+import com.hebi.quickcut.media.MediaOperationDiagnostics
 import com.hebi.quickcut.settings.QuickCutSettings
 import com.hebi.quickcut.settings.QuickTrimSettings
 import kotlinx.coroutines.launch
@@ -145,11 +147,18 @@ fun QuickCutApp(
             inspectingExport = true
             inspectionProgress = null
             inspectionJob = coroutineScope.launch {
+                val diagnostics = runCatching {
+                    MediaOperationDiagnostics.begin(context.applicationContext, ExportStage.REVIEWING,
+                        reviewedTimeline.clips.map { it.uri }.distinct().size)
+                }.getOrNull()
+                var diagnosticStatus = "실패"
+                var diagnosticError: Throwable? = null
                 try {
                     val assessment = ExportPlanner.analyze(
                         context.applicationContext, reviewedTimeline, reviewedDate,
                         onProgress = { inspectionProgress = it },
                     )
+                    diagnosticStatus = "완료"
                     if (!model.canStartExport || model.timeline != reviewedTimeline) return@launch
                     if (assessment.fastAvailable && !model.needsReencodeConsent) {
                         model.startExport(
@@ -163,14 +172,19 @@ fun QuickCutApp(
                             reviewedAction, reviewedDate)
                     }
                 } catch (cancelled: CancellationException) {
+                    diagnosticStatus = "취소"
+                    diagnosticError = cancelled
                     throw cancelled
                 } catch (error: Exception) {
-                    model.reportError(
-                        "저장 방식을 확인하지 못했습니다. " +
-                            (error.localizedMessage ?: "다시 시도해 주세요.")
-                    )
+                    diagnosticStatus = "실패"
+                    diagnosticError = error
+                    model.reportError(runCatching {
+                        MediaOperationDiagnostics.message(ExportStage.REVIEWING, error)
+                    }.getOrDefault("저장 방식을 확인하지 못했습니다. 다시 시도해 주세요."))
                 } finally {
+                    runCatching { diagnostics?.finish(diagnosticStatus, diagnosticError) }
                     inspectingExport = false
+                    inspectionJob = null
                 }
             }
         }
@@ -225,6 +239,9 @@ fun QuickCutApp(
             model.importVideos(context, listOf(uri), quickDefaults = settings.loadQuick())
         }
     }
+    val reconnectPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) model.reconnectSavedSource(context, uri)
+    }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) {
             model.changeQuickMode(false)
@@ -245,7 +262,8 @@ fun QuickCutApp(
         if (showBatch) batchModel.loadTemplates(context)
     }
 
-    BackHandler(enabled = !showBatch && model.page != QuickCutPage.PICKER) {
+    BackHandler(enabled = !showBatch && model.page != QuickCutPage.PICKER &&
+        model.page != QuickCutPage.IMPORTING) {
         when (model.page) {
             QuickCutPage.EDITOR -> model.requestExit()
             QuickCutPage.EXPORTING -> if (!model.isFinalizing)
@@ -302,7 +320,7 @@ fun QuickCutApp(
                 onPreferences = { showLastSettings = true },
                 onLicenses = { showLicenses = true },
             )
-            QuickCutPage.IMPORTING -> CenterStatus("영상 불러오는 중", "선택한 파일을 확인하고 있습니다.", null)
+            QuickCutPage.IMPORTING -> ImportingStatus(onCancel = model::cancelImport)
             QuickCutPage.EDITOR -> {
                 if (model.quickMode && model.timeline.clips.size == 1) {
                     QuickTrimScreen(
@@ -382,6 +400,18 @@ fun QuickCutApp(
             },
             dismissButton = { ExportDiagnosticButton() },
             containerColor = CutColors.panel, shape = CutShape,
+        )
+    }
+
+    model.restoreRecoveryNotice?.takeIf {
+        !showBatch && model.page == QuickCutPage.PICKER && !model.isRecoveringExport && !model.hasUnresolvedExport
+    }?.let { notice ->
+        RestoreRecoveryDialog(
+            notice = notice,
+            canReconnect = model.hasSourceReconnect,
+            onRetry = { model.restoreSavedSession(context) },
+            onReconnect = { reconnectPicker.launch(arrayOf("video/*")) },
+            onDismiss = model::dismissRestoreNotice,
         )
     }
 
@@ -616,6 +646,52 @@ private fun LastSettingsDialog(
         containerColor = CutColors.panel,
         shape = CutShape,
     )
+}
+
+@Composable
+internal fun RestoreRecoveryDialog(
+    notice: String,
+    canReconnect: Boolean,
+    onRetry: () -> Unit,
+    onReconnect: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("이전 편집 복원") },
+        text = {
+            Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(notice)
+                Text("편집 내용은 유지됩니다. 원본 영상에 다시 접근할 수 있으면 다시 시도해 주세요.")
+                if (canReconnect) {
+                    Text("원본 영상이 이동했거나 접근 권한이 바뀌었다면 같은 원본 영상을 다시 선택해 연결할 수 있습니다.")
+                    OutlinedButton(onClick = onReconnect, shape = CutShape,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+                        Text("원본 영상 다시 연결")
+                    }
+                }
+                ExportDiagnosticButton()
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onRetry, modifier = Modifier.heightIn(min = 48.dp), shape = CutShape) {
+                Text("다시 시도")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, modifier = Modifier.heightIn(min = 48.dp), shape = CutShape) {
+                Text("닫기")
+            }
+        },
+        containerColor = CutColors.panel, shape = CutShape,
+    )
+}
+
+@Composable
+internal fun ImportingStatus(onCancel: () -> Unit) {
+    BackHandler(onBack = onCancel)
+    CenterStatus("영상 불러오는 중", "선택한 파일을 확인하고 있습니다.", null, onCancel)
 }
 
 @Composable

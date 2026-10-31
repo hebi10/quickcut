@@ -38,6 +38,7 @@ internal object ExportDiagnosticCodec {
                 put("media3", value.media3ErrorCode); put("codec", value.codecName)
                 put("kind", value.codecKind?.name); put("codecError", value.codecErrorCode)
                 put("recoverable", value.recoverable); put("transient", value.transient)
+                put("playback", value.playbackErrorCode)
             })
         }
         put("copyReason", record.reasons.copyReason?.name); put("smartReason", record.reasons.smartCutReason?.name)
@@ -64,7 +65,7 @@ internal object ExportDiagnosticCodec {
             json.optJSONObject("failure")?.let {
                 ExportFailureEvidence(it.int("media3"), it.string("codec"),
                     it.string("kind")?.let(ExportCodecKind::valueOf), it.int("codecError"),
-                    it.boolean("recoverable"), it.boolean("transient")).sanitized()
+                    it.boolean("recoverable"), it.boolean("transient"), it.int("playback")).sanitized()
             }
         }.getOrNull()
         return ExportDiagnosticRecord(json.getString("id"), ExportDiagnosticStatus.valueOf(json.getString("status")),

@@ -15,6 +15,7 @@
 use anyhow::{anyhow, bail, Result};
 use ffmpeg_next as ff;
 use crate::input::ReadPackets;
+use crate::analysis_budget::AnalysisBudget;
 
 use crate::{bitstream, AccessPoint, Source, VideoInfo};
 
@@ -75,6 +76,9 @@ pub struct IndexInput<'a> {
 
 pub trait IndexSource {
     fn name(&self) -> &'static str;
+    /// Shared admission also covers nested metadata added during Source assembly.
+    /// Legacy index sources have no budget and keep their existing behavior.
+    fn analysis_budget(&self) -> Option<&AnalysisBudget> { None }
     fn build(&self, input: IndexInput) -> Result<Index>;
 }
 
@@ -129,7 +133,7 @@ pub fn walk(
     entry: impl FnMut(&ff::Packet) -> Result<()>,
     stop: Option<&(dyn Fn() -> bool + Sync)>,
 ) -> Result<Index> {
-    walk_inspecting(video, start_time, ictx, on, entry, stop, None)
+    walk_inspecting(video, start_time, ictx, on, entry, stop, None, None)
 }
 
 /// Build the packet index and inspect every demuxed packet in the same pass.
@@ -144,7 +148,21 @@ pub fn walk_observed(
     mut observe: impl FnMut(&ff::Packet) -> Result<()>,
     stop: Option<&(dyn Fn() -> bool + Sync)>,
 ) -> Result<Index> {
-    walk_inspecting(video, start_time, ictx, on, |_| Ok(()), stop, Some(&mut observe))
+    walk_inspecting(video, start_time, ictx, on, |_| Ok(()), stop, Some(&mut observe), None)
+}
+
+/// The observed walk with shared pre-growth admission for the adapter's
+/// timestamp vectors, this index, and the later bound Source copy.
+pub fn walk_observed_budgeted(
+    video: &VideoInfo,
+    start_time: f64,
+    ictx: crate::input::Demux,
+    on: Option<OnProgress>,
+    mut observe: impl FnMut(&ff::Packet) -> Result<()>,
+    stop: Option<&(dyn Fn() -> bool + Sync)>,
+    budget: &AnalysisBudget,
+) -> Result<Index> {
+    walk_inspecting(video, start_time, ictx, on, |_| Ok(()), stop, Some(&mut observe), Some(budget))
 }
 
 fn walk_inspecting(
@@ -155,6 +173,7 @@ fn walk_inspecting(
     mut entry: impl FnMut(&ff::Packet) -> Result<()>,
     stop: Option<&(dyn Fn() -> bool + Sync)>,
     mut observe: Option<&mut dyn FnMut(&ff::Packet) -> Result<()>>,
+    budget: Option<&AnalysisBudget>,
 ) -> Result<Index> {
     let stream_index = video.stream_index;
     let time_base = video.time_base;
@@ -280,6 +299,7 @@ fn walk_inspecting(
         // An entry point is one only where it has a time, as below.
         let at = p.pts().map(|pts| pts as f64 * time_base - start_time);
         if let Some(d) = p.data() {
+            if let Some(budget) = budget { judge.reserve(budget)?; }
             judge.feed(packets.len(), p.is_key() && at.is_some(), at, d);
         }
         let Some(pts) = p.pts() else { continue };
@@ -305,14 +325,12 @@ fn walk_inspecting(
             pos: p.position() as i64,
             unreferenced: None,
         };
-        if !second_half {
-            shown.push(view.pts);
-        }
-        packets.push(view);
+        push_view(&mut packets, &mut shown, view, second_half, budget)?;
     }
     if strict { reading.finished()?; }
     let whole = reading.finished().is_ok();
     drop(reading);
+    if let Some(budget) = budget { judge.reserve(budget)?; }
     for (id, free) in judge.finish(whole) {
         if let Some(p) = packets.get_mut(id).filter(|p| p.key) {
             p.unreferenced = Some(free);
@@ -340,9 +358,9 @@ fn walk_inspecting(
     // order there is: what is being asked is how long each picture is on
     // screen, and a picture is on screen until the next one shown replaces
     // it.
-    shown.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    shown.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     Ok(Index {
-        points: points_from(&packets, &codec),
+        points: points_from_budgeted(&packets, &codec, budget)?,
         leading_known: true,
         pulldown: Some(pulldown),
         variable: Some(varies(&shown, video.frame_duration())),
@@ -1042,44 +1060,54 @@ struct PacketView {
 /// [`crate::leadrefs`] followed the stream to find (`unreferenced`); where it
 /// could not say, the flag stands as it always has.
 fn point_at(packets: &[PacketView], i: usize, always_droppable: bool) -> AccessPoint {
+    point_at_budgeted(packets, i, always_droppable, None).expect("unbudgeted point")
+}
+
+fn point_at_budgeted(packets: &[PacketView], i: usize, always_droppable: bool,
+    budget: Option<&AnalysisBudget>) -> Result<AccessPoint> {
     let pkt = &packets[i];
     let mut lead_start = pkt.pts;
     let mut lead_indices = Vec::new();
     let mut referenced = false;
     for (j, next) in packets[i + 1..].iter().enumerate() {
-        if next.key {
-            break;
-        }
+        if next.key { break; }
         if next.pts < pkt.pts {
             lead_start = lead_start.min(next.pts);
+            if let Some(budget) = budget { budget.reserve(&mut lead_indices, 1)?; }
             lead_indices.push(j + 1);
             referenced |= next.reference;
         }
     }
     let droppable = always_droppable || !referenced || pkt.unreferenced == Some(true);
-    AccessPoint {
-        time: pkt.pts,
-        lead_start,
-        lead_indices,
-        droppable,
-        pos: pkt.pos,
-        measured: true,
-    }
+    Ok(AccessPoint { time: pkt.pts, lead_start, lead_indices, droppable,
+        pos: pkt.pos, measured: true })
 }
 
-/// Derive access points from a run of packets in decode order.
-fn points_from(packets: &[PacketView], codec: &str) -> Vec<AccessPoint> {
+fn push_view(packets: &mut Vec<PacketView>, shown: &mut Vec<f64>, view: PacketView,
+    second_half: bool, budget: Option<&AnalysisBudget>) -> Result<()> {
+    if let Some(budget) = budget {
+        budget.reserve(packets, 1)?;
+        if !second_half { budget.reserve(shown, 1)?; }
+    }
+    if !second_half { shown.push(view.pts); }
+    packets.push(view);
+    Ok(())
+}
+
+/// Derive access points from a run of packets in decode order. Unstable sort
+/// needs no scratch vector; equal timestamps already fail adapter clock checks.
+fn points_from_budgeted(packets: &[PacketView], codec: &str,
+    budget: Option<&AnalysisBudget>) -> Result<Vec<AccessPoint>> {
     let always_droppable = bitstream::leading_always_droppable(codec);
-    let mut points: Vec<AccessPoint> = (0..packets.len())
-        .filter(|&i| packets[i].key)
-        .map(|i| point_at(packets, i, always_droppable))
-        .collect();
-    points.sort_by(|a, b| {
-        a.time
-            .partial_cmp(&b.time)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-    points
+    let mut points = Vec::new();
+    for i in (0..packets.len()).filter(|&i| packets[i].key) {
+        if let Some(budget) = budget { budget.reserve(&mut points, 1)?; }
+        points.push(point_at_budgeted(packets, i, always_droppable, budget)?);
+    }
+    let order = |a: &AccessPoint, b: &AccessPoint| a.time.partial_cmp(&b.time).unwrap_or(std::cmp::Ordering::Equal);
+    if budget.is_some() { points.sort_unstable_by(order); }
+    else { points.sort_by(order); }
+    Ok(points)
 }
 
 /// Measure the leading pictures of the access points a cut will actually use.
@@ -1974,5 +2002,49 @@ mod tests {
         // a packet that begins somewhere else is whole again
         assert!(!c.cut_short(&packet(700, false), 700));
         assert!(!c.cut_short(&packet(-1, false), 700));
+    }
+}
+
+#[cfg(test)]
+mod analysis_memory_tests {
+    use super::*;
+    use crate::analysis_budget::AnalysisBudget;
+
+    fn view(index: usize, key: bool) -> PacketView {
+        PacketView { pts: index as f64 / 120.0, dts: index as f64 / 120.0,
+            key, reference: true, pos: index as i64, unreferenced: None }
+    }
+
+    #[test]
+    fn high_frame_count_stops_before_packet_and_shown_vectors_grow_past_budget() {
+        let budget = AnalysisBudget::new(64 * 1024);
+        let mut packets = Vec::new();
+        let mut shown = Vec::new();
+        let mut declined = false;
+        for index in 0..1_000_000 {
+            if push_view(&mut packets, &mut shown, view(index, index % 120 == 0), false,
+                Some(&budget)).is_err() {
+                declined = true;
+                break;
+            }
+        }
+        assert!(declined);
+        assert!(packets.len() > 256 && packets.len() < 4096);
+        assert_eq!(shown.len(), packets.len());
+        assert!(budget.charged() <= 64 * 1024);
+    }
+
+    #[test]
+    fn access_points_and_nested_leading_indices_require_admission() {
+        let packets = vec![view(2, true), view(0, false), view(1, false), view(3, true)];
+        let budget = AnalysisBudget::new(0);
+        assert!(points_from_budgeted(&packets, "h264", Some(&budget)).is_err());
+        let budget = AnalysisBudget::new(4096);
+        let points = points_from_budgeted(&packets, "h264", Some(&budget)).unwrap();
+        assert_eq!(points.len(), 2);
+        assert_eq!(points[0].lead_indices, [1, 2]);
+        let just_points = AnalysisBudget::new(4 * std::mem::size_of::<AccessPoint>());
+        assert!(points_from_budgeted(&packets, "h264", Some(&just_points)).is_err(),
+            "nested leading-picture allocations must share the point budget");
     }
 }

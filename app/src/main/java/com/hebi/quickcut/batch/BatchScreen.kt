@@ -82,6 +82,8 @@ import com.hebi.quickcut.editor.OriginalActionStatus
 import com.hebi.quickcut.editor.formatTime
 import com.hebi.quickcut.media.SaveDateMode
 import com.hebi.quickcut.media.ExportMode
+import com.hebi.quickcut.media.ExportStage
+import com.hebi.quickcut.media.MediaOperationDiagnostics
 import com.hebi.quickcut.ui.CutColors
 import com.hebi.quickcut.ui.CutPanelShape
 import com.hebi.quickcut.ui.CutShape
@@ -130,10 +132,7 @@ fun BatchScreen(
                 } catch (cancelled: kotlinx.coroutines.CancellationException) {
                     throw cancelled
                 } catch (error: Exception) {
-                    model.notifyUser(
-                        "영상 분석에 실패했습니다. " +
-                            (error.localizedMessage ?: "다시 시도해 주세요.")
-                    )
+                    model.notifyUser(MediaOperationDiagnostics.message(ExportStage.REVIEWING, error))
                 } finally {
                     inspecting = false
                 }

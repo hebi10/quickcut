@@ -1,7 +1,10 @@
 package com.hebi.quickcut.media
 
 import android.content.Context
+import android.media.MediaCodec
+import android.media.MediaCodecList
 import android.net.Uri
+import android.os.Build
 import android.os.Handler
 import android.os.ParcelFileDescriptor
 import android.os.Looper
@@ -327,19 +330,42 @@ class VideoExporter(private val context: Context) {
         outputTimestampMs: Long,
         optimizeTrim: Boolean,
         onStage: (ExportStage) -> Unit,
-    ): ExportResult = recoverExactExportFrames { softwareVideo ->
-        if (softwareVideo) {
+    ): ExportResult = recoverMedia3ExportFile(
+        file,
+        newRetryFile = { File(context.cacheDir, "quickcut_retry_" + UUID.randomUUID() + ".mp4") },
+        classifyCodec = ::codecRetryFacts,
+    ) { attemptFile, retry ->
+        if (retry != null) {
             onStage(ExportStage.RECOVERING)
-            Log.w("QuickCutExport", "Retrying exact export after observed video frame loss")
-            withContext(Dispatchers.IO) {
-                if (file.exists() && !file.delete()) {
-                    throw IOException("완료되지 않은 저장 시도의 임시 파일을 정리할 수 없습니다.")
-                }
-            }
+            Log.w("QuickCutExport", "Retrying classified Media3 processing failure mode=$retry")
         }
         onStage(ExportStage.MEDIA3_PROCESSING)
-        transformAttempt(timeline, file, onProgress, outputTimestampMs,
-            optimizeTrim = optimizeTrim && !softwareVideo, softwareVideo = softwareVideo, onStage = onStage)
+        transformAttempt(timeline, attemptFile, onProgress, outputTimestampMs,
+            optimizeTrim = optimizeTrim && retry != ExportRetryMode.SOFTWARE_VIDEO,
+            softwareVideo = retry == ExportRetryMode.SOFTWARE_VIDEO, onStage = onStage)
+    }
+
+    private fun codecRetryFacts(error: Exception): ExportCodecRetryFacts? {
+        // Do not reinterpret a storage/validation/callback wrapper as a codec failure.
+        if (error !is ExportException) return null
+        val evidence = ExportFailureEvidence.capture(error) ?: return null
+        val codecStatus = ExportFailureEvidence.boundedCauses(error)
+            .filterIsInstance<MediaCodec.CodecException>().firstOrNull()?.errorCode
+        val videoDecoder = evidence.codecKind == ExportCodecKind.VIDEO_DECODER
+        val software = if (videoDecoder) {
+            runCatching {
+                MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos
+                    .firstOrNull { it.name == evidence.codecName }?.let {
+                        isSoftwareVideoDecoder(Build.VERSION.SDK_INT, it.name, it.isSoftwareOnly,
+                            it.isHardwareAccelerated, it.isVendor)
+                    }
+            }.getOrNull()
+        } else null
+        return ExportCodecRetryFacts(evidence.media3ErrorCode, codecStatus ?: evidence.codecErrorCode,
+            evidence.recoverable == true, evidence.transient == true,
+            // Unknown decoder identity cannot prove that software selection changes the path.
+            videoDecoder = videoDecoder && software != null,
+            failedSoftwareVideoDecoder = software == true)
     }
 
     private suspend fun transformAttempt(
@@ -350,99 +376,119 @@ class VideoExporter(private val context: Context) {
         optimizeTrim: Boolean,
         softwareVideo: Boolean,
         onStage: (ExportStage) -> Unit,
-    ): ExportResult = suspendCancellableCoroutine { continuation ->
-        val frameGuard = ExactExportFrameGuard()
+    ): ExportResult {
         val main = Handler(Looper.getMainLooper())
-        val progress = ProgressHolder()
-        lateinit var transformer: Transformer
-        val poller = object : Runnable {
-            override fun run() {
-                if (!continuation.isActive) return
+        var transformer: Transformer? = null
+        var poller: Runnable? = null
+        var released = false
+        var releaseFailure: Exception? = null
+        fun stop() {
+            releaseFailure?.let { throw it }
+            if (released) return
+            released = true
+            poller?.let(main::removeCallbacks)
+            transformer?.cancel()
+        }
+        return withReleasedExportAttempt(release = {
+            withContext(Dispatchers.Main.immediate) { stop() }
+        }) {
+            suspendCancellableCoroutine { continuation ->
+                val frameGuard = ExactExportFrameGuard()
+                val progress = ProgressHolder()
+                val progressPoller = object : Runnable {
+                    override fun run() {
+                        if (!continuation.isActive) return
+                        val value = try {
+                            when (checkNotNull(transformer).getProgress(progress)) {
+                                Transformer.PROGRESS_STATE_AVAILABLE -> progress.progress
+                                else -> null
+                            }
+                        } catch (_: Exception) { null }
+                        runCatching { onProgress(value) }
+                        if (continuation.isActive) main.postDelayed(this, 250L)
+                    }
+                }
+                poller = progressPoller
+                val activeTransformer = Transformer.Builder(context)
+                    .apply {
+                        val timestampSeconds = Mp4TimestampData.unixTimeToMp4TimeSeconds(
+                            outputTimestampMs
+                        )
+                        setMuxerFactory(
+                            InAppMp4Muxer.Factory(
+                                InAppMp4Muxer.MetadataProvider { entries ->
+                                    entries.removeAll { it is Mp4TimestampData }
+                                    entries.add(Mp4TimestampData(timestampSeconds, timestampSeconds))
+                                }
+                            )
+                        )
+                    }
+                    .setVideoFrameProcessorFactory(GuardedVideoFrameProcessorFactory(frameGuard))
+                    .setAssetLoaderFactory(exportAssetLoaderFactory(context, softwareVideo))
+                    .setEncoderFactory(TrackingEncoderFactory(DefaultEncoderFactory.Builder(context).build(), onStage))
+                    .experimentalSetTrimOptimizationEnabled(optimizeTrim)
+                    .addListener(object : Transformer.Listener {
+                        override fun onCompleted(composition: Composition, exportResult: ExportResult) {
+                            main.removeCallbacks(progressPoller)
+                            Log.i(
+                                "QuickCutExport",
+                                "method=media3 optimization=" + exportResult.optimizationResult +
+                                    " videoProcess=" + exportResult.videoConversionProcess +
+                                    " audioProcess=" + exportResult.audioConversionProcess,
+                            )
+                            if (continuation.isActive) {
+                                try {
+                                    frameGuard.verify(exportResult.videoFrameCount,
+                                        fullyTranscoded = exportResult.videoConversionProcess ==
+                                            ExportResult.CONVERSION_PROCESS_TRANSCODED)
+                                    continuation.resume(exportResult)
+                                } catch (missing: ExactExportFrameCountException) {
+                                    Log.w("QuickCutExport", "Exact export frame mismatch expected=" +
+                                        missing.expectedFrames + " output=" + missing.outputFrames, missing)
+                                    continuation.resumeWithException(missing)
+                                }
+                            }
+                        }
+
+                        override fun onError(
+                            composition: Composition,
+                            exportResult: ExportResult,
+                            exportException: ExportException,
+                        ) {
+                            main.removeCallbacks(progressPoller)
+                            if (continuation.isActive) continuation.resumeWithException(exportException)
+                        }
+                    })
+                    .build()
+                transformer = activeTransformer
+
+                continuation.invokeOnCancellation {
+                    val cancel = Runnable {
+                        // The suspend boundary's finally reports release failures; the callback must
+                        // never throw into coroutine cancellation or a main-thread handler.
+                        try { stop() } catch (error: Exception) {
+                            releaseFailure = error
+                        }
+                    }
+                    if (Looper.myLooper() == Looper.getMainLooper()) cancel.run()
+                    else main.post(cancel)
+                }
+
+                // The cancellation callback runs immediately for an already cancelled continuation.
+                // On this main-thread path, do not start a transformer that was just cancelled.
+                if (!continuation.isActive) return@suspendCancellableCoroutine
                 try {
-                    when (transformer.getProgress(progress)) {
-                        Transformer.PROGRESS_STATE_AVAILABLE -> onProgress(progress.progress)
-                        else -> onProgress(null)
+                    if (timeline.clips.size == 1) {
+                        activeTransformer.start(CompositionFactory.editedClip(timeline.clips.first()), file.absolutePath)
+                    } else {
+                        activeTransformer.start(CompositionFactory.from(timeline), file.absolutePath)
                     }
-                } catch (_: Exception) {
-                    onProgress(null)
+                    main.post(progressPoller)
+                } catch (error: Exception) {
+                    main.removeCallbacks(progressPoller)
+                    if (continuation.isActive) continuation.resumeWithException(error)
                 }
-                main.postDelayed(this, 250L)
             }
-        }
-        transformer = Transformer.Builder(context)
-            .apply {
-                val timestampSeconds = Mp4TimestampData.unixTimeToMp4TimeSeconds(
-                    outputTimestampMs
-                )
-                setMuxerFactory(
-                    InAppMp4Muxer.Factory(
-                        InAppMp4Muxer.MetadataProvider { entries ->
-                            entries.removeAll { it is Mp4TimestampData }
-                            entries.add(Mp4TimestampData(timestampSeconds, timestampSeconds))
-                        }
-                    )
-                )
-            }
-            .setVideoFrameProcessorFactory(GuardedVideoFrameProcessorFactory(frameGuard))
-            .setAssetLoaderFactory(exportAssetLoaderFactory(context, softwareVideo))
-            .setEncoderFactory(TrackingEncoderFactory(DefaultEncoderFactory.Builder(context).build(), onStage))
-            .experimentalSetTrimOptimizationEnabled(optimizeTrim)
-            .addListener(object : Transformer.Listener {
-                override fun onCompleted(composition: Composition, exportResult: ExportResult) {
-                    main.removeCallbacks(poller)
-                    Log.i(
-                        "QuickCutExport",
-                        "method=media3 optimization=" + exportResult.optimizationResult +
-                            " videoProcess=" + exportResult.videoConversionProcess +
-                            " audioProcess=" + exportResult.audioConversionProcess,
-                    )
-                    if (continuation.isActive) {
-                        try {
-                            frameGuard.verify(exportResult.videoFrameCount,
-                                fullyTranscoded = exportResult.videoConversionProcess ==
-                                    ExportResult.CONVERSION_PROCESS_TRANSCODED)
-                            continuation.resume(exportResult)
-                        } catch (missing: ExactExportFrameCountException) {
-                            Log.w("QuickCutExport", "Exact export frame mismatch expected=" +
-                                missing.expectedFrames + " output=" + missing.outputFrames, missing)
-                            continuation.resumeWithException(missing)
-                        }
-                    }
-                }
-
-                override fun onError(
-                    composition: Composition,
-                    exportResult: ExportResult,
-                    exportException: ExportException,
-                ) {
-                    main.removeCallbacks(poller)
-                    if (continuation.isActive) continuation.resumeWithException(exportException)
-                }
-            })
-            .build()
-
-        continuation.invokeOnCancellation {
-            val stop = Runnable {
-                main.removeCallbacks(poller)
-                transformer.cancel()
-            }
-            if (Looper.myLooper() == Looper.getMainLooper()) stop.run()
-            else main.post(stop)
-        }
-
-        // The cancellation callback runs immediately for an already cancelled continuation.
-        // On this main-thread path, do not start a transformer that was just cancelled.
-        if (!continuation.isActive) return@suspendCancellableCoroutine
-        try {
-            if (timeline.clips.size == 1) {
-                transformer.start(CompositionFactory.editedClip(timeline.clips.first()), file.absolutePath)
-            } else {
-                transformer.start(CompositionFactory.from(timeline), file.absolutePath)
-            }
-            main.post(poller)
-        } catch (error: Exception) {
-            main.removeCallbacks(poller)
-            if (continuation.isActive) continuation.resumeWithException(error)
         }
     }
 

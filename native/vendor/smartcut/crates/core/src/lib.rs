@@ -10,6 +10,7 @@ use anyhow::{anyhow, Result};
 use ffmpeg_next as ff;
 use crate::input::ReadPackets;
 
+pub mod analysis_budget;
 pub mod aac;
 pub mod adts;
 pub mod arib;
@@ -1163,7 +1164,7 @@ pub fn scan_stoppable(
         on,
         stop,
     })?;
-    assemble(path, outline, idx, source.name())
+    assemble(path, outline, idx, source.name(), source.analysis_budget())
 }
 
 /// Read a recording once and come back with both its index and its pictures.
@@ -1242,41 +1243,14 @@ pub fn scan_with_pictures(
         _ => outline.duration,
     };
     let track = collector.finish(duration);
-    let src = assemble(path, outline, idx, "packet scan")?;
+    let src = assemble(path, outline, idx, "packet scan", None)?;
     Ok((src, track))
 }
 
-/// Put a [`Source`] together out of the container's answer and an index.
-fn assemble(
-    path: &str,
-    outline: Outline,
-    idx: index::Index,
-    index_name: &'static str,
-) -> Result<Source> {
-    let Outline {
-        path: _,
-        input,
-        mut video,
-        audio,
-        audios,
-        captions,
-        graphics,
-        subpictures,
-        dropped,
-        duration,
-        start_time,
-        chapters,
-        byte_seekable,
-        on_a_ts,
-        mut joins,
-        // The walk is about to say where every picture a cut can start from
-        // is, which is this one and all the rest.
-        head: _,
-    } = outline;
-    let mut points = idx.points;
-    if points.is_empty() {
-        return Err(anyhow!("no random access points found in {path}"));
-    }
+/// Normalize the index's hidden lead-in without allocating an unadmitted
+/// pre-roll marker. Unbudgeted core callers retain the original behavior.
+fn normalize_preroll(points: &mut Vec<AccessPoint>, fd: f64,
+    budget: Option<&analysis_budget::AnalysisBudget>) -> Result<()> {
     // Times are rebased by the container's start time, and the first picture
     // can land a fraction of a microsecond below zero when the two disagree
     // in the last bit. Nothing can be seeked to before the file begins, and
@@ -1296,12 +1270,18 @@ fn assemble(
     // copy can start at -- which is what it is: the head is re-encoded from
     // the first picture shown, the way a range opening mid-GOP is. Where a
     // key picture is shown at 0 after all, the hidden ones are not needed.
-    let fd = video.frame_duration();
     let hidden = points.iter().take_while(|p| p.time < -fd / 2.0).count();
     if hidden > 0 {
         if points.get(hidden).is_some_and(|p| p.time <= fd / 2.0) {
             points.drain(..hidden);
         } else {
+            // Admit the pre-roll marker before draining or changing coordinates.
+            // It is a nested leading index even when the packet walk found none.
+            if points[hidden - 1].lead_indices.is_empty() {
+                if let Some(budget) = budget {
+                    budget.reserve(&mut points[hidden - 1].lead_indices, 1)?;
+                }
+            }
             points.drain(..hidden - 1);
             let p = &mut points[0];
             p.time = 0.0;
@@ -1334,6 +1314,55 @@ fn assemble(
             p.measured = true;
         }
     }
+
+    Ok(())
+}
+
+/// Derive the seek margin in index order without a frame-count-sized gap
+/// vector. Preserve both the no-interval default and the original summation.
+fn index_seek_margin(points: &[AccessPoint]) -> f64 {
+    let mean_gop = if points.len() < 2 {
+        1.0
+    } else {
+        points.windows(2).map(|w| w[1].time - w[0].time).sum::<f64>()
+            / (points.len() - 1) as f64
+    };
+    (3.0 * mean_gop).clamp(1.0, 30.0)
+}
+
+/// Put a [`Source`] together out of the container's answer and an index.
+fn assemble(
+    path: &str,
+    outline: Outline,
+    idx: index::Index,
+    index_name: &'static str,
+    budget: Option<&analysis_budget::AnalysisBudget>,
+) -> Result<Source> {
+    let Outline {
+        path: _,
+        input,
+        mut video,
+        audio,
+        audios,
+        captions,
+        graphics,
+        subpictures,
+        dropped,
+        duration,
+        start_time,
+        chapters,
+        byte_seekable,
+        on_a_ts,
+        mut joins,
+        // The walk is about to say where every picture a cut can start from
+        // is, which is this one and all the rest.
+        head: _,
+    } = outline;
+    let mut points = idx.points;
+    if points.is_empty() {
+        return Err(anyhow!("no random access points found in {path}"));
+    }
+    normalize_preroll(&mut points, video.frame_duration(), budget)?;
 
     // A map the recording did not read for itself can be about something
     // else. See [`index::mend_stretches`]: on one recorder clip of the twenty
@@ -1368,13 +1397,7 @@ fn assemble(
         }
     }
 
-    let gaps: Vec<f64> = points.windows(2).map(|w| w[1].time - w[0].time).collect();
-    let mean_gop = if gaps.is_empty() {
-        1.0
-    } else {
-        gaps.iter().sum::<f64>() / gaps.len() as f64
-    };
-    let seek_margin = (3.0 * mean_gop).clamp(1.0, 30.0);
+    let seek_margin = index_seek_margin(&points);
 
     video.pulldown = idx.pulldown.unwrap_or(false);
     video.variable_rate |= idx.variable.unwrap_or(false);
@@ -2373,5 +2396,64 @@ mod tests {
         let (kept, folded) = one_track_per_pid(handed, false);
         assert_eq!(kept.len(), 4);
         assert!(folded.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod assembly_analysis_memory_tests {
+    use super::*;
+    use crate::analysis_budget::{AnalysisBudget, AnalysisBudgetExceeded};
+
+    fn point(time: f64) -> AccessPoint {
+        AccessPoint { time, lead_start: time, lead_indices: Vec::new(),
+            droppable: true, pos: 123, measured: false }
+    }
+
+    #[test]
+    fn assembly_seek_margin_handles_no_intervals_and_large_access_point_sequences() {
+        assert_eq!(index_seek_margin(&[]), 3.0);
+        assert_eq!(index_seek_margin(&[point(0.0)]), 3.0);
+        assert_eq!(index_seek_margin(&[point(0.0), point(0.0)]), 1.0);
+        assert_eq!(index_seek_margin(&[point(0.0), point(2.0), point(6.0)]), 9.0);
+        // Bounded fixture, large enough to exercise a dense all-IDR index.
+        let points: Vec<_> = (0..65_536).map(|i| point(i as f64 * 0.5)).collect();
+        assert_eq!(index_seek_margin(&points), 1.5);
+        assert_eq!(index_seek_margin(&[point(0.0), point(60.0)]), 30.0);
+    }
+
+    #[test]
+    fn preroll_normalization_declines_before_allocating_the_nested_index() {
+        let mut points = vec![point(-2.0), point(-1.0), point(1.0)];
+        let budget = AnalysisBudget::new(0);
+        let error = normalize_preroll(&mut points, 1.0 / 30.0, Some(&budget)).unwrap_err();
+        assert!(error.downcast_ref::<AnalysisBudgetExceeded>().is_some());
+        assert!(points.iter().all(|p| p.lead_indices.is_empty() && p.lead_indices.capacity() == 0));
+        assert_eq!(budget.charged(), 0);
+    }
+
+    #[test]
+    fn admitted_preroll_retains_boundary_safety_and_existing_unbudgeted_semantics() {
+        let original = vec![point(-2.0), point(-1.0), point(1.0)];
+        let mut budgeted = original.clone();
+        let mut unbudgeted = original;
+        let budget = AnalysisBudget::new(4 * std::mem::size_of::<usize>());
+        normalize_preroll(&mut budgeted, 1.0 / 30.0, Some(&budget)).unwrap();
+        normalize_preroll(&mut unbudgeted, 1.0 / 30.0, None).unwrap();
+        assert_eq!(budget.charged(), 4 * std::mem::size_of::<usize>());
+        assert_eq!(budgeted.len(), 2);
+        let head = &budgeted[0];
+        assert_eq!((head.time, head.lead_start, head.pos), (0.0, 0.0, 123));
+        assert_eq!(head.lead_indices, [1]);
+        assert!(!head.droppable && head.measured);
+        for (a, b) in budgeted.iter().zip(&unbudgeted) {
+            assert_eq!((a.time, a.lead_start, &a.lead_indices, a.droppable, a.measured),
+                (b.time, b.lead_start, &b.lead_indices, b.droppable, b.measured));
+        }
+        let mut at_zero = vec![point(-1.0), point(0.0), point(1.0)];
+        let no_allocations = AnalysisBudget::new(0);
+        normalize_preroll(&mut at_zero, 1.0 / 30.0, Some(&no_allocations)).unwrap();
+        assert_eq!(at_zero.len(), 2);
+        assert_eq!(at_zero[0].time, 0.0);
+        assert!(at_zero[0].lead_indices.is_empty());
     }
 }

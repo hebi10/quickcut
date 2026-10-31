@@ -26,7 +26,7 @@ import com.hebi.quickcut.media.ExportDiagnosticRecord
 import com.hebi.quickcut.media.ExportDiagnosticStore
 
 @Composable
-internal fun ExportDiagnosticButton(operationId: String? = null, label: String = "최근 저장 진단") {
+internal fun ExportDiagnosticButton(operationId: String? = null, label: String = "최근 작업 진단") {
     val context = LocalContext.current
     var history by remember { mutableStateOf<ExportDiagnosticHistory?>(null) }
     var selected by remember { mutableStateOf<ExportDiagnosticRecord?>(null) }
@@ -42,7 +42,7 @@ internal fun ExportDiagnosticButton(operationId: String? = null, label: String =
     history?.let { records ->
         AlertDialog(
             onDismissRequest = { history = null },
-            title = { Text(if (selected == null) "저장 진단 기록" else "저장 작업 진단") },
+            title = { Text(if (selected == null) "편집·저장 진단 기록" else "저장 작업 진단") },
             text = {
                 Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
                     val record = selected
@@ -57,8 +57,8 @@ internal fun ExportDiagnosticButton(operationId: String? = null, label: String =
                         records.failures.forEach { item ->
                             DiagnosticRecordRow(item) { selected = item; copied = false }
                         }
-                        Text("최근 저장 작업", Modifier.semantics { heading() })
-                        if (records.recent.isEmpty()) Text("기록된 저장 진단이 없습니다.")
+                        Text("최근 작업", Modifier.semantics { heading() })
+                        if (records.recent.isEmpty()) Text("기록된 작업 진단이 없습니다.")
                         records.recent.forEach { item ->
                             DiagnosticRecordRow(item) { selected = item; copied = false }
                         }
@@ -69,7 +69,7 @@ internal fun ExportDiagnosticButton(operationId: String? = null, label: String =
                 selected?.let { record ->
                     TextButton(onClick = {
                         (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
-                            .setPrimaryClip(ClipData.newPlainText("QuickCut 저장 진단", record.text))
+                            .setPrimaryClip(ClipData.newPlainText("QuickCut 편집·저장 진단", record.text))
                         copied = true
                     }) { Text(if (copied) "복사됨" else "진단 복사") }
                 }

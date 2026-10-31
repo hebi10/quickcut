@@ -16,6 +16,7 @@ import com.hebi.quickcut.export.ExportWorkMonitor
 import com.hebi.quickcut.editor.OriginalAction
 import com.hebi.quickcut.editor.OriginalActionStatus
 import com.hebi.quickcut.media.MediaReader
+import com.hebi.quickcut.media.MediaOperationDiagnostics
 import com.hebi.quickcut.media.OriginalMediaDates
 import com.hebi.quickcut.media.OriginalTimestamp
 import com.hebi.quickcut.media.SaveDateMode
@@ -77,10 +78,16 @@ data class BatchExportOverview(
         else reviewedFiles.size - adjustedFast
 }
 
-class BatchViewModel(application: Application) : AndroidViewModel(application) {
+class BatchViewModel internal constructor(
+    application: Application,
+    private val sessionStore: BatchSessionStore,
+) : AndroidViewModel(application) {
+    constructor(application: Application) : this(application, BatchSessionStore(application))
+
+    private val completionJournal = BatchCompletionJournal()
+    private val completionRecordingWarning = "영상은 저장했지만 완료 기록을 보관하지 못했습니다. 이전 작업 확인 후 다시 시작해 주세요. 원본은 유지됩니다."
     private val settings = QuickCutSettings(application)
     private val lastDraft = settings.loadBatch()
-    private val sessionStore = BatchSessionStore(application)
     private val initialLoad = runCatching { sessionStore.load() }
     private val restored = initialLoad.getOrNull()
     private var journalUnreadable by mutableStateOf(initialLoad.isFailure)
@@ -126,6 +133,30 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
         retryOnly: Boolean,
         onFileProgress: (Int?) -> Unit = {},
         onProgress: (Int, Int) -> Unit = { _, _ -> },
+    ): BatchExportOverview {
+        val sourceCount = files.count { it.status != BatchFileStatus.SAVED &&
+            (!retryOnly || it.status == BatchFileStatus.FAILED || it.status == BatchFileStatus.SKIPPED) }
+        val diagnostic = runCatching {
+            MediaOperationDiagnostics.begin(context, ExportStage.REVIEWING, sourceCount)
+        }.getOrNull()
+        return try {
+            inspectExportInternal(context, retryOnly, onFileProgress, onProgress).also {
+                runCatching { diagnostic?.finish("완료") }
+            }
+        } catch (cancelled: CancellationException) {
+            runCatching { diagnostic?.finish("취소", cancelled) }
+            throw cancelled
+        } catch (error: Exception) {
+            runCatching { diagnostic?.finish("실패", error) }
+            throw error
+        }
+    }
+
+    private suspend fun inspectExportInternal(
+        context: Context,
+        retryOnly: Boolean,
+        onFileProgress: (Int?) -> Unit,
+        onProgress: (Int, Int) -> Unit,
     ): BatchExportOverview {
         invalidateReview()
         val generation = reviewGeneration
@@ -398,7 +429,8 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
 
     /** A corrupt/unwritten journal must never be overwritten by initial settings observers. */
     val hasUnresolvedRecovery: Boolean
-        get() = journalUnreadable || persistenceFailed || files.any { it.hasUnresolvedOutput() }
+        get() = journalUnreadable || persistenceFailed || completionJournal.requiresRecovery ||
+            files.any { it.hasUnresolvedOutput() }
 
     private fun restoreSnapshotSettings(snapshot: BatchSessionSnapshot) {
         activeTemplate = snapshot.template
@@ -419,7 +451,8 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
     val failures: Int get() = files.count { it.status == BatchFileStatus.FAILED }
     val skips: Int get() = files.count { it.status == BatchFileStatus.SKIPPED }
     val originalCandidates: List<String>
-        get() = sourceUrisSavedThisRun.distinct().filter { candidate ->
+        get() = if (completionJournal.requiresRecovery || persistenceFailed) emptyList()
+        else sourceUrisSavedThisRun.distinct().filter { candidate ->
             files.any { it.uri == candidate && it.status == BatchFileStatus.SAVED }
         }
     val savedOutputForConfirmation: Uri?
@@ -521,7 +554,7 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
 
     fun addVideos(context: Context, selected: List<Uri>) {
         if (isRunning || isRecovering || isImporting || selected.isEmpty()) return
-        if (journalUnreadable || persistenceFailed) { recoveryNotice(); return }
+        if (journalUnreadable || persistenceFailed || completionJournal.requiresRecovery) { recoveryNotice(); return }
         invalidateReview()
         if (files.size + selected.distinctBy { it.toString() }.count { uri -> files.none { it.uri == uri.toString() } } > 250) {
             notification = "한 번에 최대 250개의 영상을 선택할 수 있습니다."
@@ -536,13 +569,18 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
                     selected.distinctBy { it.toString() }
                         .filter { it.toString() !in existing || it.toString() in refreshable }
                         .map { uri ->
-                            val name = runCatching {
+                            currentCoroutineContext().ensureActive()
+                            val name = try {
                                 context.contentResolver.query(
                                     uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null
                                 )?.use { cursor ->
                                     if (cursor.moveToFirst()) cursor.getString(0) else null
                                 }
-                            }.getOrNull() ?: "선택한 영상"
+                            } catch (cancelled: CancellationException) {
+                                throw cancelled
+                            } catch (_: Exception) {
+                                null
+                            } ?: "선택한 영상"
                             try {
                                 try {
                                     context.contentResolver.takePersistableUriPermission(
@@ -554,12 +592,21 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
                                     // No persistable grant was supplied by the provider.
                                 }
                                 val metadata = MediaReader.metadata(context.applicationContext, uri)
+                                currentCoroutineContext().ensureActive()
                                 val originalDate = OriginalMediaDates.resolve(context.applicationContext, uri)
+                                currentCoroutineContext().ensureActive()
                                 BatchFile(uri.toString(), name, metadata.durationMs,
                                     metadata.hasAudio, originalDate)
+                            } catch (cancelled: CancellationException) {
+                                throw cancelled
                             } catch (error: Exception) {
+                                currentCoroutineContext().ensureActive()
+                                val diagnosticId = runCatching {
+                                    MediaOperationDiagnostics.recordFailure(context, ExportStage.IMPORTING, error, 1)
+                                }.getOrNull()
                                 BatchFile(uri.toString(), name, status = BatchFileStatus.SKIPPED,
-                                    reason = "이 영상을 읽을 수 없습니다.")
+                                    reason = MediaOperationDiagnostics.message(ExportStage.IMPORTING, error),
+                                    diagnosticId = diagnosticId)
                             }
                         }
                 }
@@ -572,15 +619,21 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
                         outputExpectedDurationMs = previous.outputExpectedDurationMs,
                         outputExpectedAudio = previous.outputExpectedAudio,
                         outputExpectedDateMs = previous.outputExpectedDateMs,
-                        diagnosticId = previous.diagnosticId) } ?: previous
+                        diagnosticId = fresh.diagnosticId ?: previous.diagnosticId) } ?: previous
                 } + refreshed.values
                 persistSession()
                 if (runState == BatchRunState.FINISHED) runState = BatchRunState.SETUP
                 if (newRows.isEmpty()) notification = "이미 선택된 영상입니다."
-            } catch (_: CancellationException) {
-                // Selection is aborted with no changes.
+            } catch (cancelled: CancellationException) {
+                // Cancellation must not be classified as an unreadable source.
+                throw cancelled
             } catch (error: Exception) {
-                notification = error.localizedMessage ?: "영상을 불러오지 못했습니다."
+                currentCoroutineContext().ensureActive()
+                runCatching {
+                    MediaOperationDiagnostics.recordFailure(context, ExportStage.IMPORTING, error,
+                        selected.distinctBy(Uri::toString).size)
+                }
+                notification = MediaOperationDiagnostics.message(ExportStage.IMPORTING, error)
             } finally {
                 isImporting = false
             }
@@ -589,7 +642,7 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
 
     fun removeVideo(uri: String) {
         if (isRunning || isRecovering || isImporting) return
-        if (journalUnreadable || persistenceFailed) { recoveryNotice(); return }
+        if (journalUnreadable || persistenceFailed || completionJournal.requiresRecovery) { recoveryNotice(); return }
         val row = files.firstOrNull { it.uri == uri } ?: return
         invalidateReview()
         isImporting = true
@@ -683,7 +736,7 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
                 persistSession()
                 ExportWorkMonitor.awaitReady(workId)
                 val sourceRows = files.toList()
-                for (sourceRow in sourceRows) {
+                exports@ for (sourceRow in sourceRows) {
                     currentCoroutineContext().ensureActive()
                     var row = sourceRow
                     if (row.status != BatchFileStatus.SAVED && row.savedOutputUri != null) {
@@ -765,10 +818,18 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
                                     },
                                     onCommitted = { output ->
                                         committedOutput = output
-                                        update(row.uri) { it.copy(status=BatchFileStatus.SAVED, progress=100,
-                                            savedOutputUri=output.toString(), reason=null) }
-                                        if (selectedOriginalAction != OriginalAction.KEEP)
+                                        // onOutputCreated already durably stored this URI and its
+                                        // validation contract while pending. Keep both on failure:
+                                        // recovery can adopt the now-published video without retry.
+                                        val recorded = completionJournal.record {
+                                            update(row.uri) { it.copy(status=BatchFileStatus.SAVED, progress=100,
+                                                savedOutputUri=output.toString(), reason=null) }
+                                        }
+                                        if (!recorded) {
+                                            notification = completionRecordingWarning
+                                        } else if (selectedOriginalAction != OriginalAction.KEEP) {
                                             sourceUrisSavedThisRun = sourceUrisSavedThisRun + row.uri
+                                        }
                                     },
                                     saveDateMode = selectedDateMode,
                                     outputBaseName = row.displayName,
@@ -800,13 +861,25 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
                                                     it.copy(exportReport = report) else it
                                             }
                                         }.onFailure {
-                                            notification = "영상은 저장했지만 처리 방식 기록을 보관하지 못했습니다."
+                                            notification = if (completionJournal.requiresRecovery) completionRecordingWarning
+                                                else "영상은 저장했지만 처리 방식 기록을 보관하지 못했습니다."
                                         }
                                     },
                                 )
                                 if (files.first { it.uri == row.uri }.status != BatchFileStatus.SAVED) {
                                     update(row.uri) { it.copy(status=BatchFileStatus.SAVED,progress=100,
                                         savedOutputUri=result.toString(),reason=null) }
+                                }
+                                if (completionJournal.requiresRecovery) {
+                                    // Preserve the last durable pending handle before any new
+                                    // publication. Only explicit recovery can resume the queue.
+                                    files = files.map {
+                                        if (it.status == BatchFileStatus.WAITING)
+                                            it.copy(status = BatchFileStatus.SKIPPED, progress = null,
+                                                reason = completionRecordingWarning)
+                                        else it
+                                    }
+                                    break@exports
                                 }
                             } catch (required: ReencodeRequiredException) {
                                 update(row.uri) {
@@ -854,8 +927,10 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
                 else OriginalActionStatus.NONE
                 job = null
                 runCatching { persistSession() }.onFailure {
-                    notification = "작업 결과를 기록하지 못했습니다. 저장 공간을 확인해 주세요."
+                    notification = if (completionJournal.requiresRecovery) completionRecordingWarning
+                        else "작업 결과를 기록하지 못했습니다. 저장 공간을 확인해 주세요."
                 }
+                if (completionJournal.requiresRecovery) notification = completionRecordingWarning
                 ExportWorkMonitor.finish(workId)
             }
         }
@@ -897,7 +972,7 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
 
     fun resetBatch() {
         if (isRunning || isRecovering || isImporting) return
-        if (journalUnreadable || persistenceFailed) { recoveryNotice(); return }
+        if (journalUnreadable || persistenceFailed || completionJournal.requiresRecovery) { recoveryNotice(); return }
         invalidateReview()
         val tracked = files.filter { it.status != BatchFileStatus.SAVED && it.savedOutputUri != null }
         if (tracked.isEmpty()) {
@@ -965,6 +1040,13 @@ class BatchViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 files = withContext(Dispatchers.IO) { files.map { recoverFile(getApplication(), it) } }
                 persistSession()
+                if (completionJournal.requiresRecovery && files.none { it.hasUnresolvedOutput() }) {
+                    // Recovery never retroactively grants deletion consent to outputs
+                    // from the interrupted run, including earlier successful rows.
+                    sourceUrisSavedThisRun = emptyList()
+                    originalStatus = OriginalActionStatus.NONE
+                    completionJournal.recovered()
+                }
                 completedCount = files.count { it.status != BatchFileStatus.WAITING && it.status != BatchFileStatus.RUNNING }
                 if (hasUnresolvedRecovery) recoveryNotice() else notification = "이전 작업 확인을 완료했습니다."
             } catch (_: Exception) { recoveryNotice() }

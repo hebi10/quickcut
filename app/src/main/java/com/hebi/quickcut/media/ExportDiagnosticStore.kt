@@ -6,6 +6,7 @@ import android.media.MediaFormat
 import android.media.MediaCodec
 import androidx.annotation.OptIn
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.common.PlaybackException
 import androidx.media3.transformer.ExportException
 import android.net.Uri
 import android.os.Build
@@ -40,6 +41,16 @@ internal object ExportDiagnosticStore {
             timeline.clips.map { it.uri }.distinct().size, timeline.clips.firstOrNull()?.sourceDurationMs ?: 0L,
             runCatching { timeline.totalDurationUs }.getOrDefault(0L), timeline.clips.size)
         return ExportDiagnosticSession(context.applicationContext, facts).also { it.stage(ExportStage.PREPARING) }
+    }
+
+    internal fun beginOperation(context: Context, stage: ExportStage, sourceCount: Int): ExportDiagnosticSession {
+        @Suppress("DEPRECATION")
+        val version = runCatching {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName
+        }.getOrNull() ?: "?"
+        val facts = ExportDiagnosticFacts(version, "${Build.MANUFACTURER} ${Build.MODEL}",
+            Build.VERSION.SDK_INT, sourceCount.coerceAtLeast(0), 0L, 0L, 0)
+        return ExportDiagnosticSession(context.applicationContext, facts).also { it.stage(stage) }
     }
 
     @Synchronized internal fun save(context: Context, record: ExportDiagnosticRecord) {
@@ -92,6 +103,7 @@ internal class ExportDiagnosticSession(private val context: Context, private var
             error == null -> null
             error is CancellationException -> "CancellationException"
             causes.any { it is ExportException } -> "ExportException"
+            causes.any { it is PlaybackException } -> "PlaybackException"
             causes.any { it is MediaCodec.CodecException } -> "MediaCodecException"
             error is ReencodeRequiredException -> "ReencodeRequiredException"
             error is SecurityException -> "SecurityException"

@@ -177,6 +177,8 @@ if [[ "$HOST_TESTS" == true ]]; then
     export BINDGEN_EXTRA_CLANG_ARGS="-resource-dir=$TOOLCHAIN/lib/clang/18"
     cargo +"$RUST_VERSION" test --manifest-path "$CRATE" --locked --release --no-fail-fast
     cargo +"$RUST_VERSION" test --manifest-path "$CRATE" --locked --release -p smartcut-core --lib descriptor
+    cargo +"$RUST_VERSION" test --manifest-path "$CRATE" --locked --release -p smartcut-core --lib analysis_budget
+    cargo +"$RUST_VERSION" test --manifest-path "$CRATE" --locked --release -p smartcut-core --lib analysis_memory_tests
   )
 fi
 build_android arm64-v8a aarch64-linux-android aarch64

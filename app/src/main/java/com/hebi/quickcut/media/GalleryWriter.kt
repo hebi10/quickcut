@@ -164,9 +164,12 @@ class GalleryWriter(private val context: Context) {
                     if (resolver.update(uri, changes, null, null) < 1) {
                         throw IOException("저장된 파일을 갤러리에 등록할 수 없습니다.")
                     }
+                    // Publication is irreversible from the journal's perspective.
+                    // Mark inside IO: neither a callback failure nor cancellation
+                    // at dispatcher return may delete a valid published output.
+                    committed = true
                 }
                 runCallback { onCommitted(uri) }
-                committed = true
                 uri
             }
         } catch (error: Throwable) {

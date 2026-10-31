@@ -226,11 +226,35 @@ class ExportIntegrityInstrumentedTest {
     }
 
     @Test
-    fun failedCommittedJournalRemovesThePublishedOutput() = runBlocking {
+    fun cancellationThrownByCommittedCallbackKeepsThePublishedOutput() = runBlocking {
+        withFixtureSuspending { context, file ->
+            val name = "throw_cancel_committed_" + UUID.randomUUID().toString().take(8)
+            val cancelled = kotlinx.coroutines.CancellationException("Injected cancellation")
+            var output: Uri? = null
+            try {
+                val failure = runCatching {
+                    GalleryWriter(context).save(file, outputBaseName = name,
+                        onOutputCreated = { output = it },
+                        onCommitted = {
+                            assertEquals(0, pendingValue(context, it))
+                            throw cancelled
+                        })
+                }.exceptionOrNull()
+                org.junit.Assert.assertSame(cancelled, failure)
+                assertEquals(1, savedRows(context, name))
+                MediaReader.validateExport(context, output!!)
+                assertTrue(file.exists())
+            } finally { deleteRows(context, name) }
+        }
+    }
+
+    @Test
+    fun failedCommittedJournalRetainsThePublishedOutputAndRecoveryHandle() = runBlocking {
         withFixtureSuspending { context, file ->
             val metadata = MediaReader.metadata(context, Uri.fromFile(file))
             val name = "failed_commit_" + UUID.randomUUID().toString().take(8)
             val journalFailure = IOException("Completion journal unavailable")
+            var recoveryHandle: Uri? = null
             try {
                 val failure = runCatching {
                     GalleryWriter(context).saveDirect(
@@ -239,11 +263,19 @@ class ExportIntegrityInstrumentedTest {
                         expectAudio = metadata.hasAudio,
                         writer = { descriptor -> copyToDescriptor(file, descriptor) },
                         onFinalizing = {},
-                        onCommitted = { throw journalFailure },
+                        onOutputCreated = { recoveryHandle = it },
+                        onCommitted = { output ->
+                            assertEquals(recoveryHandle, output)
+                            assertEquals("Inject after actual publication", 0, pendingValue(context, output))
+                            throw journalFailure
+                        },
                     )
                 }.exceptionOrNull()
                 assertEquals(journalFailure, failure?.cause)
-                assertEquals("A published file without a successful journal must be removed", 0, savedRows(context, name))
+                assertEquals("Publication survives a later journal failure", 1, savedRows(context, name))
+                assertEquals(0, pendingValue(context, recoveryHandle!!))
+                MediaReader.validateExport(context, recoveryHandle!!, metadata.durationMs, metadata.hasAudio)
+                assertTrue("A journal failure never deletes the original", file.exists())
             } finally {
                 deleteRows(context, name)
             }
@@ -260,7 +292,10 @@ class ExportIntegrityInstrumentedTest {
                     GalleryWriter(context).save(
                         file,
                         outputBaseName = name,
-                        onOutputCreated = { throw journalFailure },
+                        onOutputCreated = {
+                            assertEquals("Creation journaling still precedes publication", 1, pendingValue(context, it))
+                            throw journalFailure
+                        },
                     )
                 }.exceptionOrNull()
                 assertEquals(journalFailure, failure?.cause)
@@ -293,12 +328,15 @@ class ExportIntegrityInstrumentedTest {
                         outputBaseName = name,
                         exportMode = ExportMode.ALLOW_REENCODE,
                         onOutputCreated = { createdCount++ },
-                        onCommitted = { throw journalFailure },
+                        onCommitted = { output ->
+                            assertEquals("Inject after actual publication", 0, pendingValue(context, output))
+                            throw journalFailure
+                        },
                     )
                 }.exceptionOrNull()
                 assertEquals(journalFailure, failure?.cause)
                 assertEquals("Persistence failure must not be mistaken for remux incompatibility", 1, createdCount)
-                assertEquals(0, savedRows(context, name))
+                assertEquals(1, savedRows(context, name))
             } finally {
                 deleteRows(context, name)
             }

@@ -155,6 +155,7 @@ fun BatchScreen(
     BackHandler(onBack = guardedBack)
 
     BoxWithConstraints(Modifier.fillMaxSize().background(CutColors.background)) {
+        val actionsMaxHeight = maxHeight * 0.45f
         if (maxWidth >= 840.dp) {
             Row(Modifier.fillMaxSize()) {
                 Column(
@@ -182,7 +183,7 @@ fun BatchScreen(
                         }
                     }
                     Column(
-                        Modifier.fillMaxWidth().heightIn(max = maxHeight * 0.45f)
+                        Modifier.fillMaxWidth().heightIn(max = actionsMaxHeight)
                             .verticalScroll(rememberScrollState()),
                     ) {
                         BatchProgress(model)
@@ -209,7 +210,7 @@ fun BatchScreen(
                 item { BatchProgress(model) }
             }
             Column(
-                Modifier.fillMaxWidth().heightIn(max = maxHeight * 0.45f)
+                Modifier.fillMaxWidth().heightIn(max = actionsMaxHeight)
                     .verticalScroll(rememberScrollState()).padding(12.dp),
             ) {
                 BatchActions(model, requestExport, inspecting) { showStopConfirmation = true }

@@ -76,7 +76,7 @@ PYCODE
 if ! timeout --kill-after=2s 10s adb pull /sdcard/Android/data/com.hebi.quickcut/files/quickcut-fast-review.png quickcut-fast-review.png; then
   echo "::warning::Optional fast-review screenshot was unavailable; instrumentation results are unchanged."
 fi
-if ! timeout --kill-after=2s 10s adb pull /sdcard/Android/data/com.hebi.quickcut/files/design-review quickcut-design-review; then
+if ! timeout --kill-after=2s 10s adb pull /data/local/tmp/quickcut-design-review quickcut-design-review; then
   echo "::warning::Optional design screenshots were unavailable; instrumentation results are unchanged."
 fi
 if [[ "$first_failure" -ne 0 ]]; then

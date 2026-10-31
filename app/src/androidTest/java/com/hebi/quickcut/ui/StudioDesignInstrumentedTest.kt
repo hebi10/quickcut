@@ -1,12 +1,14 @@
 package com.hebi.quickcut.ui
 
 import android.graphics.Bitmap
+import android.os.ParcelFileDescriptor
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsActions
@@ -154,8 +156,63 @@ class StudioDesignInstrumentedTest {
             }
         assertTrue("The action label must have a text layout: $label", layouts.isNotEmpty())
         layouts.forEach { layout ->
-            assertFalse("The action label is clipped horizontally: $label", layout.didOverflowWidth)
-            assertFalse("The action label is clipped vertically: $label", layout.didOverflowHeight)
+            assertEquals("The complete action label must be laid out", label, layout.layoutInput.text.text)
+            assertTrue("The action label must have a visible line: $label", layout.lineCount > 0)
+            // Spaces consumed at a soft wrap have no painted glyph and can extend past a line.
+            val visibleOffsets = label.indices.filterNot { label[it].isWhitespace() }
+            val characterBounds = visibleOffsets.map(layout::getBoundingBox)
+            val glyphBounds = Rect(
+                characterBounds.minOf { it.left }, characterBounds.minOf { it.top },
+                characterBounds.maxOf { it.right }, characterBounds.maxOf { it.bottom },
+            )
+            val lines = (0 until layout.lineCount).joinToString { line ->
+                "$line:[${layout.getLineLeft(line)},${layout.getLineTop(line)}," +
+                    "${layout.getLineRight(line)},${layout.getLineBottom(line)}]"
+            }
+            val metrics = "label=$label size=${layout.size} paragraph=" +
+                "${layout.multiParagraph.width}x${layout.multiParagraph.height} " +
+                "didOverflowWidth=${layout.didOverflowWidth} " +
+                "didOverflowHeight=${layout.didOverflowHeight} glyphBounds=$glyphBounds lines=$lines"
+            Log.i("StudioDesignTest", metrics)
+
+            // Compose 1.11's String-text semantics rebuild a MultiParagraph at the available
+            // width but retain the smaller measured layoutSize. didOverflowWidth then reports
+            // unused paragraph allocation as overflow. Check the actual characters and lines.
+            // Their coordinates are floats, while layout.size is integral physical pixels;
+            // allow at most one physical pixel of edge rounding, independent of density.
+            val roundingPx = 1f
+            val width = layout.size.width.toFloat()
+            val height = layout.size.height.toFloat()
+            assertFalse("The action label must not truncate lines: $metrics",
+                layout.multiParagraph.didExceedMaxLines)
+            assertEquals("The final visible line must consume the complete action label: $metrics",
+                label.length, layout.getLineEnd(layout.lineCount - 1, visibleEnd = true))
+            assertTrue("The action label is clipped vertically: $metrics",
+                layout.multiParagraph.height.isFinite() &&
+                    layout.multiParagraph.height <= height + roundingPx)
+            repeat(layout.lineCount) { line ->
+                assertFalse("The action label must not be ellipsized: $metrics",
+                    layout.isLineEllipsized(line))
+                val left = layout.getLineLeft(line)
+                val right = layout.getLineRight(line)
+                val top = layout.getLineTop(line)
+                val bottom = layout.getLineBottom(line)
+                assertTrue("The action label line is clipped horizontally: $metrics",
+                    left.isFinite() && right.isFinite() &&
+                        left >= -roundingPx && right <= width + roundingPx)
+                assertTrue("The action label line is clipped vertically: $metrics",
+                    top.isFinite() && bottom.isFinite() &&
+                        top >= -roundingPx && bottom <= height + roundingPx)
+            }
+            characterBounds.forEachIndexed { index, bounds ->
+                val offset = visibleOffsets[index]
+                assertTrue("The action label character $offset is clipped horizontally: $metrics",
+                    bounds.left.isFinite() && bounds.right.isFinite() &&
+                        bounds.left >= -roundingPx && bounds.right <= width + roundingPx)
+                assertTrue("The action label character $offset is clipped vertically: $metrics",
+                    bounds.top.isFinite() && bounds.bottom.isFinite() &&
+                        bounds.top >= -roundingPx && bounds.bottom <= height + roundingPx)
+            }
         }
     }
 
@@ -173,6 +230,24 @@ class StudioDesignInstrumentedTest {
                 check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream))
             }
             Log.i("StudioDesignTest", "Saved screenshot: ${output.absolutePath}")
+            // Gradle uninstalls the app after instrumentation, removing external-files images.
+            // Copy the review artifacts to a shell-owned directory before that cleanup.
+            require(name.matches(Regex("studio_home_(phone|phone_font_160|landscape|fold)_(top|settings)\\.png")))
+            require(output.absolutePath.matches(Regex("[A-Za-z0-9_./-]+")))
+            val destination = "/data/local/tmp/quickcut-design-review/$name"
+            fun shell(command: String): String {
+                val descriptor = InstrumentationRegistry.getInstrumentation().uiAutomation
+                    .executeShellCommand(command)
+                return ParcelFileDescriptor.AutoCloseInputStream(descriptor).bufferedReader()
+                    .use { it.readText().trim() }
+            }
+            shell("mkdir -p /data/local/tmp/quickcut-design-review")
+            shell("cp ${output.absolutePath} $destination")
+            val preservedBytes = shell("wc -c $destination").substringBefore(' ').toLongOrNull()
+            check(output.length() > 0L && preservedBytes == output.length()) {
+                "Could not preserve complete screenshot: $destination"
+            }
+            Log.i("StudioDesignTest", "Preserved screenshot: $destination")
         }.onFailure { error ->
             Log.w("StudioDesignTest", "Could not capture $name", error)
         }

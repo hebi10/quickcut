@@ -16,6 +16,8 @@ on:
       - "scripts/test-emulator-failure.py"
       - "scripts/test-emulator-flow.py"
       - "scripts/android-instrumentation-check.sh"
+      - "scripts/android-dialog-geometry-check.sh"
+      - "scripts/test-dialog-geometry.py"
       - "scripts/verify-android-main10.py"
       - "scripts/build-native-smartcut.sh"
       - "scripts/native-smartcut-sources.json"
@@ -44,6 +46,8 @@ on:
       - "scripts/test-emulator-failure.py"
       - "scripts/test-emulator-flow.py"
       - "scripts/android-instrumentation-check.sh"
+      - "scripts/android-dialog-geometry-check.sh"
+      - "scripts/test-dialog-geometry.py"
       - "scripts/verify-android-main10.py"
       - "scripts/build-native-smartcut.sh"
       - "scripts/native-smartcut-sources.json"
@@ -146,9 +150,10 @@ jobs:
           sudo udevadm trigger --name-match=kvm
       - name: Validate bounded diagnostics and instrumentation control flow
         run: |
-          bash -n scripts/android-emulator-check.sh scripts/android-instrumentation-check.sh
+          bash -n scripts/android-emulator-check.sh scripts/android-instrumentation-check.sh scripts/android-dialog-geometry-check.sh
           python3 scripts/test-emulator-failure.py
           python3 scripts/test-emulator-flow.py
+          python3 scripts/test-dialog-geometry.py
       - name: Launch QuickCut on API ${{ matrix.api }} emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -163,6 +168,31 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -no-metrics -partition-size 2048
           disable-animations: true
           script: bash scripts/android-emulator-check.sh
+      # The preceding emulator action shuts down its device. Start a fresh disposable
+      # API 36 emulator here; the helper preserves/restores the full-suite workspace XML.
+      - name: Verify real Dialog geometry on API 36
+        if: success() && matrix.api == 36
+        timeout-minutes: 8
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disk-size: 2048M
+          ram-size: 1536M
+          heap-size: 256M
+          emulator-boot-timeout: 300
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -no-metrics -partition-size 2048
+          disable-animations: true
+          script: bash scripts/android-dialog-geometry-check.sh
+      - name: Upload real Dialog geometry evidence
+        if: always() && matrix.api == 36
+        uses: actions/upload-artifact@v4
+        with:
+          name: quickcut-real-dialog-results-api-36
+          path: quickcut-real-dialog-results/
+          if-no-files-found: warn
       - name: Upload emulator screenshot
         if: always()
         uses: actions/upload-artifact@v4

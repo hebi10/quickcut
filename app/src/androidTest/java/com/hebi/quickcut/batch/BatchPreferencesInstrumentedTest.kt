@@ -8,9 +8,10 @@ import android.net.Uri
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.test.assertIsNotSelected
+import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -18,6 +19,7 @@ import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.Lifecycle
 import androidx.test.platform.app.InstrumentationRegistry
 import com.hebi.quickcut.editor.OriginalAction
+import com.hebi.quickcut.media.SaveDateMode
 import com.hebi.quickcut.media.ExportMode
 import com.hebi.quickcut.ui.QuickCutTheme
 import java.io.File
@@ -94,44 +96,56 @@ class BatchPreferencesInstrumentedTest {
         compose.onNodeWithText("템플릿·저장 옵션 펼치기").performScrollTo().performClick()
     }
 
+    private fun chooseOriginalAction(label: String) {
+        compose.onNodeWithTag("batch-original-action").performScrollTo().performClick()
+        compose.onNodeWithText(label).performClick()
+    }
+
+    private fun assertOriginalActionSelected(label: String) {
+        compose.onNodeWithTag("batch-original-action")
+            .assertContentDescriptionEquals("저장 후 원본 처리: $label")
+        compose.onNodeWithTag("batch-original-action").performScrollTo().performClick()
+        compose.onNodeWithText(label).assertIsSelected().performClick()
+    }
+
     @Test fun cancellingEnableLeavesOriginalsKept() {
         openOptions()
-        compose.onNodeWithText("저장 성공한 원본만 휴지통으로 이동").performScrollTo().performClick()
+        chooseOriginalAction("저장 성공한 원본만 휴지통으로 이동")
         compose.onNodeWithText("원본 자동 처리 활성화").assertExists()
         compose.runOnIdle { assertEquals(OriginalAction.KEEP, model.originalAction) }
         compose.onNodeWithText("취소").performClick()
-        compose.onNodeWithText("원본 유지 (기본값)").assertIsSelected()
+        assertOriginalActionSelected("원본 유지 (기본값)")
         assertEquals(OriginalAction.KEEP, newModel().originalAction)
     }
 
     @Test fun confirmedPreferenceSurvivesNewBatchAndModelRecreation() {
         openOptions()
-        compose.onNodeWithText("저장 성공한 원본만 휴지통으로 이동").performScrollTo().performClick()
+        chooseOriginalAction("저장 성공한 원본만 휴지통으로 이동")
         compose.onNodeWithText("활성화").performClick()
-        compose.onNodeWithText("저장 성공한 원본만 휴지통으로 이동").assertIsSelected()
+        assertOriginalActionSelected("저장 성공한 원본만 휴지통으로 이동")
         compose.runOnIdle {
             model.resetBatch()
             assertEquals(OriginalAction.TRASH, model.originalAction)
         }
         assertEquals(OriginalAction.TRASH, newModel().originalAction)
         // Selecting the already enabled preference must not repeat the app warning.
-        compose.onNodeWithText("저장 성공한 원본만 휴지통으로 이동").performScrollTo().performClick()
+        chooseOriginalAction("저장 성공한 원본만 휴지통으로 이동")
         compose.onNodeWithText("원본 자동 처리 활성화").assertDoesNotExist()
     }
 
     @Test fun disablingIsImmediateAndReenablingOrChangingActionRequiresConfirmation() {
         openOptions()
-        compose.onNodeWithText("저장 성공한 원본만 휴지통으로 이동").performScrollTo().performClick()
+        chooseOriginalAction("저장 성공한 원본만 휴지통으로 이동")
         compose.onNodeWithText("활성화").performClick()
-        compose.onNodeWithText("저장 성공한 원본 영구 삭제").performScrollTo().performClick()
+        chooseOriginalAction("저장 성공한 원본 영구 삭제")
         compose.onNodeWithText("원본 자동 처리 활성화").assertExists()
         compose.runOnIdle { assertEquals(OriginalAction.TRASH, model.originalAction) }
         compose.onNodeWithText("취소").performClick()
-        compose.onNodeWithText("원본 유지 (기본값)").performScrollTo().performClick()
+        chooseOriginalAction("원본 유지 (기본값)")
         compose.onNodeWithText("원본 자동 처리 활성화").assertDoesNotExist()
-        compose.onNodeWithText("저장 성공한 원본만 휴지통으로 이동").assertIsNotSelected()
+        assertOriginalActionSelected("원본 유지 (기본값)")
         assertEquals(OriginalAction.KEEP, newModel().originalAction)
-        compose.onNodeWithText("저장 성공한 원본만 휴지통으로 이동").performScrollTo().performClick()
+        chooseOriginalAction("저장 성공한 원본만 휴지통으로 이동")
         compose.onNodeWithText("원본 자동 처리 활성화").assertExists()
     }
 
@@ -146,7 +160,15 @@ class BatchPreferencesInstrumentedTest {
             model.draftName = "두 번째 설정"
             model.draftLeadingSeconds = "5"
         }
-        // Presets are available without expanding the advanced save options.
+        // Acknowledge the first save without reselecting a template or losing the edited draft.
+        compose.onNodeWithText("템플릿을 저장했습니다.").assertExists()
+        compose.onNodeWithText("확인").performClick()
+        compose.onNodeWithTag("batch-template-manager").performScrollTo().performClick()
+        compose.runOnIdle {
+            assertEquals(saved.id, model.selectedTemplateId)
+            assertEquals("두 번째 설정", model.draftName)
+            assertEquals("5", model.draftLeadingSeconds)
+        }
         compose.onNodeWithText("새 템플릿으로 저장").performScrollTo().performClick()
         val stored = TemplateStore(application).load()
         assertEquals(2, stored.size)
@@ -165,13 +187,18 @@ class BatchPreferencesInstrumentedTest {
             model.draftMode = BatchClipMode.KEEP_FIRST
             model.draftLeadingSeconds = "2"
             model.originalAction = OriginalAction.TRASH
+            // File-backed fixture has no guaranteed original-date metadata; this test covers
+            // publication and lifecycle delivery, independently of the default date policy.
+            model.saveDateMode = SaveDateMode.CURRENT
             model.addVideos(application, listOf(Uri.fromFile(source)))
         }
         withTimeout(30_000L) { while (model.isImporting) delay(25L) }
         compose.activityRule.scenario.moveToState(Lifecycle.State.STARTED)
         withContext(Dispatchers.Main) { model.start(application, exportMode = ExportMode.FAST_ONLY) }
         withTimeout(60_000L) { while (model.isRunning) delay(25L) }
-        assertEquals(1, model.successes)
+        assertEquals("Expected a published output: " + model.files.joinToString {
+            "${it.status}: ${it.reason}"
+        } + "; notification=${model.notification}", 1, model.successes)
         assertEquals(0, approvalRequests)
         compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
         compose.waitUntil(10_000L) { approvalRequests == 1 }

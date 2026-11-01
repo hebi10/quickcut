@@ -3,6 +3,7 @@ package com.hebi.quickcut.batch
 import android.Manifest
 import android.app.Application
 import android.content.Context
+import android.content.ContentUris
 import android.graphics.Color
 import android.media.MediaMetadataRetriever
 import android.content.pm.PackageManager
@@ -134,19 +135,16 @@ class ExactBatchExportInstrumentedTest {
         InstrumentationRegistry.getInstrumentation().context.assets.open("quickcut_exact_boundary.mp4")
             .use { input -> exactSource.outputStream().use { input.copyTo(it) } }
         val sourceBytes = exactSource.readBytes()
-        // Include pending rows: inspection/dismissal must not publish or leave a new output.
-        fun outputIds(): Set<Long> {
-            val prefix = exactSource.nameWithoutExtension + "_QuickCut_"
-            return context.contentResolver.query(MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
-                arrayOf(MediaStore.Video.Media._ID, MediaStore.Video.Media.DISPLAY_NAME),
-                null, null, null)!!.use { cursor ->
-                buildSet {
-                    while (cursor.moveToNext()) {
-                        if (cursor.getString(1).startsWith(prefix)) add(cursor.getLong(0))
-                    }
-                }
-            }
-        }
+        // Include owned pending and published rows; file:// imports may use a provider fallback name.
+        @Suppress("DEPRECATION")
+        fun outputIds(): Set<Long> = context.contentResolver.query(
+            MediaStore.setIncludePending(MediaStore.Video.Media.EXTERNAL_CONTENT_URI),
+            arrayOf(MediaStore.Video.Media._ID),
+            "${MediaStore.MediaColumns.OWNER_PACKAGE_NAME} = ?",
+            arrayOf(context.packageName), null,
+        )?.use { cursor ->
+            buildSet { while (cursor.moveToNext()) add(cursor.getLong(0)) }
+        } ?: throw AssertionError("Owned pending/published output query must return a cursor")
         try {
             composeRule.runOnUiThread { model.removeVideo(model.files.single().uri) }
             composeRule.waitUntil(30_000L) { !model.isImporting && model.files.isEmpty() }
@@ -178,7 +176,7 @@ class ExactBatchExportInstrumentedTest {
             assertEquals(refused.reencodeRefusal, sessionStore.load()!!.files.single().reencodeRefusal)
             assertNull(refused.savedOutputUri)
             assertNull(refused.exportReport)
-            assertEquals(before, outputIds())
+            assertEquals("A refused fast export must not create a pending or published output", before, outputIds())
             assertTrue(model.originalCandidates.isEmpty())
 
             val dismissed = runBlocking { withContext(Dispatchers.Main) { model.inspectExport(context, true) } }
@@ -191,7 +189,7 @@ class ExactBatchExportInstrumentedTest {
             assertEquals(BatchExportChoice.EXACT, BatchExportChoicePolicy.defaults(listOf(file))[file.uri])
             assertNull(BatchExportChoicePolicy.resolve(listOf(file), mapOf(file.uri to BatchExportChoice.RECOMMENDED)))
             // Inspection itself (including dismissing this overview without submission) has no side effects.
-            assertEquals(before, outputIds())
+            assertEquals("Inspection without consent must not create an output", before, outputIds())
             assertEquals(BatchFileStatus.SKIPPED, model.files.single().status)
             // The reviewed aggregate fast-only shortcut must exclude the known refusal too.
             composeRule.runOnUiThread {
@@ -200,12 +198,12 @@ class ExactBatchExportInstrumentedTest {
             composeRule.waitUntil(120_000L) { model.runState == BatchRunState.FINISHED }
             assertEquals(BatchFileStatus.SKIPPED, model.files.single().status)
             assertEquals(refused.reencodeRefusal, model.files.single().reencodeRefusal)
-            assertEquals(before, outputIds())
+            assertEquals("Reviewed fast-only retry must not repeat the refused request", before, outputIds())
             composeRule.runOnUiThread { model.start(context, retryOnly = true, exportMode = ExportMode.ALLOW_REENCODE) }
             composeRule.waitUntil(120_000L) { model.runState == BatchRunState.FINISHED }
             assertEquals(BatchFileStatus.SKIPPED, model.files.single().status)
             assertEquals(refused.reencodeRefusal, model.files.single().reencodeRefusal)
-            assertEquals(before, outputIds())
+            assertEquals("Unreviewed encoding retry must not create an output", before, outputIds())
 
             val consented = runBlocking { withContext(Dispatchers.Main) { model.inspectExport(context, true) } }
             composeRule.runOnUiThread {
@@ -227,7 +225,9 @@ class ExactBatchExportInstrumentedTest {
             assertTrue("Duration must preserve the requested interval within one 30fps frame: " +
                 "requested=${requested.totalDurationMs}ms actual=${actual.durationMs}ms",
                 abs(actual.durationMs - requested.totalDurationMs) <= 34L)
-            assertEquals(before.size + 1, outputIds().size)
+            assertFalse("The saved output must be a new MediaStore row", before.contains(ContentUris.parseId(output)))
+            assertEquals("Explicit exact consent must create exactly the saved output and no extra pending rows",
+                before + ContentUris.parseId(output), outputIds())
             assertTrue(exactSource.exists())
             assertTrue(sourceBytes.contentEquals(exactSource.readBytes()))
             assertTrue(model.originalCandidates.isEmpty())

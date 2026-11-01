@@ -77,9 +77,10 @@ jobs:
           gradle-version: "9.4.1"
       - name: Validate emulator test script
         run: |
-          bash -n scripts/android-emulator-check.sh scripts/android-instrumentation-check.sh scripts/verify-release-apk.sh scripts/build-native-smartcut.sh
+          bash -n scripts/android-emulator-check.sh scripts/android-instrumentation-check.sh scripts/android-dialog-geometry-check.sh scripts/verify-release-apk.sh scripts/build-native-smartcut.sh
           python3 scripts/test-emulator-failure.py
           python3 scripts/test-emulator-flow.py
+          python3 scripts/test-dialog-geometry.py
           python3 scripts/test-release-gate.py
           python3 scripts/test-runtime-publication-metadata.py
       - name: Unit tests, lint, and builds

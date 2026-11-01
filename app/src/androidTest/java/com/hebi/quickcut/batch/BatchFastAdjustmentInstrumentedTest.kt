@@ -11,13 +11,8 @@ import android.graphics.Bitmap
 import android.os.ParcelFileDescriptor
 import android.util.Log
 import androidx.compose.ui.graphics.asAndroidBitmap
-import androidx.compose.ui.test.DeviceConfigurationOverride
 import androidx.compose.ui.test.ExperimentalTestApi
-import androidx.compose.ui.test.FontScale
-import androidx.compose.ui.test.ForcedSize
 import androidx.compose.ui.test.captureToImage
-import androidx.compose.ui.unit.DpSize
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -56,6 +51,8 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.json.JSONArray
+import org.json.JSONObject
 
 @RunWith(AndroidJUnit4::class)
 @OptIn(ExperimentalTestApi::class)
@@ -254,26 +251,12 @@ class BatchFastAdjustmentInstrumentedTest {
     }
 
     @Test
-    fun narrowLargeFontReviewKeepsBothSaveActionsInFixedFooter() = checkReviewGeometry(320, 640, 1.6f, "phone_font_160")
-
-    @Test
-    fun wideReviewKeepsBothSaveActionsInFixedFooter() = checkReviewGeometry(840, 720, 1f, "fold")
-
-    @Test
-    fun narrowLargeFontTemplateManagerRemainsUsable() = checkTemplateGeometry(320, 640, 1.6f, "phone_font_160")
-
-    @Test
-    fun wideTemplateManagerRemainsUsable() = checkTemplateGeometry(840, 720, 1f, "fold")
-
-    private fun checkReviewGeometry(width: Int, height: Int, fontScale: Float, name: String) {
+    fun reviewKeepsBothSaveActionsInFixedFooter() {
+        assertActualGeometryConfiguration()
         val review = inspect()
         composeRule.runOnUiThread {
             composeRule.activity.setContent {
-                DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(width.dp, height.dp))) {
-                    DeviceConfigurationOverride(DeviceConfigurationOverride.FontScale(fontScale)) {
-                        QuickCutTheme { BatchReviewDialog(review, null, {}, {}, {}, {}) }
-                    }
-                }
+                QuickCutTheme { BatchReviewDialog(review, null, {}, {}, {}, {}) }
             }
         }
         composeRule.onNodeWithTag("batch-review-submit").performScrollTo().assertIsDisplayed().assertIsEnabled()
@@ -283,51 +266,104 @@ class BatchFastAdjustmentInstrumentedTest {
             hasAnyAncestor(hasTestTag("batch-review-footer"))).assertExists()
         composeRule.onNode(hasTestTag("batch-review-submit") and
             hasAnyAncestor(hasTestTag("batch-review-footer"))).assertExists()
-        captureBatchDesignImage("batch_review_${name}.png", "batch-review-dialog")
+        val exact = composeRule.onNodeWithTag("batch-review-submit").fetchSemanticsNode().boundsInRoot
+        val recommended = composeRule.onNodeWithTag("batch-review-recommended-submit").fetchSemanticsNode().boundsInRoot
+        assertFalse("Footer actions must not overlap", exact.overlaps(recommended))
+        captureBatchGeometry("review", "batch-review-dialog")
         assertFalse(model.isRunning)
         assertTrue(model.files.single().savedOutputUri == null)
     }
 
-    private fun checkTemplateGeometry(width: Int, height: Int, fontScale: Float, name: String) {
-        composeRule.runOnUiThread {
-            composeRule.activity.setContent {
-                DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(width.dp, height.dp))) {
-                    DeviceConfigurationOverride(DeviceConfigurationOverride.FontScale(fontScale)) {
-                        QuickCutTheme { BatchScreen(model, {}, {}, { _, _, _ -> }) }
-                    }
-                }
-            }
-        }
+    @Test
+    fun templateManagerRemainsUsable() {
+        assertActualGeometryConfiguration()
         composeRule.onNodeWithTag("batch-template-manager").performScrollTo().performClick()
         composeRule.onNodeWithTag("batch-template-direct").assertIsDisplayed().assertIsEnabled()
         composeRule.onNodeWithText("새 템플릿으로 저장").performScrollTo().assertIsDisplayed().assertIsEnabled()
         composeRule.onNodeWithText("닫기").assertIsDisplayed().assertIsEnabled()
-        captureBatchDesignImage("batch_templates_${name}.png", "batch-template-dialog")
+        captureBatchGeometry("templates", "batch-template-dialog")
         composeRule.onNodeWithText("닫기").performClick()
+        composeRule.onNodeWithTag("batch-template-dialog").assertDoesNotExist()
         assertFalse(model.isRunning)
+        assertTrue(model.files.single().savedOutputUri == null)
     }
 
-    private fun captureBatchDesignImage(name: String, tag: String) {
-        // Optional screenshot support never replaces the required UI assertions above.
-        runCatching {
-            require(name.matches(Regex("batch_(review|templates)_(phone_font_160|fold)\\.png")))
+    private val geometryStage: String
+        get() = (InstrumentationRegistry.getArguments().getString("quickcutGeometryStage") ?: "default")
+            .also { require(it in setOf("default", "narrow", "wide")) }
+
+    private fun assertActualGeometryConfiguration() {
+        val arguments = InstrumentationRegistry.getArguments()
+        val configuration = composeRule.activity.resources.configuration
+        val metrics = composeRule.activity.resources.displayMetrics
+        if (geometryStage != "default") {
+            val width = requireNotNull(arguments.getString("quickcutExpectedWidthDp")).toInt()
+            val font = requireNotNull(arguments.getString("quickcutExpectedFontScale")).toFloat()
+            assertEquals("Fresh Activity width in dp", width, configuration.screenWidthDp)
+            assertEquals("Fresh Activity font scale", font, configuration.fontScale, 0.01f)
+            assertEquals("Actual resource density", 320, configuration.densityDpi)
+            assertEquals("Actual display density", 320, metrics.densityDpi)
+        }
+        // Activity height excludes system insets on some API levels; record it, do not
+        // confuse it with the complete wm display height.
+        assertTrue(configuration.screenWidthDp > 0 && configuration.screenHeightDp > 0)
+    }
+
+    private fun captureBatchGeometry(kind: String, tag: String) {
+        val bounds = composeRule.onNodeWithTag(tag).fetchSemanticsNode().boundsInWindow
+        val resources = composeRule.activity.resources
+        assertTrue("Dialog must have actual positive bounds", bounds.width > 0 && bounds.height > 0)
+        assertTrue("Dialog must fit the actual display width", bounds.width <= resources.displayMetrics.widthPixels + 1)
+        if (kind == "review") {
+            assertTrue("Review dialog keeps its 680dp cap", bounds.width <= 680 * resources.displayMetrics.density + 1)
+        }
+        val capture = runCatching {
+            val stem = "batch_${kind}_${geometryStage}"
             val context = InstrumentationRegistry.getInstrumentation().targetContext
             val directory = File(checkNotNull(context.getExternalFilesDir(null)), "design-review")
             check(directory.isDirectory || directory.mkdirs())
-            val output = File(directory, name)
-            val bitmap = composeRule.onNodeWithTag(tag).captureToImage().asAndroidBitmap()
-            output.outputStream().use { check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) }
-            require(output.absolutePath.matches(Regex("[A-Za-z0-9_./-]+")))
             fun shell(command: String): String {
                 val descriptor = InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand(command)
                 return ParcelFileDescriptor.AutoCloseInputStream(descriptor).bufferedReader().use { it.readText().trim() }
             }
-            val destination = "/data/local/tmp/quickcut-design-review/$name"
-            shell("mkdir -p /data/local/tmp/quickcut-design-review")
-            shell("cp ${output.absolutePath} $destination")
-            check(output.length() > 0 && shell("wc -c $destination").substringBefore(' ').toLongOrNull() == output.length())
-            Log.i("BatchDesignTest", "Preserved screenshot: $destination")
-        }.onFailure { Log.w("BatchDesignTest", "Could not capture $name", it) }
+            fun preserve(output: File) {
+                require(output.absolutePath.matches(Regex("[A-Za-z0-9_./-]+")))
+                val destination = "/data/local/tmp/quickcut-design-review/${output.name}"
+                shell("mkdir -p /data/local/tmp/quickcut-design-review")
+                shell("cp ${output.absolutePath} $destination")
+                check(output.length() > 0 && shell("wc -c $destination").substringBefore(' ').toLongOrNull() == output.length())
+                Log.i("BatchDesignTest", "Preserved geometry evidence: $destination")
+            }
+            val dialog = composeRule.onNodeWithTag(tag).captureToImage().asAndroidBitmap()
+            val image = File(directory, "$stem.png")
+            image.outputStream().use { check(dialog.compress(Bitmap.CompressFormat.PNG, 100, it)) }
+            preserve(image)
+            val device = checkNotNull(InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot())
+            try {
+                val fullImage = File(directory, "${stem}_device.png")
+                fullImage.outputStream().use { check(device.compress(Bitmap.CompressFormat.PNG, 100, it)) }
+                preserve(fullImage)
+                val configuration = resources.configuration
+                val evidence = JSONObject()
+                    .put("stage", geometryStage)
+                    .put("screenWidthDp", configuration.screenWidthDp)
+                    .put("screenHeightDp", configuration.screenHeightDp)
+                    .put("fontScale", configuration.fontScale.toDouble())
+                    .put("densityDpi", configuration.densityDpi)
+                    .put("displayDensity", resources.displayMetrics.density.toDouble())
+                    .put("displayWidthPx", device.width)
+                    .put("displayHeightPx", device.height)
+                    .put("dialogBoundsInWindowPx", JSONArray(listOf(bounds.left, bounds.top, bounds.right, bounds.bottom)))
+                val output = File(directory, "${stem}_configuration.json")
+                output.writeText(evidence.toString(2) + "\n")
+                preserve(output)
+            } finally {
+                device.recycle()
+            }
+        }
+        // Default full-suite captures remain optional; focused stage evidence is mandatory.
+        if (geometryStage != "default") capture.getOrThrow()
+        else capture.onFailure { Log.w("BatchDesignTest", "Could not capture default $kind geometry", it) }
     }
 
     @Test

@@ -22,6 +22,18 @@ class BatchExportChoicePolicyTest {
         )
     }
 
+    @Test fun refusedRecommendationRequiresExplicitExactReviewAndKeepsOriginalInterval() {
+        val refused = file(1).copy(reencodeRequired = true)
+        assertEquals(false, refused.canRecommend)
+        assertEquals(BatchExportChoice.EXACT, BatchExportChoicePolicy.defaults(listOf(refused))[refused.uri])
+        assertNull(BatchExportChoicePolicy.resolve(listOf(refused),
+            mapOf(refused.uri to BatchExportChoice.RECOMMENDED)))
+        val exact = BatchExportChoicePolicy.resolve(listOf(refused),
+            mapOf(refused.uri to BatchExportChoice.EXACT))!!.single()
+        assertSame(refused.requested, exact.timeline)
+        assertEquals(ExportMode.ALLOW_REENCODE, exact.exportMode)
+    }
+
     @Test fun mixedChoicesKeepExactRangeUseReviewedRecommendationAndSkipExcludedFile() {
         val files = listOf(file(1), file(2), file(3))
         val result = BatchExportChoicePolicy.resolve(files, mapOf(

@@ -6,9 +6,22 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import android.graphics.Bitmap
+import android.os.ParcelFileDescriptor
+import android.util.Log
+import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.test.DeviceConfigurationOverride
+import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.FontScale
+import androidx.compose.ui.test.ForcedSize
+import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
-import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.hasTestTag
@@ -45,6 +58,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
+@OptIn(ExperimentalTestApi::class)
 class BatchFastAdjustmentInstrumentedTest {
     @get:Rule val composeRule = createAndroidComposeRule<ComponentActivity>()
 
@@ -144,7 +158,7 @@ class BatchFastAdjustmentInstrumentedTest {
     @Test
     fun automaticReviewExplainsTheExactCutAndCanReturnToSettings() {
         openReview()
-        composeRule.onNode(hasText("각 영상의 앞 3초와 뒤 0초를 삭제합니다.") and
+        composeRule.onNode(hasText("각 영상의 앞 3초와 뒤 0초를 자릅니다.") and
             hasAnyAncestor(isDialog())).assertExists()
         composeRule.runOnIdle {
             assertFalse(model.isRunning)
@@ -220,12 +234,109 @@ class BatchFastAdjustmentInstrumentedTest {
     }
 
     @Test
+    fun refusedFastReviewExplainsConversionAndDisablesRecommendation() {
+        val review = inspect()
+        val file = review.reviewedFiles.single().copy(reencodeRequired = true, fastAvailable = false)
+        composeRule.runOnUiThread {
+            composeRule.activity.setContent {
+                QuickCutTheme { BatchReviewDialog(review.copy(reviewedFiles = listOf(file)), null, {}, {}, {}, {}) }
+            }
+        }
+        composeRule.onNodeWithTag("batch-review-list").performScrollToNode(
+            hasTestTag("batch-review-${file.uri}-choice"))
+        composeRule.onNodeWithTag("batch-review-${file.uri}-choice")
+            .assertTextContains("영상 변환 허용", substring = true).performClick()
+        composeRule.onNodeWithText("추천 위치").assertIsNotEnabled()
+        composeRule.onNodeWithText("정확한 위치 · 영상 변환 허용").assertIsEnabled().performClick()
+        composeRule.onNodeWithTag("batch-review-recommended-submit").assertDoesNotExist()
+        assertFalse(model.isRunning)
+        assertTrue(model.files.single().savedOutputUri == null)
+    }
+
+    @Test
+    fun narrowLargeFontReviewKeepsBothSaveActionsInFixedFooter() = checkReviewGeometry(320, 640, 1.6f, "phone_font_160")
+
+    @Test
+    fun wideReviewKeepsBothSaveActionsInFixedFooter() = checkReviewGeometry(840, 720, 1f, "fold")
+
+    @Test
+    fun narrowLargeFontTemplateManagerRemainsUsable() = checkTemplateGeometry(320, 640, 1.6f, "phone_font_160")
+
+    @Test
+    fun wideTemplateManagerRemainsUsable() = checkTemplateGeometry(840, 720, 1f, "fold")
+
+    private fun checkReviewGeometry(width: Int, height: Int, fontScale: Float, name: String) {
+        val review = inspect()
+        composeRule.runOnUiThread {
+            composeRule.activity.setContent {
+                DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(width.dp, height.dp))) {
+                    DeviceConfigurationOverride(DeviceConfigurationOverride.FontScale(fontScale)) {
+                        QuickCutTheme { BatchReviewDialog(review, null, {}, {}, {}, {}) }
+                    }
+                }
+            }
+        }
+        composeRule.onNodeWithTag("batch-review-submit").performScrollTo().assertIsDisplayed().assertIsEnabled()
+        // Both primary actions must remain visible together, outside the scrolling file list.
+        composeRule.onNodeWithTag("batch-review-recommended-submit").assertIsDisplayed().assertIsEnabled()
+        composeRule.onNode(hasTestTag("batch-review-recommended-submit") and
+            hasAnyAncestor(hasTestTag("batch-review-footer"))).assertExists()
+        composeRule.onNode(hasTestTag("batch-review-submit") and
+            hasAnyAncestor(hasTestTag("batch-review-footer"))).assertExists()
+        captureBatchDesignImage("batch_review_${name}.png", "batch-review-dialog")
+        assertFalse(model.isRunning)
+        assertTrue(model.files.single().savedOutputUri == null)
+    }
+
+    private fun checkTemplateGeometry(width: Int, height: Int, fontScale: Float, name: String) {
+        composeRule.runOnUiThread {
+            composeRule.activity.setContent {
+                DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(width.dp, height.dp))) {
+                    DeviceConfigurationOverride(DeviceConfigurationOverride.FontScale(fontScale)) {
+                        QuickCutTheme { BatchScreen(model, {}, {}, { _, _, _ -> }) }
+                    }
+                }
+            }
+        }
+        composeRule.onNodeWithTag("batch-template-manager").performScrollTo().performClick()
+        composeRule.onNodeWithTag("batch-template-direct").assertIsDisplayed().assertIsEnabled()
+        composeRule.onNodeWithText("새 템플릿으로 저장").performScrollTo().assertIsDisplayed().assertIsEnabled()
+        composeRule.onNodeWithText("닫기").assertIsDisplayed().assertIsEnabled()
+        captureBatchDesignImage("batch_templates_${name}.png", "batch-template-dialog")
+        composeRule.onNodeWithText("닫기").performClick()
+        assertFalse(model.isRunning)
+    }
+
+    private fun captureBatchDesignImage(name: String, tag: String) {
+        // Optional screenshot support never replaces the required UI assertions above.
+        runCatching {
+            require(name.matches(Regex("batch_(review|templates)_(phone_font_160|fold)\\.png")))
+            val context = InstrumentationRegistry.getInstrumentation().targetContext
+            val directory = File(checkNotNull(context.getExternalFilesDir(null)), "design-review")
+            check(directory.isDirectory || directory.mkdirs())
+            val output = File(directory, name)
+            val bitmap = composeRule.onNodeWithTag(tag).captureToImage().asAndroidBitmap()
+            output.outputStream().use { check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) }
+            require(output.absolutePath.matches(Regex("[A-Za-z0-9_./-]+")))
+            fun shell(command: String): String {
+                val descriptor = InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand(command)
+                return ParcelFileDescriptor.AutoCloseInputStream(descriptor).bufferedReader().use { it.readText().trim() }
+            }
+            val destination = "/data/local/tmp/quickcut-design-review/$name"
+            shell("mkdir -p /data/local/tmp/quickcut-design-review")
+            shell("cp ${output.absolutePath} $destination")
+            check(output.length() > 0 && shell("wc -c $destination").substringBefore(' ').toLongOrNull() == output.length())
+            Log.i("BatchDesignTest", "Preserved screenshot: $destination")
+        }.onFailure { Log.w("BatchDesignTest", "Could not capture $name", it) }
+    }
+
+    @Test
     fun fileReviewStartsRecommendedAndAllowsAnExplicitSkip() {
         openReview()
         val uri = model.files.single().uri
-        composeRule.onNodeWithTag("batch-review-$uri-recommended").performScrollTo().assertIsSelected()
-        composeRule.onNodeWithTag("batch-review-$uri-recommended").performScrollTo().assertIsEnabled()
-        composeRule.onNodeWithTag("batch-review-$uri-skip").performScrollTo().performClick()
+        composeRule.onNodeWithTag("batch-review-$uri-choice").performScrollTo().assertTextContains("추천 위치", substring = true)
+        composeRule.onNodeWithTag("batch-review-$uri-choice").performClick()
+        composeRule.onNodeWithText("제외").performClick()
         composeRule.onNodeWithText("전체 제외 적용").performClick()
         composeRule.waitUntil(30_000L) { model.runState == BatchRunState.FINISHED }
         assertEquals(BatchFileStatus.SKIPPED, model.files.single().status)
@@ -242,8 +353,8 @@ class BatchFastAdjustmentInstrumentedTest {
         composeRule.onNode(hasText("미리보기 · 요청/추천 비교") and
             hasAnyAncestor(hasTestTag("batch-review-$uri-preview"))).performClick()
         composeRule.onNodeWithTag("batch-review-list").performScrollToNode(
-            hasTestTag("batch-review-$uri-exact"))
-        composeRule.onNodeWithTag("batch-review-$uri-recommended").assertIsSelected()
+            hasTestTag("batch-review-$uri-choice"))
+        composeRule.onNodeWithTag("batch-review-$uri-choice").assertTextContains("추천 위치", substring = true)
         composeRule.onNodeWithTag("batch-review-submit").assertIsEnabled()
         assertFalse(model.isRunning)
         assertTrue(model.files.single().savedOutputUri == null)
@@ -257,11 +368,12 @@ class BatchFastAdjustmentInstrumentedTest {
         openReview()
         val uri = model.files.single().uri
         composeRule.onNodeWithTag("batch-review-list").performScrollToNode(
-            hasTestTag("batch-review-$uri-exact"))
-        composeRule.onNodeWithTag("batch-review-$uri-exact").assertIsNotEnabled()
-        composeRule.onNodeWithTag("batch-review-$uri-recommended").assertIsNotEnabled()
-        composeRule.onNodeWithTag("batch-review-$uri-skip").assertIsSelected()
-        composeRule.onNodeWithText("저장 불가 · 앞뒤 구간을 제거할 만큼 영상이 길지 않습니다.").assertExists()
+            hasTestTag("batch-review-$uri-choice"))
+        composeRule.onNodeWithTag("batch-review-$uri-choice").assertTextContains("제외", substring = true).performClick()
+        composeRule.onNodeWithText("정확한 위치").assertIsNotEnabled()
+        composeRule.onNodeWithText("추천 위치").assertIsNotEnabled()
+        composeRule.onNodeWithText("제외").performClick()
+        composeRule.onNodeWithText("저장 불가 · 앞뒤 구간을 자를 만큼 영상이 길지 않습니다.").assertExists()
         composeRule.onNodeWithText("전체 제외 적용").assertIsEnabled()
     }
 

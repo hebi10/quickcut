@@ -15,8 +15,9 @@ data class BatchReviewedFile(
     val fastAvailable: Boolean = false,
     val unavailableReason: String? = null,
     val explanation: String? = null,
+    val reencodeRequired: Boolean = false,
 ) {
-    val canRecommend: Boolean get() = requested != null &&
+    val canRecommend: Boolean get() = !reencodeRequired && requested != null &&
         requested.clips.isNotEmpty() && requested.clips.all { it.uri == uri } &&
         suggestion?.applyTo(requested) != null
 }

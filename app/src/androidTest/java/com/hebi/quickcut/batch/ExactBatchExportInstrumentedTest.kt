@@ -2,9 +2,13 @@ package com.hebi.quickcut.batch
 
 import android.Manifest
 import android.app.Application
+import android.content.Context
+import android.graphics.Color
+import android.media.MediaMetadataRetriever
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.provider.MediaStore
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.hasText
@@ -18,9 +22,11 @@ import androidx.lifecycle.ViewModelStore
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.hebi.quickcut.editor.formatTime
+import com.hebi.quickcut.editor.OriginalAction
 import com.hebi.quickcut.media.MediaReader
 import com.hebi.quickcut.media.SaveDateMode
 import com.hebi.quickcut.media.ExportMethod
+import com.hebi.quickcut.media.ExportMode
 import com.hebi.quickcut.media.GalleryWriter
 import com.hebi.quickcut.settings.BatchDraftSettings
 import com.hebi.quickcut.settings.QuickCutSettings
@@ -33,6 +39,7 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -116,6 +123,118 @@ class ExactBatchExportInstrumentedTest {
         }
         if (::source.isInitialized) source.delete()
         extraSources.forEach(File::delete)
+    }
+
+    @Test
+    fun refusedFastSaveRequiresReviewedExactConsentAndRetriesOriginalInterval() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val previousAction = settings.loadOriginalAction()
+        val exactSource = File.createTempFile("quickcut_batch_exact_boundary_", ".mp4", context.cacheDir)
+        extraSources += exactSource
+        InstrumentationRegistry.getInstrumentation().context.assets.open("quickcut_exact_boundary.mp4")
+            .use { input -> exactSource.outputStream().use { input.copyTo(it) } }
+        val sourceBytes = exactSource.readBytes()
+        // Include pending rows: inspection/dismissal must not publish or leave a new output.
+        fun outputIds(): Set<Long> {
+            val prefix = exactSource.nameWithoutExtension + "_QuickCut_"
+            return context.contentResolver.query(MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                arrayOf(MediaStore.Video.Media._ID, MediaStore.Video.Media.DISPLAY_NAME),
+                null, null, null)!!.use { cursor ->
+                buildSet {
+                    while (cursor.moveToNext()) {
+                        if (cursor.getString(1).startsWith(prefix)) add(cursor.getLong(0))
+                    }
+                }
+            }
+        }
+        try {
+            composeRule.runOnUiThread { model.removeVideo(model.files.single().uri) }
+            composeRule.waitUntil(30_000L) { !model.isImporting && model.files.isEmpty() }
+            composeRule.runOnUiThread { model.addVideos(context, listOf(Uri.fromFile(exactSource))) }
+            composeRule.waitUntil(30_000L) { !model.isImporting && model.files.size == 1 }
+            assertEquals(Uri.fromFile(exactSource).toString(), model.files.single().uri)
+            assertTrue(model.files.single().hasAudio)
+            assertRed(centerColor(context, Uri.fromFile(exactSource), 1_950_000L),
+                "Exact-boundary fixture must be red before the next keyframe")
+            assertBlue(centerColor(context, Uri.fromFile(exactSource), 2_000_000L),
+                "Exact-boundary fixture must switch to blue at the next keyframe")
+            composeRule.runOnUiThread {
+                model.draftLeadingSeconds = "1.95"
+                model.draftTrailingSeconds = "0"
+                model.originalAction = OriginalAction.KEEP
+            }
+            val requested = (model.previewTemplate()!!.plan(model.files.single().uri,
+                model.files.single().durationMs, model.files.single().hasAudio) as BatchPlan.Ready).timeline
+            assertEquals(1_950_000L, requested.clips.single().startUs)
+            val before = outputIds()
+            // Same real native boundary used by ExactTrimInstrumentedTest's refusal regression.
+            composeRule.runOnUiThread { model.start(context, exportMode = ExportMode.FAST_ONLY) }
+            composeRule.waitUntil(120_000L) { model.runState == BatchRunState.FINISHED }
+            val refused = model.files.single()
+            assertEquals(BatchFileStatus.SKIPPED, refused.status)
+            assertNotNull(refused.reencodeRefusal)
+            assertTrue(refused.reencodeRefusal!!.matches(requested, SaveDateMode.CURRENT.name,
+                refused.originalDate?.epochMs))
+            assertEquals(refused.reencodeRefusal, sessionStore.load()!!.files.single().reencodeRefusal)
+            assertNull(refused.savedOutputUri)
+            assertNull(refused.exportReport)
+            assertEquals(before, outputIds())
+            assertTrue(model.originalCandidates.isEmpty())
+
+            val dismissed = runBlocking { withContext(Dispatchers.Main) { model.inspectExport(context, true) } }
+            val file = dismissed.reviewedFiles.single()
+            assertTrue(file.reencodeRequired)
+            assertFalse(file.fastAvailable)
+            assertFalse(file.canRecommend)
+            assertEquals(0, dismissed.adjustedFast)
+            assertEquals(requested, file.requested)
+            assertEquals(BatchExportChoice.EXACT, BatchExportChoicePolicy.defaults(listOf(file))[file.uri])
+            assertNull(BatchExportChoicePolicy.resolve(listOf(file), mapOf(file.uri to BatchExportChoice.RECOMMENDED)))
+            // Inspection itself (including dismissing this overview without submission) has no side effects.
+            assertEquals(before, outputIds())
+            assertEquals(BatchFileStatus.SKIPPED, model.files.single().status)
+            // The reviewed aggregate fast-only shortcut must exclude the known refusal too.
+            composeRule.runOnUiThread {
+                model.startReviewed(context, dismissed, true, ExportMode.FAST_ONLY)
+            }
+            composeRule.waitUntil(120_000L) { model.runState == BatchRunState.FINISHED }
+            assertEquals(BatchFileStatus.SKIPPED, model.files.single().status)
+            assertEquals(refused.reencodeRefusal, model.files.single().reencodeRefusal)
+            assertEquals(before, outputIds())
+            composeRule.runOnUiThread { model.start(context, retryOnly = true, exportMode = ExportMode.ALLOW_REENCODE) }
+            composeRule.waitUntil(120_000L) { model.runState == BatchRunState.FINISHED }
+            assertEquals(BatchFileStatus.SKIPPED, model.files.single().status)
+            assertEquals(refused.reencodeRefusal, model.files.single().reencodeRefusal)
+            assertEquals(before, outputIds())
+
+            val consented = runBlocking { withContext(Dispatchers.Main) { model.inspectExport(context, true) } }
+            composeRule.runOnUiThread {
+                model.startReviewed(context, consented, true,
+                    mapOf(file.uri to BatchExportChoice.EXACT))
+            }
+            composeRule.waitUntil(120_000L) { model.runState == BatchRunState.FINISHED }
+            val saved = model.files.single()
+            assertEquals(BatchFileStatus.SAVED, saved.status)
+            assertNull(saved.reencodeRefusal)
+            assertNull(sessionStore.load()!!.files.single().reencodeRefusal)
+            assertNotNull(saved.exportReport)
+            assertEquals(requested.totalDurationMs, saved.outputExpectedDurationMs)
+            val output = Uri.parse(saved.savedOutputUri!!)
+            generatedOutputs += output
+            assertRed(centerColor(context, output, 0L),
+                "The first saved frame must retain red footage before the next keyframe")
+            val actual = MediaReader.validateExport(context, output, requested.totalDurationMs, true)
+            assertTrue("Duration must preserve the requested interval within one 30fps frame: " +
+                "requested=${requested.totalDurationMs}ms actual=${actual.durationMs}ms",
+                abs(actual.durationMs - requested.totalDurationMs) <= 34L)
+            assertEquals(before.size + 1, outputIds().size)
+            assertTrue(exactSource.exists())
+            assertTrue(sourceBytes.contentEquals(exactSource.readBytes()))
+            assertTrue(model.originalCandidates.isEmpty())
+        } finally {
+            composeRule.runOnUiThread { model.originalAction = previousAction }
+            settings.saveOriginalAction(previousAction)
+        }
     }
 
     @Test
@@ -276,6 +395,29 @@ class ExactBatchExportInstrumentedTest {
         assertEquals(BatchFileStatus.SAVED, model.files.single().status)
         assertEquals(output.toString(), model.files.single().savedOutputUri)
         assertEquals(saved.outputExpectedDurationMs, model.files.single().outputExpectedDurationMs)
+    }
+
+    private fun centerColor(context: Context, uri: Uri, timeUs: Long): Int {
+        val retriever = MediaMetadataRetriever()
+        try {
+            retriever.setDataSource(context, uri)
+            val frame = retriever.getScaledFrameAtTime(timeUs,
+                MediaMetadataRetriever.OPTION_CLOSEST, 160, 90)
+                ?: throw AssertionError("The requested frame at ${timeUs}us must decode")
+            return try {
+                frame.getPixel(frame.width / 2, frame.height / 2)
+            } finally { frame.recycle() }
+        } finally { retriever.release() }
+    }
+
+    private fun assertRed(color: Int, message: String) {
+        assertTrue("$message: red=${Color.red(color)} blue=${Color.blue(color)}",
+            Color.red(color) > 150 && Color.red(color) > Color.blue(color) + 100)
+    }
+
+    private fun assertBlue(color: Int, message: String) {
+        assertTrue("$message: red=${Color.red(color)} blue=${Color.blue(color)}",
+            Color.blue(color) > 150 && Color.blue(color) > Color.red(color) + 100)
     }
 
     private fun showScreen() {

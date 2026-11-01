@@ -16,7 +16,7 @@ data class QuickTrimSettings(
 )
 
 data class BatchDraftSettings(
-    val name: String = "앞뒤 3초 삭제",
+    val name: String = "앞뒤 3초 자르기",
     val mode: BatchClipMode = BatchClipMode.REMOVE_EDGES,
     val leadingMs: Long = 3_000L,
     val trailingMs: Long = 3_000L,
@@ -49,9 +49,9 @@ class QuickCutSettings(context: Context) {
 
     fun loadSaveDate(): SaveDateMode = runCatching {
         SaveDateMode.valueOf(
-            preferences.getString("save_date_mode", SaveDateMode.CURRENT.name)!!
+            preferences.getString("save_date_mode", SaveDateMode.ORIGINAL.name)!!
         )
-    }.getOrDefault(SaveDateMode.CURRENT)
+    }.getOrDefault(SaveDateMode.ORIGINAL)
 
     fun saveSaveDate(mode: SaveDateMode) {
         preferences.edit().putString("save_date_mode", mode.name).apply()
@@ -77,8 +77,8 @@ class QuickCutSettings(context: Context) {
     }.distinctUntilChanged()
 
     fun loadBatch(): BatchDraftSettings = BatchDraftSettings(
-        name = preferences.getString("batch_name", "앞뒤 3초 삭제")
-            ?.take(40)?.takeIf { it.isNotBlank() } ?: "앞뒤 3초 삭제",
+        name = preferences.getString("batch_name", "앞뒤 3초 자르기")
+            ?.take(40)?.takeIf { it.isNotBlank() } ?: "앞뒤 3초 자르기",
         mode = runCatching {
             BatchClipMode.valueOf(
                 preferences.getString("batch_mode", BatchClipMode.REMOVE_EDGES.name)!!

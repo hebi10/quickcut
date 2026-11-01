@@ -62,7 +62,10 @@ internal data class ExportDiagnosticFacts(
         appendLine("처리 방식: ${safeLabel(method ?: "확인 전")}")
         appendLine("원본 복사 사유: ${reasons.copyReason?.name ?: "없음"}")
         appendLine("부분 처리 사유: ${reasons.smartCutReason?.name ?: "없음"}")
-        failureType?.let { appendLine("오류 종류: ${safeLabel(it)}") }
+        failureType?.let {
+            val label = if (it == "ReencodeRequiredException") "이 구간은 인코딩이 필요합니다 ($it)" else it
+            appendLine("오류 종류: ${safeLabel(label)}")
+        }
         append("원본 경로·이름·내용은 기록하지 않습니다. 이 기록은 자동 전송되지 않습니다.")
     }
     /** Optional malformed metadata must not hide a final operation outcome. */

@@ -5,6 +5,11 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class BatchTemplateTest {
+    @Test fun newTemplateUsesTrimNameWithoutChangingExplicitNames() {
+        assertEquals("앞뒤 3초 자르기", BatchTemplate().name)
+        assertEquals("내 삭제 템플릿", BatchTemplate(name = "내 삭제 템플릿").name)
+    }
+
     private val uri = "content://media/external/video/media/77"
     @Test fun removeFirstAndLastThreeSeconds() {
         val plan = BatchTemplate().plan(uri, 20_000L, true) as BatchPlan.Ready

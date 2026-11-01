@@ -16,6 +16,26 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class SettingsPersistenceInstrumentedTest {
+    @Test fun originalDateIsDefaultButExplicitCurrentAndCustomNamesSurvive() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val preferences = context.getSharedPreferences("quickcut_last_settings_v1", 0)
+        val date = preferences.getString("save_date_mode", null)
+        val name = preferences.getString("batch_name", null)
+        try {
+            preferences.edit().remove("save_date_mode").remove("batch_name").commit()
+            assertEquals(SaveDateMode.ORIGINAL, QuickCutSettings(context).loadSaveDate())
+            assertEquals("앞뒤 3초 자르기", QuickCutSettings(context).loadBatch().name)
+            preferences.edit().putString("save_date_mode", "invalid").commit()
+            assertEquals(SaveDateMode.ORIGINAL, QuickCutSettings(context).loadSaveDate())
+            QuickCutSettings(context).saveSaveDate(SaveDateMode.CURRENT)
+            assertEquals(SaveDateMode.CURRENT, QuickCutSettings(context).loadSaveDate())
+            preferences.edit().putString("batch_name", "내 삭제 템플릿").commit()
+            assertEquals("내 삭제 템플릿", QuickCutSettings(context).loadBatch().name)
+        } finally {
+            preferences.edit().putString("save_date_mode", date).putString("batch_name", name).commit()
+        }
+    }
+
     @Test
     fun lastUsedQuickBatchAndDateSettingsSurviveNewStoreInstances() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext

@@ -62,6 +62,8 @@ class BatchSessionStore internal constructor(
                 outputExpectedDateMs = if (row.isNull("expectedDate")) null else row.getLong("expectedDate"),
                 exportReport = readReport(row.optJSONObject("exportReport")),
                 diagnosticId = safeDiagnosticId(row.optString("diagnosticId")),
+                reencodeRefusal = if (!row.has("reencodeRefusal") || row.isNull("reencodeRefusal")) null
+                    else readRefusal(row.getJSONObject("reencodeRefusal")),
             ).also { require(it.durationMs >= 0L && it.uri.isNotBlank()) }
         }
         require(files.map { it.uri }.distinct().size == files.size)
@@ -91,6 +93,19 @@ class BatchSessionStore internal constructor(
                 put("hasAudio", row.hasAudio)
                 put("originalDate", row.originalDate?.epochMs ?: JSONObject.NULL)
                 put("dateSource", row.originalDate?.source ?: JSONObject.NULL)
+                put("reencodeRefusal", row.reencodeRefusal?.let { refusal ->
+                    JSONObject().apply {
+                        put("dateMode", refusal.dateMode)
+                        put("originalDate", refusal.originalDateMs ?: JSONObject.NULL)
+                        put("clips", JSONArray().apply { refusal.clips.forEach { clip ->
+                            put(JSONObject().apply {
+                                put("uri", clip.uri); put("duration", clip.durationMs)
+                                put("startUs", clip.startUs); put("endUs", clip.endUs)
+                                put("muted", clip.muted); put("hasAudio", clip.hasAudio)
+                            })
+                        } })
+                    }
+                } ?: JSONObject.NULL)
                 put("status", row.status.name)
                 put("reason", row.reason ?: JSONObject.NULL)
                 put("output", row.savedOutputUri ?: JSONObject.NULL)
@@ -148,6 +163,22 @@ class BatchSessionStore internal constructor(
         // ones also manage .new. Clear only this journal's fixed companions.
         listOf(File(base.path + ".bak"), File(base.path + ".new")).forEach { it.delete() }
         if (hasRecord()) throw IOException("이전 일괄 작업 기록을 정리하지 못했습니다.")
+    }
+
+    // Refusal is safety state, not optional telemetry: malformed context blocks recovery.
+    private fun readRefusal(data: JSONObject): BatchReencodeRefusal {
+        val clips = data.getJSONArray("clips")
+        require(clips.length() in 1..500)
+        val dateMode = SaveDateMode.valueOf(data.getString("dateMode")).name
+        return BatchReencodeRefusal((0 until clips.length()).map { index ->
+            val clip = clips.getJSONObject(index)
+            BatchRefusedClip(clip.getString("uri"), clip.getLong("duration"),
+                clip.getLong("startUs"), clip.getLong("endUs"), clip.getBoolean("muted"),
+                clip.getBoolean("hasAudio")).also {
+                require(it.uri.isNotBlank() && it.durationMs > 0 && it.startUs >= 0 &&
+                    it.endUs > it.startUs && it.endUs <= Math.multiplyExact(it.durationMs, 1_000L))
+            }
+        }, dateMode, if (data.isNull("originalDate")) null else data.getLong("originalDate"))
     }
 
     // Optional local telemetry must never invalidate a recovery record or retain source text.

@@ -53,6 +53,24 @@ class BatchPreferencesInstrumentedTest {
         }
     }
 
+    @Test fun removingNonselectedTemplateKeepsSelectionAndUnsavedDraft() {
+        val selected = BatchTemplate("selected", "선택", BatchClipMode.KEEP_FIRST, 1_000, 0, false)
+        val other = selected.copy(id = "other", name = "다른 템플릿")
+        TemplateStore(context).save(selected)
+        TemplateStore(context).save(other)
+        model = newModel()
+        compose.runOnIdle {
+            assertEquals(listOf(selected, other), model.templates)
+            model.chooseTemplate(selected.id)
+            assertEquals(selected.name, model.draftName)
+            model.draftLeadingSeconds = "3"
+            model.removeTemplate(context, other.id)
+            assertEquals(selected.id, model.selectedTemplateId)
+            assertEquals("3", model.draftLeadingSeconds)
+            assertEquals(listOf(selected), TemplateStore(context).load())
+        }
+    }
+
     @After fun tearDown() = runBlocking {
         withContext(Dispatchers.Main) {
             models.forEach { ViewModelStore().apply { put("batch", it) }.clear() }

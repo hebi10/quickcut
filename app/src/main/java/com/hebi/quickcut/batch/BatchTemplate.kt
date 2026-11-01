@@ -14,7 +14,7 @@ enum class BatchClipMode(val usesLeading: Boolean, val usesTrailing: Boolean) {
 
 data class BatchTemplate(
     val id: String = UUID.randomUUID().toString(),
-    val name: String = "앞뒤 3초 삭제",
+    val name: String = "앞뒤 3초 자르기",
     val mode: BatchClipMode = BatchClipMode.REMOVE_EDGES,
     val leadingMs: Long = 3_000L,
     val trailingMs: Long = 3_000L,
@@ -27,7 +27,7 @@ data class BatchTemplate(
         }
         return when (mode) {
             BatchClipMode.REMOVE_EDGES ->
-                if (leadingMs == 0L && trailingMs == 0L) "삭제할 구간을 설정해 주세요." else null
+                if (leadingMs == 0L && trailingMs == 0L) "자를 구간을 설정해 주세요." else null
             BatchClipMode.KEEP_FIRST ->
                 if (leadingMs < 100L) "앞부분 추출은 최소 0.1초 이상이어야 합니다." else null
             BatchClipMode.KEEP_LAST ->
@@ -50,7 +50,7 @@ data class BatchTemplate(
         return when (mode) {
             BatchClipMode.REMOVE_EDGES -> {
                 if (durationMs - leadingMs - trailingMs < 100L) {
-                    BatchPlan.Skip("앞뒤 구간을 제거할 만큼 영상이 길지 않습니다.")
+                    BatchPlan.Skip("앞뒤 구간을 자를 만큼 영상이 길지 않습니다.")
                 } else {
                     BatchPlan.Ready(EditTimeline(listOf(clip(1, leadingMs, durationMs - trailingMs))))
                 }

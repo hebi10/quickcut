@@ -33,7 +33,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Checkbox
 import androidx.compose.foundation.text.KeyboardOptions
@@ -589,7 +588,7 @@ private fun LastSettingsDialog(
                 OutlinedTextField(
                     value = headText,
                     onValueChange = { headText = it.take(12) },
-                    label = { Text("앞부분 삭제 (초)") },
+                    label = { Text("앞부분 자르기 (초)") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.fillMaxWidth(),
@@ -597,7 +596,7 @@ private fun LastSettingsDialog(
                 OutlinedTextField(
                     value = tailText,
                     onValueChange = { tailText = it.take(12) },
-                    label = { Text("뒷부분 삭제 (초)") },
+                    label = { Text("뒷부분 자르기 (초)") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.fillMaxWidth(),
@@ -610,20 +609,15 @@ private fun LastSettingsDialog(
                     Checkbox(checked = mute, onCheckedChange = { mute = it })
                     Text("영상 음소거")
                 }
-                Text("저장 날짜", fontWeight = FontWeight.SemiBold)
-                listOf(
-                    SaveDateMode.CURRENT to "현재 날짜 저장",
-                    SaveDateMode.ORIGINAL to "원본 날짜 유지",
-                ).forEach { (mode, label) ->
-                    Row(
-                        Modifier.fillMaxWidth().heightIn(min = 48.dp)
-                            .clickable { chosenDate = mode },
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        RadioButton(selected = chosenDate == mode, onClick = null)
-                        Text(label)
-                    }
-                }
+                CutChoiceDropdown(
+                    label = "저장 날짜",
+                    selected = chosenDate,
+                    options = listOf(
+                        CutChoice(SaveDateMode.ORIGINAL, "원본 날짜 유지"),
+                        CutChoice(SaveDateMode.CURRENT, "현재 날짜 저장"),
+                    ),
+                    onSelected = { chosenDate = it },
+                )
                 Text("원본 휴지통 이동·영구 삭제는 자동 저장하지 않습니다.",
                     color = CutColors.secondaryText,
                     style = MaterialTheme.typography.bodySmall)

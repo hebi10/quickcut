@@ -54,7 +54,7 @@ internal object BatchTimeInput {
         val leading = durationText(template.leadingMs)
         val trailing = durationText(template.trailingMs)
         return when (template.mode) {
-            BatchClipMode.REMOVE_EDGES -> "각 영상의 앞 ${leading}와 뒤 ${trailing}를 삭제합니다."
+            BatchClipMode.REMOVE_EDGES -> "각 영상의 앞 ${leading}와 뒤 ${trailing}를 자릅니다."
             BatchClipMode.KEEP_FIRST -> "각 영상의 처음 ${leading}만 남깁니다."
             BatchClipMode.KEEP_LAST -> "각 영상의 마지막 ${trailing}만 남깁니다."
             BatchClipMode.JOIN_EDGES -> "각 영상의 처음 ${leading}와 마지막 ${trailing}를 이어 붙이고 중간은 삭제합니다."

@@ -59,6 +59,7 @@ data class BatchFile(
     val outputExpectedDateMs: Long? = null,
     val exportReport: ExportReport? = null,
     val diagnosticId: String? = null,
+    val reencodeRefusal: BatchReencodeRefusal? = null,
 )
 
 data class BatchExportOverview(
@@ -73,7 +74,7 @@ data class BatchExportOverview(
     val reviewedFiles: List<BatchReviewedFile> = emptyList(),
 ) {
     val adjustedFast: Int get() = if (reviewedFiles.isEmpty()) fast + adjustments.size
-        else reviewedFiles.count { it.fastAvailable || it.canRecommend }
+        else reviewedFiles.count { !it.reencodeRequired && (it.fastAvailable || it.canRecommend) }
     val adjustedSkips: Int get() = if (reviewedFiles.isEmpty()) skipped + needsEncoding - adjustments.size
         else reviewedFiles.size - adjustedFast
 }
@@ -204,6 +205,15 @@ class BatchViewModel internal constructor(
                         unavailableReason = plan.reason)
                 }
                 is BatchPlan.Ready -> {
+                    if (file.reencodeRefusal?.matches(plan.timeline, dateMode.name, file.originalDate?.epochMs) == true) {
+                        val explanation = "이 구간은 고속 저장할 수 없습니다. 원래 구간을 저장하려면 인코딩을 허용해 주세요."
+                        reviewedFiles += BatchReviewedFile(file.uri, file.displayName, plan.timeline,
+                            explanation = explanation, reencodeRequired = true)
+                        encoded++
+                        encodingFiles += file.displayName + " · " + explanation
+                        unadjustableFiles += file.displayName + " · " + explanation
+                        continue
+                    }
                     val assessment = ExportPlanner.analyze(context, plan.timeline, dateMode,
                         onProgress = onFileProgress)
                     val suggestion = assessment.suggestion?.takeIf { it.applyTo(plan.timeline) != null }
@@ -292,7 +302,7 @@ class BatchViewModel internal constructor(
         val choices = overview.reviewedFiles.associate { file ->
             file.uri to when {
                 file.requested == null -> BatchExportChoice.SKIP
-                exportMode == ExportMode.ALLOW_REENCODE || file.fastAvailable -> BatchExportChoice.EXACT
+                exportMode == ExportMode.ALLOW_REENCODE || (file.fastAvailable && !file.reencodeRequired) -> BatchExportChoice.EXACT
                 adjustStarts && file.canRecommend -> BatchExportChoice.RECOMMENDED
                 else -> BatchExportChoice.SKIP
             }
@@ -536,13 +546,12 @@ class BatchViewModel internal constructor(
         }
     }
 
-    fun removeTemplate(context: Context) {
-        if (isRunning || isRecovering) return
+    fun removeTemplate(context: Context, id: String? = selectedTemplateId) {
+        if (isRunning || isRecovering || isImporting || id == null) return
         invalidateReview()
-        val id = selectedTemplateId ?: return
         try {
             templates = TemplateStore(context).remove(id)
-            selectedTemplateId = null
+            if (selectedTemplateId == id) selectedTemplateId = null
             notification = "템플릿을 삭제했습니다. 현재 편집값은 유지됩니다."
         } catch (e: Exception) {
             notification = e.localizedMessage ?: "템플릿을 삭제하지 못했습니다."
@@ -781,6 +790,15 @@ class BatchViewModel internal constructor(
                                 }
                                 continue
                             }
+                            val sameRefusal = row.reencodeRefusal?.matches(plan.timeline,
+                                selectedDateMode.name, row.originalDate?.epochMs) == true
+                            // Only an explicitly submitted exact review may authorize encoding after refusal.
+                            if (sameRefusal && (reviewedExport?.choice != BatchExportChoice.EXACT ||
+                                    reviewedExport?.exportMode != ExportMode.ALLOW_REENCODE)) {
+                                update(row.uri) { it.copy(status = BatchFileStatus.SKIPPED, progress = null,
+                                    reason = "원래 구간을 인코딩해 저장하려면 저장 방식을 다시 확인해 주세요.") }
+                                continue
+                            }
                             update(row.uri) {
                                 it.copy(status=BatchFileStatus.RUNNING,reason=null,progress=null,
                                     exportReport=null)
@@ -823,7 +841,7 @@ class BatchViewModel internal constructor(
                                         // recovery can adopt the now-published video without retry.
                                         val recorded = completionJournal.record {
                                             update(row.uri) { it.copy(status=BatchFileStatus.SAVED, progress=100,
-                                                savedOutputUri=output.toString(), reason=null) }
+                                                savedOutputUri=output.toString(), reason=null, reencodeRefusal=null) }
                                         }
                                         if (!recorded) {
                                             notification = completionRecordingWarning
@@ -868,7 +886,7 @@ class BatchViewModel internal constructor(
                                 )
                                 if (files.first { it.uri == row.uri }.status != BatchFileStatus.SAVED) {
                                     update(row.uri) { it.copy(status=BatchFileStatus.SAVED,progress=100,
-                                        savedOutputUri=result.toString(),reason=null) }
+                                        savedOutputUri=result.toString(),reason=null, reencodeRefusal=null) }
                                 }
                                 if (completionJournal.requiresRecovery) {
                                     // Preserve the last durable pending handle before any new
@@ -883,8 +901,10 @@ class BatchViewModel internal constructor(
                                 }
                             } catch (required: ReencodeRequiredException) {
                                 update(row.uri) {
-                                    it.copy(status=BatchFileStatus.SKIPPED,progress=null,
-                                        reason="고속 저장을 지원하지 않아 건너뛰었습니다.\n" + diagnostics.explanation())
+                                    if (it.status == BatchFileStatus.SAVED) it else it.copy(status=BatchFileStatus.SKIPPED,progress=null,
+                                        reason="이 구간은 인코딩이 필요합니다. 저장 방식을 다시 확인해 주세요.\n" + diagnostics.explanation(),
+                                        reencodeRefusal = BatchReencodeRefusal.from(plan.timeline,
+                                            selectedDateMode.name, row.originalDate?.epochMs))
                                 }
                             } catch (cancelled: CancellationException) {
                                 if (files.first { it.uri == row.uri }.status != BatchFileStatus.SAVED) update(row.uri) {

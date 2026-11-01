@@ -383,9 +383,10 @@ internal fun BatchReviewDialog(
                             .verticalScroll(rememberScrollState())
                             .background(CutColors.surface, CutShape).padding(10.dp).testTag("batch-review-footer"),
                     ) {
+                        val useHorizontalActions = maxWidth / LocalDensity.current.fontScale >= 560.dp
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             val recommendedAvailable = overview.reviewedFiles.any { it.canRecommend }
-                            if (maxWidth / LocalDensity.current.fontScale >= 560.dp) {
+                            if (useHorizontalActions) {
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     if (recommendedAvailable) BatchRecommendedButton(overview, Modifier.weight(1f), onRecommended)
                                     BatchReviewSubmitButton(saveCount, overview.reviewedFiles.isNotEmpty(),

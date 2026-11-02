@@ -7,7 +7,7 @@ REPORTS=app/build/reports/androidTests/connected
 EVIDENCE=quickcut-real-dialog-results
 REMOTE=/data/local/tmp/quickcut-design-review
 CLASS=com.hebi.quickcut.batch.BatchFastAdjustmentInstrumentedTest
-METHODS=reviewKeepsBothSaveActionsInFixedFooter,templateManagerRemainsUsable
+SELECTORS="$CLASS#reviewKeepsBothSaveActionsInFixedFooter,$CLASS#templateManagerRemainsUsable,com.hebi.quickcut.ui.PrivacyPolicyInstrumentedTest#privacyCanBeReadOfflineAndClosedFromHome"
 first_failure=0
 last_status=0
 size_changed=0
@@ -133,9 +133,9 @@ if [[ "$original_user_rotation" != 0 ]]; then
 fi
 
 verify_stage() {
-  python3 - "$1" "$2" "$3" "$CLASS" "$METHODS" <<'PY'
+  python3 - "$1" "$2" "$3" "$SELECTORS" <<'PY'
 import json, pathlib, struct, sys, xml.etree.ElementTree as ET
-base, width, font, klass, methods = sys.argv[1:]
+base, width, font, selectors = sys.argv[1:]
 base = pathlib.Path(base)
 cases = []
 for path in sorted((base / 'results').rglob('TEST-*.xml')):
@@ -147,7 +147,7 @@ for path in sorted((base / 'results').rglob('TEST-*.xml')):
         if any(case.find(key) is not None for key in ('failure', 'error', 'skipped')):
             raise SystemExit(f'Failed/skipped focused case: {path}')
         cases.append((case.get('classname'), case.get('name')))
-expected = [(klass, method) for method in methods.split(',')]
+expected = [tuple(selector.split('#', 1)) for selector in selectors.split(',')]
 if sorted(cases) != sorted(expected):
     raise SystemExit(f'Expected exactly {expected}; found {cases}')
 dimensions = {}
@@ -176,7 +176,7 @@ for kind in ('review', 'templates'):
                 zip(dimensions[path.name], (bounds[2] - bounds[0], bounds[3] - bounds[1]))):
             raise SystemExit(f'Tagged dialog PNG dimensions disagree with actual bounds: {path}')
 (base / 'screenshot-dimensions.json').write_text(json.dumps(dimensions, indent=2) + '\n')
-print(f'{base.name}: exactly two passing cases and all required real-window captures')
+print(f'{base.name}: exactly three passing cases and all required real-window captures')
 PY
 }
 
@@ -202,7 +202,7 @@ for stage in narrow wide; do
   run_checked 'Clear canonical focused results' rm -rf "$RESULTS" "$REPORTS"
   # TERM at 175s, KILL at 180s: the entire focused Gradle command is bounded by 3m.
   run_checked "$stage fresh instrumentation" timeout --kill-after=5s 175s gradle --no-daemon :app:connectedDebugAndroidTest \
-    "-Pandroid.testInstrumentationRunnerArguments.class=$CLASS#${METHODS%,*},$CLASS#${METHODS#*,}" \
+    "-Pandroid.testInstrumentationRunnerArguments.class=$SELECTORS" \
     "-Pandroid.testInstrumentationRunnerArguments.quickcutGeometryStage=$stage" \
     "-Pandroid.testInstrumentationRunnerArguments.quickcutExpectedWidthDp=$width" \
     "-Pandroid.testInstrumentationRunnerArguments.quickcutExpectedFontScale=$font"

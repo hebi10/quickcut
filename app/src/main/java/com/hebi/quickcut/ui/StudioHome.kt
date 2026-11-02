@@ -106,6 +106,7 @@ internal fun StudioStartScreen(
                 StudioSettings(quickSettings, dateMode, onPreferences)
                 Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End) {
                     ExportDiagnosticButton()
+                    PrivacyPolicyButton()
                     TextButton(onClick = onLicenses, shape = CutShape,
                         modifier = Modifier.heightIn(min = 48.dp)) {
                         Text("오픈소스 라이선스", color = CutColors.mutedText,

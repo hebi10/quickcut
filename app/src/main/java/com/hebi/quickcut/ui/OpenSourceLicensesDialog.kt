@@ -26,6 +26,14 @@ import kotlinx.coroutines.withContext
 @Composable
 internal fun OpenSourceLicensesDialog(onDismiss: () -> Unit) {
     val context = LocalContext.current
+    val sourceReleaseUrl = remember(context) {
+        @Suppress("DEPRECATION")
+        val version = runCatching {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName
+        }.getOrNull()
+        "https://github.com/hebi10/quickcut/releases" +
+            (version?.takeIf(String::isNotBlank)?.let { "/tag/v$it" } ?: "")
+    }
     var names by remember { mutableStateOf<List<String>>(emptyList()) }
     var selected by remember { mutableStateOf<String?>(null) }
     var contents by remember { mutableStateOf("") }
@@ -50,8 +58,14 @@ internal fun OpenSourceLicensesDialog(onDismiss: () -> Unit) {
         text = {
             if (selected == null) {
                 Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
-                    Text("QuickCut에 포함된 소프트웨어의 저작권과 사용 조건입니다. " +
-                        "이 버전의 소스 코드는 설치 파일과 함께 제공됩니다.")
+                    SelectionContainer {
+                        Text("QuickCut에 포함된 소프트웨어의 저작권과 사용 조건입니다. " +
+                            "이 통합판은 GPLv3에 따라 제공됩니다.\n\n" +
+                            "이 버전의 전체 대응 소스와 빌드 안내는 아래 릴리스의 " +
+                            "source.tar.gz 및 source-guide.md에서 받을 수 있습니다.\n" +
+                            "$sourceReleaseUrl\n\n" +
+                            "개발 저장소:\nhttps://github.com/hebi10/quickcut")
+                    }
                     names.forEach { name ->
                         TextButton(onClick = { selected = name }, shape = CutShape) {
                             Text(name)

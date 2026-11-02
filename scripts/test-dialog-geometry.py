@@ -8,8 +8,6 @@ import tempfile
 import unittest
 
 HELPER = Path(__file__).with_name('android-dialog-geometry-check.sh').resolve()
-CLASS = 'com.hebi.quickcut.batch.BatchFastAdjustmentInstrumentedTest'
-METHODS = ['reviewKeepsBothSaveActionsInFixedFooter', 'templateManagerRemainsUsable']
 RESULTS = 'app/build/outputs/androidTest-results/connected'
 REPORTS = 'app/build/reports/androidTests/connected'
 
@@ -69,7 +67,9 @@ elif tool == 'gradle':
     assert flags['quickcutExpectedFontScale'] == font
     klass = 'com.hebi.quickcut.batch.BatchFastAdjustmentInstrumentedTest'
     methods = ['reviewKeepsBothSaveActionsInFixedFooter', 'templateManagerRemainsUsable']
-    assert flags['class'] == ','.join(klass + '#' + method for method in methods)
+    expected_cases = [(klass, method) for method in methods] + [
+        ('com.hebi.quickcut.ui.PrivacyPolicyInstrumentedTest', 'privacyCanBeReadOfflineAndClosedFromHome')]
+    assert flags['class'] == ','.join(klass + '#' + method for klass, method in expected_cases)
     assert state['size'] == {'narrow': '640x1280', 'wide': '1680x1440'}[stage]
     assert state['density'] == '320' and state['settings']['font_scale'] == font
     assert state['settings']['accelerometer_rotation'] == '0'
@@ -77,12 +77,13 @@ elif tool == 'gradle':
     results = pathlib.Path('app/build/outputs/androidTest-results/connected')
     assert not list(results.rglob('TEST-*.xml')), 'stale full/focused XML was not cleared'
     results.mkdir(parents=True, exist_ok=True)
-    cases = ''.join('<testcase classname="%s" name="%s"/>' % (klass, m) for m in methods)
+    emitted_cases = expected_cases[:-1] if os.environ['FAKE_MODE'] == 'missing_privacy_case' else expected_cases
+    cases = ''.join('<testcase classname="%s" name="%s"/>' % case for case in emitted_cases)
     if os.environ['FAKE_MODE'] == 'extra_case': cases += '<testcase classname="foreign" name="unexpected"/>'
     if os.environ['FAKE_MODE'] == 'duplicate_case': cases += '<testcase classname="%s" name="%s"/>' % (klass, methods[0])
     if os.environ['FAKE_MODE'] == 'skipped': cases = cases.replace('/>', '><skipped/></testcase>', 1)
     if os.environ['FAKE_MODE'] != 'missing_xml':
-        (results / 'TEST-stage.xml').write_text('<testsuite tests="2" failures="0" errors="0" skipped="0">' + cases + '</testsuite>')
+        (results / 'TEST-stage.xml').write_text('<testsuite tests="%s" failures="0" errors="0" skipped="0">' % len(emitted_cases) + cases + '</testsuite>')
     reports = pathlib.Path('app/build/reports/androidTests/connected')
     reports.mkdir(parents=True, exist_ok=True)
     (reports / 'index.html').write_text(stage)
@@ -193,7 +194,7 @@ class GeometryHelperTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
 
     def test_extra_duplicate_or_skipped_test_cannot_satisfy_focused_gate(self):
-        for mode in ('extra_case', 'duplicate_case', 'skipped'):
+        for mode in ('extra_case', 'duplicate_case', 'skipped', 'missing_privacy_case'):
             with self.subTest(mode=mode):
                 result, _ = self.run_helper(mode)
                 self.assertNotEqual(result.returncode, 0)

@@ -61,10 +61,29 @@ JOBS="${QUICKCUT_NATIVE_JOBS:-4}"
 export CARGO_TARGET_DIR="$CACHE/cargo-target"
 export LIBCLANG_PATH="${LIBCLANG_PATH:-$TOOLCHAIN/musl/lib}"
 
+dependency_prefix_complete() {
+  local prefix="$1" name
+  for name in x264 x265 avutil avcodec avformat avdevice avfilter swresample swscale; do
+    [[ -s "$prefix/lib/lib$name.a" ]] || return 1
+  done
+  for name in x264 x265 libavutil libavcodec libavformat libavdevice libavfilter libswresample libswscale; do
+    [[ -s "$prefix/lib/pkgconfig/$name.pc" ]] || return 1
+  done
+  for name in x264.h x265.h x265_config.h libavutil/avutil.h libavcodec/avcodec.h \
+    libavformat/avformat.h libavdevice/avdevice.h libavfilter/avfilter.h \
+    libswresample/swresample.h libswscale/swscale.h; do
+    [[ -s "$prefix/include/$name" ]] || return 1
+  done
+  PKG_CONFIG_PATH="$prefix/lib/pkgconfig" PKG_CONFIG_LIBDIR="$prefix/lib/pkgconfig" \
+    PKG_CONFIG_SYSROOT_DIR="" pkg-config --static --exists \
+    x264 x265 libavutil libavcodec libavformat libavdevice libavfilter libswresample libswscale
+}
+
 build_dependencies() (
   local abi="$1" target="$2" arch="$3"
   local prefix="$CACHE/prefix/$abi" build="$CACHE/objects/$abi"
-  if [[ -f "$prefix/.build-key" && "$(cat "$prefix/.build-key")" == "$BUILD_KEY" ]]; then
+  if [[ -f "$prefix/.build-key" && "$(cat "$prefix/.build-key")" == "$BUILD_KEY" ]] \
+    && dependency_prefix_complete "$prefix"; then
     return
   fi
   rm -rf "$build" "$prefix"
@@ -130,14 +149,33 @@ EOF
     --extra-ldflags="-L$prefix/lib -Wl,-z,max-page-size=16384"
   make -j"$JOBS"
   make install
+  if ! dependency_prefix_complete "$prefix"; then
+    echo "Incomplete native dependency prefix: $abi" >&2
+    exit 1
+  fi
   printf '%s\n' "$BUILD_KEY" > "$prefix/.build-key"
 )
 
+build_dependencies_logged() {
+  local abi="$1" status
+  # A function used in an OR/if condition ignores errexit throughout its body.
+  # Capture a standalone strict subshell's result so the first build error wins.
+  set +e
+  (
+    set -e
+    build_dependencies "$@"
+  ) > "$CACHE/logs/dependencies-$abi.log" 2>&1
+  status=$?
+  set -e
+  if [[ "$status" -ne 0 ]]; then
+    tail -80 "$CACHE/logs/dependencies-$abi.log" >&2 || true
+    return "$status"
+  fi
+}
+
 build_android() (
   local abi="$1" target="$2" arch="$3"
-  build_dependencies "$abi" "$target" "$arch" > "$CACHE/logs/dependencies-$abi.log" 2>&1 || {
-    tail -80 "$CACHE/logs/dependencies-$abi.log" >&2; exit 1;
-  }
+  build_dependencies_logged "$abi" "$target" "$arch"
   local prefix="$CACHE/prefix/$abi" linker_var="CARGO_TARGET_${target^^}_LINKER"
   linker_var="${linker_var//-/_}"
   export "$linker_var=$TOOLCHAIN/bin/${target}${API}-clang"
@@ -167,9 +205,7 @@ PYCODE
 )
 
 if [[ "$HOST_TESTS" == true ]]; then
-  build_dependencies host x86_64-linux-gnu x86_64 > "$CACHE/logs/dependencies-host.log" 2>&1 || {
-    tail -80 "$CACHE/logs/dependencies-host.log" >&2; exit 1;
-  }
+  build_dependencies_logged host x86_64-linux-gnu x86_64
   (
     export PKG_CONFIG_PATH="$CACHE/prefix/host/lib/pkgconfig" PKG_CONFIG_LIBDIR="$CACHE/prefix/host/lib/pkgconfig"
     export PKG_CONFIG_ALL_STATIC=1 FFMPEG_STATIC=1 PKG_CONFIG_SYSROOT_DIR=""

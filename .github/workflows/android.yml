@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -61,6 +61,8 @@ jobs:
           if [[ -n "$NATIVE_CACHE_MATCHED_KEY" && "$NATIVE_CACHE_MATCHED_KEY" != "$NATIVE_CACHE_DEPENDENCY_PREFIX"* ]]; then
             rm -rf build/native-smartcut/cargo-target
           fi
+      - name: Verify native dependency build failure handling
+        run: python3 scripts/test-native-build-cache.py
       - name: Build native smart-cut engine
         run: bash scripts/build-native-smartcut.sh --host-tests
       - name: Save native build cache

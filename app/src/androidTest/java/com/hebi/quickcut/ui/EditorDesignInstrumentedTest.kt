@@ -2,6 +2,7 @@ package com.hebi.quickcut.ui
 
 import android.app.Application
 import android.graphics.Bitmap
+import android.graphics.Color
 import android.net.Uri
 import android.os.ParcelFileDescriptor
 import android.view.View
@@ -11,6 +12,7 @@ import androidx.annotation.OptIn as AndroidOptIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -26,9 +28,12 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModelStore
@@ -45,6 +50,7 @@ import com.hebi.quickcut.editor.EditorSessionStore
 import com.hebi.quickcut.editor.EditorViewModel
 import com.hebi.quickcut.editor.OriginalAction
 import com.hebi.quickcut.editor.QuickCutPage
+import com.hebi.quickcut.media.MediaReader
 import com.hebi.quickcut.settings.BatchDraftSettings
 import com.hebi.quickcut.settings.QuickCutSettings
 import com.hebi.quickcut.settings.QuickTrimSettings
@@ -155,17 +161,16 @@ class EditorDesignInstrumentedTest {
         }
         compose.waitUntil(25_000L) { editor.page == QuickCutPage.EDITOR }
         compose.runOnUiThread { editor.trimSelected(4_000L, 7_400L) }
+        checkNotNull(MediaReader.thumbnail(context, Uri.fromFile(source), 4_000L))
         var detailed by mutableStateOf(false)
         compose.setContent {
-            DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(393.dp, 852.dp))) {
-                QuickCutTheme {
-                    Box(Modifier.fillMaxSize().background(CutColors.background)) {
-                        if (detailed) EditorScreen(editor, {}, {})
-                        else QuickTrimScreen(editor, settings, {}, {
-                            editor.changeQuickMode(false)
-                            detailed = true
-                        }, {}, {})
-                    }
+            QuickCutTheme {
+                Box(Modifier.fillMaxSize().background(CutColors.background).safeDrawingPadding()) {
+                    if (detailed) EditorScreen(editor, {}, {})
+                    else QuickTrimScreen(editor, settings, {}, {
+                        editor.changeQuickMode(false)
+                        detailed = true
+                    }, {}, {})
                 }
             }
         }
@@ -189,14 +194,14 @@ class EditorDesignInstrumentedTest {
 
     private fun showBatch(fontScale: Float) {
         compose.setContent {
-            DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(
-                DpSize((if (fontScale > 1f) 320 else 393).dp, 852.dp),
-            )) {
-                DeviceConfigurationOverride(DeviceConfigurationOverride.FontScale(fontScale)) {
-                    QuickCutTheme {
-                        Box(Modifier.fillMaxSize().background(CutColors.background)) {
-                            BatchScreen(batch, {}, {}, { _, _, _ -> })
-                        }
+            QuickCutTheme {
+                Box(Modifier.fillMaxSize().background(CutColors.background).safeDrawingPadding()) {
+                    DeviceConfigurationOverride(DeviceConfigurationOverride.FontScale(fontScale)) {
+                        if (fontScale > 1f) {
+                            DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(320.dp, 800.dp))) {
+                                BatchScreen(batch, {}, {}, { _, _, _ -> })
+                            }
+                        } else BatchScreen(batch, {}, {}, { _, _, _ -> })
                     }
                 }
             }
@@ -207,18 +212,53 @@ class EditorDesignInstrumentedTest {
         compose.waitUntil(25_000L) {
             var ready = false
             compose.runOnUiThread {
-                fun find(view: View): PlayerView? {
-                    if (view is PlayerView) return view
-                    if (view is ViewGroup) for (i in 0 until view.childCount) {
-                        find(view.getChildAt(i))?.let { return it }
-                    }
-                    return null
-                }
-                ready = find(compose.activity.window.decorView)?.player?.playbackState == Player.STATE_READY
+                ready = previewView()?.player?.playbackState == Player.STATE_READY
             }
             ready
         }
+        compose.onNodeWithContentDescription("재생").performClick()
+        compose.waitUntil(15_000L) { previewHasRenderedColor() }
+        compose.onNodeWithContentDescription("일시정지").performClick()
+        compose.onNodeWithContentDescription("결과 미리보기 위치")
+            .performSemanticsAction(SemanticsActions.SetProgress) { it(0f) }
+        compose.waitUntil(15_000L) { previewHasRenderedColor() }
         compose.waitForIdle()
+    }
+
+    private fun previewView(): PlayerView? {
+        fun find(view: View): PlayerView? {
+            if (view is PlayerView) return view
+            if (view is ViewGroup) for (i in 0 until view.childCount) {
+                find(view.getChildAt(i))?.let { return it }
+            }
+            return null
+        }
+        return find(compose.activity.window.decorView)
+    }
+
+    private fun previewHasRenderedColor(): Boolean {
+        var bounds: IntArray? = null
+        compose.runOnUiThread {
+            previewView()?.let { view ->
+                val location = IntArray(2)
+                view.getLocationOnScreen(location)
+                bounds = intArrayOf(location[0], location[1], view.width, view.height)
+            }
+        }
+        val area = bounds ?: return false
+        if (area[2] <= 0 || area[3] <= 0) return false
+        val bitmap = InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot() ?: return false
+        return try {
+            var colored = 0
+            for (x in 3..7) for (y in 3..7) {
+                val px = (area[0] + area[2] * x / 10).coerceIn(0, bitmap.width - 1)
+                val py = (area[1] + area[3] * y / 10).coerceIn(0, bitmap.height - 1)
+                val value = bitmap.getPixel(px, py)
+                val channels = listOf(Color.red(value), Color.green(value), Color.blue(value))
+                if (channels.max() - channels.min() > 35 && channels.max() > 50) colored++
+            }
+            colored >= 5
+        } finally { bitmap.recycle() }
     }
 
     private fun capture(name: String) {

@@ -154,6 +154,45 @@ jobs:
           python3 scripts/test-emulator-failure.py
           python3 scripts/test-emulator-flow.py
           python3 scripts/test-dialog-geometry.py
+      - name: Start bounded emulator host resource monitor
+        continue-on-error: true
+        run: |
+          mkdir -p quickcut-host-diagnostics
+          nohup python3 -u - "$RUNNER_TEMP/quickcut-host-monitor.json" > quickcut-host-diagnostics/host-resources.log 2>&1 <<'PY' &
+          import datetime, json, os, signal, subprocess, sys, threading, time
+          from pathlib import Path
+
+          stop = threading.Event()
+          signal.signal(signal.SIGTERM, lambda *_: stop.set())
+          raw_stat = Path('/proc/self/stat').read_text()
+          stat = raw_stat.rsplit(')', 1)[1].split()
+          Path(sys.argv[1]).write_text(json.dumps({'pid': os.getpid(), 'proc_pid': int(raw_stat.split(' ', 1)[0]), 'start_ticks': stat[19]}))
+          deadline = time.monotonic() + 3600
+          for sample in range(180):
+              if stop.is_set() or time.monotonic() >= deadline:
+                  break
+              print(datetime.datetime.now(datetime.timezone.utc).isoformat(), flush=True)
+              for line in Path('/proc/meminfo').read_text().splitlines():
+                  if line.split(':', 1)[0] in {'MemTotal', 'MemFree', 'MemAvailable', 'Buffers', 'Cached', 'SwapTotal', 'SwapFree'}:
+                      print(line)
+              for command in (['df', '-Pk', '/'], ['ps', '-eo', 'comm=,pid=,rss=,pcpu=']):
+                  if stop.is_set() or time.monotonic() >= deadline:
+                      break
+                  try:
+                      result = subprocess.run(command, capture_output=True, text=True, timeout=min(1, deadline - time.monotonic()))
+                      lines = result.stdout.splitlines()
+                      if command[0] == 'ps':
+                          print('QEMU/emulator: comm pid rss_kib cpu_percent')
+                          lines = [line for line in lines if line.split() and line.split()[0].startswith(('qemu', 'emulator'))][:20]
+                      print('\n'.join(lines)[:4096])
+                      print(command[0] + ' exit=' + str(result.returncode))
+                  except subprocess.TimeoutExpired:
+                      print(command[0] + ' timeout')
+              sys.stdout.flush()
+              if stop.wait(min(20, max(0, deadline - time.monotonic()))):
+                  break
+          print('Host monitor stopped.', flush=True)
+          PY
       - name: Launch QuickCut on API ${{ matrix.api }} emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -168,6 +207,52 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -no-metrics -partition-size 2048
           disable-animations: true
           script: bash scripts/android-emulator-check.sh
+      - name: Stop host monitor and collect bounded kernel failure events
+        if: always()
+        continue-on-error: true
+        run: |
+          mkdir -p quickcut-host-diagnostics
+          python3 - <<'PY'
+          import json, os, re, signal, subprocess, time
+          from pathlib import Path
+
+          state = Path(os.environ['RUNNER_TEMP']) / 'quickcut-host-monitor.json'
+          if state.is_file():
+              identity = json.loads(state.read_text())
+              process_stat = Path('/proc') / str(identity['proc_pid']) / 'stat'
+              def owned_monitor_running():
+                  try:
+                      stat = process_stat.read_text().rsplit(')', 1)[1].split()
+                      return stat[0] != 'Z' and stat[19] == identity['start_ticks']
+                  except FileNotFoundError:
+                      return False
+              if owned_monitor_running():
+                  try:
+                      os.kill(identity['pid'], signal.SIGTERM)
+                  except ProcessLookupError:
+                      pass
+                  deadline = time.monotonic() + 1
+                  while owned_monitor_running() and time.monotonic() < deadline:
+                      time.sleep(0.05)
+                  if owned_monitor_running():
+                      try:
+                          os.kill(identity['pid'], signal.SIGKILL)
+                      except ProcessLookupError:
+                          pass
+                      print('Bounded stop terminated the owned host monitor.')
+                  else:
+                      print('Host monitor stopped cleanly.')
+          else:
+              print('Host monitor was not started.')
+          try:
+              result = subprocess.run(['sudo', '-n', 'dmesg', '--time-format', 'iso'], capture_output=True, text=True, timeout=1)
+              relevant = re.compile(r'out of memory|oom[-_ ]|oom-kill|killed process|segfault|general protection fault', re.I)
+              lines = [line for line in result.stdout.splitlines() if relevant.search(line)][-100:]
+              report = 'kernel read exit=' + str(result.returncode) + '\n' + '\n'.join(lines)
+          except (subprocess.TimeoutExpired, FileNotFoundError) as error:
+              report = 'Kernel events unavailable: ' + type(error).__name__
+          Path('quickcut-host-diagnostics/kernel-failure-events.log').write_text(report[:32768] + '\n')
+          PY
       # The preceding emulator action shuts down its device. Start a fresh disposable
       # API 36 emulator here; the helper preserves/restores the full-suite workspace XML.
       - name: Verify real Dialog geometry on API 36
@@ -234,5 +319,13 @@ jobs:
             quickcut-main10-preflight/
             quickcut-main10-full/
           if-no-files-found: ignore
+      - name: Upload emulator host resource evidence
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: quickcut-host-diagnostics-api-${{ matrix.api }}
+          path: quickcut-host-diagnostics/
+          if-no-files-found: warn
 
 

@@ -24,9 +24,13 @@ run_checked() {
 rm -rf "$PREFLIGHT" "$RESULTS" "$REPORTS" quickcut-main10-preflight
 mkdir -p "$PREFLIGHT/results" "$PREFLIGHT/reports"
 run_checked "Clear preflight Main10 evidence" timeout --kill-after=2s 10s adb shell rm -rf /data/local/tmp/quickcut-main10
-run_checked "Native preflight" timeout --kill-after=30s 10m gradle --no-daemon :app:connectedDebugAndroidTest \
+run_checked "Native preflight" timeout --kill-after=30s 10m gradle --no-daemon \
+  -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true :app:connectedDebugAndroidTest \
   -Pandroid.testInstrumentationRunnerArguments.class=com.hebi.quickcut.media.NativeSmartCutInstrumentedTest
 preflight_gradle_status="$last_status"
+# Isolate package removal from required post-test evidence collection. This
+# device check also proves the installed AGP honored the retention option.
+run_checked "Require retained test APK after preflight" timeout --kill-after=2s 10s adb shell pm path com.hebi.quickcut.test
 if [[ -d "$RESULTS" ]]; then
   run_checked "Preserve preflight XML" cp -a "$RESULTS/." "$PREFLIGHT/results/"
 else
@@ -48,7 +52,8 @@ printf 'gradle_exit=%s\nphase_exit=%s\n' "$preflight_gradle_status" "$first_fail
 rm -rf "$RESULTS" "$REPORTS" quickcut-main10-full
 run_checked "Clear full-suite Main10 evidence" timeout --kill-after=2s 10s adb shell rm -rf /data/local/tmp/quickcut-main10
 # API29 can complete over 230 cases before reaching 15 minutes; retain a bounded full-suite budget.
-run_checked "Full instrumentation suite" timeout --kill-after=30s 20m gradle --no-daemon :app:connectedDebugAndroidTest
+run_checked "Full instrumentation suite" timeout --kill-after=30s 20m gradle --no-daemon \
+  -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true :app:connectedDebugAndroidTest
 run_checked "Pull full-suite Main10 evidence" timeout --kill-after=2s 10s adb pull /data/local/tmp/quickcut-main10 quickcut-main10-full
 run_checked "Verify full-suite Main10 evidence" python3 "$SCRIPT_DIR/verify-android-main10.py" quickcut-main10-full
 run_checked "Verify full-suite XML" python3 - <<'PYCODE'

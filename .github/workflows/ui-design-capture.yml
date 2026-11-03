@@ -3,7 +3,7 @@ name: Focused UI design capture
 on:
   workflow_dispatch:
   push:
-    branches: [codex/ui-design-20261103]
+    branches: [codex/ui-design-20261103, codex/ui-capture-diagnostic-20261103]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -155,12 +155,12 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: quickcut-focused-design-api-35
-          path: quickcut-design-review/**/*.png
+          path: quickcut-design-review/
           if-no-files-found: error
       - name: Upload focused instrumentation XML
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: quickcut-focused-design-results-api-35
-          path: app/build/outputs/androidTest-results/connected/**/*.xml
+          path: app/build/outputs/androidTest-results/connected/
           if-no-files-found: error

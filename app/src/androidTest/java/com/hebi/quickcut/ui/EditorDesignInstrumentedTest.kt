@@ -5,6 +5,12 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import android.net.Uri
 import android.os.ParcelFileDescriptor
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
+import android.view.PixelCopy
+import android.view.SurfaceHolder
+import android.view.SurfaceView
 import android.view.View
 import android.view.ViewGroup
 import androidx.activity.ComponentActivity
@@ -53,6 +59,8 @@ import com.hebi.quickcut.settings.BatchDraftSettings
 import com.hebi.quickcut.settings.QuickCutSettings
 import com.hebi.quickcut.settings.QuickTrimSettings
 import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -172,7 +180,7 @@ class EditorDesignInstrumentedTest {
                 }
             }
         }
-        waitForPreview()
+        waitForPreview(diagnosePause = true)
         capture("editor_design_quick_trim")
         compose.onNodeWithText("영상 저장").assertIsDisplayed().assertIsEnabled()
         compose.runOnIdle {
@@ -206,7 +214,7 @@ class EditorDesignInstrumentedTest {
         }
     }
 
-    private fun waitForPreview() {
+    private fun waitForPreview(diagnosePause: Boolean = false) {
         compose.waitUntil(25_000L) {
             var ready = false
             compose.runOnUiThread {
@@ -214,11 +222,129 @@ class EditorDesignInstrumentedTest {
             }
             ready
         }
-        compose.onNodeWithContentDescription("재생").performClick()
-        compose.waitUntil(15_000L) { previewHasRenderedColor() }
-        compose.onNodeWithContentDescription("일시정지").performClick()
-        compose.waitUntil(15_000L) { previewHasRenderedColor() }
-        compose.waitForIdle()
+        val diagnostic = if (diagnosePause) PauseDiagnostic() else null
+        try {
+            compose.onNodeWithContentDescription("재생").performClick()
+            compose.waitUntil(15_000L) { previewHasRenderedColor() }
+            diagnostic?.capture("before_compose_pause")
+            compose.onNodeWithContentDescription("일시정지").performClick()
+            diagnostic?.capture("after_compose_pause")
+            try {
+                compose.waitUntil(15_000L) { previewHasRenderedColor() }
+            } catch (failure: Throwable) {
+                diagnostic?.capture("compose_pause_timeout")
+                if (diagnostic != null && !previewHasRenderedColor()) {
+                    // Compare direct native pause only after the original failure; never mask it.
+                    runCatching {
+                        compose.runOnUiThread { previewView()?.player?.play() }
+                        compose.waitUntil(15_000L) { previewHasRenderedColor() }
+                        diagnostic.capture("before_native_pause")
+                        compose.runOnUiThread { previewView()?.player?.pause() }
+                        diagnostic.capture("after_native_pause")
+                    }.onFailure { diagnostic.record("native comparison failed: $it") }
+                }
+                throw failure
+            }
+            compose.waitForIdle()
+        } finally { diagnostic?.close() }
+    }
+
+    /** Diagnostic evidence only: no production playback changes or relaxed assertions. */
+    private inner class PauseDiagnostic {
+        private val instrumentation = InstrumentationRegistry.getInstrumentation()
+        private val directory = File(checkNotNull(instrumentation.targetContext.getExternalFilesDir(null)), "design-review")
+        private val trace = StringBuffer()
+        private var observedPlayer: Player? = null
+        private var observedSurface: SurfaceView? = null
+        private val listener = object : Player.Listener {
+            override fun onEvents(player: Player, events: Player.Events) = state("events=${(0 until events.size()).map(events::get)}")
+            override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
+                record("discontinuity reason=$reason old=${oldPosition.positionMs} new=${newPosition.positionMs}")
+            }
+            override fun onRenderedFirstFrame() { state("firstFrame") }
+        }
+        private val surfaceCallback = object : SurfaceHolder.Callback {
+            override fun surfaceCreated(holder: SurfaceHolder) { state("surfaceCreated") }
+            override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) { state("surfaceChanged $format ${width}x$height") }
+            override fun surfaceDestroyed(holder: SurfaceHolder) { state("surfaceDestroyed") }
+        }
+        init {
+            directory.mkdirs()
+            compose.runOnUiThread {
+                observedPlayer = previewView()?.player
+                observedSurface = previewView()?.videoSurfaceView as? SurfaceView
+                observedPlayer?.addListener(listener)
+                observedSurface?.holder?.addCallback(surfaceCallback)
+                state("attached")
+            }
+        }
+        fun record(message: String) { trace.append("${SystemClock.elapsedRealtime()} $message\n") }
+        private fun state(label: String) {
+            fun describe(view: View?): String {
+                if (view == null) return "null"
+                val location = IntArray(2).also(view::getLocationOnScreen)
+                return "${view.javaClass.simpleName}@${System.identityHashCode(view)} attached=${view.isAttachedToWindow} visibility=${view.visibility} rect=${location.toList()} ${view.width}x${view.height}"
+            }
+            val view = previewView()
+            val player = view?.player
+            val tracks = player?.currentTracks?.groups?.map { group ->
+                (0 until group.length).map { "selected=${group.isTrackSelected(it)} ${group.getTrackFormat(it)}" }
+            }
+            record("$label player@${System.identityHashCode(player)} state=${player?.playbackState} pos=${player?.currentPosition}/${player?.duration} ready=${player?.playWhenReady} playing=${player?.isPlaying} suppression=${player?.playbackSuppressionReason} error=${player?.playerError} media=${player?.currentMediaItem} tracks=$tracks modelPos=${editor.playPositionMs} bounds=${editor.timeline.clips.map { it.startMs to it.endMs }}")
+            record("view=${describe(view)} surface=${describe(view?.videoSurfaceView)} valid=${(view?.videoSurfaceView as? SurfaceView)?.holder?.surface?.isValid} shutter=${view?.findViewById<View>(androidx.media3.ui.R.id.exo_shutter)?.visibility}")
+        }
+        fun capture(label: String) {
+            runCatching {
+                compose.runOnUiThread { state(label) }
+                instrumentation.uiAutomation.takeScreenshot()?.let { bitmap ->
+                    saveBitmap("${label}_window", bitmap)
+                    bitmap.recycle()
+                }
+                var bitmap: Bitmap? = null
+                var result = -1
+                val completed = CountDownLatch(1)
+                compose.runOnUiThread {
+                    val surface = previewView()?.videoSurfaceView as? SurfaceView
+                    if (surface == null || surface.width <= 0 || surface.height <= 0 || !surface.holder.surface.isValid) {
+                        record("$label PixelCopy unavailable")
+                        completed.countDown()
+                    } else {
+                        bitmap = Bitmap.createBitmap(surface.width, surface.height, Bitmap.Config.ARGB_8888)
+                        PixelCopy.request(surface, checkNotNull(bitmap), { result = it; completed.countDown() }, Handler(Looper.getMainLooper()))
+                    }
+                }
+                val finished = completed.await(3, TimeUnit.SECONDS) // Instrumentation thread, never the UI thread.
+                record("$label PixelCopy completed=$finished result=$result")
+                if (finished) bitmap?.let { pixels ->
+                    if (result == PixelCopy.SUCCESS) saveBitmap("${label}_surface", pixels)
+                    pixels.recycle()
+                }
+            }.onFailure { record("$label capture failed: $it") }
+            flush()
+        }
+        private fun saveBitmap(name: String, bitmap: Bitmap) {
+            val output = File(directory, "editor_design_pause_$name.png")
+            output.outputStream().use { check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) }
+            preserve(output)
+        }
+        private fun preserve(output: File) {
+            require(output.absolutePath.matches(Regex("[A-Za-z0-9_./-]+")))
+            for (command in listOf("mkdir -p /data/local/tmp/quickcut-design-review", "cp ${output.absolutePath} /data/local/tmp/quickcut-design-review/${output.name}")) {
+                ParcelFileDescriptor.AutoCloseInputStream(instrumentation.uiAutomation.executeShellCommand(command)).use { it.readBytes() }
+            }
+        }
+        private fun flush() {
+            runCatching { File(directory, "editor_design_pause_trace.txt").also { it.writeText(trace.toString()); preserve(it) } }
+                .onFailure { android.util.Log.e("QuickPauseDiagnostic", trace.toString(), it) }
+        }
+        fun close() {
+            runCatching { compose.runOnUiThread {
+                state("closing")
+                observedPlayer?.removeListener(listener)
+                observedSurface?.holder?.removeCallback(surfaceCallback)
+            } }.onFailure { record("close failed: $it") }
+            flush()
+        }
     }
 
     private fun previewView(): PlayerView? {

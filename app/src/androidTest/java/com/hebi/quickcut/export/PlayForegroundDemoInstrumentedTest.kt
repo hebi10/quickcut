@@ -166,7 +166,7 @@ class PlayForegroundDemoInstrumentedTest {
             val nodes = instrumentation.uiAutomation.rootInActiveWindow
                 ?.findAccessibilityNodeInfosByText(text).orEmpty()
             for (node in nodes) {
-                if (node.isVisibleToUser && node.isEnabled) {
+                if (node.text?.toString() == text && node.isVisibleToUser && node.isEnabled) {
                     val bounds = Rect().also(node::getBoundsInScreen)
                     if (bounds.width() > 0 && bounds.height() > 0) {
                         val x = bounds.centerX()

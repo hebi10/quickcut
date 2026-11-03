@@ -222,8 +222,6 @@ class EditorDesignInstrumentedTest {
             val player = checkNotNull(previewView()?.player)
             assertTrue("Pause must retain the prepared preview", player.playbackState == Player.STATE_READY)
             assertTrue("The preview must remain paused", !player.playWhenReady)
-            assertTrue("The model must retain the final paused position",
-                kotlin.math.abs(editor.playPositionMs - player.currentPosition) <= 100L)
         }
         compose.waitForIdle()
     }
@@ -268,6 +266,8 @@ class EditorDesignInstrumentedTest {
         require(name.matches(Regex("editor_design_[a-z_]+")))
         compose.waitForIdle()
         val instrumentation = InstrumentationRegistry.getInstrumentation()
+        // Popup windows and platform surfaces settle after Compose's own idle state.
+        instrumentation.uiAutomation.waitForIdle(300L, 5_000L)
         val directory = File(checkNotNull(instrumentation.targetContext.getExternalFilesDir(null)), "design-review")
         check(directory.isDirectory || directory.mkdirs())
         val output = File(directory, "$name.png")

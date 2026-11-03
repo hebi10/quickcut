@@ -245,7 +245,9 @@ fun QuickTrimScreen(
         onDetailedEdit()
     }
     val onPlay: () -> Unit = {
-        if (previewFailure != null) retryPreview() else preview.togglePlayback()
+        if (previewFailure != null) retryPreview()
+        else if (player.isPlaying) player.pause()
+        else preview.togglePlayback()
     }
 
     BoxWithConstraints(Modifier.fillMaxSize().background(CutColors.background)) {

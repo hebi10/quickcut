@@ -218,6 +218,13 @@ class EditorDesignInstrumentedTest {
         compose.waitUntil(15_000L) { previewHasRenderedColor() }
         compose.onNodeWithContentDescription("일시정지").performClick()
         compose.waitUntil(15_000L) { previewHasRenderedColor() }
+        compose.runOnIdle {
+            val player = checkNotNull(previewView()?.player)
+            assertTrue("Pause must retain the prepared preview", player.playbackState == Player.STATE_READY)
+            assertTrue("The preview must remain paused", !player.playWhenReady)
+            assertTrue("The model must retain the final paused position",
+                kotlin.math.abs(editor.playPositionMs - player.currentPosition) <= 100L)
+        }
         compose.waitForIdle()
     }
 

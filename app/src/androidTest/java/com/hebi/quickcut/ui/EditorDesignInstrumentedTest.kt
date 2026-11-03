@@ -36,7 +36,11 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModelStore
+import androidx.media3.common.C
 import androidx.media3.common.Player
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.video.VideoFrameMetadataListener
+import androidx.media3.transformer.CompositionPlayer
 import androidx.media3.ui.PlayerView
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -54,6 +58,8 @@ import com.hebi.quickcut.settings.BatchDraftSettings
 import com.hebi.quickcut.settings.QuickCutSettings
 import com.hebi.quickcut.settings.QuickTrimSettings
 import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -215,19 +221,52 @@ class EditorDesignInstrumentedTest {
             }
             ready
         }
-        compose.onNodeWithContentDescription("재생").performClick()
-        // Pixel copies can outlive this short fixture; pause as soon as the control is ready.
-        compose.waitUntil(5_000L) {
-            compose.onAllNodesWithContentDescription("일시정지").fetchSemanticsNodes().size == 1
+        val frameSeen = AtomicBoolean(false)
+        val firstFrameReleaseNs = AtomicLong(C.TIME_UNSET)
+        val frameListener = VideoFrameMetadataListener { _, releaseTimeNs, _, _ ->
+            if (!frameSeen.get()) {
+                firstFrameReleaseNs.set(releaseTimeNs)
+                frameSeen.set(true)
+            }
         }
-        compose.onNodeWithContentDescription("일시정지").performClick()
-        compose.waitUntil(15_000L) { previewHasRenderedColor() }
-        compose.runOnIdle {
-            val player = checkNotNull(previewView()?.player)
-            assertTrue("Pause must retain the prepared preview", player.playbackState == Player.STATE_READY)
-            assertTrue("The preview must remain paused", !player.playWhenReady)
+        lateinit var player: Player
+        compose.runOnUiThread {
+            player = checkNotNull(previewView()?.player)
+            when (val activePlayer = player) {
+                is ExoPlayer -> activePlayer.setVideoFrameMetadataListener(frameListener)
+                is CompositionPlayer -> activePlayer.setVideoFrameMetadataListener(frameListener)
+                else -> error("Unsupported preview player")
+            }
         }
-        compose.waitForIdle()
+        try {
+            compose.onNodeWithContentDescription("재생").performClick()
+            compose.waitUntil(5_000L) {
+                compose.onAllNodesWithContentDescription("일시정지").fetchSemanticsNodes().size == 1
+            }
+            // Playing can precede video output. Wait cheaply for the next frame's display time,
+            // then pause before expensive pixel copies can outlive this short fixture.
+            compose.waitUntil(5_000L) {
+                frameSeen.get() && firstFrameReleaseNs.get().let { releaseNs ->
+                    releaseNs == C.TIME_UNSET || System.nanoTime() >= releaseNs
+                }
+            }
+            compose.onNodeWithContentDescription("일시정지").performClick()
+            compose.waitUntil(15_000L) { previewHasRenderedColor() }
+            compose.runOnIdle {
+                assertTrue("Pause must retain the prepared preview", player.playbackState == Player.STATE_READY)
+                assertTrue("The preview must remain paused", !player.playWhenReady)
+            }
+            compose.waitForIdle()
+        } finally {
+            compose.runOnUiThread {
+                when (val activePlayer = player) {
+                    is ExoPlayer -> activePlayer.clearVideoFrameMetadataListener(frameListener)
+                    // CompositionPlayer has no clear API and its setter requires a non-null listener.
+                    is CompositionPlayer -> activePlayer.setVideoFrameMetadataListener { _, _, _, _ -> }
+                    else -> Unit
+                }
+            }
+        }
     }
 
     private fun previewView(): PlayerView? {

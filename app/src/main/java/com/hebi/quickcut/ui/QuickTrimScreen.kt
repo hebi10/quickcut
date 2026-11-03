@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -473,14 +474,14 @@ private fun TrimSecondsRow(
         Text(label, color = CutColors.primaryText, fontSize = 14.sp,
             modifier = Modifier.fillMaxWidth())
         Row(
-            Modifier.fillMaxWidth(),
+            Modifier.fillMaxWidth().height(IntrinsicSize.Min),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
         OutlinedButton(
             onClick = { onStep(-1_000L) },
             contentPadding = PaddingValues(0.dp),
-            modifier = Modifier.size(48.dp).semantics {
+            modifier = Modifier.width(48.dp).fillMaxHeight().semantics {
                 contentDescription = "$label 1초 감소"
             },
             shape = CutShape,
@@ -494,16 +495,18 @@ private fun TrimSecondsRow(
         OutlinedTextField(
             value = value,
             onValueChange = onValueChange,
-            label = { Text("초") },
+            suffix = { Text("초") },
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
             shape = CutShape,
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.weight(1f).semantics {
+                contentDescription = "$label 시간(초)"
+            },
         )
         OutlinedButton(
             onClick = { onStep(1_000L) },
             contentPadding = PaddingValues(0.dp),
-            modifier = Modifier.size(48.dp).semantics {
+            modifier = Modifier.width(48.dp).fillMaxHeight().semantics {
                 contentDescription = "$label 1초 증가"
             },
             shape = CutShape,

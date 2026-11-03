@@ -51,7 +51,7 @@ class TimelineStripInstrumentedTest {
         composeRule.onNodeWithText("00:10.9").assertIsDisplayed().performClick()
         composeRule.runOnIdle { assertEquals(100L, selectedId) }
         composeRule.onNodeWithText("+").performClick()
-        composeRule.onNodeWithText("2배").assertIsDisplayed()
+        composeRule.onNodeWithText("확대 2배").assertIsDisplayed()
         composeRule.onNode(hasScrollToIndexAction()).performScrollToIndex(99)
         composeRule.onNode(hasClickAction() and hasText("00:10.9")).performTouchInput {
             down(Offset(4f, centerY))

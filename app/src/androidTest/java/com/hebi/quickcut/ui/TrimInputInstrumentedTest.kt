@@ -384,7 +384,7 @@ class TrimInputInstrumentedTest {
         composeRule.onAllNodes(hasSetTextAction())[0].performTextReplacement("-")
         assertInvalidDetailedDraft()
 
-        composeRule.onNodeWithText("저장", substring = false).assertIsNotEnabled()
+        composeRule.onNodeWithText("영상 저장", substring = false).assertIsNotEnabled()
     }
 
     @Test
@@ -395,7 +395,7 @@ class TrimInputInstrumentedTest {
         composeRule.onAllNodes(hasSetTextAction())[0].performTextReplacement("-")
         assertInvalidDetailedDraft()
         composeRule.onNode(hasClickAction() and hasText(formatTime(model.timeline.totalDurationMs))).performClick()
-        composeRule.onNodeWithText("저장", substring = false).assertIsNotEnabled()
+        composeRule.onNodeWithText("영상 저장", substring = false).assertIsNotEnabled()
     }
 
     @kotlin.OptIn(ExperimentalTestApi::class)
@@ -420,12 +420,12 @@ class TrimInputInstrumentedTest {
         composeRule.onNodeWithText("자르기").performClick()
         composeRule.onAllNodes(hasSetTextAction())[0].performTextReplacement("-")
         assertInvalidDetailedDraft()
-        composeRule.onNodeWithText("저장", substring = false).assertIsNotEnabled()
+        composeRule.onNodeWithText("영상 저장", substring = false).assertIsNotEnabled()
 
         composeRule.onNodeWithTag("detailed-trim-range").performTouchInput {
             click(center)
         }
-        composeRule.onNodeWithText("저장", substring = false).assertIsEnabled()
+        composeRule.onNodeWithText("영상 저장", substring = false).assertIsEnabled()
         composeRule.onAllNodes(hasSetTextAction())[0].assertIsDisplayed()
     }
 
@@ -486,7 +486,7 @@ class TrimInputInstrumentedTest {
             SemanticsMatcher.expectValue(SemanticsProperties.EditableText, AnnotatedString("-")),
         )
         composeRule.runOnIdle { assertEquals(false, model.isTrimInputValid) }
-        composeRule.onNodeWithText("저장", substring = false).assertIsNotEnabled()
+        composeRule.onNodeWithText("영상 저장", substring = false).assertIsNotEnabled()
     }
 
     @Test
@@ -495,7 +495,28 @@ class TrimInputInstrumentedTest {
         composeRule.onAllNodes(hasSetTextAction())[0].performTextReplacement("-")
         composeRule.onNodeWithText("상세 편집", substring = false).performClick()
 
-        composeRule.onNodeWithText("저장", substring = false).assertIsEnabled()
+        composeRule.onNodeWithText("영상 저장", substring = false).assertIsEnabled()
+    }
+
+    @Test
+    fun quickPreviewShowsResultTimeAndTheRetainedOriginalInterval() {
+        composeRule.runOnUiThread {
+            model.trimSelected(234L, 2_345L)
+            model.seek(123L)
+        }
+        showQuick()
+        composeRule.onNodeWithText("남길 원본 구간 " + formatTime(234L) + " – " + formatTime(2_345L))
+            .performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("결과 " + formatTime(123L) + " / " + formatTime(2_111L))
+            .assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("결과 미리보기 위치").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("재생").assertIsDisplayed()
+        composeRule.runOnIdle {
+            org.junit.Assert.assertFalse("Only Compose controls should show preview time",
+                requirePlayerView().useController)
+            assertEquals(234L, model.timeline.clips.single().startMs)
+            assertEquals(2_345L, model.timeline.clips.single().endMs)
+        }
     }
 
     @Test
@@ -512,7 +533,7 @@ class TrimInputInstrumentedTest {
             assertEquals("The preview must be silent when the export is muted",
                 0f, requirePlayerView().player!!.volume, 0f)
         }
-        composeRule.onNodeWithText("소리 켜기", substring = false)
+        composeRule.onNodeWithText("소리 복원", substring = false)
             .performScrollTo().performClick()
         composeRule.runOnIdle {
             assertEquals(1f, requirePlayerView().player!!.volume, 0f)

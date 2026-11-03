@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -66,22 +67,25 @@ fun TimelineStrip(
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("00:00", fontSize = 11.sp, color = CutColors.mutedText)
             Text(
                 "전체 " + formatTime(totalDurationMs),
                 fontSize = 11.sp,
                 color = CutColors.secondaryText,
+                modifier = Modifier.weight(1f),
             )
             Row(verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = { zoom = (zoom / 2f).coerceAtLeast(1f) },
-                    enabled = zoom > 1f, shape = CutShape) { Text("−") }
-                Text(zoom.toInt().toString() + "배", fontSize = 11.sp,
+                    enabled = zoom > 1f, shape = CutShape,
+                    modifier = Modifier.size(48.dp), contentPadding = PaddingValues(0.dp)) { Text("−") }
+                Text("확대 " + zoom.toInt().toString() + "배", fontSize = 11.sp,
                     color = CutColors.accent,
                     modifier = Modifier.background(CutColors.accentMuted, CutSmallShape)
                         .padding(horizontal = 6.dp, vertical = 4.dp))
                 TextButton(onClick = { zoom = (zoom * 2f).coerceAtMost(16f) },
-                    enabled = zoom < 16f, shape = CutShape) { Text("+") }
+                    enabled = zoom < 16f, shape = CutShape,
+                    modifier = Modifier.size(48.dp), contentPadding = PaddingValues(0.dp)) { Text("+") }
             }
         }
         Spacer(Modifier.height(8.dp))

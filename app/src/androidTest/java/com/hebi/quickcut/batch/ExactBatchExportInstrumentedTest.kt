@@ -272,7 +272,7 @@ class ExactBatchExportInstrumentedTest {
     @Test
     fun exactAutomaticSaveKeepsThreeSecondCutAndReportsCompletedMethod() {
         showScreen()
-        composeRule.onNodeWithText("일괄 편집 및 저장 시작").performClick()
+        composeRule.onNodeWithText("일괄 저장").performClick()
         composeRule.waitUntil(30_000L) {
             composeRule.onAllNodes(hasText("자동 저장 확인")).fetchSemanticsNodes().isNotEmpty()
         }

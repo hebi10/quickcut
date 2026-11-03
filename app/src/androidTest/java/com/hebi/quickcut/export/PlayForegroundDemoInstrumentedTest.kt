@@ -72,6 +72,7 @@ class PlayForegroundDemoInstrumentedTest {
         }
         compose.waitUntil(25_000L) { !model.isRecoveringExport }
         compose.runOnIdle { model.startNew() }
+        dismissLauncherStartupDialog()
     }
 
     @After fun cleanDisposableEmulatorData() {
@@ -85,6 +86,7 @@ class PlayForegroundDemoInstrumentedTest {
 
     @Test fun userInitiatedTranscodeContinuesWithVisibleNotificationAndFinishes() {
         Thread.sleep(2_000L)
+        dismissLauncherStartupDialog()
         compose.onNodeWithText("상세 편집 (분할·연결·순서 변경)").performClick()
         clickSystemItem("Demo-A.mp4", longClick = true)
         clickSystemItem("Demo-B.mp4")
@@ -160,6 +162,7 @@ class PlayForegroundDemoInstrumentedTest {
     private fun clickSystemItem(text: String, longClick: Boolean = false) {
         val deadline = System.currentTimeMillis() + 25_000L
         while (System.currentTimeMillis() < deadline) {
+            dismissLauncherStartupDialog()
             val nodes = instrumentation.uiAutomation.rootInActiveWindow
                 ?.findAccessibilityNodeInfosByText(text).orEmpty()
             for (node in nodes) {
@@ -189,11 +192,22 @@ class PlayForegroundDemoInstrumentedTest {
             return null
         }
         while (System.currentTimeMillis() < deadline) {
+            dismissLauncherStartupDialog()
             val node = find(instrumentation.uiAutomation.rootInActiveWindow)
             if (node?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true) return
             Thread.sleep(100L)
         }
         error("Document picker selection button was unavailable")
+    }
+
+    private fun dismissLauncherStartupDialog() {
+        val root = instrumentation.uiAutomation.rootInActiveWindow ?: return
+        if (root.findAccessibilityNodeInfosByText("Pixel Launcher isn't responding").isEmpty()) return
+        val close = root.findAccessibilityNodeInfosByText("Close app").firstOrNull {
+            it.text?.toString() == "Close app" && it.isClickable
+        } ?: error("The unrelated launcher startup dialog has no close control")
+        check(close.performAction(AccessibilityNodeInfo.ACTION_CLICK))
+        Thread.sleep(500L)
     }
 
     private fun saveUiDiagnostic() {

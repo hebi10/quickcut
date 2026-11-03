@@ -62,6 +62,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -179,7 +180,7 @@ class EditorDesignInstrumentedTest {
                 }
             }
         }
-        waitForPreview()
+        waitForPreview(ExoPlayer::class.java)
         capture("editor_design_quick_trim")
         compose.onNodeWithText("영상 저장").assertIsDisplayed().assertIsEnabled()
         compose.runOnIdle {
@@ -187,7 +188,7 @@ class EditorDesignInstrumentedTest {
             assertEquals(7_400L, editor.timeline.clips.single().endMs)
         }
         compose.runOnUiThread { editor.changeQuickMode(false); detailed = true }
-        waitForPreview()
+        waitForPreview(CompositionPlayer::class.java)
         compose.onNodeWithText("상세 편집").assertIsDisplayed()
         compose.onNodeWithText("확대 1배").assertIsDisplayed()
         capture("editor_design_detailed")
@@ -213,11 +214,19 @@ class EditorDesignInstrumentedTest {
         }
     }
 
-    private fun waitForPreview() {
+    private fun waitForPreview(expectedPlayerType: Class<out Player>) {
+        // A model change is not a recomposition barrier: discard the previous screen's view first.
+        compose.waitForIdle()
+        lateinit var player: Player
         compose.waitUntil(25_000L) {
             var ready = false
             compose.runOnUiThread {
-                ready = previewView()?.player?.playbackState == Player.STATE_READY
+                val candidate = previewView()?.player
+                if (candidate != null && expectedPlayerType.isInstance(candidate) &&
+                    candidate.playbackState == Player.STATE_READY) {
+                    player = candidate
+                    ready = true
+                }
             }
             ready
         }
@@ -229,9 +238,8 @@ class EditorDesignInstrumentedTest {
                 frameSeen.set(true)
             }
         }
-        lateinit var player: Player
-        compose.runOnUiThread {
-            player = checkNotNull(previewView()?.player)
+        compose.runOnIdle {
+            assertSame("Frame listener must observe the visible preview", player, previewView()?.player)
             when (val activePlayer = player) {
                 is ExoPlayer -> activePlayer.setVideoFrameMetadataListener(frameListener)
                 is CompositionPlayer -> activePlayer.setVideoFrameMetadataListener(frameListener)
@@ -253,6 +261,7 @@ class EditorDesignInstrumentedTest {
             compose.onNodeWithContentDescription("일시정지").performClick()
             compose.waitUntil(15_000L) { previewHasRenderedColor() }
             compose.runOnIdle {
+                assertSame("Paused preview must retain the observed player", player, previewView()?.player)
                 assertTrue("Pause must retain the prepared preview", player.playbackState == Player.STATE_READY)
                 assertTrue("The preview must remain paused", !player.playWhenReady)
             }

@@ -1,0 +1,173 @@
+name: Focused UI design capture
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/ui-design-20261103]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  design-capture:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      NATIVE_SOURCE_RUN: "41560481621"
+      NATIVE_SOURCE_SHA: c2ffca1b1284f2489f7d74882416e94ccb976a5f
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify tested native artifact provenance
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: run } = await github.rest.actions.getWorkflowRun({
+              ...context.repo,
+              run_id: Number(process.env.NATIVE_SOURCE_RUN),
+            });
+            if (run.head_sha !== process.env.NATIVE_SOURCE_SHA ||
+                run.status !== 'completed' || run.conclusion !== 'success') {
+              throw new Error('Native artifact source must be the pinned successful build.');
+            }
+            core.info(`Native artifact source: ${run.html_url} at ${run.head_sha}`);
+      - name: Verify native sources still match the tested build
+        run: |
+          git diff --exit-code "$NATIVE_SOURCE_SHA" HEAD -- \
+            native scripts/build-native-smartcut.sh scripts/native-smartcut-sources.json
+      - name: Download tested debug APK for native payload only
+        uses: actions/download-artifact@v4
+        with:
+          name: quickcut-debug-apk
+          run-id: ${{ env.NATIVE_SOURCE_RUN }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/tested-native-apk
+      - name: Extract and verify only native libraries and notices
+        env:
+          TESTED_APK_DIR: ${{ runner.temp }}/tested-native-apk
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import os
+          from pathlib import Path
+          import zipfile
+
+          apks = list(Path(os.environ["TESTED_APK_DIR"]).rglob("*.apk"))
+          if len(apks) != 1 or apks[0].name != "app-debug.apk":
+              raise SystemExit(f"Expected one app-debug.apk, found {len(apks)} APKs")
+          expected = {
+              "arm64-v8a": "9524be50f4b9ad98d5d9537ad1b95688f8b06a5a6225e7a5776de5f58bfa925e",
+              "x86_64": "a2b3caeccfcc466133373d3c2eb3c84ad11087fbee681c497a8741c524e747b5",
+          }
+          with zipfile.ZipFile(apks[0]) as apk:
+              for abi, digest in expected.items():
+                  entry = f"lib/{abi}/libquickcut_smartcut.so"
+                  if apk.namelist().count(entry) != 1:
+                      raise SystemExit(f"Expected exactly one {entry}")
+                  payload = apk.read(entry)
+                  if hashlib.sha256(payload).hexdigest() != digest:
+                      raise SystemExit(f"Native SHA-256 mismatch for {abi}")
+                  target = Path(f"app/build/generated/nativeLibs/{abi}/libquickcut_smartcut.so")
+                  target.parent.mkdir(parents=True, exist_ok=True)
+                  target.write_bytes(payload)
+                  print(f"Verified {abi}: {digest}")
+              entry = "assets/licenses/NATIVE-DEPENDENCIES.txt"
+              if apk.namelist().count(entry) != 1:
+                  raise SystemExit("Expected exactly one native dependency notice")
+              notices = apk.read(entry)
+              if not notices.strip():
+                  raise SystemExit("Native dependency notice is empty")
+              target = Path("build/generated/smartcutAssets/licenses/NATIVE-DEPENDENCIES.txt")
+              target.parent.mkdir(parents=True, exist_ok=True)
+              target.write_bytes(notices)
+          PY
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.4.1"
+      - name: Install Android SDK and NDK
+        run: sdkmanager --install "platforms;android-36" "build-tools;36.0.0" "ndk;27.3.13750724"
+      - name: Ensure test-video encoder is available
+        timeout-minutes: 5
+        run: |
+          if ! command -v ffmpeg >/dev/null; then
+            if [[ -f /etc/apt/apt-mirrors.txt ]] && grep -q '^https://archive\.ubuntu\.com/ubuntu/' /etc/apt/apt-mirrors.txt; then
+              sudo sed -i '\|^http://azure\.archive\.ubuntu\.com/ubuntu/[[:space:]]*priority:1$|d' /etc/apt/apt-mirrors.txt
+            fi
+            sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update -qq
+            sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends ffmpeg
+          fi
+      - name: Generate the real keyframe video fixture
+        run: |
+          mkdir -p app/src/androidTest/assets
+          ffmpeg -hide_banner -loglevel error -y \
+            -f lavfi -i testsrc2=size=320x240:rate=30 \
+            -f lavfi -i sine=frequency=880:sample_rate=44100 \
+            -t 8 -c:v libx264 -preset ultrafast -pix_fmt yuv420p \
+            -g 60 -keyint_min 60 -sc_threshold 0 \
+            -c:a aac -b:a 64k -shortest \
+            app/src/androidTest/assets/quickcut_keyframes.mp4
+          ffmpeg -hide_banner -loglevel error -y \
+            -f lavfi -i color=c=blue:s=320x240:r=30 \
+            -f lavfi -i sine=frequency=440:sample_rate=44100 \
+            -t 3 -c:v libx264 -preset ultrafast -pix_fmt yuv420p \
+            -c:a aac -b:a 64k -shortest \
+            -metadata creation_time=2021-01-01T00:00:00Z \
+            app/src/androidTest/assets/quickcut_fixture.mp4
+      - name: Build current debug app and test APKs together
+        # Both APKs use this runner's disposable debug key. The downloaded APK is
+        # never installed, and the normal preBuild native verification still runs.
+        run: gradle --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest
+      - name: Enable KVM for Android emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Capture editor design on API 36
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disk-size: 2048M
+          ram-size: 1536M
+          heap-size: 256M
+          emulator-boot-timeout: 300
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -no-metrics -partition-size 2048
+          disable-animations: true
+          # Preserve the test's failure while pulling any evidence before shutdown.
+          script: >-
+            bash -c 'set +e;
+            gradle --no-daemon :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.hebi.quickcut.ui.EditorDesignInstrumentedTest,com.hebi.quickcut.ui.TrimInputInstrumentedTest#narrowQuickTrimWithLargeFontKeepsSaveOptionsReachable,com.hebi.quickcut.ui.TrimInputInstrumentedTest#landscapeQuickTrimWithLargeFontKeepsSaveOptionsReachable;
+            test_status=$?;
+            adb pull /data/local/tmp/quickcut-design-review quickcut-design-review;
+            pull_status=$?;
+            if [[ "$test_status" -ne 0 ]]; then exit "$test_status"; fi;
+            exit "$pull_status"'
+      - name: Upload editor design screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quickcut-focused-design-api-36
+          path: quickcut-design-review/**/*.png
+          if-no-files-found: error
+      - name: Upload focused instrumentation XML
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quickcut-focused-design-results-api-36
+          path: app/build/outputs/androidTest-results/connected/**/*.xml
+          if-no-files-found: error

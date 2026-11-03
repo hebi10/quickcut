@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -95,6 +96,7 @@ fun QuickTrimScreen(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val player = remember(context) { ExoPlayer.Builder(context.applicationContext).build() }
+    var isPlaying by remember(player) { mutableStateOf(false) }
     val preview = remember(player, model) {
         EditorPreviewCoordinator(
             object : EditorPreviewPlayback {
@@ -144,9 +146,10 @@ fun QuickTrimScreen(
             override fun onPlayerError(error: PlaybackException) {
                 reportPreviewFailure(error)
             }
-            override fun onIsPlayingChanged(isPlaying: Boolean) {
+            override fun onIsPlayingChanged(playing: Boolean) {
+                isPlaying = playing
                 if (player.playerError != null) preview.playbackFailed()
-                else if (!isPlaying) preview.synchronizePosition()
+                else if (!playing) preview.synchronizePosition()
             }
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (playbackState == Player.STATE_READY) previewFailure = null
@@ -242,6 +245,11 @@ fun QuickTrimScreen(
         preview.pause()
         onDetailedEdit()
     }
+    val onPlay: () -> Unit = {
+        if (previewFailure != null) retryPreview()
+        else if (player.isPlaying) player.pause()
+        else preview.togglePlayback()
+    }
 
     BoxWithConstraints(Modifier.fillMaxSize().background(CutColors.background)) {
         val fontScale = LocalDensity.current.fontScale
@@ -271,7 +279,8 @@ fun QuickTrimScreen(
         }
             if (sideBySide) {
                 Row(Modifier.fillMaxWidth().weight(1f)) {
-                    QuickPreview(player, Modifier.weight(1f).fillMaxHeight())
+                    QuickPreview(player, isPlaying, clip.durationMs, model.playPositionMs,
+                        onPlay, preview::seek, Modifier.weight(1f).fillMaxHeight())
                     QuickTrimControls(
                         clip, leadingText, trailingText, valid, canSave,
                         ::changeLeading, ::changeTrailing,
@@ -285,7 +294,8 @@ fun QuickTrimScreen(
                     )
                 }
             } else {
-                QuickPreview(player, Modifier.fillMaxWidth().weight(1f))
+                QuickPreview(player, isPlaying, clip.durationMs, model.playPositionMs,
+                    onPlay, preview::seek, Modifier.fillMaxWidth().weight(1f))
                 QuickTrimControls(
                     clip, leadingText, trailingText, valid, canSave,
                     ::changeLeading, ::changeTrailing,
@@ -315,23 +325,34 @@ private fun DetailedEditButton(onClick: () -> Unit, modifier: Modifier = Modifie
 
 @OptIn(UnstableApi::class)
 @Composable
-private fun QuickPreview(player: ExoPlayer, modifier: Modifier) {
-    Box(modifier.clip(CutPanelShape).background(Color.Black)
-        .border(1.dp, CutColors.border, CutPanelShape), contentAlignment = Alignment.Center) {
-        AndroidView(
-            factory = { ctx ->
-                PlayerView(ctx).apply {
-                    useController = true
-                    resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-                    this.player = player
-                    layoutParams = ViewGroup.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT,
-                    )
-                }
-            },
-            update = { it.player = player },
-            modifier = Modifier.fillMaxSize(),
-        )
+private fun QuickPreview(
+    player: ExoPlayer,
+    playing: Boolean,
+    timelineDuration: Long,
+    currentPosition: Long,
+    onPlay: () -> Unit,
+    onSeek: (Long) -> Unit,
+    modifier: Modifier,
+) {
+    Column(modifier.padding(horizontal = 12.dp)) {
+        Box(Modifier.weight(1f).fillMaxWidth().clip(CutPanelShape).background(Color.Black)
+            .border(1.dp, CutColors.border, CutPanelShape), contentAlignment = Alignment.Center) {
+            AndroidView(
+                factory = { ctx ->
+                    PlayerView(ctx).apply {
+                        useController = false
+                        resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                        this.player = player
+                        layoutParams = ViewGroup.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT,
+                        )
+                    }
+                },
+                update = { it.player = player },
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+        PreviewPlaybackControls(playing, timelineDuration, currentPosition, onPlay, onSeek)
     }
 }
 
@@ -353,15 +374,16 @@ private fun QuickTrimControls(
         Column(
             modifier = Modifier.fillMaxWidth().weight(1f)
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
                 Column(
-                    Modifier.fillMaxWidth().background(CutColors.accentMuted, CutShape)
-                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                    Modifier.fillMaxWidth().padding(vertical = 4.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
                     Text("원본 " + formatTime(clip.sourceDurationMs),
+                        color = CutColors.secondaryText, fontSize = 13.sp)
+                    Text("남길 원본 구간 " + formatTime(clip.startMs) + " – " + formatTime(clip.endMs),
                         color = CutColors.secondaryText, fontSize = 13.sp)
                     Text("결과 " + formatTime(clip.durationMs),
                         color = CutColors.accent, fontSize = 15.sp,
@@ -394,9 +416,8 @@ private fun QuickTrimControls(
                         color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
                 }
                 Column(
-                    Modifier.fillMaxWidth().background(CutColors.surface, CutPanelShape)
-                        .border(1.dp, CutColors.border, CutPanelShape).padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
                     Text(if (clip.muted) "원본 소리: 음소거" else "원본 소리: 유지",
                         color = CutColors.secondaryText, fontSize = 13.sp)
@@ -413,7 +434,7 @@ private fun QuickTrimControls(
                         Icon(if (clip.muted) Icons.Outlined.VolumeUp else Icons.Outlined.VolumeOff,
                             contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(8.dp))
-                        Text(if (clip.muted) "소리 켜기" else "음소거")
+                        Text(if (clip.muted) "소리 복원" else "음소거")
                     }
                 }
                 Text(
@@ -449,20 +470,18 @@ private fun TrimSecondsRow(
     onValueChange: (String) -> Unit,
     onStep: (Long) -> Unit,
 ) {
-    Column(Modifier.fillMaxWidth().background(CutColors.surface, CutPanelShape)
-        .border(1.dp, CutColors.border, CutPanelShape).padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(label, color = CutColors.primaryText, fontSize = 14.sp,
             modifier = Modifier.fillMaxWidth())
         Row(
-            Modifier.fillMaxWidth(),
+            Modifier.fillMaxWidth().height(IntrinsicSize.Min),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
         OutlinedButton(
             onClick = { onStep(-1_000L) },
             contentPadding = PaddingValues(0.dp),
-            modifier = Modifier.size(48.dp).semantics {
+            modifier = Modifier.width(48.dp).fillMaxHeight().semantics {
                 contentDescription = "$label 1초 감소"
             },
             shape = CutShape,
@@ -476,16 +495,18 @@ private fun TrimSecondsRow(
         OutlinedTextField(
             value = value,
             onValueChange = onValueChange,
-            label = { Text("초") },
+            suffix = { Text("초") },
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
             shape = CutShape,
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.weight(1f).semantics {
+                contentDescription = "$label 시간(초)"
+            },
         )
         OutlinedButton(
             onClick = { onStep(1_000L) },
             contentPadding = PaddingValues(0.dp),
-            modifier = Modifier.size(48.dp).semantics {
+            modifier = Modifier.width(48.dp).fillMaxHeight().semantics {
                 contentDescription = "$label 1초 증가"
             },
             shape = CutShape,

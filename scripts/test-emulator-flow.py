@@ -133,7 +133,7 @@ class EmulatorFlowTest(unittest.TestCase):
         self.assertEqual(sum(e[0] == "python3" and any("verify-android-main10.py" in a for a in e) for e in events), 2)
         self.assertIn("152 distinct tests", result.stdout)
         timed = [e[1:3] for e in events if e[0] == "timeout" and len(e) > 3 and e[3] == "gradle"]
-        self.assertEqual(timed, [["--kill-after=30s", "10m"], ["--kill-after=30s", "15m"]])
+        self.assertEqual(timed, [["--kill-after=30s", "10m"], ["--kill-after=30s", "20m"]])
         self.assertIn("/data/local/tmp/quickcut-native-diagnostics", (root / "quickcut-native-preflight-results/diagnostics/evidence.txt").read_text())
 
 

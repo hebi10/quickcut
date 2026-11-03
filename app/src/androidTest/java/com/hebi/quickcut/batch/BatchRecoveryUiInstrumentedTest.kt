@@ -53,7 +53,7 @@ class BatchRecoveryUiInstrumentedTest {
             check(file.readText() == "{truncated")
             vm.clearNotification()
         }
-        compose.onNodeWithText("일괄 편집 및 저장 시작").assertIsNotEnabled()
+        compose.onNodeWithText("일괄 저장").assertIsNotEnabled()
         // A user-fixed/removed journal can be rechecked through the same visible control.
         BatchSessionStore(context).clear()
         compose.onNodeWithTag("batch-recovery-retry").performClick()

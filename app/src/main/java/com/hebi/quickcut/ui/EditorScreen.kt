@@ -24,7 +24,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.Icons
@@ -71,9 +70,10 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -354,7 +354,7 @@ fun EditorScreen(
             onTrimStart = model::beginTrim,
             onTrimEnd = model::finishTrim,
                             showHint = false,
-                            modifier = Modifier.fillMaxWidth().height(130.dp),
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 130.dp),
                         )
                     }
                 }
@@ -410,7 +410,7 @@ fun EditorScreen(
             onTrim = onClipTrimmed,
             onTrimStart = model::beginTrim,
             onTrimEnd = model::finishTrim,
-                            modifier = Modifier.fillMaxWidth().height(155.dp),
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 155.dp),
                         )
                     }
                 }
@@ -439,7 +439,7 @@ fun EditorScreen(
             onTrim = onClipTrimmed,
             onTrimStart = model::beginTrim,
             onTrimEnd = model::finishTrim,
-                            modifier = Modifier.fillMaxWidth().height(148.dp),
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 148.dp),
                         )
                         if (showTrim && selected != null) {
                             TrimEditor(
@@ -531,33 +531,46 @@ private fun EditorHeader(
     canRedo: Boolean,
     canSave: Boolean,
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth().height(56.dp)
-            .background(CutColors.background).padding(horizontal = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
-            Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "편집 종료")
+    BoxWithConstraints(Modifier.fillMaxWidth().background(CutColors.background)
+        .padding(horizontal = 8.dp)) {
+        val compactHeader = maxWidth < 380.dp ||
+            (LocalDensity.current.fontScale >= 1.5f && maxWidth < 600.dp)
+        val historyAndSave: @Composable () -> Unit = {
+            IconButton(onClick = onUndo, enabled = canUndo, modifier = Modifier.size(48.dp)) {
+                Icon(Icons.Outlined.Undo, contentDescription = "실행 취소")
+            }
+            IconButton(onClick = onRedo, enabled = canRedo, modifier = Modifier.size(48.dp)) {
+                Icon(Icons.Outlined.Redo, contentDescription = "다시 실행")
+            }
+            IconButton(onClick = onAdd, modifier = Modifier.size(48.dp)) {
+                Icon(Icons.Outlined.Add, contentDescription = "영상 추가")
+            }
+            Button(onClick = onSave, enabled = canSave,
+                modifier = Modifier.heightIn(min = 48.dp), shape = CutShape,
+                contentPadding = PaddingValues(horizontal = 14.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = CutColors.accent, contentColor = CutColors.onAccent,
+                )) {
+                Text("영상 저장", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+            }
         }
-        Text("편집", color = CutColors.primaryText, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
-        Spacer(Modifier.weight(1f))
-        IconButton(onClick = onUndo, enabled = canUndo, modifier = Modifier.size(48.dp)) {
-            Icon(Icons.Outlined.Undo, contentDescription = "실행 취소")
-        }
-        IconButton(onClick = onRedo, enabled = canRedo, modifier = Modifier.size(48.dp)) {
-            Icon(Icons.Outlined.Redo, contentDescription = "다시 실행")
-        }
-        IconButton(onClick = onAdd, modifier = Modifier.size(48.dp)) {
-            Icon(Icons.Outlined.Add, contentDescription = "영상 추가")
-        }
-        Button(onClick = onSave, enabled = canSave,
-            modifier = Modifier.heightIn(min = 48.dp), shape = CutShape,
-            contentPadding = PaddingValues(horizontal = 14.dp),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = CutColors.accent, contentColor = CutColors.onAccent,
-            )) {
-            Text("저장",
-                fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+        Column {
+            Row(Modifier.fillMaxWidth().heightIn(min = 56.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
+                    Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "편집 종료")
+                }
+                Text("상세 편집", color = CutColors.primaryText, fontSize = 20.sp,
+                    fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                if (!compactHeader) historyAndSave()
+            }
+            if (compactHeader) {
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
+                    .padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.End) {
+                    historyAndSave()
+                }
+            }
         }
     }
 }
@@ -593,44 +606,37 @@ private fun PreviewPanel(
                 update = { view -> view.player = player },
                 modifier = Modifier.fillMaxSize(),
             )
-            if (!playing) {
-                IconButton(
-                    onClick = onPlay,
-                    modifier = Modifier.size(if (compact) 54.dp else 72.dp)
-                        .background(CutColors.accent, CircleShape),
-                ) {
-                    Icon(
-                        Icons.Outlined.PlayArrow,
-                        contentDescription = "재생",
-                        tint = CutColors.onAccent,
-                        modifier = Modifier.size(if (compact) 32.dp else 42.dp),
-                    )
-                }
-            }
         }
-        Row(
-            modifier = Modifier.fillMaxWidth().height(if (compact) 45.dp else 60.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            IconButton(onClick = onPlay, modifier = Modifier.size(48.dp)) {
-                Icon(
-                    if (playing) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
-                    contentDescription = if (playing) "일시정지" else "재생",
-                )
-            }
-            if (!compact) Text(formatTime(currentPosition), color = CutColors.accent, fontSize = 12.sp)
+        PreviewPlaybackControls(playing, timelineDuration, currentPosition, onPlay, onSeek,
+            modifier = Modifier.padding(vertical = if (compact) 0.dp else 4.dp))
+    }
+}
+
+/** Both previews use result-relative positions from EditorPreviewCoordinator. */
+@Composable
+internal fun PreviewPlaybackControls(
+    playing: Boolean,
+    timelineDuration: Long,
+    currentPosition: Long,
+    onPlay: () -> Unit,
+    onSeek: (Long) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(modifier.fillMaxWidth().heightIn(min = 48.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        IconButton(onClick = onPlay, modifier = Modifier.size(48.dp)) {
+            Icon(if (playing) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
+                contentDescription = if (playing) "일시정지" else "재생")
+        }
+        Column(Modifier.weight(1f).padding(end = 8.dp)) {
+            Text("결과 " + formatTime(currentPosition) + " / " + formatTime(timelineDuration),
+                color = CutColors.secondaryText, fontSize = 12.sp)
             Slider(
                 value = currentPosition.toFloat().coerceIn(0f, timelineDuration.coerceAtLeast(1L).toFloat()),
                 onValueChange = { onSeek(it.roundToLong()) },
                 valueRange = 0f..timelineDuration.coerceAtLeast(1L).toFloat(),
-                modifier = Modifier.weight(1f),
-            )
-            Text(
-                formatTime(timelineDuration),
-                color = CutColors.secondaryText,
-                fontSize = 12.sp,
-                modifier = Modifier.padding(end = 8.dp),
+                modifier = Modifier.fillMaxWidth().semantics { contentDescription = "결과 미리보기 위치" },
             )
         }
     }
@@ -646,18 +652,22 @@ private fun ToolButtons(
 ) {
     if (vertical) {
         Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            selected?.let {
+                Text(if (it.muted) "원본 소리: 음소거" else "원본 소리: 유지",
+                    color = CutColors.secondaryText, fontSize = 12.sp)
+            }
             actions.forEach { item ->
                 val active = item.key == "trim" && showTrim
                 val enabled = selected != null && (item.key != "split" || model.canSplitSelected)
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(54.dp)
+                        .heightIn(min = 54.dp)
                         .background(if (active) CutColors.accentMuted else CutColors.panel, CutShape)
                         .border(1.dp, if (active) CutColors.accent else CutColors.border, CutShape)
                         .clip(CutShape)
                         .clickable(enabled = enabled) { onAction(item.key) }
-                        .padding(horizontal = 12.dp),
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
@@ -670,9 +680,7 @@ private fun ToolButtons(
                         modifier = Modifier.size(22.dp),
                     )
                     Text(
-                        if (item.key == "mute" && selected?.muted == true) "소리 켜기" else item.text,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                        if (item.key == "mute" && selected?.muted == true) "소리 복원" else item.text,
                         color = if (enabled) CutColors.primaryText else CutColors.mutedText,
                         fontSize = 14.sp,
                     )
@@ -680,39 +688,47 @@ private fun ToolButtons(
             }
         }
     } else {
-        Row(
-            modifier = Modifier.fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .background(CutColors.background)
-                .padding(horizontal = 10.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            actions.forEach { item ->
-                val active = item.key == "trim" && showTrim
-                val enabled = selected != null && (item.key != "split" || model.canSplitSelected)
-                Column(
-                    modifier = Modifier.width(76.dp).height(78.dp)
-                        .background(if (active) CutColors.accentMuted else CutColors.surface, CutShape)
-                        .border(1.dp, if (active) CutColors.accent else CutColors.border, CutShape)
-                        .clip(CutShape)
-                        .clickable(enabled = enabled) { onAction(item.key) },
-                    verticalArrangement = Arrangement.Center,
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    Icon(
-                        if (item.key == "mute" && selected?.muted == true) Icons.Outlined.VolumeUp else item.icon,
-                        contentDescription = null,
-                        tint = if (!enabled) CutColors.mutedText
-                            else if (active) CutColors.accent else CutColors.primaryText,
-                        modifier = Modifier.size(23.dp),
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        if (item.key == "mute" && selected?.muted == true) "소리 켜기" else item.text,
-                        color = if (!enabled) CutColors.mutedText
-                            else if (active) CutColors.accent else CutColors.primaryText,
-                        fontSize = 12.sp,
-                    )
+        Column(Modifier.fillMaxWidth()) {
+            selected?.let {
+                Text(if (it.muted) "원본 소리: 음소거" else "원본 소리: 유지",
+                    color = CutColors.secondaryText, fontSize = 12.sp,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp))
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .background(CutColors.background)
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                actions.forEach { item ->
+                    val active = item.key == "trim" && showTrim
+                    val enabled = selected != null && (item.key != "split" || model.canSplitSelected)
+                    Column(
+                        modifier = Modifier.widthIn(min = 76.dp).heightIn(min = 78.dp)
+                            .background(if (active) CutColors.accentMuted else CutColors.surface, CutShape)
+                            .border(1.dp, if (active) CutColors.accent else CutColors.border, CutShape)
+                            .clip(CutShape)
+                            .clickable(enabled = enabled) { onAction(item.key) }
+                            .padding(8.dp),
+                        verticalArrangement = Arrangement.Center,
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Icon(
+                            if (item.key == "mute" && selected?.muted == true) Icons.Outlined.VolumeUp else item.icon,
+                            contentDescription = null,
+                            tint = if (!enabled) CutColors.mutedText
+                                else if (active) CutColors.accent else CutColors.primaryText,
+                            modifier = Modifier.size(23.dp),
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            if (item.key == "mute" && selected?.muted == true) "소리 복원" else item.text,
+                            color = if (!enabled) CutColors.mutedText
+                                else if (active) CutColors.accent else CutColors.primaryText,
+                            fontSize = 12.sp,
+                        )
+                    }
                 }
             }
         }

@@ -29,6 +29,7 @@ import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -215,7 +216,10 @@ class EditorDesignInstrumentedTest {
             ready
         }
         compose.onNodeWithContentDescription("재생").performClick()
-        compose.waitUntil(15_000L) { previewHasRenderedColor() }
+        // Pixel copies can outlive this short fixture; pause as soon as the control is ready.
+        compose.waitUntil(5_000L) {
+            compose.onAllNodesWithContentDescription("일시정지").fetchSemanticsNodes().size == 1
+        }
         compose.onNodeWithContentDescription("일시정지").performClick()
         compose.waitUntil(15_000L) { previewHasRenderedColor() }
         compose.runOnIdle {

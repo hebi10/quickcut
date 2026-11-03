@@ -139,11 +139,12 @@ jobs:
           ram-size: 1536M
           heap-size: 256M
           emulator-boot-timeout: 300
-          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -no-metrics -partition-size 2048
+          emulator-options: -no-window -gpu software -no-snapshot -noaudio -no-boot-anim -camera-back none -no-metrics -partition-size 2048
           disable-animations: true
           # Preserve the test's failure while pulling any evidence before shutdown.
           script: >-
             bash -c 'set +e;
+            "$ANDROID_HOME/emulator/emulator" -version;
             gradle --no-daemon :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.hebi.quickcut.ui.EditorDesignInstrumentedTest;
             test_status=$?;
             adb pull /data/local/tmp/quickcut-design-review quickcut-design-review;

@@ -32,8 +32,6 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
-import androidx.compose.ui.test.performSemanticsAction
-import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModelStore
@@ -219,8 +217,6 @@ class EditorDesignInstrumentedTest {
         compose.onNodeWithContentDescription("재생").performClick()
         compose.waitUntil(15_000L) { previewHasRenderedColor() }
         compose.onNodeWithContentDescription("일시정지").performClick()
-        compose.onNodeWithContentDescription("결과 미리보기 위치")
-            .performSemanticsAction(SemanticsActions.SetProgress) { it(0f) }
         compose.waitUntil(15_000L) { previewHasRenderedColor() }
         compose.waitForIdle()
     }

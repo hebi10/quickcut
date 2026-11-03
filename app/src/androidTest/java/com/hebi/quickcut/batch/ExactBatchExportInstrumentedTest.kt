@@ -78,8 +78,10 @@ class ExactBatchExportInstrumentedTest {
         previousDraft = settings.loadBatch()
         previousDate = settings.loadSaveDate()
         sessionStore = BatchSessionStore(context)
-        previousSession = sessionStore.load()
-        sessionStore.clear()
+        composeRule.runOnUiThread {
+            previousSession = sessionStore.load()
+            sessionStore.clear()
+        }
         source = File(context.cacheDir, "quickcut_batch_exact_3s.mp4")
         instrumentation.context.assets.open("quickcut_keyframes.mp4").use { input ->
             source.outputStream().use { output -> input.copyTo(output) }
@@ -116,7 +118,9 @@ class ExactBatchExportInstrumentedTest {
             }
         }
         if (::sessionStore.isInitialized) {
-            previousSession?.let(sessionStore::save) ?: sessionStore.clear()
+            composeRule.runOnUiThread {
+                previousSession?.let(sessionStore::save) ?: sessionStore.clear()
+            }
         }
         if (::settings.isInitialized) {
             settings.saveBatch(previousDraft)
@@ -173,7 +177,7 @@ class ExactBatchExportInstrumentedTest {
             assertNotNull(refused.reencodeRefusal)
             assertTrue(refused.reencodeRefusal!!.matches(requested, SaveDateMode.CURRENT.name,
                 refused.originalDate?.epochMs))
-            assertEquals(refused.reencodeRefusal, sessionStore.load()!!.files.single().reencodeRefusal)
+            assertEquals(refused.reencodeRefusal, loadSessionOnMain()!!.files.single().reencodeRefusal)
             assertNull(refused.savedOutputUri)
             assertNull(refused.exportReport)
             assertEquals("A refused fast export must not create a pending or published output", before, outputIds())
@@ -214,7 +218,7 @@ class ExactBatchExportInstrumentedTest {
             val saved = model.files.single()
             assertEquals(BatchFileStatus.SAVED, saved.status)
             assertNull(saved.reencodeRefusal)
-            assertNull(sessionStore.load()!!.files.single().reencodeRefusal)
+            assertNull(loadSessionOnMain()!!.files.single().reencodeRefusal)
             assertNotNull(saved.exportReport)
             assertEquals(requested.totalDurationMs, saved.outputExpectedDurationMs)
             val output = Uri.parse(saved.savedOutputUri!!)
@@ -296,11 +300,11 @@ class ExactBatchExportInstrumentedTest {
             abs(actual.durationMs - requestedDuration) <= 250L)
         assertTrue("The source audio must remain present", actual.hasAudio)
         assertEquals(requestedDuration,
-            sessionStore.load()!!.files.single().outputExpectedDurationMs)
+            loadSessionOnMain()!!.files.single().outputExpectedDurationMs)
         assertFileText(formatTime(row.durationMs) + " → " + formatTime(requestedDuration))
         assertFileText("처리 방식:", substring = true)
         assertNotNull("A successful export must report its actual method", row.exportReport)
-        assertEquals(row.exportReport, sessionStore.load()!!.files.single().exportReport)
+        assertEquals(row.exportReport, loadSessionOnMain()!!.files.single().exportReport)
         composeRule.runOnUiThread {
             ViewModelStore().apply { put("batch-exact", model) }.clear()
             model = BatchViewModel(context.applicationContext as Application)
@@ -347,10 +351,12 @@ class ExactBatchExportInstrumentedTest {
         showScreen()
         assertFileText("원본 복사 제한: 자르기 시작 위치가 키프레임", substring = true)
         assertFileText("고속 부분 처리 제한: 프레임 간격이 일정하지 않거나", substring = true)
-        sessionStore.save(BatchSessionSnapshot(model.files, model.previewTemplate(),
-            SaveDateMode.CURRENT, BatchRunState.FINISHED))
+        composeRule.runOnUiThread {
+            sessionStore.save(BatchSessionSnapshot(model.files, model.previewTemplate(),
+                SaveDateMode.CURRENT, BatchRunState.FINISHED))
+        }
         assertEquals(model.files.single().exportReport,
-            sessionStore.load()?.files?.single()?.exportReport)
+            loadSessionOnMain()?.files?.single()?.exportReport)
     }
 
     @Test
@@ -380,21 +386,25 @@ class ExactBatchExportInstrumentedTest {
         val template = model.previewTemplate()
         composeRule.runOnUiThread {
             ViewModelStore().apply { put("batch-exact", model) }.clear()
-        }
-        sessionStore.save(BatchSessionSnapshot(listOf(saved), template,
-            SaveDateMode.CURRENT, BatchRunState.FINISHED))
-        // Exercise the actual schema-1 file that older installations leave behind.
-        val journal = File(context.filesDir, "quickcut_batch_session_v1.json")
-        val legacy = JSONObject(journal.readText())
-        changeReport(legacy.getJSONArray("files").getJSONObject(0))
-        journal.writeText(legacy.toString())
-        composeRule.runOnUiThread {
+            sessionStore.save(BatchSessionSnapshot(listOf(saved), template,
+                SaveDateMode.CURRENT, BatchRunState.FINISHED))
+            // Exercise the actual schema-1 file that older installations leave behind.
+            val journal = File(context.filesDir, "quickcut_batch_session_v1.json")
+            val legacy = JSONObject(journal.readText())
+            changeReport(legacy.getJSONArray("files").getJSONObject(0))
+            journal.writeText(legacy.toString())
             model = BatchViewModel(context.applicationContext as Application)
         }
         composeRule.waitUntil(30_000L) { !model.isRecovering }
         assertEquals(BatchFileStatus.SAVED, model.files.single().status)
         assertEquals(output.toString(), model.files.single().savedOutputUri)
         assertEquals(saved.outputExpectedDurationMs, model.files.single().outputExpectedDurationMs)
+    }
+
+    private fun loadSessionOnMain(): BatchSessionSnapshot? = composeRule.runOnUiThread {
+        // FINISHED is visible before the final journal write returns. AtomicFile
+        // reads must run after that Main-thread write, or openRead can delete its .new file.
+        sessionStore.load()
     }
 
     private fun centerColor(context: Context, uri: Uri, timeUs: Long): Int {

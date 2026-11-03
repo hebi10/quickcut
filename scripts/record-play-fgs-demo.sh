@@ -15,6 +15,10 @@ status=0
 gradle --no-daemon -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true \
   :app:connectedDebugAndroidTest \
   -Pandroid.testInstrumentationRunnerArguments.class=com.hebi.quickcut.export.PlayForegroundDemoInstrumentedTest || status=$?
+if ! kill -0 "$recorder" 2>/dev/null; then
+  echo '::error::The recorder ended before the demonstration scenario completed.'
+  status=1
+fi
 finish_recording
 trap - EXIT
 adb pull /sdcard/quickcut-play-demo.mp4 quickcut-play-fgs/demo.mp4

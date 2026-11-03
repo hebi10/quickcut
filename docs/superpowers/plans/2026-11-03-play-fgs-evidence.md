@@ -27,3 +27,9 @@
 - A recording must not be accepted if the scenario fails or no foreground notification is observed.
 - Native artifacts and production code must match the already-tested release source.
 - Only synthetic demonstration videos may receive reviewer access.
+
+## Execution record
+- Static workflow/shell validation passed. The first CI build compiled the capture test successfully on API35.
+- Fresh review found two Important evidence gaps: early recorder exit and unchecked runtime service type/lifecycle.
+- Fixed recorder exit validation after a regression reproduced false acceptance; all three disposable-process flow tests now pass.
+- Added real foreground service/type checks (API34 DATA_SYNC; API35 MEDIA_PROCESSING) and service disappearance checks. Production source remains unchanged.

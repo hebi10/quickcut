@@ -1,8 +1,10 @@
 package com.hebi.quickcut.export
 
 import android.Manifest
+import android.app.ActivityManager
 import android.app.NotificationManager
 import android.content.ContentValues
+import android.content.pm.ServiceInfo
 import android.net.Uri
 import android.os.Build
 import android.os.ParcelFileDescriptor
@@ -109,7 +111,18 @@ class PlayForegroundDemoInstrumentedTest {
         Thread.sleep(3_000L)
         assertTrue("Ongoing processing must have a notification", notifications().isNotEmpty())
         val directory = File(context.getExternalFilesDir(null), "play-fgs-demo").apply { mkdirs() }
-        File(directory, "foreground-service.txt").writeText(shell("dumpsys activity services com.hebi.quickcut"))
+        val serviceDump = shell("dumpsys activity services com.hebi.quickcut")
+        File(directory, "foreground-service.txt").writeText(serviceDump)
+        assertTrue("The export service must be running in the foreground", exportService()?.foreground == true)
+        val foregroundLine = serviceDump.lineSequence().firstOrNull {
+            it.contains("isForeground=true") && it.contains("foregroundId=1001")
+        } ?: error("No active export foreground service in the system dump")
+        val type = checkNotNull(Regex("types=([0-9A-Fa-f]+)").find(foregroundLine))
+            .groupValues[1].toLong(16)
+        val expectedType = if (Build.VERSION.SDK_INT >= 35)
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING
+        else ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+        assertEquals("Foreground type must match the actual Android version", expectedType.toLong(), type)
         shell("cmd statusbar collapse")
         shell("am start -W -n com.hebi.quickcut/.MainActivity -f 0x10200000")
         compose.waitUntil(180_000L) { !ExportWorkMonitor.isRunning && model.page != QuickCutPage.EXPORTING }
@@ -120,6 +133,9 @@ class PlayForegroundDemoInstrumentedTest {
         }
         MediaReader.validateExport(context, checkNotNull(model.completedUri), 80_000L, expectAudio = true)
         compose.waitUntil(10_000L) { notifications().isEmpty() }
+        compose.waitUntil(10_000L) { exportService() == null }
+        File(directory, "service-after-completion.txt")
+            .writeText(shell("dumpsys activity services com.hebi.quickcut"))
         Thread.sleep(3_000L)
         shell("cmd statusbar expand-notifications")
         Thread.sleep(2_000L)
@@ -131,6 +147,12 @@ class PlayForegroundDemoInstrumentedTest {
 
     private fun notifications() = context.getSystemService(NotificationManager::class.java)
         .activeNotifications.filter { it.id == 1001 }
+
+    @Suppress("DEPRECATION")
+    private fun exportService() = context.getSystemService(ActivityManager::class.java)
+        .getRunningServices(Int.MAX_VALUE).singleOrNull {
+            it.service.className == "com.hebi.quickcut.export.ExportWorkService"
+        }
 
     private fun clickSystemItem(text: String, longClick: Boolean = false) {
         val deadline = System.currentTimeMillis() + 25_000L

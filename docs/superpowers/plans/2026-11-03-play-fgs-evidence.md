@@ -33,3 +33,5 @@
 - Fresh review found two Important evidence gaps: early recorder exit and unchecked runtime service type/lifecycle.
 - Fixed recorder exit validation after a regression reproduced false acceptance; all three disposable-process flow tests now pass.
 - Added real foreground service/type checks (API34 DATA_SYNC; API35 MEDIA_PROCESSING) and service disappearance checks. Production source remains unchanged.
+- The first complete capture attempt failed at document selection on both APIs; the API35 movie shows both fixture items present. Use real bounded long-press/tap gestures on the observed accessibility item bounds instead of requiring DocumentsUI recycler items to expose a long-click action. Short fixture names avoid ambiguous truncated titles.
+- API34 denied the shell recorder's /sdcard output; record in shell-owned /data/local/tmp instead. API35 system diagnostics add a 0x prefix to the foreground type, verified against AOSP source; accept both hexadecimal renderings.

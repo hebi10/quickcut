@@ -3,7 +3,7 @@ set -euo pipefail
 mkdir -p quickcut-play-fgs
 adb shell settings put system screen_off_timeout 600000
 adb shell screenrecord --size 720x1600 --bit-rate 2000000 --time-limit 180 \
-  /sdcard/quickcut-play-demo.mp4 > quickcut-play-fgs/recorder.log 2>&1 &
+  /data/local/tmp/quickcut-play-demo.mp4 > quickcut-play-fgs/recorder.log 2>&1 &
 recorder=$!
 finish_recording() {
   timeout 10s adb shell pkill -2 screenrecord || true
@@ -21,7 +21,7 @@ if ! kill -0 "$recorder" 2>/dev/null; then
 fi
 finish_recording
 trap - EXIT
-adb pull /sdcard/quickcut-play-demo.mp4 quickcut-play-fgs/demo.mp4
+adb pull /data/local/tmp/quickcut-play-demo.mp4 quickcut-play-fgs/demo.mp4
 adb pull /sdcard/Android/data/com.hebi.quickcut/files/play-fgs-demo quickcut-play-fgs/evidence || status=1
 cp -a app/build/outputs/androidTest-results/connected quickcut-play-fgs/results
 if [[ "$status" -ne 0 ]]; then exit "$status"; fi

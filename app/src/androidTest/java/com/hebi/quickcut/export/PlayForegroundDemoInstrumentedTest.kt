@@ -5,6 +5,8 @@ import android.app.ActivityManager
 import android.app.NotificationManager
 import android.content.ContentValues
 import android.content.pm.ServiceInfo
+import android.graphics.Bitmap
+import android.graphics.Rect
 import android.net.Uri
 import android.os.Build
 import android.os.ParcelFileDescriptor
@@ -51,7 +53,7 @@ class PlayForegroundDemoInstrumentedTest {
             saveOriginalAction(OriginalAction.KEEP)
             saveSaveDate(SaveDateMode.CURRENT)
         }
-        for (name in listOf("QuickCut Demo A.mp4", "QuickCut Demo B.mp4")) {
+        for (name in listOf("Demo-A.mp4", "Demo-B.mp4")) {
             val values = ContentValues().apply {
                 put(MediaStore.Video.Media.DISPLAY_NAME, name)
                 put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
@@ -73,6 +75,7 @@ class PlayForegroundDemoInstrumentedTest {
     }
 
     @After fun cleanDisposableEmulatorData() {
+        saveUiDiagnostic()
         shell("cmd statusbar collapse")
         if (ExportWorkMonitor.isRunning) compose.runOnUiThread { model.cancelExport() }
         compose.waitUntil(120_000L) { !ExportWorkMonitor.isRunning }
@@ -83,8 +86,8 @@ class PlayForegroundDemoInstrumentedTest {
     @Test fun userInitiatedTranscodeContinuesWithVisibleNotificationAndFinishes() {
         Thread.sleep(2_000L)
         compose.onNodeWithText("상세 편집 (분할·연결·순서 변경)").performClick()
-        clickSystemItem("QuickCut Demo A.mp4", longClick = true)
-        clickSystemItem("QuickCut Demo B.mp4")
+        clickSystemItem("Demo-A.mp4", longClick = true)
+        clickSystemItem("Demo-B.mp4")
         clickSystemButton(setOf("OPEN", "Open", "열기", "선택", "SELECT", "Select"))
         compose.waitUntil(30_000L) { model.page == QuickCutPage.EDITOR }
         compose.runOnIdle {
@@ -117,7 +120,7 @@ class PlayForegroundDemoInstrumentedTest {
         val foregroundLine = serviceDump.lineSequence().firstOrNull {
             it.contains("isForeground=true") && it.contains("foregroundId=1001")
         } ?: error("No active export foreground service in the system dump")
-        val type = checkNotNull(Regex("types=([0-9A-Fa-f]+)").find(foregroundLine))
+        val type = checkNotNull(Regex("types=(?:0x)?([0-9A-Fa-f]+)").find(foregroundLine))
             .groupValues[1].toLong(16)
         val expectedType = if (Build.VERSION.SDK_INT >= 35)
             ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING
@@ -160,17 +163,15 @@ class PlayForegroundDemoInstrumentedTest {
             val nodes = instrumentation.uiAutomation.rootInActiveWindow
                 ?.findAccessibilityNodeInfosByText(text).orEmpty()
             for (node in nodes) {
-                var current: AccessibilityNodeInfo? = node
-                while (current != null) {
-                    if (current.isVisibleToUser && current.isEnabled &&
-                        (if (longClick) current.isLongClickable else current.isClickable)) {
-                        if (current.performAction(if (longClick) AccessibilityNodeInfo.ACTION_LONG_CLICK
-                            else AccessibilityNodeInfo.ACTION_CLICK)) {
-                            Thread.sleep(1_000L)
-                            return
-                        }
+                if (node.isVisibleToUser && node.isEnabled) {
+                    val bounds = Rect().also(node::getBoundsInScreen)
+                    if (bounds.width() > 0 && bounds.height() > 0) {
+                        val x = bounds.centerX()
+                        val y = bounds.centerY()
+                        shell(if (longClick) "input swipe $x $y $x $y 1200" else "input tap $x $y")
+                        Thread.sleep(1_000L)
+                        return
                     }
-                    current = current.parent
                 }
             }
             Thread.sleep(100L)
@@ -193,6 +194,25 @@ class PlayForegroundDemoInstrumentedTest {
             Thread.sleep(100L)
         }
         error("Document picker selection button was unavailable")
+    }
+
+    private fun saveUiDiagnostic() {
+        val directory = File(context.getExternalFilesDir(null), "play-fgs-demo").apply { mkdirs() }
+        val lines = mutableListOf<String>()
+        fun visit(node: AccessibilityNodeInfo?, depth: Int) {
+            if (node == null || depth > 30) return
+            val bounds = Rect().also(node::getBoundsInScreen)
+            lines += "$depth ${node.packageName} ${node.className} text=${node.text} description=${node.contentDescription} visible=${node.isVisibleToUser} clickable=${node.isClickable} longClickable=${node.isLongClickable} bounds=$bounds"
+            for (i in 0 until node.childCount) visit(node.getChild(i), depth + 1)
+        }
+        visit(instrumentation.uiAutomation.rootInActiveWindow, 0)
+        File(directory, "final-ui.txt").writeText(lines.joinToString("\n"))
+        instrumentation.uiAutomation.takeScreenshot()?.let { bitmap ->
+            File(directory, "final-ui.png").outputStream().use {
+                bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)
+            }
+            bitmap.recycle()
+        }
     }
 
     private fun shell(command: String): String {

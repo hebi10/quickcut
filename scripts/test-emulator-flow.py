@@ -44,6 +44,8 @@ if name == "gradle":
     (reports / "index.html").write_text(phase + " report")
     sys.exit(status)
 if name == "adb":
+    if args[:3] == ["shell", "pm", "path"]:
+        sys.exit(int(os.environ.get("RETAINED_APK_STATUS", "0")))
     if args and args[0] == "pull":
         destination = root / args[-1]
         destination.mkdir(parents=True, exist_ok=True)
@@ -113,6 +115,11 @@ class EmulatorFlowTest(unittest.TestCase):
     def test_full_main10_gate_failure_is_not_hidden(self):
         result, _, _, _ = self.run_flow(FULL_VERIFY_STATUS=32)
         self.assertEqual(result.returncode, 32, result.stdout + result.stderr)
+
+    def test_retention_check_failure_still_runs_full_and_stays_failed(self):
+        result, _, _, phases = self.run_flow(RETAINED_APK_STATUS=33)
+        self.assertEqual(phases, ["preflight", "full"])
+        self.assertEqual(result.returncode, 33, result.stdout + result.stderr)
 
     def test_full_count_gate_stays_mandatory(self):
         result, _, _, _ = self.run_flow(FULL_COUNT=151)

@@ -198,11 +198,13 @@ class EditorDesignInstrumentedTest {
                     else QuickTrimScreen(editor, settings, {}, {
                         editor.changeQuickMode(false)
                         detailed = true
-                    }, {}, {})
+                    }, {}, {}, diagnosticPrepareAfterSurface =
+                        InstrumentationRegistry.getArguments().getString("quickcutDiagnosticPrepareAfterSurface") == "true")
                 }
             }
         }
         waitForPreview(ExoPlayer::class.java)
+        Log.i("QuickCutPreviewTest", "stage=quick_preview passed_original_assertions=true")
         capture("editor_design_quick_trim")
         compose.onNodeWithText("영상 저장").assertIsDisplayed().assertIsEnabled()
         compose.runOnIdle {
@@ -211,6 +213,7 @@ class EditorDesignInstrumentedTest {
         }
         compose.runOnUiThread { editor.changeQuickMode(false); detailed = true }
         waitForPreview(CompositionPlayer::class.java)
+        Log.i("QuickCutPreviewTest", "stage=detailed_preview passed_original_assertions=true")
         compose.onNodeWithText("상세 편집").assertIsDisplayed()
         compose.onNodeWithText("확대 1배").assertIsDisplayed()
         capture("editor_design_detailed")

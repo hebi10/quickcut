@@ -15,7 +15,7 @@ git rev-parse 'HEAD^{tree}' > "$output/source-tree.txt"
 printf '%s\n' "$method" > "$output/method.txt"
 timeout --kill-after=2s 10s adb shell getprop > "$output/device-properties.txt"
 
-for profile in original_pattern solid_blue original_visible_before_pause; do
+for profile in original_pattern solid_blue original_visible_before_pause original_prepare_after_surface; do
   destination="$output/$profile"
   mkdir -p "$destination"
   rm -rf "$results" "$reports"
@@ -32,6 +32,9 @@ for profile in original_pattern solid_blue original_visible_before_pause; do
   if [[ "$profile" == original_visible_before_pause ]]; then
     cp "$output/original_pattern/fixture.mp4" app/src/androidTest/assets/quickcut_keyframes.mp4
     diagnostic_arguments=(-Pandroid.testInstrumentationRunnerArguments.quickcutDiagnosticVisibleBeforePause=true)
+  elif [[ "$profile" == original_prepare_after_surface ]]; then
+    cp "$output/original_pattern/fixture.mp4" app/src/androidTest/assets/quickcut_keyframes.mp4
+    diagnostic_arguments=(-Pandroid.testInstrumentationRunnerArguments.quickcutDiagnosticPrepareAfterSurface=true)
   else
   ffmpeg -hide_banner -loglevel error -y \
     -f lavfi -i "$video_filter" \

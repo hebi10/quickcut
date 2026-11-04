@@ -93,6 +93,7 @@ fun QuickTrimScreen(
     onDetailedEdit: () -> Unit,
     onSave: () -> Unit,
     onSaveOptions: () -> Unit,
+    diagnosticPrepareAfterSurface: Boolean = false,
 ) {
     val clip = model.timeline.clips.singleOrNull() ?: return
     val context = LocalContext.current
@@ -106,7 +107,18 @@ fun QuickTrimScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
     var isPlaying by remember(player) { mutableStateOf(false) }
-    val preview = remember(player, model) {
+    val surfacePrepare = remember(player, lifecycleOwner, diagnosticPrepareAfterSurface) {
+        if (diagnosticPrepareAfterSurface && PreviewTrace.enabled(context)) {
+            PreviewTrace.FirstSurfacePrepare(context, player,
+                canPrepare = { previewCanLoadMedia(lifecycleOwner) },
+                prepare = {
+                    PreviewTrace.event(context, player, "prepare.begin")
+                    player.prepare()
+                    PreviewTrace.event(context, player, "prepare.end")
+                })
+        } else null
+    }
+    val preview = remember(player, model, surfacePrepare) {
         EditorPreviewCoordinator(
             object : EditorPreviewPlayback {
                 override val positionMs get() = player.currentPosition
@@ -124,9 +136,12 @@ fun QuickTrimScreen(
                     player.setMediaItem(CompositionFactory.mediaItem(timeline.clips.single()))
                     PreviewTrace.event(context, player, "replace.seek", "position_ms=$positionMs")
                     player.seekTo(positionMs)
-                    PreviewTrace.event(context, player, "prepare.begin")
-                    player.prepare()
-                    PreviewTrace.event(context, player, "prepare.end")
+                    if (surfacePrepare != null) surfacePrepare.request { quickTrimPreviewTimeline(model.timeline) == timeline }
+                    else {
+                        PreviewTrace.event(context, player, "prepare.begin")
+                        player.prepare()
+                        PreviewTrace.event(context, player, "prepare.end")
+                    }
                 }
             },
             timeline = { quickTrimPreviewTimeline(model.timeline) },
@@ -142,6 +157,7 @@ fun QuickTrimScreen(
             model.timeline.clips.map { it.uri }.distinct().size)
         previewFailure = MediaOperationDiagnostics.message(ExportStage.PREVIEWING, error)
     }
+    surfacePrepare?.onFailure = reportPreviewFailure
     val retryPreview: () -> Unit = {
         if (previewCanLoadMedia(lifecycleOwner)) {
             try {
@@ -187,6 +203,7 @@ fun QuickTrimScreen(
         player.addListener(listener)
         onDispose {
             PreviewTrace.event(context, player, "player.dispose")
+            surfacePrepare?.dispose()
             preview.setActive(false)
             player.removeListener(listener)
             player.release()
@@ -302,7 +319,7 @@ fun QuickTrimScreen(
             if (sideBySide) {
                 Row(Modifier.fillMaxWidth().weight(1f)) {
                     QuickPreview(player, isPlaying, clip.durationMs, model.playPositionMs,
-                        onPlay, preview::seek, Modifier.weight(1f).fillMaxHeight())
+                        onPlay, preview::seek, Modifier.weight(1f).fillMaxHeight(), surfacePrepare)
                     QuickTrimControls(
                         clip, leadingText, trailingText, valid, canSave,
                         ::changeLeading, ::changeTrailing,
@@ -317,7 +334,7 @@ fun QuickTrimScreen(
                 }
             } else {
                 QuickPreview(player, isPlaying, clip.durationMs, model.playPositionMs,
-                    onPlay, preview::seek, Modifier.fillMaxWidth().weight(1f))
+                    onPlay, preview::seek, Modifier.fillMaxWidth().weight(1f), surfacePrepare)
                 QuickTrimControls(
                     clip, leadingText, trailingText, valid, canSave,
                     ::changeLeading, ::changeTrailing,
@@ -355,6 +372,7 @@ private fun QuickPreview(
     onPlay: () -> Unit,
     onSeek: (Long) -> Unit,
     modifier: Modifier,
+    surfacePrepare: PreviewTrace.FirstSurfacePrepare? = null,
 ) {
     Column(modifier.padding(horizontal = 12.dp)) {
         Box(Modifier.weight(1f).fillMaxWidth().clip(CutPanelShape).background(Color.Black)
@@ -362,7 +380,7 @@ private fun QuickPreview(
             AndroidView(
                 factory = { ctx ->
                     PlayerView(ctx).apply {
-                        PreviewTrace.bind(this, player)
+                        PreviewTrace.bind(this, player, surfacePrepare)
                         useController = false
                         resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                         this.player = player

@@ -77,7 +77,7 @@ jobs:
           ram-size: 1536M
           heap-size: 256M
           emulator-boot-timeout: 300
-          emulator-options: -no-window -gpu swiftshader -feature -HardwareDecoder -no-snapshot -noaudio -no-boot-anim -camera-back none -no-metrics -partition-size 2048
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -no-metrics -partition-size 2048
           disable-animations: true
           script: bash scripts/diagnose-api35-preview.sh
       - name: Retain both diagnostic profiles and original test outcomes

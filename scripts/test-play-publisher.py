@@ -162,6 +162,47 @@ class PublisherTest(unittest.TestCase):
         self.assertTrue(self.publish()['published'])
 
 
+class TargetAuthorizationTest(unittest.TestCase):
+    def test_internal_is_default_for_publisher_and_cli(self):
+        api = FakeAPI()
+        result = p.publish(api, Path('signed.aab'), 23, '0.4.17', '업데이트')
+        self.assertEqual(result['tracks'], ['internal'])
+        with patch.object(p, 'PublisherAPI'), patch.object(p, 'publish') as publish, \
+                patch.object(Path, 'is_file', return_value=True), \
+                patch.object(Path, 'stat') as stat, \
+                patch.object(Path, 'read_text', return_value='업데이트'), \
+                patch.object(p.sys, 'argv', ['publish-play-test.py', '--bundle', 'signed.aab',
+                    '--version', '0.4.17', '--version-code', '23', '--notes', 'notes.md', '--result', 'result.json']), \
+                patch.object(p.os, 'environ', {}):
+            stat.return_value.st_size = 1
+            publish.side_effect = RuntimeError('stop before writing result')
+            with self.assertRaisesRegex(RuntimeError, 'stop before writing result'):
+                p.main()
+        self.assertEqual(publish.call_args.args[-2], 'internal')
+
+    def test_closed_requires_matching_explicit_manual_input(self):
+        for target in ('closed', 'both'):
+            p.authorize_target(target, 'workflow_dispatch', {'inputs': {'target': target}})
+            for event, inputs in (('workflow_run', {'target': target}), ('push', {'target': target}),
+                                  ('workflow_dispatch', {}), ('workflow_dispatch', {'target': 'internal'}), ('', {})):
+                with self.subTest(target=target, event=event, inputs=inputs), self.assertRaises(ValueError):
+                    p.authorize_target(target, event, {'inputs': inputs})
+
+    def test_closed_cli_rejects_automatic_context_before_any_api_call(self):
+        with patch.object(p, 'PublisherAPI') as client, \
+                patch.object(p.sys, 'argv', ['publish-play-test.py', '--bundle', 'signed.aab',
+                    '--version', '0.4.17', '--version-code', '23', '--notes', 'notes.md',
+                    '--result', 'result.json', '--target', 'closed']), \
+                patch.object(p.os, 'environ', {'GITHUB_EVENT_NAME': 'workflow_run'}):
+            with self.assertRaisesRegex(ValueError, 'explicit matching workflow_dispatch'):
+                p.main()
+        client.assert_not_called()
+
+    def test_internal_needs_no_closed_authorization(self):
+        for event in ('workflow_run', 'workflow_dispatch', ''):
+            p.authorize_target('internal', event, {})
+
+
 class HTTPBoundaryTest(unittest.TestCase):
     def response(self, value):
         class Response(io.BytesIO):

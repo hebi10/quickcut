@@ -1,6 +1,9 @@
 package com.hebi.quickcut.ui
 
 import android.view.ViewGroup
+import android.view.View
+import android.view.SurfaceHolder
+import android.view.SurfaceView
 import androidx.annotation.OptIn
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -41,8 +44,10 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -95,8 +100,10 @@ fun QuickTrimScreen(
     val clip = model.timeline.clips.singleOrNull() ?: return
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val currentLifecycleOwner by rememberUpdatedState(lifecycleOwner)
     val player = remember(context) { ExoPlayer.Builder(context.applicationContext).build() }
     var isPlaying by remember(player) { mutableStateOf(false) }
+    val output = remember(player) { PreviewOutputState<PlayerView>() }
     val preview = remember(player, model) {
         EditorPreviewCoordinator(
             object : EditorPreviewPlayback {
@@ -117,6 +124,13 @@ fun QuickTrimScreen(
             modelPosition = { model.playPositionMs },
             publishPosition = model::seek,
             initiallyActive = false,
+            canPrepare = {
+                val view = output.current
+                val surface = view?.videoSurfaceView as? SurfaceView
+                view != null && surface != null && output.ready && view.player === player &&
+                    view.isAttachedToWindow && surface.isAttachedToWindow && surface.holder.surface.isValid &&
+                    previewCanLoadMedia(currentLifecycleOwner)
+            },
         )
     }
     var previewFailure by remember(player) { mutableStateOf<String?>(null) }
@@ -125,6 +139,14 @@ fun QuickTrimScreen(
         MediaOperationDiagnostics.recordFailure(context, ExportStage.PREVIEWING, error,
             model.timeline.clips.map { it.uri }.distinct().size)
         previewFailure = MediaOperationDiagnostics.message(ExportStage.PREVIEWING, error)
+    }
+    val outputChanged: () -> Unit = {
+        try {
+            preview.outputChanged()
+        } catch (error: Exception) {
+            if (error is CancellationException) throw error
+            reportPreviewFailure(error)
+        }
     }
     val retryPreview: () -> Unit = {
         if (previewCanLoadMedia(lifecycleOwner)) {
@@ -165,6 +187,7 @@ fun QuickTrimScreen(
         }
         player.addListener(listener)
         onDispose {
+            output.dispose()
             preview.setActive(false)
             player.removeListener(listener)
             player.release()
@@ -280,7 +303,7 @@ fun QuickTrimScreen(
             if (sideBySide) {
                 Row(Modifier.fillMaxWidth().weight(1f)) {
                     QuickPreview(player, isPlaying, clip.durationMs, model.playPositionMs,
-                        onPlay, preview::seek, Modifier.weight(1f).fillMaxHeight())
+                        onPlay, preview::seek, Modifier.weight(1f).fillMaxHeight(), output, outputChanged)
                     QuickTrimControls(
                         clip, leadingText, trailingText, valid, canSave,
                         ::changeLeading, ::changeTrailing,
@@ -295,7 +318,7 @@ fun QuickTrimScreen(
                 }
             } else {
                 QuickPreview(player, isPlaying, clip.durationMs, model.playPositionMs,
-                    onPlay, preview::seek, Modifier.fillMaxWidth().weight(1f))
+                    onPlay, preview::seek, Modifier.fillMaxWidth().weight(1f), output, outputChanged)
                 QuickTrimControls(
                     clip, leadingText, trailingText, valid, canSave,
                     ::changeLeading, ::changeTrailing,
@@ -333,27 +356,65 @@ private fun QuickPreview(
     onPlay: () -> Unit,
     onSeek: (Long) -> Unit,
     modifier: Modifier,
+    output: PreviewOutputState<PlayerView>,
+    outputChanged: () -> Unit,
 ) {
     Column(modifier.padding(horizontal = 12.dp)) {
         Box(Modifier.weight(1f).fillMaxWidth().clip(CutPanelShape).background(Color.Black)
             .border(1.dp, CutColors.border, CutPanelShape), contentAlignment = Alignment.Center) {
-            AndroidView(
-                factory = { ctx ->
-                    PlayerView(ctx).apply {
-                        useController = false
-                        resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-                        this.player = player
-                        layoutParams = ViewGroup.LayoutParams(
-                            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT,
-                        )
-                    }
-                },
-                update = { it.player = player },
-                modifier = Modifier.fillMaxSize(),
-            )
+            key(player) {
+                AndroidView(
+                    factory = { ctx ->
+                        PlayerView(ctx).apply {
+                            useController = false
+                            resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                            this.player = player
+                            layoutParams = ViewGroup.LayoutParams(
+                                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT,
+                            )
+                            bindQuickPreviewOutput(this, player, output, outputChanged)
+                        }
+                    },
+                    update = { it.player = player },
+                    onRelease = { if (output.release(it)) outputChanged() },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
         }
         PreviewPlaybackControls(playing, timelineDuration, currentPosition, onPlay, onSeek)
     }
+}
+
+
+@OptIn(UnstableApi::class)
+private fun bindQuickPreviewOutput(
+    view: PlayerView,
+    player: ExoPlayer,
+    output: PreviewOutputState<PlayerView>,
+    outputChanged: () -> Unit,
+) {
+    val surface = view.videoSurfaceView as SurfaceView
+    output.bind(view)
+    outputChanged()
+    fun scheduleReady() {
+        val generation = output.generation(view) ?: return
+        view.post {
+            if (view.player !== player || !view.isAttachedToWindow || !surface.isAttachedToWindow ||
+                !surface.holder.surface.isValid) return@post
+            if (output.markReady(view, generation)) outputChanged()
+        }
+    }
+    fun invalidate() { if (output.invalidate(view)) outputChanged() }
+    view.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+        override fun onViewAttachedToWindow(v: View) = scheduleReady()
+        override fun onViewDetachedFromWindow(v: View) = invalidate()
+    })
+    surface.holder.addCallback(object : SurfaceHolder.Callback {
+        override fun surfaceCreated(holder: SurfaceHolder) = scheduleReady()
+        override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) = scheduleReady()
+        override fun surfaceDestroyed(holder: SurfaceHolder) = invalidate()
+    })
+    scheduleReady()
 }
 
 @Composable

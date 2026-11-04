@@ -15,7 +15,7 @@ SHA = 'a' * 40
 
 def run_record(name, **changes):
     record = dict(id=10, run_number=10, name=name, head_sha=SHA, head_branch='main',
-                  event='push', status='completed', conclusion='success',
+                  event='push', status='completed', conclusion='success', run_attempt=1, updated_at='2026-11-04T10:00:00Z',
                   head_repository={'full_name': REPO}, repository={'full_name': REPO})
     record.update(changes)
     return record
@@ -148,6 +148,30 @@ class ReleaseGateTest(unittest.TestCase):
     def test_play_mode_still_requires_exact_successful_current_main(self):
         self.runs['android.yml'][0]['conclusion'] = 'failure'
         self.assertFalse(gate.evaluate(REPO, SHA, 'v0.4.11', self.fetch, mode='play')[0])
+
+    def test_only_later_completed_ci_event_authorizes_automatic_play(self):
+        build = self.runs['android.yml'][0]
+        emulator = self.runs['emulator-smoke.yml'][0]
+        build.update(id=10, updated_at='2026-11-04T10:00:00Z')
+        emulator.update(id=11, updated_at='2026-11-04T10:01:00Z')
+        self.assertFalse(gate.evaluate(REPO, SHA, 'v0.4.11', self.fetch, mode='play', trigger=build)[0])
+        self.assertTrue(gate.evaluate(REPO, SHA, 'v0.4.11', self.fetch, mode='play', trigger=emulator)[0])
+
+    def test_completion_tie_uses_id_and_old_attempt_cannot_authorize(self):
+        self.runs['android.yml'][0]['id'] = 10
+        self.runs['emulator-smoke.yml'][0].update(id=11, run_attempt=2)
+        winner = self.runs['emulator-smoke.yml'][0]
+        self.assertTrue(gate.evaluate(REPO, SHA, 'v0.4.11', self.fetch, mode='play', trigger=winner)[0])
+        self.assertFalse(gate.evaluate(REPO, SHA, 'v0.4.11', self.fetch, mode='play', trigger=dict(winner, run_attempt=1))[0])
+        self.assertFalse(gate.evaluate(REPO, SHA, 'v0.4.11', self.fetch, mode='play', trigger=self.runs['android.yml'][0])[0])
+
+    def test_invalid_completion_metadata_fails_closed(self):
+        for field, value in (('updated_at', None), ('updated_at', '2026-02-30T00:00:00Z'),
+                             ('run_attempt', None), ('run_attempt', 0)):
+            self.setUp()
+            self.runs['android.yml'][0][field] = value
+            with self.subTest(field=field, value=value), self.assertRaises(ValueError):
+                gate.evaluate(REPO, SHA, 'v0.4.11', self.fetch, mode='play', trigger=self.runs['android.yml'][0])
 
     def test_unknown_gate_mode_fails_closed(self):
         with self.assertRaises(ValueError):

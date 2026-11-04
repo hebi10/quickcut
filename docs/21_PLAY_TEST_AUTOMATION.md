@@ -2,7 +2,7 @@
 
 `Google Play test release`는 `main`의 `Android build` 및 `Android emulator smoke`가 같은 커밋에서 성공한 뒤 기존 내부 테스트 트랙을 업데이트합니다. 수동 실행의 `target`은 `internal`(기본), `closed`입니다. 비공개 테스트는 수동 실행에서 `closed`를 명시적으로 선택한 경우에만 업데이트합니다. 자동 실행에 비공개 대상이 전달되면 게이트와 게시 스크립트가 거부합니다. 프로덕션과 오픈 테스트 배포, 테스터 목록 변경은 지원하지 않습니다.
 
-기존 `Signed release APK`의 GitHub 태그·릴리스 생성은 그대로 유지됩니다. Play 게이트는 기존 GitHub 태그가 있어도 실행할 수 있으나, 현재 `main` HEAD와 두 검증 워크플로의 최신 성공 실행을 반드시 확인합니다. 새 커밋에 대한 검증이 끝나지 않았거나 검증이 실패한 경우 서명 및 배포를 시작하지 않습니다. 빌드 후 게시 직전에도 같은 조건을 확인합니다.
+기존 `Signed release APK`의 GitHub 태그·릴리스 생성은 그대로 유지됩니다. Play 게이트는 기존 GitHub 태그가 있어도 실행할 수 있으나, 현재 `main` HEAD와 두 검증 워크플로의 최신 성공 실행을 반드시 확인합니다. 새 커밋에 대한 검증이 끝나지 않았거나 검증이 실패한 경우 서명 및 배포를 시작하지 않습니다. 빌드 후 게시 직전에도 같은 조건을 확인합니다. 자동 실행은 두 필수 CI 중 나중에 완료된 최신 실행의 ID와 시도 번호에 해당하는 이벤트만 허용합니다. 완료 시각이 같으면 실행 ID가 큰 쪽을 선택하므로 지연 도착한 이전 완료 이벤트가 중복 버전을 만들지 않습니다. 수동 실행은 이 이벤트 선택 조건을 적용하지 않습니다.
 
 ## 최초 연결
 
@@ -33,11 +33,21 @@ Google Cloud 프로젝트에서 Android Publisher API를 활성화하고, GitHub
 
 ## 버전과 산출물
 
-현재 소스 버전은 `0.4.17`, `versionCode`는 `23`입니다. APK와 AAB는 동일한 커밋의 버전 선언을 사용합니다. 새 앱 버전을 배포할 때는 `app/build.gradle.kts`의 버전 코드가 Play의 기존 최댓값보다 커야 하며, `docs/releases/VERSION.md`에 해당 버전의 한국어 릴리스 노트를 함께 커밋합니다. 노트는 Play 제한에 맞게 공백 포함 500자 이하로 작성합니다.
+현재 소스의 버전명은 `0.4.17`, 기본 `versionCode`는 `23`입니다. Play 빌드는 서명 전에 모든 트랙(초안 포함), AAB, APK의 코드를 조회하고 `max(소스 기본 코드, Play 전체 최댓값 + 1)`을 할당합니다. 허용 범위는 1–2100000000이며, 잘못된 서버 코드나 범위 소진은 빌드 전에 실패합니다. 조회용 edit는 삭제하며 업로드·트랙 갱신·commit은 하지 않습니다. 새 앱 소스의 자동 배포를 위해 기본 코드를 직접 올릴 필요는 없습니다. 소스의 버전명·기본 코드·GitHub 태그는 자동으로 수정하지 않습니다.
 
-이미 같은 versionCode의 AAB가 Play에 있으면 다시 업로드하지 않고 그 바이너리를 선택한 테스트 트랙으로 승격합니다. 선택한 트랙에 같은 코드의 `completed` 릴리스가 있으면 해당 트랙은 변경하지 않습니다. 더 높은 코드가 이미 존재하거나 같은 코드의 APK만 있어 AAB를 재사용할 수 없다면 덮어쓰지 않고 명확히 실패합니다.
+할당 코드는 기존 Gradle 속성 `quickcutTestVersionCode`로 APK/AAB 양쪽에 적용됩니다. 실제 APK badging과 AAB manifest가 동일한 패키지·버전명·할당 코드를 포함하는지 검사합니다. 버전명을 바꿀 때는 `docs/releases/VERSION.md`의 해당 한국어 릴리스 노트도 필요하며 공백 포함 500자 이하로 작성합니다.
 
-`quickcut-play-vVERSION-RUN_ID` 산출물에는 검증된 APK/AAB, 대응 소스, 소스 식별 정보, 원본 소스 위치, 네이티브 소스 안내, 릴리스 노트 및 `SHA256SUMS`가 포함됩니다. 기존 네이티브 소스/캐시 검증 및 정확한 캐시 키를 재사용하고 대체 캐시 키나 트리거 실행의 산출물은 사용하지 않습니다. bundletool `1.18.2`는 공식 GitHub 릴리스의 SHA256으로 검증합니다.
+게시 직전에 기존 source/CI 게이트를 재검증하고 단기 토큰을 새로 발급합니다. 외부 Console 작업 등이 더 높은 코드를 선점하면 재할당·재업로드하지 않고 실패합니다. 같은 코드가 서버에 있으면 로컬 후보 AAB와 서버 번들의 SHA256이 정확히 같아야 재사용·`unchanged`를 허용합니다. 번들 누락·중복·해시 누락/불일치는 목표 트랙에 해당 코드가 있어도 실패합니다. 새 업로드 응답도 코드와 SHA256을 검사한 뒤에만 트랙을 갱신합니다.
+
+승인된 새 실행마다 새 코드를 할당하므로 같은 소스의 명시적 수동 재실행도 다음 코드를 생성할 수 있습니다. commit 응답이 불확실했던 실행은 먼저 기록된 결과를 확인한 뒤 재실행합니다. 기존 심사 상태를 바꾸거나 실패한 업로드·commit을 자동 재시도하지 않습니다.
+
+`play-version-plan.json`에는 소스 SHA·트리·기본 코드, 관측된 Play 최댓값, 할당 코드, 버전명, 실제 Gradle 속성과 최종 APK/AAB SHA256을 기록합니다. 대응 소스에는 커밋된 기본 코드가 그대로 있으므로 동일 버전 메타데이터를 재현하려면 계획에 기록된 할당 속성을 빌드에 적용합니다.
+
+```bash
+gradle --no-daemon -PquickcutTestVersionCode=ALLOCATED_VERSION_CODE :app:assembleRelease :app:bundleRelease
+```
+
+`quickcut-play-vVERSION-RUN_ID` 산출물에는 검증된 APK/AAB, 대응 소스, 소스 식별 정보, 원본 소스 위치, 네이티브 소스 안내, 릴리스 노트, `play-version-plan.json` 및 `SHA256SUMS`가 포함됩니다. 기존 네이티브 소스/캐시 검증 및 정확한 캐시 키를 재사용하고 대체 캐시 키나 트리거 실행의 산출물은 사용하지 않습니다. bundletool `1.18.2`는 공식 GitHub 릴리스의 SHA256으로 검증합니다.
 
 ## 실행 결과와 재실행
 
@@ -47,7 +57,7 @@ Play 편집은 이 워크플로 내에서 직렬화됩니다. 다른 사람이�
 
 | 결과 | 의미 |
 | --- | --- |
-| `unchanged` | 선택 트랙에 해당 코드의 완료 릴리스가 이미 있음 |
+| `unchanged` | 선택 트랙에 해당 코드가 완료 상태이고 서버/후보 AAB SHA256도 일치함 |
 | `committed` | Google이 edit commit을 수락함. 심사·수동 게시 등은 아직 남을 수 있음 |
 | `uncertain` | commit 응답을 확정하지 못함. 독립 조회 결과를 남기고 실행을 실패 처리함 |
 | `published: true` | 릴리스 조회에서 해당 코드가 모든 선택 트랙의 `PUBLISHED`로 확인됨 |
@@ -66,4 +76,4 @@ python3 scripts/test-play-bundle.py
 
 Python 3.11 이상과 JDK 17이 필요합니다. 번들 테스트에는 로컬에서만 생성하고 삭제하는 일회용 테스트 인증서를 사용합니다. 실제 QuickCut 서명 키나 Google 자격 증명 없이 실행할 수 있습니다. 전체 Android 테스트·lint·네이티브 빌드와 API 29/35/36 에뮬레이터 검증은 기존 CI에서 수행합니다.
 
-참고: [Google auth](https://github.com/google-github-actions/auth), [트랙 ID](https://developers.google.com/android-publisher/tracks), [심사 보존 commit](https://developers.google.com/android-publisher/api-ref/rest/v3/edits/commit), [릴리스 lifecycle](https://developers.google.com/android-publisher/api-ref/rest/v3/applications.tracks.releases), [공식 bundletool](https://github.com/google/bundletool/releases/tag/1.18.2).
+참고: [Google auth](https://github.com/google-github-actions/auth), [트랙 ID](https://developers.google.com/android-publisher/tracks), [심사 보존 commit](https://developers.google.com/android-publisher/api-ref/rest/v3/edits/commit), [릴리스 lifecycle](https://developers.google.com/android-publisher/api-ref/rest/v3/applications.tracks.releases), [공식 bundletool](https://github.com/google/bundletool/releases/tag/1.18.2), [서버 번들 SHA256](https://developers.google.com/android-publisher/api-ref/rest/v3/edits.bundles), [버전 코드 한도](https://developer.android.com/studio/publish/versioning).

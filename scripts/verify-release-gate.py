@@ -5,6 +5,7 @@ No polling, artifacts, check runs, or third-party dependencies. A later workflow
 completion retries the gate; API errors fail closed rather than authorizing.
 """
 import json
+from datetime import datetime
 import os
 from pathlib import Path
 import re
@@ -51,13 +52,24 @@ def play_target(event, event_name):
     raise ValueError('Automatic Play releases target internal; closed requires an explicit manual selection')
 
 
-def evaluate(repo, sha, tag, fetch, mode="release"):
+def completion_order(run):
+    try:
+        completed = datetime.strptime(run['updated_at'], '%Y-%m-%dT%H:%M:%SZ')
+        if type(run['run_attempt']) is not int or run['run_attempt'] < 1:
+            raise ValueError('Invalid workflow attempt')
+        return completed, run['id']
+    except (KeyError, TypeError, ValueError):
+        raise ValueError('Missing or invalid trusted CI completion metadata') from None
+
+
+def evaluate(repo, sha, tag, fetch, mode="release", trigger=None):
     if mode not in ("release", "play"):
         raise ValueError("Unknown publication gate mode")
     prefix = f'/repos/{repo}'
     main = fetch(prefix + '/git/ref/heads/main')
     if main['object']['sha'] != sha:
         return False, 'Commit is no longer the current main HEAD'
+    completed_runs = []
     for workflow, name in REQUIRED_WORKFLOWS.items():
         query = urlencode({'branch': 'main', 'head_sha': sha, 'per_page': 100})
         response = fetch(f'{prefix}/actions/workflows/{workflow}/runs?{query}')
@@ -70,6 +82,11 @@ def evaluate(repo, sha, tag, fetch, mode="release"):
         latest = max(runs, key=lambda run: (run['run_number'], run['id']))
         if latest.get('status') != 'completed' or latest.get('conclusion') != 'success':
             return False, f"{name}: {latest.get('status')}/{latest.get('conclusion')}"
+        completed_runs.append(latest)
+    if mode == 'play' and trigger is not None:
+        winner = max(completed_runs, key=completion_order)
+        if (trigger.get('id'), trigger.get('run_attempt')) != (winner['id'], winner['run_attempt']):
+            return False, 'Only the later completed required CI event authorizes automatic Play allocation'
     for endpoint in (() if mode == 'play' else ('git/ref/tags', 'releases/tags')):
         if fetch(f'{prefix}/{endpoint}/{tag}') is not None:
             return False, f'{tag} already exists; releases and assets are never overwritten'
@@ -101,7 +118,7 @@ def parse_release_version(gradle):
         declarations[field] = values[0]
     version = re.fullmatch(r'"([0-9]+\.[0-9]+\.[0-9]+)"', declarations['versionName'])
     # This specific override exists solely for instrumentation upgrade fixtures.
-    # A release always uses the committed production fallback, not a test code.
+    # The gate reads the committed base; Play allocates its build override later.
     code = re.fullmatch(
         r'(?:providers\.gradleProperty\("quickcutTestVersionCode"\)\.orNull\?\.toInt\(\)[ \t]*\?:[ \t]*)?([1-9][0-9]*)',
         declarations['versionCode'])
@@ -128,7 +145,8 @@ def main():
     gradle = Path('app/build.gradle.kts').read_text()
     version, code = parse_release_version(gradle)
     tag = 'v' + version
-    ready, reason = evaluate(repo, sha, tag, api_fetch, mode=args.mode)
+    trigger = event['workflow_run'] if os.environ['GITHUB_EVENT_NAME'] == 'workflow_run' else None
+    ready, reason = evaluate(repo, sha, tag, api_fetch, mode=args.mode, trigger=trigger)
     values = {'ready': str(ready).lower(), 'sha': sha, 'tag': tag,
               'version': version, 'version_code': code}
     if args.mode == 'play':

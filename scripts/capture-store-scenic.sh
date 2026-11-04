@@ -3,6 +3,7 @@ set -euo pipefail
 
 output=quickcut-store-scenic
 mkdir -p "$output"
+adb shell getprop ro.build.version.sdk > "$output/device-api.txt"
 adb shell settings put system screen_off_timeout 600000
 adb shell input keyevent KEYCODE_WAKEUP
 adb shell wm dismiss-keyguard
@@ -49,6 +50,8 @@ assert cases[0].find("failure") is None
 evidence = root / "evidence"
 assert (evidence / "passed.txt").is_file(), "Missing successful capture evidence"
 record = json.loads((evidence / "evidence.json").read_text())
+assert record["apiLevel"] == int((root / "device-api.txt").read_text().strip())
+assert record["apiLevel"] in {29, 35, 36}
 assert record["encodedDurationMs"] == 8000
 assert 8000 <= record["sourceDurationMs"] <= 8050
 assert record["leadingRemovedMs"] == 4000

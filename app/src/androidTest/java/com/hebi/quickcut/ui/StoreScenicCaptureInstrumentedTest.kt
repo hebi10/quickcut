@@ -7,6 +7,7 @@ import android.graphics.Color
 import android.graphics.Rect
 import android.net.Uri
 import android.os.Handler
+import android.os.Build
 import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.view.PixelCopy
@@ -36,6 +37,7 @@ import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextReplacement
 import androidx.lifecycle.ViewModelStore
 import androidx.media3.common.C
@@ -155,6 +157,7 @@ class StoreScenicCaptureInstrumentedTest {
         }
         compose.onNodeWithContentDescription("앞부분 삭제 시간(초)").assertTextContains("4")
         compose.onNodeWithContentDescription("뒷부분 삭제 시간(초)").assertTextContains("0.623")
+        compose.onNodeWithText("원본 " + formatTime(sourceDurationMs)).performScrollTo().assertIsDisplayed()
         assertReviewedBounds()
         capturePhase = "quick_preview"
         waitForRealPausedPreview(ExoPlayer::class.java)
@@ -170,7 +173,7 @@ class StoreScenicCaptureInstrumentedTest {
         assertReviewedBounds()
         capture("store_scenic_detailed", thumbnailVisible = true)
 
-        val evidence = JSONObject().put("sourceFile", "quickcut_store_scenic.mp4")
+        val evidence = JSONObject().put("apiLevel", Build.VERSION.SDK_INT).put("sourceFile", "quickcut_store_scenic.mp4")
             .put("sourceSha256", sha256(source)).put("encodedDurationMs", 8_000L)
             .put("sourceDurationMs", sourceDurationMs)
             .put("leadingRemovedMs", 4_000L).put("trailingRemovedMs", 623L)
@@ -231,6 +234,7 @@ class StoreScenicCaptureInstrumentedTest {
             compose.waitUntil(5_000L) {
                 frameSeen.get() && firstFrameReleaseNs.get().let { it == C.TIME_UNSET || System.nanoTime() >= it }
             }
+            compose.waitUntil(5_000L) { previewScreenshotHasImage() }
             compose.onNodeWithContentDescription("일시정지").performClick()
             compose.waitUntil(15_000L) { previewScreenshotHasImage() }
             compose.runOnIdle {

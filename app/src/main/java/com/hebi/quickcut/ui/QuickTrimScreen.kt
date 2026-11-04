@@ -52,6 +52,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.font.FontWeight
@@ -63,6 +64,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.VideoSize
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
@@ -95,7 +97,14 @@ fun QuickTrimScreen(
     val clip = model.timeline.clips.singleOrNull() ?: return
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-    val player = remember(context) { ExoPlayer.Builder(context.applicationContext).build() }
+    val player = remember(context) {
+        ExoPlayer.Builder(context.applicationContext).build().also { PreviewTrace.event(context, it, "player.create") }
+    }
+    DisposableEffect(lifecycleOwner, player) {
+        val observer = LifecycleEventObserver { _, event -> PreviewTrace.event(context, player, "lifecycle.$event") }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     var isPlaying by remember(player) { mutableStateOf(false) }
     val preview = remember(player, model) {
         EditorPreviewCoordinator(
@@ -103,14 +112,21 @@ fun QuickTrimScreen(
                 override val positionMs get() = player.currentPosition
                 override val playing get() = player.isPlaying
                 override val ended get() = player.playbackState == Player.STATE_ENDED
-                override fun pause() = player.pause()
-                override fun play() = player.play()
-                override fun stop() = player.stop()
-                override fun seekTo(positionMs: Long) = player.seekTo(positionMs)
-                override fun replace(timeline: EditTimeline, positionMs: Long) {
-                    player.setMediaItem(CompositionFactory.mediaItem(timeline.clips.single()))
+                override fun pause() { PreviewTrace.event(context, player, "pause"); player.pause() }
+                override fun play() { PreviewTrace.event(context, player, "play"); player.play() }
+                override fun stop() { PreviewTrace.event(context, player, "stop"); player.stop() }
+                override fun seekTo(positionMs: Long) {
+                    PreviewTrace.event(context, player, "seek", "position_ms=$positionMs")
                     player.seekTo(positionMs)
+                }
+                override fun replace(timeline: EditTimeline, positionMs: Long) {
+                    PreviewTrace.event(context, player, "replace", "timeline=${System.identityHashCode(timeline)} clips=${timeline.clips.size}")
+                    player.setMediaItem(CompositionFactory.mediaItem(timeline.clips.single()))
+                    PreviewTrace.event(context, player, "replace.seek", "position_ms=$positionMs")
+                    player.seekTo(positionMs)
+                    PreviewTrace.event(context, player, "prepare.begin")
                     player.prepare()
+                    PreviewTrace.event(context, player, "prepare.end")
                 }
             },
             timeline = { quickTrimPreviewTimeline(model.timeline) },
@@ -143,6 +159,11 @@ fun QuickTrimScreen(
     SideEffect { preview.onModelChanged() }
     DisposableEffect(player, model, preview) {
         val listener = object : Player.Listener {
+            override fun onRenderedFirstFrame() { PreviewTrace.event(context, player, "rendered.first") }
+            override fun onVideoSizeChanged(videoSize: VideoSize) {
+                PreviewTrace.event(context, player, "video.size", "width=${videoSize.width} height=${videoSize.height} " +
+                    "pixel_ratio=${videoSize.pixelWidthHeightRatio} position_ms=${player.currentPosition}")
+            }
             override fun onPlayerError(error: PlaybackException) {
                 reportPreviewFailure(error)
             }
@@ -165,6 +186,7 @@ fun QuickTrimScreen(
         }
         player.addListener(listener)
         onDispose {
+            PreviewTrace.event(context, player, "player.dispose")
             preview.setActive(false)
             player.removeListener(listener)
             player.release()
@@ -340,6 +362,7 @@ private fun QuickPreview(
             AndroidView(
                 factory = { ctx ->
                     PlayerView(ctx).apply {
+                        PreviewTrace.bind(this, player)
                         useController = false
                         resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                         this.player = player
@@ -348,7 +371,10 @@ private fun QuickPreview(
                         )
                     }
                 },
-                update = { it.player = player },
+                update = {
+                    PreviewTrace.event(it.context, player, "view.update", "view=${System.identityHashCode(it)}")
+                    it.player = player
+                },
                 modifier = Modifier.fillMaxSize(),
             )
         }

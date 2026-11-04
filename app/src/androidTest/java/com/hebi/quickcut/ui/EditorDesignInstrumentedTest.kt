@@ -3,8 +3,12 @@ package com.hebi.quickcut.ui
 import android.app.Application
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.ParcelFileDescriptor
+import android.os.SystemClock
+import android.util.Log
+import android.view.SurfaceView
 import android.view.View
 import android.view.ViewGroup
 import androidx.activity.ComponentActivity
@@ -68,6 +72,8 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.json.JSONArray
+import org.json.JSONObject
 
 @RunWith(AndroidJUnit4::class)
 @OptIn(ExperimentalTestApi::class)
@@ -84,6 +90,7 @@ class EditorDesignInstrumentedTest {
     private var previousSession: EditorSessionSnapshot? = null
     private lateinit var source: File
     private lateinit var batchStore: BatchSessionStore
+    private var lastPreviewSample = JSONObject()
 
     @Before fun prepareModels() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
@@ -97,6 +104,15 @@ class EditorDesignInstrumentedTest {
         source = File(context.cacheDir, "editor_design_fixture.mp4")
         InstrumentationRegistry.getInstrumentation().context.assets.open("quickcut_keyframes.mp4").use { input ->
             source.outputStream().use { output -> input.copyTo(output) }
+        }
+        MediaMetadataRetriever().apply {
+            try {
+                setDataSource(context, Uri.fromFile(source))
+                Log.i("QuickCutPreviewTest", "fixture width=${extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)} " +
+                    "height=${extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)} " +
+                    "rotation=${extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)} " +
+                    "duration_ms=${extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)}")
+            } finally { release() }
         }
         batchStore = BatchSessionStore(File(context.cacheDir, "editor_design_batch_session.json"))
         batchStore.clear()
@@ -234,6 +250,8 @@ class EditorDesignInstrumentedTest {
         val firstFrameReleaseNs = AtomicLong(C.TIME_UNSET)
         val frameListener = VideoFrameMetadataListener { _, releaseTimeNs, _, _ ->
             if (!frameSeen.get()) {
+                Log.i("QuickCutPreviewTest", "elapsed_ns=${SystemClock.elapsedRealtimeNanos()} mono_ns=${System.nanoTime()} event=metadata.first " +
+                    "player=${System.identityHashCode(player)} release_mono_ns=$releaseTimeNs")
                 firstFrameReleaseNs.set(releaseTimeNs)
                 frameSeen.set(true)
             }
@@ -247,6 +265,7 @@ class EditorDesignInstrumentedTest {
             }
         }
         try {
+            Log.i("QuickCutPreviewTest", "elapsed_ns=${SystemClock.elapsedRealtimeNanos()} mono_ns=${System.nanoTime()} event=action.play player=${System.identityHashCode(player)}")
             compose.onNodeWithContentDescription("재생").performClick()
             compose.waitUntil(5_000L) {
                 compose.onAllNodesWithContentDescription("일시정지").fetchSemanticsNodes().size == 1
@@ -259,7 +278,15 @@ class EditorDesignInstrumentedTest {
                 }
             }
             compose.onNodeWithContentDescription("일시정지").performClick()
-            compose.waitUntil(15_000L) { previewHasRenderedColor() }
+            Log.i("QuickCutPreviewTest", "elapsed_ns=${SystemClock.elapsedRealtimeNanos()} mono_ns=${System.nanoTime()} event=action.pause player=${System.identityHashCode(player)}")
+            try {
+                compose.waitUntil(15_000L) { previewHasRenderedColor() }
+            } catch (failure: Throwable) {
+                runCatching { capturePreviewFailure(player) }.onFailure {
+                    Log.w("QuickCutPreviewTest", "Diagnostic capture failed: ${it.javaClass.simpleName}")
+                }
+                throw failure
+            }
             compose.runOnIdle {
                 assertSame("Paused preview must retain the observed player", player, previewView()?.player)
                 assertTrue("Pause must retain the prepared preview", player.playbackState == Player.STATE_READY)
@@ -303,15 +330,60 @@ class EditorDesignInstrumentedTest {
         val bitmap = InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot() ?: return false
         return try {
             var colored = 0
+            val pixels = JSONArray()
             for (x in 3..7) for (y in 3..7) {
                 val px = (area[0] + area[2] * x / 10).coerceIn(0, bitmap.width - 1)
                 val py = (area[1] + area[3] * y / 10).coerceIn(0, bitmap.height - 1)
                 val value = bitmap.getPixel(px, py)
+                pixels.put(value)
                 val channels = listOf(Color.red(value), Color.green(value), Color.blue(value))
                 if (channels.max() - channels.min() > 35 && channels.max() > 50) colored++
             }
+            lastPreviewSample = JSONObject().put("sample_elapsed_ns", SystemClock.elapsedRealtimeNanos()).put("sample_mono_ns", System.nanoTime())
+                .put("bounds", JSONArray(area.toList())).put("colored_pixels", colored).put("sampled_argb", pixels)
+                .put("screenshot_width", bitmap.width).put("screenshot_height", bitmap.height)
             colored >= 5
         } finally { bitmap.recycle() }
+    }
+
+    private fun capturePreviewFailure(player: Player) {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val directory = File(checkNotNull(instrumentation.targetContext.getExternalFilesDir(null)), "preview-diagnostics")
+        check(directory.isDirectory || directory.mkdirs())
+        val state = lastPreviewSample.put("capture_elapsed_ns", SystemClock.elapsedRealtimeNanos()).put("capture_mono_ns", System.nanoTime())
+        compose.runOnUiThread {
+            val view = previewView()
+            val surface = (view?.videoSurfaceView as? SurfaceView)?.holder?.surface
+            state.put("player_id", System.identityHashCode(player)).put("view_id", System.identityHashCode(view))
+                .put("current_position_ms", player.currentPosition).put("playback_state", player.playbackState)
+                .put("play_when_ready", player.playWhenReady).put("is_playing", player.isPlaying)
+                .put("surface_generation", surface?.generationId).put("surface_valid", surface?.isValid)
+                .put("video_width", player.videoSize.width).put("video_height", player.videoSize.height)
+            for ((name, target) in listOf("player_view_bounds" to view, "surface_view_bounds" to view?.videoSurfaceView)) {
+                target?.let {
+                    val location = IntArray(2)
+                    it.getLocationOnScreen(location)
+                    state.put(name, JSONArray(listOf(location[0], location[1], it.width, it.height)))
+                }
+            }
+        }
+        val bitmap = checkNotNull(instrumentation.uiAutomation.takeScreenshot())
+        File(directory, "preview-failure.png").outputStream().use {
+            check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it))
+        }
+        bitmap.recycle()
+        File(directory, "preview-sample.json").writeText(state.toString(2))
+        Log.i("QuickCutPreviewTest", "failure_state=$state")
+        fun shell(command: String) {
+            val fd = instrumentation.uiAutomation.executeShellCommand(command)
+            ParcelFileDescriptor.AutoCloseInputStream(fd).bufferedReader().use { it.readText() }
+        }
+        shell("mkdir -p /data/local/tmp/quickcut-preview-diagnostics")
+        for (name in listOf("preview-failure.png", "preview-sample.json")) {
+            val file = File(directory, name)
+            require(file.absolutePath.matches(Regex("[A-Za-z0-9_./-]+")))
+            shell("cp ${file.absolutePath} /data/local/tmp/quickcut-preview-diagnostics/$name")
+        }
     }
 
     private fun capture(name: String) {

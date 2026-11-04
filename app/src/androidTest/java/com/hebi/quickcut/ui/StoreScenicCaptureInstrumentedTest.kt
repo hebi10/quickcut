@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.Rect
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
@@ -85,6 +86,10 @@ class StoreScenicCaptureInstrumentedTest {
     private val selectedEndMs get() = sourceDurationMs - 623L
     private val resultDurationMs get() = selectedEndMs - 4_000L
     private val captures = JSONArray()
+    private var capturePhase = "preparing"
+    private var completed = false
+    private var lastSceneCheck = JSONObject()
+    private var lastPixelCopyCheck = JSONObject()
 
     @Before fun prepareNewScenicSource() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
@@ -108,6 +113,9 @@ class StoreScenicCaptureInstrumentedTest {
     }
 
     @After fun restoreModels() {
+        if (!completed && ::editor.isInitialized) {
+            runCatching { savePreviewDiagnostics("failure_$capturePhase") }
+        }
         if (::editor.isInitialized) compose.runOnUiThread {
             editor.discardEditing()
             ViewModelStore().apply { put("editor", editor) }.clear()
@@ -148,11 +156,13 @@ class StoreScenicCaptureInstrumentedTest {
         compose.onNodeWithContentDescription("앞부분 삭제 시간(초)").assertTextContains("4")
         compose.onNodeWithContentDescription("뒷부분 삭제 시간(초)").assertTextContains("0.623")
         assertReviewedBounds()
+        capturePhase = "quick_preview"
         waitForRealPausedPreview(ExoPlayer::class.java)
         compose.onNodeWithText("영상 저장").assertIsDisplayed().assertIsEnabled()
         capture("store_scenic_quick_trim", thumbnailVisible = false)
 
         compose.onNodeWithText("상세 편집").assertIsDisplayed().performClick()
+        capturePhase = "detailed_preview"
         waitForRealPausedPreview(CompositionPlayer::class.java)
         compose.onNodeWithText("상세 편집").assertIsDisplayed()
         compose.onNodeWithText("확대 1배").assertIsDisplayed()
@@ -168,6 +178,7 @@ class StoreScenicCaptureInstrumentedTest {
             .put("resultDurationMs", resultDurationMs).put("captures", captures)
         saveEvidenceFile("evidence.json", evidence.toString(2))
         saveEvidenceFile("passed.txt", "Actual new source imported; both real player surfaces rendered and paused; timeline bounds retained.\n")
+        completed = true
     }
 
     private fun assertReviewedBounds() = compose.runOnIdle {
@@ -221,7 +232,7 @@ class StoreScenicCaptureInstrumentedTest {
                 frameSeen.get() && firstFrameReleaseNs.get().let { it == C.TIME_UNSET || System.nanoTime() >= it }
             }
             compose.onNodeWithContentDescription("일시정지").performClick()
-            compose.waitUntil(15_000L) { previewSurfaceHasImage() }
+            compose.waitUntil(15_000L) { previewScreenshotHasImage() }
             compose.runOnIdle {
                 assertSame(player, previewView()?.player)
                 assertEquals(Player.STATE_READY, player.playbackState)
@@ -229,6 +240,9 @@ class StoreScenicCaptureInstrumentedTest {
                 assertTrue("Preview decoding must not report an error", player.playerError == null)
             }
             assertReviewedBounds()
+        } catch (error: Throwable) {
+            runCatching { savePreviewDiagnostics("failure_$capturePhase") }
+            throw error
         } finally {
             compose.runOnUiThread {
                 when (val active = player) {
@@ -251,11 +265,61 @@ class StoreScenicCaptureInstrumentedTest {
         return find(compose.activity.window.decorView)
     }
 
-    private fun previewSurfaceHasImage(): Boolean {
+    private data class PreviewGeometry(val surface: Rect, val content: Rect, val videoWidth: Int, val videoHeight: Int) {
+        fun json() = JSONObject().put("surfaceBounds", surface.toShortString())
+            .put("contentBounds", content.toShortString())
+            .put("videoWidth", videoWidth).put("videoHeight", videoHeight)
+    }
+
+    private fun previewGeometry(): PreviewGeometry? {
+        var geometry: PreviewGeometry? = null
+        compose.runOnUiThread {
+            val preview = previewView() ?: return@runOnUiThread
+            val surface = preview.videoSurfaceView ?: return@runOnUiThread
+            val video = preview.player?.videoSize ?: return@runOnUiThread
+            if (surface.width <= 0 || surface.height <= 0 || video.width <= 0 || video.height <= 0) return@runOnUiThread
+            val location = IntArray(2)
+            surface.getLocationOnScreen(location)
+            val bounds = Rect(location[0], location[1], location[0] + surface.width, location[1] + surface.height)
+            val aspect = video.width * video.pixelWidthHeightRatio / video.height
+            val width = minOf(surface.width.toFloat(), surface.height * aspect)
+            val height = width / aspect
+            val left = bounds.left + (surface.width - width) / 2f
+            val top = bounds.top + (surface.height - height) / 2f
+            geometry = PreviewGeometry(bounds,
+                Rect(left.toInt(), top.toInt(), (left + width).toInt(), (top + height).toInt()),
+                video.width, video.height)
+        }
+        return geometry
+    }
+
+    private fun previewScreenshotHasImage(): Boolean {
+        var focused = false
+        compose.runOnUiThread { focused = compose.activity.window.decorView.hasWindowFocus() }
+        if (!focused) {
+            lastSceneCheck = JSONObject().put("accepted", false).put("hasWindowFocus", false)
+            return false
+        }
+        val geometry = previewGeometry() ?: return false
+        val bitmap = InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot() ?: return false
+        return try {
+            lastSceneCheck = sceneStats(bitmap, geometry.content).put("geometry", geometry.json())
+            lastSceneCheck.getBoolean("accepted")
+        } finally { bitmap.recycle() }
+    }
+
+    private fun previewSurfaceHasImage(diagnosticName: String? = null): Boolean {
         var surface: SurfaceView? = null
         compose.runOnUiThread { surface = previewView()?.videoSurfaceView as? SurfaceView }
-        val view = surface ?: return false
-        if (!view.holder.surface.isValid || view.width <= 0 || view.height <= 0) return false
+        val view = surface ?: run {
+            lastPixelCopyCheck = JSONObject().put("status", "no_surface_view")
+            return false
+        }
+        if (!view.holder.surface.isValid || view.width <= 0 || view.height <= 0) {
+            lastPixelCopyCheck = JSONObject().put("status", "invalid_surface")
+            return false
+        }
+        val geometry = previewGeometry()
         val bitmap = Bitmap.createBitmap(256, 144, Bitmap.Config.ARGB_8888)
         val completion = CountDownLatch(1)
         val result = AtomicInteger(-1)
@@ -273,8 +337,23 @@ class StoreScenicCaptureInstrumentedTest {
                 completion.countDown()
             }, Handler(Looper.getMainLooper()))
             requested = true
-            completion.await(2L, TimeUnit.SECONDS) && result.get() == PixelCopy.SUCCESS && bitmapHasScene(bitmap)
-        } catch (_: IllegalArgumentException) {
+            val delivered = completion.await(2L, TimeUnit.SECONDS)
+            lastPixelCopyCheck = JSONObject().put("delivered", delivered).put("resultCode", result.get())
+                .put("surfaceWidth", view.width).put("surfaceHeight", view.height)
+            geometry?.let { lastPixelCopyCheck.put("geometry", it.json()) }
+            if (delivered) {
+                val area = geometry?.let {
+                    Rect((it.content.left - it.surface.left) * bitmap.width / it.surface.width(),
+                        (it.content.top - it.surface.top) * bitmap.height / it.surface.height(),
+                        (it.content.right - it.surface.left) * bitmap.width / it.surface.width(),
+                        (it.content.bottom - it.surface.top) * bitmap.height / it.surface.height())
+                } ?: Rect(0, 0, bitmap.width, bitmap.height)
+                lastPixelCopyCheck.put("scene", sceneStats(bitmap, area))
+                if (diagnosticName != null) saveBitmap("${diagnosticName}_pixelcopy.png", bitmap)
+            }
+            delivered && result.get() == PixelCopy.SUCCESS && lastPixelCopyCheck.getJSONObject("scene").getBoolean("accepted")
+        } catch (error: IllegalArgumentException) {
+            lastPixelCopyCheck = JSONObject().put("status", "invalid_surface_race").put("error", error.toString())
             false
         } finally {
             synchronized(lifetime) {
@@ -284,18 +363,25 @@ class StoreScenicCaptureInstrumentedTest {
         }
     }
 
-    private fun bitmapHasScene(bitmap: Bitmap): Boolean {
+    private fun sceneStats(bitmap: Bitmap, requestedArea: Rect): JSONObject {
+        val area = Rect(requestedArea)
+        if (!area.intersect(0, 0, bitmap.width, bitmap.height) || area.width() <= 0 || area.height() <= 0) {
+            return JSONObject().put("accepted", false).put("invalidBounds", requestedArea.toShortString())
+        }
         var nonBlack = 0
         var colored = 0
         val brightness = mutableListOf<Int>()
         for (x in 2..8) for (y in 2..8) {
-            val color = bitmap.getPixel(bitmap.width * x / 10, bitmap.height * y / 10)
+            val color = bitmap.getPixel(area.left + area.width() * x / 10, area.top + area.height() * y / 10)
             val channels = listOf(Color.red(color), Color.green(color), Color.blue(color))
             if (channels.max() > 35) nonBlack++
             if (channels.max() - channels.min() > 20) colored++
             brightness += channels.sum() / 3
         }
-        return nonBlack >= 35 && colored >= 10 && brightness.max() - brightness.min() >= 20
+        val range = brightness.max() - brightness.min()
+        return JSONObject().put("nonBlackSamples", nonBlack).put("coloredSamples", colored)
+            .put("brightnessRange", range).put("sampleCount", 49).put("sampleBounds", area.toShortString())
+            .put("accepted", nonBlack >= 35 && colored >= 10 && range >= 20)
     }
 
     private fun timelineThumbnailHasImage(): Boolean {
@@ -321,23 +407,63 @@ class StoreScenicCaptureInstrumentedTest {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         instrumentation.uiAutomation.waitForIdle(300L, 5_000L)
         assertReviewedBounds()
-        assertTrue("The actual video surface must contain a decoded scenic frame", previewSurfaceHasImage())
+        assertTrue("The actual screenshot must show the decoded scenic frame", previewScreenshotHasImage())
         if (thumbnailVisible) assertTrue("The actual timeline thumbnail must be loaded", timelineThumbnailHasImage())
         compose.runOnIdle {
             val player = checkNotNull(previewView()?.player)
             assertEquals(Player.STATE_READY, player.playbackState)
             assertTrue(!player.playWhenReady && !player.isPlaying)
+            assertTrue("A system dialog must not obscure the actual app", compose.activity.window.decorView.hasWindowFocus())
         }
         val output = File(evidenceDirectory(), "$name.png")
         val bitmap = checkNotNull(instrumentation.uiAutomation.takeScreenshot())
         try {
+            val geometry = checkNotNull(previewGeometry())
+            val scene = sceneStats(bitmap, geometry.content).put("geometry", geometry.json())
+            assertTrue("The saved raw screenshot must show the decoded scenic frame", scene.getBoolean("accepted"))
             output.outputStream().use { check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) }
             captures.put(JSONObject().put("file", output.name).put("sha256", sha256(output))
                 .put("width", bitmap.width).put("height", bitmap.height)
-                .put("frameMetadataObserved", true).put("surfacePixelCopyVerified", true)
+                .put("frameMetadataObserved", true).put("visibleScreenshotSceneVerified", true)
+                .put("verificationType", "uiAutomationScreenshotContentRegion").put("scene", scene)
                 .put("playerReady", true).put("paused", true).put("timelineThumbnailVisible", thumbnailVisible))
         } finally { bitmap.recycle() }
         copyForRunner(output)
+        savePreviewDiagnostics(name)
+    }
+
+    private fun saveBitmap(name: String, bitmap: Bitmap) {
+        val output = File(evidenceDirectory(), name)
+        output.outputStream().use { check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) }
+        copyForRunner(output)
+    }
+
+    private fun savePreviewDiagnostics(name: String) {
+        val diagnostics = JSONObject().put("phase", capturePhase)
+            .put("lastVisibleSceneCheck", lastSceneCheck)
+        val bitmap = InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
+        if (bitmap != null) try {
+            saveBitmap("${name}_diagnostic_raw.png", bitmap)
+            previewGeometry()?.let { geometry ->
+                diagnostics.put("geometry", geometry.json())
+                    .put("rawScene", sceneStats(bitmap, geometry.content))
+            }
+        } finally { bitmap.recycle() }
+        val pixelCopyVerified = previewSurfaceHasImage(name)
+        diagnostics.put("pixelCopyVerified", pixelCopyVerified).put("pixelCopy", lastPixelCopyCheck)
+        compose.runOnUiThread {
+            previewView()?.let { view ->
+                diagnostics.put("surfaceClass", view.videoSurfaceView?.javaClass?.name)
+                    .put("viewWidth", view.width).put("viewHeight", view.height)
+                    .put("hasWindowFocus", view.hasWindowFocus())
+                view.player?.let { player ->
+                    diagnostics.put("playerClass", player.javaClass.name).put("playbackState", player.playbackState)
+                        .put("playWhenReady", player.playWhenReady).put("isPlaying", player.isPlaying)
+                        .put("positionMs", player.currentPosition).put("playerError", player.playerError?.toString())
+                }
+            }
+        }
+        saveEvidenceFile("${name}_diagnostic.json", diagnostics.toString(2))
     }
 
     private fun evidenceDirectory(): File {

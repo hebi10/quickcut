@@ -6,6 +6,8 @@ mkdir -p "$output"
 adb shell settings put system screen_off_timeout 600000
 adb shell input keyevent KEYCODE_WAKEUP
 adb shell wm dismiss-keyguard
+adb shell settings put secure anr_show_background 0
+adb shell am force-stop com.google.android.apps.nexuslauncher
 adb shell rm -rf /data/local/tmp/quickcut-store-scenic
 
 status=0
@@ -64,7 +66,9 @@ for item in record["captures"]:
     assert image.is_file() and image.stat().st_size > 10000
     assert image.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
     assert hashlib.sha256(image.read_bytes()).hexdigest() == item["sha256"]
-    assert all(item[key] for key in ("frameMetadataObserved", "surfacePixelCopyVerified", "playerReady", "paused"))
+    assert all(item[key] for key in ("frameMetadataObserved", "visibleScreenshotSceneVerified", "playerReady", "paused"))
+    assert item["verificationType"] == "uiAutomationScreenshotContentRegion"
+    assert item["scene"]["accepted"]
     assert item["timelineThumbnailVisible"] == (item["file"] == "store_scenic_detailed.png")
 print("Focused actual-device capture passed; new source hash and both raw screenshots verified.")
 PY

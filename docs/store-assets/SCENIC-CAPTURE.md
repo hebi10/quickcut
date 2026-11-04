@@ -7,8 +7,9 @@ media download or test-pattern source is used in this capture workflow.
 The workflow `store-scenic-capture.yml` runs only
 `StoreScenicCaptureInstrumentedTest` on API 35. It imports the actual video through
 `EditorViewModel`, enters the quick trim values `4` and `0.623`, plays and pauses
-both actual preview players, and verifies a decoded first frame with `PixelCopy`
-before each untouched device screenshot. The detailed screen also waits for its
+both actual preview players, and verifies a decoded first frame in the actual
+untouched device screenshot, sampling the active video area derived from the
+player's reported video size and surface bounds. The detailed screen also waits for its
 actual timeline thumbnail. FFprobe verifies the encoded source is exactly eight
 seconds. Android's metadata reader may include a small codec timing difference
 (8,023 ms on the API 35 capture device). The test records that actual imported
@@ -27,5 +28,9 @@ The artifact `quickcut-store-scenic-api-35` contains the new source video,
 `source-media.json`, source checksums, the source commit, both raw screenshots,
 `evidence.json`, a success marker, and the focused instrumentation report. The
 evidence records the imported source checksum, real trim bounds, player/frame
-checks, and screenshot checksums. Promotional image composition happens only
+checks, screenshot content-area pixel statistics, and screenshot checksums.
+PixelCopy images, result codes, and pixel statistics are collected as independent
+diagnostics; they are not claimed as successful when the copy fails. A failure
+also saves the actual app screenshot, player state, surface/video bounds, and
+pixel statistics before the activity is torn down. Promotional image composition happens only
 after these real captures are reviewed.

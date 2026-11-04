@@ -294,8 +294,12 @@ fun EditorScreen(
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Text("영상이 없습니다. 실행 취소하거나 영상을 추가하세요.", color = CutColors.secondaryText)
-                TextButton(onClick = addVideos, shape = CutShape) { Text("영상 추가") }
+                Text("편집할 영상이 없습니다.", color = CutColors.primaryText,
+                    style = MaterialTheme.typography.titleMedium)
+                Text("실행을 취소하거나 다른 영상을 추가할 수 있습니다.",
+                    color = CutColors.secondaryText)
+                Button(onClick = addVideos, shape = CutShape,
+                    modifier = Modifier.heightIn(min = 52.dp)) { Text("영상 추가") }
             }
             return@Column
         }
@@ -590,8 +594,8 @@ private fun PreviewPanel(
     Column(modifier.background(CutColors.background)) {
         Box(
             modifier = Modifier.weight(1f).fillMaxWidth()
-                .clip(CutPanelShape).background(Color.Black)
-                .border(1.dp, CutColors.border, CutPanelShape),
+                .clip(CutShape).background(Color.Black)
+                .border(1.dp, CutColors.border, CutShape),
             contentAlignment = Alignment.Center,
         ) {
             AndroidView(

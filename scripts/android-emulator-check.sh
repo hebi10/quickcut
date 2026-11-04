@@ -56,25 +56,7 @@ if [ "$(adb shell run-as com.hebi.quickcut cat files/update-sentinel | tr -d '\r
 fi
 adb shell run-as com.hebi.quickcut rm files/update-sentinel
 echo "Same-signature version-code $older_version_code to $current_version_code update retained application data"
-adb shell am force-stop com.google.android.apps.nexuslauncher
-adb shell am start -W -n com.hebi.quickcut/.MainActivity
-sleep 3
-adb exec-out screencap -p > quickcut-start.png
-
-found_screen=false
-for attempt in 1 2 3 4 5; do
-  if adb shell uiautomator dump /sdcard/quickcut-ui.xml >/dev/null 2>&1 &&
-     adb shell cat /sdcard/quickcut-ui.xml | grep -q "빠른 자르기"; then
-    found_screen=true
-    break
-  fi
-  sleep 2
-done
-if [ "$found_screen" != true ]; then
-  echo "::error::QuickCut start screen could not be verified"
-  exit 1
-fi
-echo "QuickCut start screen verified"
+python3 "$repo_dir/scripts/android-startup-check.py"
 
 adb shell wm size 1280x800
 adb shell wm density 160

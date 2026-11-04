@@ -78,6 +78,14 @@ class EmulatorUpdateVerificationTest(unittest.TestCase):
             shutil.copy2(SCRIPT, root / 'scripts' / SCRIPT.name)
             shutil.copy2(SCRIPT.with_name('verify-release-gate.py'),
                          root / 'scripts' / 'verify-release-gate.py')
+            # Upgrade tests stop at the startup component boundary; startup itself
+            # has behavioral coverage in test-emulator-startup.py.
+            (root / 'scripts' / 'android-startup-check.py').write_text(
+                "import json, os\nfrom pathlib import Path\n"
+                "path = Path(os.environ['FIXTURE_DEVICE_STATE'])\n"
+                "state = json.loads(path.read_text())\n"
+                "state['reached_ui_boundary'] = True\n"
+                "path.write_text(json.dumps(state))\nraise SystemExit(31)\n", encoding='utf-8')
             (root / 'app' / 'build.gradle.kts').write_text(
                 f'versionName = "0.4.12"\nversionCode = {current}\n', encoding='utf-8')
             # Gradle produces a stand-in artifact containing the requested code.
@@ -193,3 +201,4 @@ else:
 
 if __name__ == "__main__":
     unittest.main()
+

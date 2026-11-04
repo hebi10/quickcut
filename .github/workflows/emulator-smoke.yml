@@ -22,6 +22,8 @@ on:
       - "scripts/package-smartcut-source.sh"
       - "third_party/runtime-publication-metadata/**"
       - "scripts/android-emulator-check.sh"
+      - "scripts/android-startup-check.py"
+      - "scripts/test-emulator-startup.py"
       - "scripts/test-emulator-failure.py"
       - "scripts/test-emulator-flow.py"
       - "scripts/android-instrumentation-check.sh"
@@ -61,6 +63,8 @@ on:
       - "scripts/package-smartcut-source.sh"
       - "third_party/runtime-publication-metadata/**"
       - "scripts/android-emulator-check.sh"
+      - "scripts/android-startup-check.py"
+      - "scripts/test-emulator-startup.py"
       - "scripts/test-emulator-failure.py"
       - "scripts/test-emulator-flow.py"
       - "scripts/android-instrumentation-check.sh"
@@ -170,6 +174,7 @@ jobs:
         run: |
           bash -n scripts/android-emulator-check.sh scripts/android-instrumentation-check.sh scripts/android-dialog-geometry-check.sh
           python3 scripts/test-emulator-failure.py
+          python3 scripts/test-emulator-startup.py
           python3 scripts/test-emulator-flow.py
           python3 scripts/test-dialog-geometry.py
       - name: Start bounded emulator host resource monitor
@@ -303,6 +308,7 @@ jobs:
           name: quickcut-emulator-start-api-${{ matrix.api }}
           path: |
             quickcut-start.png
+            quickcut-startup-diagnostics/
             quickcut-tablet-start.png
             quickcut-fast-review.png
             quickcut-design-review/

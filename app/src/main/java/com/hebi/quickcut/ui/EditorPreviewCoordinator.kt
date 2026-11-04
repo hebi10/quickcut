@@ -21,10 +21,12 @@ internal class EditorPreviewCoordinator(
     private val modelPosition: () -> Long,
     private val publishPosition: (Long) -> Unit,
     initiallyActive: Boolean = true,
+    private val canPrepare: () -> Boolean = { true },
 ) {
     private var loadedTimeline: EditTimeline? = null
     private var publishedPosition = 0L
     private var active = initiallyActive
+    private var playbackNeedsRelease = false
 
     /** User pauses keep media ready; an invisible preview relinquishes its playback resources. */
     fun setActive(value: Boolean) {
@@ -34,11 +36,25 @@ internal class EditorPreviewCoordinator(
             active = false
             // Invalidate before player callbacks can observe any stop/release state.
             loadedTimeline = null
+            playbackNeedsRelease = false
             player.pause()
             player.stop()
         } else {
             active = true
             replaceTimeline(timeline())
+        }
+    }
+
+    fun outputChanged() {
+        if (!active) return
+        if (canPrepare()) {
+            replaceTimeline(timeline())
+        } else if (playbackNeedsRelease) {
+            synchronizePosition()
+            loadedTimeline = null
+            playbackNeedsRelease = false
+            player.pause()
+            player.stop()
         }
     }
 
@@ -56,7 +72,7 @@ internal class EditorPreviewCoordinator(
     }
 
     fun replaceTimeline(replacement: EditTimeline): Boolean {
-        if (!active || replacement != timeline()) return false
+        if (!active || !canPrepare() || replacement != timeline()) return false
         if (loadedTimeline == replacement) {
             onModelChanged()
             return true
@@ -64,11 +80,13 @@ internal class EditorPreviewCoordinator(
         loadedTimeline = null
         player.pause()
         if (replacement.isEmpty) {
+            playbackNeedsRelease = false
             player.stop()
             return false
         }
         val position = modelPosition().coerceIn(0L, replacement.totalDurationMs)
         // Ignore all callbacks until the complete replacement has been configured.
+        playbackNeedsRelease = true
         player.replace(replacement, position)
         publishedPosition = position
         loadedTimeline = replacement
@@ -104,7 +122,7 @@ internal class EditorPreviewCoordinator(
     }
 
     fun togglePlayback() {
-        if (!active || loadedTimeline != timeline()) return
+        if (!active || !canPrepare() || loadedTimeline != timeline()) return
         if (player.playing) {
             pause()
         } else {
@@ -120,8 +138,9 @@ internal class EditorPreviewCoordinator(
 
     /** A failed/idle player needs prepare again, even when its composition has not changed. */
     fun retryPlayback(): Boolean {
-        if (!active || timeline().isEmpty) return false
+        if (!active || !canPrepare() || timeline().isEmpty) return false
         loadedTimeline = null
+        playbackNeedsRelease = false
         player.pause()
         player.stop()
         if (!replaceTimeline(timeline())) return false

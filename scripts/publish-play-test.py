@@ -112,7 +112,15 @@ def observe(api, tracks, code):
     return states
 
 
-def publish(api, bundle, code, version, notes, target='closed', closed='alpha'):
+def authorize_target(target, event_name, event):
+    if target not in ('internal', 'closed', 'both'):
+        raise ValueError('Target must be internal, closed, or both')
+    if target != 'internal' and (event_name != 'workflow_dispatch'
+            or event.get('inputs', {}).get('target') != target):
+        raise ValueError('Closed testing requires an explicit matching workflow_dispatch selection')
+
+
+def publish(api, bundle, code, version, notes, target='internal', closed='alpha'):
     if code <= 0 or not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', version):
         raise ValueError('Invalid source version')
     if not notes.strip() or len(notes) > 500:
@@ -177,10 +185,13 @@ def main():
     parser.add_argument('--version', required=True)
     parser.add_argument('--version-code', type=int, required=True)
     parser.add_argument('--notes', type=Path, required=True)
-    parser.add_argument('--target', choices=('internal', 'closed', 'both'), default='closed')
+    parser.add_argument('--target', choices=('internal', 'closed', 'both'), default='internal')
     parser.add_argument('--closed-track', default='alpha')
     parser.add_argument('--result', type=Path, required=True)
     args = parser.parse_args()
+    event_path = os.environ.get('GITHUB_EVENT_PATH')
+    event = json.loads(Path(event_path).read_text(encoding='utf-8')) if event_path else {}
+    authorize_target(args.target, os.environ.get('GITHUB_EVENT_NAME', ''), event)
     if not args.bundle.is_file() or not args.bundle.stat().st_size:
         raise ValueError('Signed AAB is missing')
     result = publish(PublisherAPI(os.environ.get('PLAY_ACCESS_TOKEN', '')), args.bundle,

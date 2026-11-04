@@ -42,6 +42,15 @@ def event_sha(event, event_name, repo, ref, sha):
     return sha
 
 
+def play_target(event, event_name):
+    target = event.get('inputs', {}).get('target', 'internal')
+    if event_name == 'workflow_run' and target == 'internal':
+        return 'internal'
+    if event_name == 'workflow_dispatch' and target in ('internal', 'closed'):
+        return target
+    raise ValueError('Automatic Play releases target internal; closed requires an explicit manual selection')
+
+
 def evaluate(repo, sha, tag, fetch, mode="release"):
     if mode not in ("release", "play"):
         raise ValueError("Unknown publication gate mode")
@@ -122,6 +131,8 @@ def main():
     ready, reason = evaluate(repo, sha, tag, api_fetch, mode=args.mode)
     values = {'ready': str(ready).lower(), 'sha': sha, 'tag': tag,
               'version': version, 'version_code': code}
+    if args.mode == 'play':
+        values['target'] = play_target(event, os.environ['GITHUB_EVENT_NAME'])
     if os.environ.get('GITHUB_OUTPUT'):
         with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
             for key, value in values.items():

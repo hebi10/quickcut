@@ -1,6 +1,6 @@
 # Google Play 테스트 배포
 
-`Google Play test release`는 `main`의 `Android build` 및 `Android emulator smoke`가 같은 커밋에서 성공한 뒤 기존 비공개 테스트 트랙을 업데이트합니다. 수동 실행의 `target`은 `closed`(기본), `internal`, `both`입니다. 프로덕션과 오픈 테스트 배포, 테스터 목록 변경은 지원하지 않습니다.
+`Google Play test release`는 `main`의 `Android build` 및 `Android emulator smoke`가 같은 커밋에서 성공한 뒤 기존 내부 테스트 트랙을 업데이트합니다. 수동 실행의 `target`은 `internal`(기본), `closed`입니다. 비공개 테스트는 수동 실행에서 `closed`를 명시적으로 선택한 경우에만 업데이트합니다. 자동 실행에 비공개 대상이 전달되면 게이트와 게시 스크립트가 거부합니다. 프로덕션과 오픈 테스트 배포, 테스터 목록 변경은 지원하지 않습니다.
 
 기존 `Signed release APK`의 GitHub 태그·릴리스 생성은 그대로 유지됩니다. Play 게이트는 기존 GitHub 태그가 있어도 실행할 수 있으나, 현재 `main` HEAD와 두 검증 워크플로의 최신 성공 실행을 반드시 확인합니다. 새 커밋에 대한 검증이 끝나지 않았거나 검증이 실패한 경우 서명 및 배포를 시작하지 않습니다. 빌드 후 게시 직전에도 같은 조건을 확인합니다.
 

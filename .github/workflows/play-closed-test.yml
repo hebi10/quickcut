@@ -1,0 +1,230 @@
+name: Google Play test release
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Existing test tracks to update
+        required: true
+        default: closed
+        type: choice
+        options: [closed, internal, both]
+  workflow_run:
+    workflows: [Android build, Android emulator smoke]
+    branches: [main]
+    types: [completed]
+
+concurrency:
+  group: quickcut-play-test-edit
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  gate:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.repository.full_name == github.repository &&
+       github.event.workflow_run.head_repository.full_name == github.repository &&
+       (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      ready: ${{ steps.gate.outputs.ready }}
+      sha: ${{ steps.gate.outputs.sha }}
+      tag: ${{ steps.gate.outputs.tag }}
+      version: ${{ steps.gate.outputs.version }}
+      version_code: ${{ steps.gate.outputs.version_code }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          persist-credentials: false
+      - name: Test release authorization
+        run: python3 scripts/test-release-gate.py
+      - name: Require both workflows on exact current main
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/verify-release-gate.py --mode play
+
+  publish:
+    needs: gate
+    if: needs.gate.outputs.ready == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    env:
+      RELEASE_SHA: ${{ needs.gate.outputs.sha }}
+      RELEASE_TAG: ${{ needs.gate.outputs.tag }}
+      RELEASE_VERSION: ${{ needs.gate.outputs.version }}
+      RELEASE_VERSION_CODE: ${{ needs.gate.outputs.version_code }}
+      PLAY_TARGET: ${{ inputs.target || 'closed' }}
+      PLAY_CLOSED_TRACK: ${{ vars.QUICKCUT_PLAY_CLOSED_TRACK || 'alpha' }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+          persist-credentials: false
+      - name: Require complete signing and Google Play authentication before building
+        id: preflight
+        env:
+          QUICKCUT_KEYSTORE_BASE64: ${{ secrets.QUICKCUT_KEYSTORE_BASE64 }}
+          QUICKCUT_KEYSTORE_PASSWORD: ${{ secrets.QUICKCUT_KEYSTORE_PASSWORD }}
+          QUICKCUT_KEY_ALIAS: ${{ secrets.QUICKCUT_KEY_ALIAS }}
+          QUICKCUT_KEY_PASSWORD: ${{ secrets.QUICKCUT_KEY_PASSWORD }}
+          PLAY_IDENTITY_PROVIDER: ${{ vars.QUICKCUT_PLAY_WORKLOAD_IDENTITY_PROVIDER }}
+          PLAY_SERVICE_ACCOUNT: ${{ vars.QUICKCUT_PLAY_SERVICE_ACCOUNT }}
+          PLAY_CREDENTIALS_JSON: ${{ secrets.QUICKCUT_PLAY_SERVICE_ACCOUNT_JSON }}
+        run: |
+          set -euo pipefail
+          for name in QUICKCUT_KEYSTORE_BASE64 QUICKCUT_KEYSTORE_PASSWORD QUICKCUT_KEY_ALIAS QUICKCUT_KEY_PASSWORD; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Missing signing secret: $name. Configure all four existing QuickCut signing secrets."
+              exit 1
+            fi
+          done
+          if [[ -n "$PLAY_IDENTITY_PROVIDER" && -n "$PLAY_SERVICE_ACCOUNT" ]]; then
+            echo 'auth_mode=wif' >> "$GITHUB_OUTPUT"
+          elif [[ -n "$PLAY_CREDENTIALS_JSON" ]]; then
+            echo 'auth_mode=json' >> "$GITHUB_OUTPUT"
+          else
+            echo '::error::Missing Google Play auth: configure QUICKCUT_PLAY_WORKLOAD_IDENTITY_PROVIDER and QUICKCUT_PLAY_SERVICE_ACCOUNT, or an already-provided QUICKCUT_PLAY_SERVICE_ACCOUNT_JSON secret.'
+            exit 1
+          fi
+          test -s "docs/releases/$RELEASE_VERSION.md"
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Test Play publishing and signed bundle verification
+        run: |
+          python3 scripts/test-play-publisher.py
+          python3 scripts/test-play-bundle.py
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4
+        with:
+          packages: platform-tools
+      - name: Install pinned Android SDK and NDK
+        run: sdkmanager --install "platforms;android-36" "build-tools;36.0.0" "ndk;27.3.13750724"
+      - name: Install native build tools
+        timeout-minutes: 10
+        run: |
+          if [[ -f /etc/apt/apt-mirrors.txt ]] && grep -q '^https://archive\.ubuntu\.com/ubuntu/' /etc/apt/apt-mirrors.txt; then
+            sudo sed -i '\|^http://azure\.archive\.ubuntu\.com/ubuntu/[[:space:]]*priority:1$|d' /etc/apt/apt-mirrors.txt
+          fi
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update -qq
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends cmake nasm pkg-config
+      - name: Restore exact native dependency cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            build/native-smartcut
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: native-smartcut-${{ runner.os }}-${{ hashFiles('scripts/build-native-smartcut.sh', 'scripts/native-smartcut-sources.json') }}-${{ hashFiles('native/**') }}
+      - name: Build native engine with existing source and cache validation
+        run: bash scripts/build-native-smartcut.sh
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+        with:
+          gradle-version: "9.4.1"
+          cache-disabled: true
+      - name: Build APK and AAB signed with the existing QuickCut upload key
+        env:
+          QUICKCUT_KEYSTORE_BASE64: ${{ secrets.QUICKCUT_KEYSTORE_BASE64 }}
+          QUICKCUT_KEYSTORE_PASSWORD: ${{ secrets.QUICKCUT_KEYSTORE_PASSWORD }}
+          QUICKCUT_KEY_ALIAS: ${{ secrets.QUICKCUT_KEY_ALIAS }}
+          QUICKCUT_KEY_PASSWORD: ${{ secrets.QUICKCUT_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          umask 077
+          export QUICKCUT_KEYSTORE_PATH="$RUNNER_TEMP/quickcut-play.p12"
+          trap 'rm -f "$QUICKCUT_KEYSTORE_PATH"' EXIT
+          printf '%s' "$QUICKCUT_KEYSTORE_BASE64" | base64 --decode > "$QUICKCUT_KEYSTORE_PATH"
+          gradle --no-daemon -PquickcutTestVersionCode="$RELEASE_VERSION_CODE" :app:testDebugUnitTest :app:lintRelease :app:assembleRelease :app:bundleRelease
+          apk=app/build/outputs/apk/release/app-release.apk
+          bash scripts/verify-release-apk.sh "$apk"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt2" dump badging "$apk" > "$RUNNER_TEMP/play-apk-badging.txt"
+          grep -F "package: name='com.hebi.quickcut' versionCode='$RELEASE_VERSION_CODE' versionName='$RELEASE_VERSION'" "$RUNNER_TEMP/play-apk-badging.txt"
+      - name: Verify signed AAB with pinned official bundletool
+        run: |
+          set -euo pipefail
+          tool="$RUNNER_TEMP/bundletool-all-1.18.2.jar"
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+            'https://github.com/google/bundletool/releases/download/1.18.2/bundletool-all-1.18.2.jar' -o "$tool"
+          python3 scripts/verify-play-bundle.py --bundle app/build/outputs/bundle/release/app-release.aab \
+            --bundletool "$tool" --version "$RELEASE_VERSION" --version-code "$RELEASE_VERSION_CODE"
+      - name: Package corresponding source
+        run: bash scripts/package-smartcut-source.sh
+      - name: Assemble verified delivery and checksums
+        run: |
+          set -euo pipefail
+          mkdir -p build/play-delivery
+          cp app/build/outputs/apk/release/app-release.apk "build/play-delivery/QuickCut-$RELEASE_TAG-release.apk"
+          cp app/build/outputs/bundle/release/app-release.aab "build/play-delivery/QuickCut-$RELEASE_TAG-release.aab"
+          cp "build/source-delivery/quickcut-corresponding-source-${RELEASE_SHA:0:12}.tar.gz" "build/play-delivery/QuickCut-$RELEASE_TAG-source.tar.gz"
+          cp build/source-delivery/source-identity.json build/source-delivery/UPSTREAM-SOURCE-LOCATIONS.md build/play-delivery/
+          cp docs/20_NATIVE_SMART_CUT.md "build/play-delivery/QuickCut-$RELEASE_TAG-source-guide.md"
+          cp "docs/releases/$RELEASE_VERSION.md" build/play-delivery/release-notes.md
+          (
+            cd build/play-delivery
+            sha256sum -- *.apk *.aab *.tar.gz *.json *.md > SHA256SUMS
+            sha256sum --check SHA256SUMS
+          )
+      - name: Retain verified APK AAB corresponding source and checksums
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: quickcut-play-${{ needs.gate.outputs.tag }}-${{ github.run_id }}
+          path: build/play-delivery/*
+          if-no-files-found: error
+      - name: Recheck trusted CI and exact main immediately before Play edit
+        id: final_gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 scripts/verify-release-gate.py --mode play
+      - name: Authenticate Google Play with Workload Identity Federation
+        if: steps.final_gate.outputs.ready == 'true' && steps.preflight.outputs.auth_mode == 'wif'
+        id: auth_wif
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.QUICKCUT_PLAY_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.QUICKCUT_PLAY_SERVICE_ACCOUNT }}
+          token_format: access_token
+          access_token_scopes: https://www.googleapis.com/auth/androidpublisher
+          create_credentials_file: false
+          export_environment_variables: false
+      - name: Authenticate with an already-configured service account JSON
+        if: steps.final_gate.outputs.ready == 'true' && steps.preflight.outputs.auth_mode == 'json'
+        id: auth_json
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          credentials_json: ${{ secrets.QUICKCUT_PLAY_SERVICE_ACCOUNT_JSON }}
+          token_format: access_token
+          access_token_scopes: https://www.googleapis.com/auth/androidpublisher
+          create_credentials_file: false
+          export_environment_variables: false
+      - name: Update existing Google Play test tracks
+        if: steps.final_gate.outputs.ready == 'true'
+        env:
+          PLAY_ACCESS_TOKEN: ${{ steps.auth_wif.outputs.access_token || steps.auth_json.outputs.access_token }}
+        run: |
+          python3 scripts/publish-play-test.py --bundle app/build/outputs/bundle/release/app-release.aab \
+            --version "$RELEASE_VERSION" --version-code "$RELEASE_VERSION_CODE" \
+            --notes "docs/releases/$RELEASE_VERSION.md" --target "$PLAY_TARGET" --closed-track "$PLAY_CLOSED_TRACK" \
+            --result build/play-result.json
+      - name: Retain nonsecret Play transaction result
+        if: always() && steps.final_gate.outputs.ready == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: quickcut-play-result-${{ github.run_id }}
+          path: build/play-result.json
+          if-no-files-found: ignore

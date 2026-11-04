@@ -117,6 +117,19 @@ class ReleaseGateTest(unittest.TestCase):
                 self.responses[f'/repos/{REPO}/{endpoint}/v0.4.11'] = {'id': 7}
                 self.assertFalse(self.check()[0])
 
+    def test_play_mode_allows_existing_github_release(self):
+        self.responses[f'/repos/{REPO}/git/ref/tags/v0.4.11'] = {'id': 7}
+        self.assertTrue(gate.evaluate(REPO, SHA, 'v0.4.11', self.fetch, mode='play')[0])
+        self.assertFalse(any('/tags/' in path for path in self.calls))
+
+    def test_play_mode_still_requires_exact_successful_current_main(self):
+        self.runs['android.yml'][0]['conclusion'] = 'failure'
+        self.assertFalse(gate.evaluate(REPO, SHA, 'v0.4.11', self.fetch, mode='play')[0])
+
+    def test_unknown_gate_mode_fails_closed(self):
+        with self.assertRaises(ValueError):
+            gate.evaluate(REPO, SHA, 'v0.4.11', self.fetch, mode='production')
+
     def test_workflow_event_requires_same_repo_main_success(self):
         event = {'workflow_run': run_record('Android build')}
         self.assertEqual(gate.event_sha(event, 'workflow_run', REPO, '', ''), SHA)
@@ -133,3 +146,4 @@ class ReleaseGateTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+

@@ -6,6 +6,15 @@ on:
     paths:
       - ".github/workflows/emulator-smoke.yml"
       - ".github/workflows/release.yml"
+      - ".github/workflows/android.yml"
+      - ".github/workflows/play-closed-test.yml"
+      - "scripts/publish-play-test.py"
+      - "scripts/test-play-publisher.py"
+      - "scripts/verify-play-bundle.py"
+      - "scripts/VerifyBundleSignatures.java"
+      - "scripts/test-play-bundle.py"
+      - "config/release-certificate.sha256"
+      - "docs/21_PLAY_TEST_AUTOMATION.md"
       - "scripts/verify-release-gate.py"
       - "scripts/test-release-gate.py"
       - "scripts/runtime-publication-metadata.py"
@@ -36,6 +45,15 @@ on:
     paths:
       - ".github/workflows/emulator-smoke.yml"
       - ".github/workflows/release.yml"
+      - ".github/workflows/android.yml"
+      - ".github/workflows/play-closed-test.yml"
+      - "scripts/publish-play-test.py"
+      - "scripts/test-play-publisher.py"
+      - "scripts/verify-play-bundle.py"
+      - "scripts/VerifyBundleSignatures.java"
+      - "scripts/test-play-bundle.py"
+      - "config/release-certificate.sha256"
+      - "docs/21_PLAY_TEST_AUTOMATION.md"
       - "scripts/verify-release-gate.py"
       - "scripts/test-release-gate.py"
       - "scripts/runtime-publication-metadata.py"
@@ -327,5 +345,6 @@ jobs:
           name: quickcut-host-diagnostics-api-${{ matrix.api }}
           path: quickcut-host-diagnostics/
           if-no-files-found: warn
+
 
 

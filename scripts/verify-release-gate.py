@@ -42,7 +42,9 @@ def event_sha(event, event_name, repo, ref, sha):
     return sha
 
 
-def evaluate(repo, sha, tag, fetch):
+def evaluate(repo, sha, tag, fetch, mode="release"):
+    if mode not in ("release", "play"):
+        raise ValueError("Unknown publication gate mode")
     prefix = f'/repos/{repo}'
     main = fetch(prefix + '/git/ref/heads/main')
     if main['object']['sha'] != sha:
@@ -59,7 +61,7 @@ def evaluate(repo, sha, tag, fetch):
         latest = max(runs, key=lambda run: (run['run_number'], run['id']))
         if latest.get('status') != 'completed' or latest.get('conclusion') != 'success':
             return False, f"{name}: {latest.get('status')}/{latest.get('conclusion')}"
-    for endpoint in ('git/ref/tags', 'releases/tags'):
+    for endpoint in (() if mode == 'play' else ('git/ref/tags', 'releases/tags')):
         if fetch(f'{prefix}/{endpoint}/{tag}') is not None:
             return False, f'{tag} already exists; releases and assets are never overwritten'
     return True, 'Both required workflows succeeded on the exact current main commit'
@@ -100,6 +102,10 @@ def parse_release_version(gradle):
 
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--mode', choices=('release', 'play'), default='release')
+    args = parser.parse_args()
     repo = os.environ['GITHUB_REPOSITORY']
     event = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())
     sha = event_sha(event, os.environ['GITHUB_EVENT_NAME'], repo,
@@ -113,7 +119,7 @@ def main():
     gradle = Path('app/build.gradle.kts').read_text()
     version, code = parse_release_version(gradle)
     tag = 'v' + version
-    ready, reason = evaluate(repo, sha, tag, api_fetch)
+    ready, reason = evaluate(repo, sha, tag, api_fetch, mode=args.mode)
     values = {'ready': str(ready).lower(), 'sha': sha, 'tag': tag,
               'version': version, 'version_code': code}
     if os.environ.get('GITHUB_OUTPUT'):
@@ -132,3 +138,4 @@ if __name__ == '__main__':
     except (ValueError, KeyError, HTTPError) as error:
         print(f'::error::Release gate rejected: {error}', file=sys.stderr)
         sys.exit(1)
+

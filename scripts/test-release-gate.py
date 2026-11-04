@@ -45,6 +45,29 @@ class ReleaseVersionTest(unittest.TestCase):
                 gate.parse_release_version('versionName = ' + name + '\nversionCode = 16\n')
 
 
+class PlayTargetTest(unittest.TestCase):
+    def test_automatic_release_targets_internal(self):
+        self.assertEqual(gate.play_target({}, 'workflow_run'), 'internal')
+
+    def test_automatic_release_cannot_select_closed(self):
+        for target in ('closed', 'both', 'production'):
+            with self.subTest(target=target), self.assertRaises(ValueError):
+                gate.play_target({'inputs': {'target': target}}, 'workflow_run')
+
+    def test_manual_release_defaults_internal_and_allows_explicit_closed(self):
+        self.assertEqual(gate.play_target({}, 'workflow_dispatch'), 'internal')
+        for target in ('internal', 'closed'):
+            self.assertEqual(gate.play_target({'inputs': {'target': target}}, 'workflow_dispatch'), target)
+
+    def test_unknown_events_and_targets_fail_closed(self):
+        for event in ('push', 'pull_request', ''):
+            with self.subTest(event=event), self.assertRaises(ValueError):
+                gate.play_target({}, event)
+        for target in ('production', 'both', '', None):
+            with self.subTest(target=target), self.assertRaises(ValueError):
+                gate.play_target({'inputs': {'target': target}}, 'workflow_dispatch')
+
+
 class ReleaseGateTest(unittest.TestCase):
     def setUp(self):
         self.responses = {

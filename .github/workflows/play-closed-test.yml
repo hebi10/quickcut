@@ -6,9 +6,9 @@ on:
       target:
         description: Existing test tracks to update
         required: true
-        default: closed
+        default: internal
         type: choice
-        options: [closed, internal, both]
+        options: [internal, closed]
   workflow_run:
     workflows: [Android build, Android emulator smoke]
     branches: [main]
@@ -40,6 +40,7 @@ jobs:
       tag: ${{ steps.gate.outputs.tag }}
       version: ${{ steps.gate.outputs.version }}
       version_code: ${{ steps.gate.outputs.version_code }}
+      target: ${{ steps.gate.outputs.target }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -67,7 +68,7 @@ jobs:
       RELEASE_TAG: ${{ needs.gate.outputs.tag }}
       RELEASE_VERSION: ${{ needs.gate.outputs.version }}
       RELEASE_VERSION_CODE: ${{ needs.gate.outputs.version_code }}
-      PLAY_TARGET: ${{ inputs.target || 'closed' }}
+      PLAY_TARGET: ${{ needs.gate.outputs.target }}
       PLAY_CLOSED_TRACK: ${{ vars.QUICKCUT_PLAY_CLOSED_TRACK || 'alpha' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

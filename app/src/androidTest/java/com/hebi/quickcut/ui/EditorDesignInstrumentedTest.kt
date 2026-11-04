@@ -272,9 +272,32 @@ class EditorDesignInstrumentedTest {
             }
             // Playing can precede video output. Wait cheaply for the next frame's display time,
             // then pause before expensive pixel copies can outlive this short fixture.
-            compose.waitUntil(5_000L) {
-                frameSeen.get() && firstFrameReleaseNs.get().let { releaseNs ->
-                    releaseNs == C.TIME_UNSET || System.nanoTime() >= releaseNs
+            if (InstrumentationRegistry.getArguments().getString("quickcutDiagnosticVisibleBeforePause") == "true") {
+                Log.i("QuickCutPreviewTest", "barrier=actual_pixels_before_pause")
+                try {
+                    compose.waitUntil(5_000L) {
+                        compose.runOnUiThread {
+                            check(player.playbackState != Player.STATE_ENDED) {
+                                "Diagnostic clip ended before visible pixels; no replay or extension"
+                            }
+                        }
+                        previewHasRenderedColor()
+                    }
+                    compose.runOnUiThread {
+                        check(player.isPlaying && player.playbackState != Player.STATE_ENDED) {
+                            "Diagnostic clip stopped before pause"
+                        }
+                    }
+                    Log.i("QuickCutPreviewTest", "pre_pause_sample=$lastPreviewSample")
+                } catch (failure: Throwable) {
+                    runCatching { capturePreviewFailure(player) }
+                    throw failure
+                }
+            } else {
+                compose.waitUntil(5_000L) {
+                    frameSeen.get() && firstFrameReleaseNs.get().let { releaseNs ->
+                        releaseNs == C.TIME_UNSET || System.nanoTime() >= releaseNs
+                    }
                 }
             }
             compose.onNodeWithContentDescription("일시정지").performClick()

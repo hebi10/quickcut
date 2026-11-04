@@ -15,7 +15,7 @@ git rev-parse 'HEAD^{tree}' > "$output/source-tree.txt"
 printf '%s\n' "$method" > "$output/method.txt"
 timeout --kill-after=2s 10s adb shell getprop > "$output/device-properties.txt"
 
-for profile in original_pattern solid_blue; do
+for profile in original_pattern solid_blue original_visible_before_pause; do
   destination="$output/$profile"
   mkdir -p "$destination"
   rm -rf "$results" "$reports"
@@ -28,6 +28,11 @@ for profile in original_pattern solid_blue; do
     color_filter=drawbox=x=0:y=0:w=iw:h=ih:color=blue:t=fill
     output_filters=(-vf "$color_filter")
   fi
+  diagnostic_arguments=()
+  if [[ "$profile" == original_visible_before_pause ]]; then
+    cp "$output/original_pattern/fixture.mp4" app/src/androidTest/assets/quickcut_keyframes.mp4
+    diagnostic_arguments=(-Pandroid.testInstrumentationRunnerArguments.quickcutDiagnosticVisibleBeforePause=true)
+  else
   ffmpeg -hide_banner -loglevel error -y \
     -f lavfi -i "$video_filter" \
     -f lavfi -i sine=frequency=880:sample_rate=44100 \
@@ -35,6 +40,7 @@ for profile in original_pattern solid_blue; do
     -g 60 -keyint_min 60 -sc_threshold 0 \
     -c:a aac -b:a 64k -shortest \
     app/src/androidTest/assets/quickcut_keyframes.mp4
+  fi
   fixture=app/src/androidTest/assets/quickcut_keyframes.mp4
   cp "$fixture" "$destination/fixture.mp4"
   (cd "$destination" && sha256sum fixture.mp4 > fixture.sha256)
@@ -46,6 +52,7 @@ for profile in original_pattern solid_blue; do
   timeout --kill-after=30s 10m gradle --no-daemon \
     -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true \
     -Pandroid.testInstrumentationRunnerArguments.class="$method" \
+    "${diagnostic_arguments[@]}" \
     :app:connectedDebugAndroidTest > "$destination/gradle.log" 2>&1 || gradle_status=$?
   cat "$destination/gradle.log"
   if [[ "$gradle_status" -ne 0 && "$first_failure" -eq 0 ]]; then first_failure="$gradle_status"; fi

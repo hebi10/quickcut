@@ -7,8 +7,11 @@ import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.view.SurfaceView
+import android.view.PixelCopy
 import android.view.View
 import android.view.ViewGroup
 import androidx.activity.ComponentActivity
@@ -64,6 +67,9 @@ import com.hebi.quickcut.settings.QuickTrimSettings
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
@@ -373,9 +379,17 @@ class EditorDesignInstrumentedTest {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val directory = File(checkNotNull(instrumentation.targetContext.getExternalFilesDir(null)), "preview-diagnostics")
         check(directory.isDirectory || directory.mkdirs())
+        val surfaceImage = File(directory, "preview-surface.png")
+        check(!surfaceImage.exists() || surfaceImage.delete()) { "Cannot remove the previous Surface diagnostic" }
         val state = lastPreviewSample.put("capture_elapsed_ns", SystemClock.elapsedRealtimeNanos()).put("capture_mono_ns", System.nanoTime())
+        var outputView: SurfaceView? = null
+        var outputWidth = 0
+        var outputHeight = 0
         compose.runOnUiThread {
             val view = previewView()
+            outputView = view?.videoSurfaceView as? SurfaceView
+            outputWidth = outputView?.width ?: 0
+            outputHeight = outputView?.height ?: 0
             val surface = (view?.videoSurfaceView as? SurfaceView)?.holder?.surface
             state.put("player_id", System.identityHashCode(player)).put("view_id", System.identityHashCode(view))
                 .put("current_position_ms", player.currentPosition).put("playback_state", player.playbackState)
@@ -390,12 +404,51 @@ class EditorDesignInstrumentedTest {
                     state.put(name, JSONArray(listOf(location[0], location[1], it.width, it.height)))
                 }
             }
+            for (name in listOf("exo_shutter", "exo_image", "exo_artwork")) {
+                val id = instrumentation.targetContext.resources.getIdentifier(name, "id", instrumentation.targetContext.packageName)
+                val overlay = if (id != 0) view?.findViewById<View>(id) else null
+                state.put(name, JSONObject().put("found", overlay != null).put("visibility", overlay?.visibility ?: -1)
+                    .put("alpha", overlay?.alpha ?: -1f).put("shown", overlay?.isShown ?: false))
+            }
+            state.put("overlay_capture_mono_ns", System.nanoTime())
         }
         val bitmap = checkNotNull(instrumentation.uiAutomation.takeScreenshot())
         File(directory, "preview-failure.png").outputStream().use {
             check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it))
         }
         bitmap.recycle()
+        val surfaceView = outputView
+        if (surfaceView != null && outputWidth > 0 && outputHeight > 0) {
+            val copy = Bitmap.createBitmap(outputWidth, outputHeight, Bitmap.Config.ARGB_8888)
+            val finished = CountDownLatch(1)
+            val result = AtomicInteger(-1)
+            val requestTime = AtomicLong(0L)
+            val callbackTime = AtomicLong(0L)
+            state.put("pixel_copy_start_mono_ns", System.nanoTime())
+            compose.runOnUiThread {
+                try {
+                    requestTime.set(System.nanoTime())
+                    PixelCopy.request(surfaceView, copy, { status ->
+                        result.set(status)
+                        callbackTime.set(System.nanoTime())
+                        finished.countDown()
+                    }, Handler(Looper.getMainLooper()))
+                } catch (error: Exception) {
+                    result.set(-2)
+                    callbackTime.set(System.nanoTime())
+                    finished.countDown()
+                }
+            }
+            check(Looper.myLooper() != Looper.getMainLooper())
+            val completed = finished.await(2L, TimeUnit.SECONDS)
+            state.put("pixel_copy_completed", completed).put("pixel_copy_result", result.get())
+                .put("pixel_copy_request_mono_ns", requestTime.get())
+                .put("pixel_copy_callback_mono_ns", callbackTime.get()).put("pixel_copy_wait_end_mono_ns", System.nanoTime())
+            if (completed && result.get() == PixelCopy.SUCCESS) {
+                surfaceImage.outputStream().use { check(copy.compress(Bitmap.CompressFormat.PNG, 100, it)) }
+            }
+            if (completed) copy.recycle()
+        }
         File(directory, "preview-sample.json").writeText(state.toString(2))
         Log.i("QuickCutPreviewTest", "failure_state=$state")
         fun shell(command: String) {
@@ -403,8 +456,9 @@ class EditorDesignInstrumentedTest {
             ParcelFileDescriptor.AutoCloseInputStream(fd).bufferedReader().use { it.readText() }
         }
         shell("mkdir -p /data/local/tmp/quickcut-preview-diagnostics")
-        for (name in listOf("preview-failure.png", "preview-sample.json")) {
+        for (name in listOf("preview-failure.png", "preview-sample.json", "preview-surface.png")) {
             val file = File(directory, name)
+            if (!file.isFile) continue
             require(file.absolutePath.matches(Regex("[A-Za-z0-9_./-]+")))
             shell("cp ${file.absolutePath} /data/local/tmp/quickcut-preview-diagnostics/$name")
         }

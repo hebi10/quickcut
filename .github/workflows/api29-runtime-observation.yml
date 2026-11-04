@@ -1,0 +1,148 @@
+name: QuickCut API29 runtime observation
+
+on:
+  push:
+    branches: [codex/api29-runtime-observation-20261104]
+
+permissions:
+  contents: read
+
+jobs:
+  observe:
+    name: observe (${{ matrix.profile }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [full, background_class]
+    steps:
+      - name: Check out the approved application source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: 57fe35bfffa09ef4f349bbf20a5302532d1fbde6
+          persist-credentials: false
+      - name: Check out only the observer from this workflow commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          path: observer-code
+          sparse-checkout: scripts/diagnose-api29-runtime.py
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Isolate the observer and verify the clean approved source
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_sha=57fe35bfffa09ef4f349bbf20a5302532d1fbde6
+          source_tree=8bf24c931b2e353639b45179a641f2fcad7335d2
+          observer_dir="$GITHUB_WORKSPACE/observer-code"
+          test "$(git -C "$observer_dir" rev-parse HEAD)" = "$GITHUB_SHA"
+          cp -- "$observer_dir/scripts/diagnose-api29-runtime.py" "$RUNNER_TEMP/diagnose-api29-runtime.py"
+          {
+            printf 'diagnostic_commit=%s\n' "$GITHUB_SHA"
+            printf 'application_commit=%s\n' "$(git rev-parse HEAD)"
+            printf 'application_tree=%s\n' "$(git rev-parse 'HEAD^{tree}')"
+            sha256sum "$RUNNER_TEMP/diagnose-api29-runtime.py"
+          } > "$RUNNER_TEMP/quickcut-api29-observer-provenance.txt"
+          rm -rf -- "$observer_dir"
+          test "$(git rev-parse HEAD)" = "$source_sha"
+          test "$(git rev-parse 'HEAD^{tree}')" = "$source_tree"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          python3 -m py_compile "$RUNNER_TEMP/diagnose-api29-runtime.py"
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4
+        with:
+          packages: platform-tools
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+        with:
+          gradle-version: "9.4.1"
+      - name: Reclaim runner disk space for Android emulator
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/powershell
+          sudo rm -rf /usr/local/lib/android/sdk/ndk
+          sudo apt-get clean
+          df -h /
+      - name: Install native build tools and test-video encoder
+        timeout-minutes: 10
+        run: |
+          if [[ -f /etc/apt/apt-mirrors.txt ]] && grep -q '^https://archive\.ubuntu\.com/ubuntu/' /etc/apt/apt-mirrors.txt; then
+            sudo sed -i '\|^http://azure\.archive\.ubuntu\.com/ubuntu/[[:space:]]*priority:1$|d' /etc/apt/apt-mirrors.txt
+          fi
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update -qq
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends cmake nasm pkg-config ffmpeg
+      - name: Install the existing Android SDK and NDK versions
+        run: sdkmanager --install "platforms;android-36" "build-tools;36.0.0" "ndk;27.3.13750724"
+      - name: Restore the exact native dependency cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            build/native-smartcut
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: native-smartcut-${{ runner.os }}-${{ hashFiles('scripts/build-native-smartcut.sh', 'scripts/native-smartcut-sources.json') }}-${{ hashFiles('native/**') }}
+      - name: Build the unchanged native smart-cut engine
+        run: bash scripts/build-native-smartcut.sh
+      - name: Enable KVM for Android emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Validate the original bounded instrumentation control flow
+        run: |
+          bash -n scripts/android-emulator-check.sh scripts/android-instrumentation-check.sh scripts/android-dialog-geometry-check.sh
+          python3 scripts/test-emulator-failure.py
+          python3 scripts/test-emulator-startup.py
+          python3 scripts/test-emulator-flow.py
+          python3 scripts/test-dialog-geometry.py
+      - name: Observe the approved source on a fresh API29 emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 29
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disk-size: 2048M
+          ram-size: 1536M
+          heap-size: 256M
+          emulator-boot-timeout: 300
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -no-metrics -partition-size 2048
+          disable-animations: true
+          script: >-
+            python3 "$RUNNER_TEMP/diagnose-api29-runtime.py" run
+            --profile '${{ matrix.profile }}'
+            --source-sha '57fe35bfffa09ef4f349bbf20a5302532d1fbde6'
+            --source-tree '8bf24c931b2e353639b45179a641f2fcad7335d2'
+            --output "quickcut-runtime-observation-${{ matrix.profile }}"
+      - name: Retain observer identity with the runtime evidence
+        if: always()
+        run: |
+          destination="quickcut-runtime-observation-${{ matrix.profile }}"
+          mkdir -p "$destination"
+          if [[ -f "$RUNNER_TEMP/quickcut-api29-observer-provenance.txt" ]]; then
+            cp -- "$RUNNER_TEMP/quickcut-api29-observer-provenance.txt" "$destination/observer-checkout-provenance.txt"
+          fi
+      - name: Upload this run attempt and profile evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: quickcut-api29-runtime-observation-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.profile }}
+          path: |
+            quickcut-runtime-observation-${{ matrix.profile }}/
+            app/build/outputs/androidTest-results/connected/
+            app/build/reports/androidTests/connected/
+            quickcut-native-preflight-results/
+            quickcut-native-diagnostics/
+            quickcut-main10-preflight/
+            quickcut-main10-full/
+            quickcut-startup-diagnostics/
+            quickcut-design-review/
+            quickcut-host-diagnostics/
+            quickcut-start.png
+            quickcut-tablet-start.png
+            quickcut-fast-review.png
+          if-no-files-found: warn

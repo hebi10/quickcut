@@ -34,7 +34,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
@@ -121,8 +120,8 @@ internal fun StudioStartScreen(
 @Composable
 private fun StudioWelcome(showArt: Boolean, modifier: Modifier = Modifier) {
     Column(modifier.fillMaxWidth()
-        .background(Brush.linearGradient(listOf(CutColors.panel, CutColors.surface)), CutPanelShape)
-        .border(1.dp, CutColors.border, CutPanelShape).padding(20.dp)) {
+        .background(CutColors.panel, CutShape)
+        .border(1.dp, CutColors.border, CutShape).padding(20.dp)) {
         Text("나만의 작은 편집실", color = CutColors.secondaryAccent,
             style = MaterialTheme.typography.labelMedium)
         Spacer(Modifier.height(12.dp))
@@ -137,7 +136,7 @@ private fun StudioWelcome(showArt: Boolean, modifier: Modifier = Modifier) {
             }
             if (showArt) {
                 Image(painterResource(R.drawable.quickcut_studio), contentDescription = null,
-                    modifier = Modifier.width(106.dp).height(100.dp), contentScale = ContentScale.Fit)
+                    modifier = Modifier.width(120.dp).height(110.dp), contentScale = ContentScale.Fit)
             }
         }
     }
@@ -147,6 +146,8 @@ private fun StudioWelcome(showArt: Boolean, modifier: Modifier = Modifier) {
 private fun StudioModes(onQuick: () -> Unit, onBatch: () -> Unit,
     onSelect: () -> Unit, modifier: Modifier = Modifier) {
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text("편집 모드", style = MaterialTheme.typography.titleMedium,
+            color = CutColors.primaryText)
         StudioModeCard("빠른 자르기 · 영상 1개", "앞뒤 구간을 덜어내고 간편하게",
             Icons.Outlined.ContentCut, primary = true, onClick = onQuick)
         StudioModeCard("일괄 편집 · 여러 영상", "내 프리셋으로 여러 영상을 한 번에",
@@ -160,11 +161,11 @@ private fun StudioModes(onQuick: () -> Unit, onBatch: () -> Unit,
 private fun StudioModeCard(title: String, subtitle: String, icon: ImageVector,
     primary: Boolean = false, onClick: () -> Unit) {
     val foreground = if (primary) CutColors.onAccent else CutColors.primaryText
-    Surface(onClick = onClick, shape = CutPanelShape,
+    Surface(onClick = onClick, shape = CutShape,
         color = if (primary) CutColors.accent else CutColors.surface,
         contentColor = foreground,
         border = if (primary) null else BorderStroke(1.dp, CutColors.border),
-        modifier = Modifier.fillMaxWidth().heightIn(min = 86.dp)) {
+        modifier = Modifier.fillMaxWidth().heightIn(min = 82.dp)) {
         Row(Modifier.padding(horizontal = 16.dp, vertical = 16.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -185,8 +186,8 @@ private fun StudioModeCard(title: String, subtitle: String, icon: ImageVector,
 @Composable
 private fun StudioSettings(settings: QuickTrimSettings, dateMode: SaveDateMode,
     onPreferences: () -> Unit) {
-    Column(Modifier.fillMaxWidth().background(CutColors.surface, CutPanelShape)
-        .border(1.dp, CutColors.border, CutPanelShape).padding(16.dp),
+    Column(Modifier.fillMaxWidth().background(CutColors.surface, CutShape)
+        .border(1.dp, CutColors.border, CutShape).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text("마지막 사용 설정", modifier = Modifier.weight(1f),

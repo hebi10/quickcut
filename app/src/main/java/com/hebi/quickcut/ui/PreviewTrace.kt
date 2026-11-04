@@ -42,7 +42,7 @@ internal object PreviewTrace {
         if (output is SurfaceView) {
             fun trace(name: String, holder: SurfaceHolder) = event(view.context, player, name,
                 "$identity output=${System.identityHashCode(output)} " +
-                    "surface=${System.identityHashCode(holder.surface)} generation=${holder.surface.generationId} " +
+                    "surface=${System.identityHashCode(holder.surface)} descriptor=${holder.surface} frame=${holder.surfaceFrame} " +
                     "valid=${holder.surface.isValid} view_bounds=${bounds(view)} output_bounds=${bounds(output)}")
             trace("surface.initial", output.holder)
             output.holder.addCallback(object : SurfaceHolder.Callback {

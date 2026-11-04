@@ -357,7 +357,8 @@ class EditorDesignInstrumentedTest {
             state.put("player_id", System.identityHashCode(player)).put("view_id", System.identityHashCode(view))
                 .put("current_position_ms", player.currentPosition).put("playback_state", player.playbackState)
                 .put("play_when_ready", player.playWhenReady).put("is_playing", player.isPlaying)
-                .put("surface_generation", surface?.generationId).put("surface_valid", surface?.isValid)
+                .put("surface_description", surface?.toString()).put("surface_valid", surface?.isValid)
+                .put("native_generation_source", "MediaCodec logcat surface generation")
                 .put("video_width", player.videoSize.width).put("video_height", player.videoSize.height)
             for ((name, target) in listOf("player_view_bounds" to view, "surface_view_bounds" to view?.videoSurfaceView)) {
                 target?.let {

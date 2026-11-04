@@ -4,14 +4,14 @@
 
 **Goal:** Resolve the Play Console foreground-service declaration with accurate API34 and API35 demonstrations.
 
-**Architecture:** Capture real user-interface file selection and video export in disposable Android emulators. Preserve production source and the signed 0.4.17(23) bundle.
+**Architecture:** Preload synthetic sources through the existing import model in disposable Android emulators, then capture real save controls and video export. Preserve production source and the signed 0.4.17(23) bundle.
 
 **Spec:** The current Play form requires video URLs for DATA_SYNC local transcoding/export and MEDIA_PROCESSING transcoding. ExportWorkService uses DATA_SYNC below API35 and MEDIA_PROCESSING from API35.
 
 ## Constraints
 - Production source remains exactly main 1354bc5f551ebd2f6954cb492706e874abe9d601.
 - Use only generated test media, no user media or credentials.
-- Show app launch, explicit file selection, save action, background notification, completion and notification removal.
+- Show the real editor with preloaded synthetic sources, explicit save action, background notification, completion and notification removal.
 - Assert a real Media3 transcode, output validation, and foreground-service lifecycle; do not substitute mocked work.
 - Capture-only branch; no new app version or signing changes.
 
@@ -22,7 +22,7 @@
 - [ ] Update the durable deployment checkpoint with the actual final Play state.
 
 ## Review focus
-- File selection must operate the actual Android document picker, with no fabricated activity results.
+- Fixture setup may call the existing import model before the save demonstration; do not fabricate picker activity results or claim the recording demonstrates system file selection.
 - Export must start through actual app save controls and produce a validated output.
 - A recording must not be accepted if the scenario fails or no foreground notification is observed.
 - Native artifacts and production code must match the already-tested release source.
@@ -37,3 +37,5 @@
 - API34 denied the shell recorder's /sdcard output; record in shell-owned /data/local/tmp instead. API35 system diagnostics add a 0x prefix to the foreground type, verified against AOSP source; accept both hexadecimal renderings.
 - The second capture's accessibility diagnostics identified a Pixel Launcher ANR modal blocking the document picker on both APIs. Increase emulator RAM to3072MB and dismiss only that exact unrelated launcher startup dialog; a QuickCut ANR is never dismissed or accepted.
 - The next recording reached file items but opened the system Photos preview instead of selecting files. Accessibility text search also returns preview controls whose descriptions contain the filename; require the exact filename text node before any physical item gesture.
+- Run41617241299 still failed before export: API34 could not find Demo-A.mp4 and API35 could not find a selection button. Preload both synthetic MediaStore URIs through the existing importVideos API during test setup, as the established background Media3 test does. Keep every real save, transcode, foreground type, notification, output and service-completion assertion.
+

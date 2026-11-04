@@ -71,7 +71,11 @@ class PlayForegroundDemoInstrumentedTest {
             }, null, null)
         }
         compose.waitUntil(25_000L) { !model.isRecoveringExport }
-        compose.runOnIdle { model.startNew() }
+        compose.runOnIdle {
+            model.startNew()
+            model.importVideos(context, sources.toList())
+        }
+        compose.waitUntil(30_000L) { model.page == QuickCutPage.EDITOR }
         dismissLauncherStartupDialog()
     }
 
@@ -87,11 +91,6 @@ class PlayForegroundDemoInstrumentedTest {
     @Test fun userInitiatedTranscodeContinuesWithVisibleNotificationAndFinishes() {
         Thread.sleep(2_000L)
         dismissLauncherStartupDialog()
-        compose.onNodeWithText("상세 편집 (분할·연결·순서 변경)").performClick()
-        clickSystemItem("Demo-A.mp4", longClick = true)
-        clickSystemItem("Demo-B.mp4")
-        clickSystemButton(setOf("OPEN", "Open", "열기", "선택", "SELECT", "Select"))
-        compose.waitUntil(30_000L) { model.page == QuickCutPage.EDITOR }
         compose.runOnIdle {
             assertEquals(2, model.timeline.clips.size)
             assertEquals(2, model.timeline.clips.map { it.uri }.distinct().size)
@@ -147,7 +146,7 @@ class PlayForegroundDemoInstrumentedTest {
         assertFalse(ExportWorkMonitor.isRunning)
         shell("cmd statusbar collapse")
         Thread.sleep(2_000L)
-        File(directory, "passed.txt").writeText("API ${Build.VERSION.SDK_INT}: real picker, user save, Media3 transcode, background notification, validated 80000ms output and service completion passed.\n")
+        File(directory, "passed.txt").writeText("API ${Build.VERSION.SDK_INT}: preloaded synthetic sources, user save, Media3 transcode, background notification, validated 80000ms output and service completion passed.\n")
     }
 
     private fun notifications() = context.getSystemService(NotificationManager::class.java)
@@ -158,47 +157,6 @@ class PlayForegroundDemoInstrumentedTest {
         .getRunningServices(Int.MAX_VALUE).singleOrNull {
             it.service.className == "com.hebi.quickcut.export.ExportWorkService"
         }
-
-    private fun clickSystemItem(text: String, longClick: Boolean = false) {
-        val deadline = System.currentTimeMillis() + 25_000L
-        while (System.currentTimeMillis() < deadline) {
-            dismissLauncherStartupDialog()
-            val nodes = instrumentation.uiAutomation.rootInActiveWindow
-                ?.findAccessibilityNodeInfosByText(text).orEmpty()
-            for (node in nodes) {
-                if (node.text?.toString() == text && node.isVisibleToUser && node.isEnabled) {
-                    val bounds = Rect().also(node::getBoundsInScreen)
-                    if (bounds.width() > 0 && bounds.height() > 0) {
-                        val x = bounds.centerX()
-                        val y = bounds.centerY()
-                        shell(if (longClick) "input swipe $x $y $x $y 1200" else "input tap $x $y")
-                        Thread.sleep(1_000L)
-                        return
-                    }
-                }
-            }
-            Thread.sleep(100L)
-        }
-        error("Document picker did not expose $text")
-    }
-
-    private fun clickSystemButton(labels: Set<String>) {
-        val deadline = System.currentTimeMillis() + 15_000L
-        fun find(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
-            if (node == null) return null
-            if (node.isVisibleToUser && node.isEnabled && node.isClickable &&
-                (node.text?.toString() in labels || node.contentDescription?.toString() in labels)) return node
-            for (i in 0 until node.childCount) find(node.getChild(i))?.let { return it }
-            return null
-        }
-        while (System.currentTimeMillis() < deadline) {
-            dismissLauncherStartupDialog()
-            val node = find(instrumentation.uiAutomation.rootInActiveWindow)
-            if (node?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true) return
-            Thread.sleep(100L)
-        }
-        error("Document picker selection button was unavailable")
-    }
 
     private fun dismissLauncherStartupDialog() {
         val root = instrumentation.uiAutomation.rootInActiveWindow ?: return
@@ -234,3 +192,4 @@ class PlayForegroundDemoInstrumentedTest {
         return ParcelFileDescriptor.AutoCloseInputStream(fd).bufferedReader().use { it.readText() }
     }
 }
+

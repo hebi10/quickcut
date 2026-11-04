@@ -5,6 +5,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Rect
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Handler
 import android.os.Build
@@ -85,6 +86,8 @@ class StoreScenicCaptureInstrumentedTest {
     private var previousSession: EditorSessionSnapshot? = null
     private lateinit var source: File
     private var sourceDurationMs = 0L
+    private var sourceVideoWidth = 0
+    private var sourceVideoHeight = 0
     private val selectedEndMs get() = sourceDurationMs - 623L
     private val resultDurationMs get() = selectedEndMs - 4_000L
     private val captures = JSONArray()
@@ -109,6 +112,14 @@ class StoreScenicCaptureInstrumentedTest {
         assertTrue("The imported eight-second source reported ${metadata.durationMs} ms",
             metadata.durationMs in 8_000L..8_050L)
         sourceDurationMs = metadata.durationMs
+        val retriever = MediaMetadataRetriever()
+        try {
+            retriever.setDataSource(source.absolutePath)
+            sourceVideoWidth = checkNotNull(retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)).toInt()
+            sourceVideoHeight = checkNotNull(retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)).toInt()
+            assertEquals(1280, sourceVideoWidth)
+            assertEquals(720, sourceVideoHeight)
+        } finally { retriever.release() }
         assertTrue("The source must contain the generated AAC audio track", metadata.hasAudio)
         checkNotNull(MediaReader.thumbnail(context, Uri.fromFile(source), 4_000L))
         compose.runOnUiThread { editor = EditorViewModel(context.applicationContext as Application) }
@@ -269,10 +280,11 @@ class StoreScenicCaptureInstrumentedTest {
         return find(compose.activity.window.decorView)
     }
 
-    private data class PreviewGeometry(val surface: Rect, val content: Rect, val videoWidth: Int, val videoHeight: Int) {
+    private data class PreviewGeometry(val surface: Rect, val content: Rect, val videoWidth: Int, val videoHeight: Int,
+        val videoSizeSource: String) {
         fun json() = JSONObject().put("surfaceBounds", surface.toShortString())
             .put("contentBounds", content.toShortString())
-            .put("videoWidth", videoWidth).put("videoHeight", videoHeight)
+            .put("videoWidth", videoWidth).put("videoHeight", videoHeight).put("videoSizeSource", videoSizeSource)
     }
 
     private fun previewGeometry(): PreviewGeometry? {
@@ -281,18 +293,22 @@ class StoreScenicCaptureInstrumentedTest {
             val preview = previewView() ?: return@runOnUiThread
             val surface = preview.videoSurfaceView ?: return@runOnUiThread
             val video = preview.player?.videoSize ?: return@runOnUiThread
-            if (surface.width <= 0 || surface.height <= 0 || video.width <= 0 || video.height <= 0) return@runOnUiThread
+            if (surface.width <= 0 || surface.height <= 0) return@runOnUiThread
+            val reported = video.width > 0 && video.height > 0
+            val videoWidth = if (reported) video.width else sourceVideoWidth
+            val videoHeight = if (reported) video.height else sourceVideoHeight
+            if (videoWidth <= 0 || videoHeight <= 0) return@runOnUiThread
             val location = IntArray(2)
             surface.getLocationOnScreen(location)
             val bounds = Rect(location[0], location[1], location[0] + surface.width, location[1] + surface.height)
-            val aspect = video.width * video.pixelWidthHeightRatio / video.height
+            val aspect = videoWidth * (if (reported) video.pixelWidthHeightRatio else 1f) / videoHeight
             val width = minOf(surface.width.toFloat(), surface.height * aspect)
             val height = width / aspect
             val left = bounds.left + (surface.width - width) / 2f
             val top = bounds.top + (surface.height - height) / 2f
             geometry = PreviewGeometry(bounds,
                 Rect(left.toInt(), top.toInt(), (left + width).toInt(), (top + height).toInt()),
-                video.width, video.height)
+                videoWidth, videoHeight, if (reported) "player" else "importedSourceMetadata")
         }
         return geometry
     }

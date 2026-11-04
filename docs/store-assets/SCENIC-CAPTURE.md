@@ -9,8 +9,11 @@ The workflow `store-scenic-capture.yml` runs only
 `EditorViewModel`, enters the quick trim values `4` and `0.623`, plays and pauses
 both actual preview players, and verifies a decoded first frame with `PixelCopy`
 before each untouched device screenshot. The detailed screen also waits for its
-actual timeline thumbnail. The source is 8,000 ms; the retained range is
-4,000–7,377 ms and the result is 3,377 ms. Visible UI times use the app's normal
+actual timeline thumbnail. FFprobe verifies the encoded source is exactly eight
+seconds. Android's metadata reader may include a small codec timing difference
+(8,023 ms on the API 35 capture device). The test records that actual imported
+duration, retains the range from 4,000 ms to the imported duration minus 623 ms,
+and verifies the resulting real bounds. Visible UI times use the app's normal
 formatting.
 
 The original colorbar regression fixtures and tests are unchanged. Product and

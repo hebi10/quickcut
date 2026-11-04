@@ -47,10 +47,13 @@ assert cases[0].find("failure") is None
 evidence = root / "evidence"
 assert (evidence / "passed.txt").is_file(), "Missing successful capture evidence"
 record = json.loads((evidence / "evidence.json").read_text())
-assert record["sourceDurationMs"] == 8000
+assert record["encodedDurationMs"] == 8000
+assert 8000 <= record["sourceDurationMs"] <= 8050
+assert record["leadingRemovedMs"] == 4000
+assert record["trailingRemovedMs"] == 623
 assert record["selectedStartMs"] == 4000
-assert record["selectedEndMs"] == 7377
-assert record["resultDurationMs"] == 3377
+assert record["selectedEndMs"] == record["sourceDurationMs"] - 623
+assert record["resultDurationMs"] == record["selectedEndMs"] - 4000
 source_hash = hashlib.sha256((root / "source.mp4").read_bytes()).hexdigest()
 assert record["sourceSha256"] == source_hash, "Imported source differs from the generated file"
 assert len(record["captures"]) == 2

@@ -81,6 +81,9 @@ class StoreScenicCaptureInstrumentedTest {
     private lateinit var previousQuick: QuickTrimSettings
     private var previousSession: EditorSessionSnapshot? = null
     private lateinit var source: File
+    private var sourceDurationMs = 0L
+    private val selectedEndMs get() = sourceDurationMs - 623L
+    private val resultDurationMs get() = selectedEndMs - 4_000L
     private val captures = JSONArray()
 
     @Before fun prepareNewScenicSource() {
@@ -96,7 +99,9 @@ class StoreScenicCaptureInstrumentedTest {
             source.outputStream().use { output -> input.copyTo(output) }
         }
         val metadata = MediaReader.metadata(context, Uri.fromFile(source))
-        assertEquals("The imported store source must be the new eight-second video", 8_000L, metadata.durationMs)
+        assertTrue("The imported eight-second source reported ${metadata.durationMs} ms",
+            metadata.durationMs in 8_000L..8_050L)
+        sourceDurationMs = metadata.durationMs
         assertTrue("The source must contain the generated AAC audio track", metadata.hasAudio)
         checkNotNull(MediaReader.thumbnail(context, Uri.fromFile(source), 4_000L))
         compose.runOnUiThread { editor = EditorViewModel(context.applicationContext as Application) }
@@ -156,20 +161,22 @@ class StoreScenicCaptureInstrumentedTest {
         capture("store_scenic_detailed", thumbnailVisible = true)
 
         val evidence = JSONObject().put("sourceFile", "quickcut_store_scenic.mp4")
-            .put("sourceSha256", sha256(source)).put("sourceDurationMs", 8_000L)
+            .put("sourceSha256", sha256(source)).put("encodedDurationMs", 8_000L)
+            .put("sourceDurationMs", sourceDurationMs)
             .put("leadingRemovedMs", 4_000L).put("trailingRemovedMs", 623L)
-            .put("selectedStartMs", 4_000L).put("selectedEndMs", 7_377L)
-            .put("resultDurationMs", 3_377L).put("captures", captures)
+            .put("selectedStartMs", 4_000L).put("selectedEndMs", selectedEndMs)
+            .put("resultDurationMs", resultDurationMs).put("captures", captures)
         saveEvidenceFile("evidence.json", evidence.toString(2))
         saveEvidenceFile("passed.txt", "Actual new source imported; both real player surfaces rendered and paused; timeline bounds retained.\n")
     }
 
     private fun assertReviewedBounds() = compose.runOnIdle {
         val clip = editor.timeline.clips.single()
-        assertEquals(8_000L, clip.sourceDurationMs)
+        assertEquals(sourceDurationMs, clip.sourceDurationMs)
         assertEquals(4_000L, clip.startMs)
-        assertEquals(7_377L, clip.endMs)
-        assertEquals(3_377L, clip.durationMs)
+        assertEquals(623L, clip.sourceDurationMs - clip.endMs)
+        assertEquals(selectedEndMs, clip.endMs)
+        assertEquals(resultDurationMs, clip.durationMs)
         assertTrue(editor.errorMessage == null)
         assertTrue(editor.canStartExport)
     }
@@ -292,7 +299,7 @@ class StoreScenicCaptureInstrumentedTest {
     }
 
     private fun timelineThumbnailHasImage(): Boolean {
-        val tile = compose.onNode(hasClickAction() and hasText(formatTime(3_377L)))
+        val tile = compose.onNode(hasClickAction() and hasText(formatTime(resultDurationMs)))
             .fetchSemanticsNode().boundsInWindow
         if (tile.width <= 0f || tile.height <= 0f) return false
         val screenshot = InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot() ?: return false

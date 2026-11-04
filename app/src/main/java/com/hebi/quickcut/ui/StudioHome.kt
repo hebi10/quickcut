@@ -135,7 +135,7 @@ private fun StudioWelcome(showArt: Boolean, modifier: Modifier = Modifier) {
                     color = CutColors.secondaryText, style = MaterialTheme.typography.bodySmall)
             }
             if (showArt) {
-                Image(painterResource(R.drawable.quickcut_studio), contentDescription = null,
+                Image(painterResource(R.drawable.quickcut_new_edit), contentDescription = null,
                     modifier = Modifier.width(120.dp).height(110.dp), contentScale = ContentScale.Fit)
             }
         }

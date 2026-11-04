@@ -33,7 +33,7 @@ Google Cloud 프로젝트에서 Android Publisher API를 활성화하고, GitHub
 
 ## 버전과 산출물
 
-현재 소스 버전은 `0.4.17`, `versionCode`는 `23`입니다. APK와 AAB는 동일한 커밋의 버전 선언을 사용합니다. 새 앱 버전을 배포할 때는 `app/build.gradle.kts`의 버전 코드가 Play의 기존 최댓값보다 커야 하며, `docs/releases/VERSION.md`에 해당 버전의 한국어 릴리스 노트를 함께 커밋합니다. 노트는 Play 제한에 맞게 공백 포함 500자 이하로 작성합니다.
+현재 소스 버전은 `0.4.18`, `versionCode`는 `24`입니다. APK와 AAB는 동일한 커밋의 버전 선언을 사용합니다. 새 앱 버전을 배포할 때는 `app/build.gradle.kts`의 버전 코드가 Play의 기존 최댓값보다 커야 하며, `docs/releases/VERSION.md`에 해당 버전의 한국어 릴리스 노트를 함께 커밋합니다. 노트는 Play 제한에 맞게 공백 포함 500자 이하로 작성합니다.
 
 이미 같은 versionCode의 AAB가 Play에 있으면 다시 업로드하지 않고 그 바이너리를 선택한 테스트 트랙으로 승격합니다. 선택한 트랙에 같은 코드의 `completed` 릴리스가 있으면 해당 트랙은 변경하지 않습니다. 더 높은 코드가 이미 존재하거나 같은 코드의 APK만 있어 AAB를 재사용할 수 없다면 덮어쓰지 않고 명확히 실패합니다.
 

@@ -570,7 +570,7 @@ private fun EditorHeader(
                 colors = ButtonDefaults.buttonColors(
                     containerColor = CutColors.accent, contentColor = CutColors.onAccent,
                 )) {
-                Text("저장", style = MaterialTheme.typography.labelLarge)
+                Text("영상 저장", style = MaterialTheme.typography.labelLarge)
             }
         }
         Column {

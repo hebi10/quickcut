@@ -30,7 +30,7 @@ class BatchScreenInstrumentedTest {
             Triple(model.draftMode, model.draftLeadingSeconds, model.draftTrailingSeconds)
         }
         try {
-            composeRule.onNodeWithText("일괄 편집 · 여러 영상").performClick()
+            composeRule.onNodeWithText("일괄 편집").performClick()
             choose("batch-mode", "앞뒤 구간 자르기")
             composeRule.onNodeWithTag("batch-leading-minutes").performScrollTo()
                 .performTextReplacement("1")
@@ -57,7 +57,7 @@ class BatchScreenInstrumentedTest {
 
     @Test
     fun launchBatchEditorAndShowTimestampChoices() {
-        composeRule.onNodeWithText("일괄 편집 · 여러 영상").performClick()
+        composeRule.onNodeWithText("일괄 편집").performClick()
         composeRule.onNodeWithText("일괄 편집").assertExists()
         composeRule.onNodeWithTag("batch-mode").assertExists()
         composeRule.onNodeWithText("템플릿·저장 옵션 펼치기").performScrollTo().performClick()
@@ -68,7 +68,7 @@ class BatchScreenInstrumentedTest {
 
     @Test
     fun disabledDurationInputsFollowSelectedClipMode() {
-        composeRule.onNodeWithText("일괄 편집 · 여러 영상").performClick()
+        composeRule.onNodeWithText("일괄 편집").performClick()
         choose("batch-mode", "앞뒤 구간 자르기")
         val leading = composeRule.onNodeWithTag("batch-leading-seconds")
         val trailing = composeRule.onNodeWithTag("batch-trailing-seconds")
@@ -99,7 +99,7 @@ class BatchScreenInstrumentedTest {
         val previous = composeRule.runOnIdle { model.originalAction }
         try {
             composeRule.runOnIdle { model.originalAction = com.hebi.quickcut.editor.OriginalAction.KEEP }
-            composeRule.onNodeWithText("일괄 편집 · 여러 영상").performClick()
+            composeRule.onNodeWithText("일괄 편집").performClick()
             composeRule.onNodeWithText("템플릿·저장 옵션 펼치기").performScrollTo().performClick()
             choose("batch-original-action", "저장 성공한 원본만 휴지통으로 이동")
             composeRule.runOnIdle { org.junit.Assert.assertEquals(com.hebi.quickcut.editor.OriginalAction.KEEP, model.originalAction) }
@@ -110,7 +110,7 @@ class BatchScreenInstrumentedTest {
 
     @Test
     fun templateCanBeSavedFromEditor() {
-        composeRule.onNodeWithText("일괄 편집 · 여러 영상").performClick()
+        composeRule.onNodeWithText("일괄 편집").performClick()
         composeRule.onNodeWithText("템플릿·저장 옵션 펼치기").performScrollTo().performClick()
         composeRule.onNodeWithTag("batch-template-manager").performScrollTo().performClick()
         composeRule.onNodeWithTag("batch-template-direct").performClick()
@@ -140,7 +140,7 @@ class BatchScreenInstrumentedTest {
             }
             val added = model.templates.filter { it.id !in originalIds }
             org.junit.Assert.assertEquals(2, added.size)
-            composeRule.onNodeWithText("일괄 편집 · 여러 영상").performClick()
+            composeRule.onNodeWithText("일괄 편집").performClick()
             composeRule.onNodeWithTag("batch-template-manager").performScrollTo().performClick()
             composeRule.onNodeWithTag("batch-template-list")
                 .performScrollToNode(hasTestTag("batch-template-${added.first().id}-choose"))

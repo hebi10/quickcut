@@ -5,6 +5,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -156,6 +157,7 @@ private fun StudioWelcome(showArt: Boolean, onStart: () -> Unit, modifier: Modif
         Button(
             onClick = onStart,
             shape = CutShape,
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
             modifier = Modifier.fillMaxWidth().heightIn(min = 54.dp),
         ) {
             if (LocalDensity.current.fontScale <= 1.4f) {

@@ -24,11 +24,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CheckCircleOutline
 import androidx.compose.material.icons.outlined.VideoLibrary
+import androidx.compose.material.icons.outlined.Share
+import androidx.compose.material.icons.outlined.PlayCircleOutline
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -461,6 +464,21 @@ fun QuickCutApp(
                     }
                 },
                 onNew = model::startNew,
+                onShare = {
+                    val uri = model.completedUri ?: return@CompletedScreen
+                    val intent = Intent(Intent.ACTION_SEND).apply {
+                        type = "video/mp4"
+                        putExtra(Intent.EXTRA_STREAM, uri)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    try {
+                        context.startActivity(Intent.createChooser(intent, "영상 공유"))
+                    } catch (_: ActivityNotFoundException) {
+                        model.reportError("영상을 공유할 수 있는 앱을 찾을 수 없습니다.")
+                    } catch (_: SecurityException) {
+                        model.reportError("공유할 영상에 접근할 수 없습니다.")
+                    }
+                },
                 originalAction = model.originalAction,
                 savedDateMode = model.savedDateMode,
                 exportReport = model.completedExportReport,
@@ -805,42 +823,69 @@ internal fun CenterStatus(
     onCancel: (() -> Unit)? = null,
 ) {
     Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
+        modifier = Modifier.fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = CutSpacing.xl, vertical = CutSpacing.xxl),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        StudioBrand()
-        Spacer(Modifier.height(24.dp))
-        Text(title, color = CutColors.primaryText, fontSize = 26.sp, fontWeight = FontWeight.SemiBold)
-        Spacer(Modifier.height(12.dp))
-        Text(subtitle, color = CutColors.secondaryText)
-        Spacer(Modifier.height(40.dp))
-        if (progress == null) {
-            CircularProgressIndicator(modifier = Modifier.size(112.dp))
-        } else {
-            Box(contentAlignment = Alignment.Center,
-                modifier = Modifier.background(CutColors.accentMuted, CircleShape).padding(16.dp)) {
-                CircularProgressIndicator(
-                    progress = { progress / 100f },
-                    modifier = Modifier.size(132.dp),
-                    strokeWidth = 6.dp,
+        Text("QuickCut", style = MaterialTheme.typography.titleMedium,
+            color = CutColors.secondaryAccent)
+        Spacer(Modifier.height(CutSpacing.xxl))
+        Box(
+            modifier = Modifier.widthIn(max = 440.dp).fillMaxWidth()
+                .background(CutColors.surface, CutPanelShape)
+                .border(1.dp, CutColors.border, CutPanelShape)
+                .padding(CutSpacing.xl),
+            contentAlignment = Alignment.Center,
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(CutSpacing.lg),
+            ) {
+                Text(title, color = CutColors.primaryText,
+                    style = MaterialTheme.typography.headlineSmall,
+                    textAlign = TextAlign.Center)
+                Box(contentAlignment = Alignment.Center,
+                    modifier = Modifier.size(148.dp)) {
+                    if (progress == null) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(128.dp),
+                            strokeWidth = 7.dp,
+                            color = CutColors.accent,
+                        )
+                        Text("처리 중", color = CutColors.primaryText,
+                            style = MaterialTheme.typography.titleMedium)
+                    } else {
+                        CircularProgressIndicator(
+                            progress = { progress.coerceIn(0, 100) / 100f },
+                            modifier = Modifier.size(128.dp),
+                            strokeWidth = 7.dp,
+                            color = CutColors.accent,
+                        )
+                        Text(progress.coerceIn(0, 100).toString() + "%",
+                            color = CutColors.primaryText,
+                            style = MaterialTheme.typography.headlineMedium)
+                    }
+                }
+                Text(
+                    if (progress == null) "결과 영상 확인 중"
+                    else "현재 처리 단계 · " + progress.coerceIn(0, 100) + "%",
+                    color = CutColors.secondaryAccent,
+                    style = MaterialTheme.typography.labelLarge,
                 )
-                Text(text = progress.toString() + "%", color = CutColors.primaryText, fontSize = 25.sp)
+                Text(subtitle, color = CutColors.secondaryText,
+                    style = MaterialTheme.typography.bodySmall,
+                    textAlign = TextAlign.Center)
             }
         }
-        Spacer(Modifier.height(32.dp))
-        Text(
-            if (progress == null) "영상 처리 및 저장을 확인하고 있습니다." else "저장 중 · " + progress + "%",
-            textAlign = TextAlign.Center,
-            color = CutColors.secondaryText,
-        )
         if (onCancel != null) {
-            Spacer(Modifier.height(48.dp))
-            OutlinedButton(
-                onClick = onCancel,
-                shape = CutShape,
-                modifier = Modifier.widthIn(max = 420.dp).fillMaxWidth().heightIn(min = 52.dp),
-            ) { Text("취소") }
+            Spacer(Modifier.height(CutSpacing.xl))
+            OutlinedButton(onClick = onCancel, shape = CutShape,
+                modifier = Modifier.widthIn(max = 440.dp).fillMaxWidth()
+                    .heightIn(min = CutSizes.primaryButton)) {
+                Text("저장 취소")
+            }
         }
     }
 }
@@ -850,6 +895,7 @@ private fun CompletedScreen(
     videoUri: String?,
     onOpen: () -> Unit,
     onNew: () -> Unit,
+    onShare: () -> Unit,
     originalAction: OriginalAction,
     savedDateMode: SaveDateMode,
     exportReport: ExportReport?,
@@ -894,6 +940,10 @@ private fun CompletedScreen(
         }
         Spacer(Modifier.height(28.dp))
         if (videoUri != null) {
+            Text("저장된 영상", color = CutColors.primaryText,
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth())
+            Spacer(Modifier.height(CutSpacing.sm))
             ClipThumbnail(
                 uri = videoUri,
                 timeMs = 0L,
@@ -933,10 +983,25 @@ private fun CompletedScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Button(
-                onClick = onOpen,
-                modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
+                onClick = onOpen, enabled = videoUri != null,
+                modifier = Modifier.fillMaxWidth().heightIn(min = CutSizes.primaryButton),
                 shape = CutShape,
-            ) { Text("갤러리에서 열기", fontWeight = FontWeight.SemiBold) }
+            ) {
+                Icon(Icons.Outlined.PlayCircleOutline, contentDescription = null,
+                    modifier = Modifier.size(CutSizes.icon))
+                Spacer(Modifier.width(CutSpacing.sm))
+                Text("갤러리에서 열기", fontWeight = FontWeight.SemiBold)
+            }
+            OutlinedButton(
+                onClick = onShare, enabled = videoUri != null,
+                modifier = Modifier.fillMaxWidth().heightIn(min = CutSizes.primaryButton),
+                shape = CutShape,
+            ) {
+                Icon(Icons.Outlined.Share, contentDescription = null,
+                    modifier = Modifier.size(CutSizes.icon))
+                Spacer(Modifier.width(CutSpacing.sm))
+                Text("영상 공유")
+            }
             OutlinedButton(
                 onClick = onNew,
                 modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),

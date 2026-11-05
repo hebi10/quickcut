@@ -226,10 +226,11 @@ fun BatchScreen(
                 Button(enabled = !model.isFinalizing, onClick = {
                     showStopConfirmation = false
                     model.cancel()
-                }) { Text("저장 중단") }
+                }, modifier = Modifier.heightIn(min = 48.dp), shape = CutShape) { Text("저장 중단") }
             },
             dismissButton = {
-                TextButton(onClick = { showStopConfirmation = false }) {
+                TextButton(onClick = { showStopConfirmation = false },
+                    modifier = Modifier.heightIn(min = 48.dp), shape = CutShape) {
                     Text("계속 저장")
                 }
             },
@@ -274,7 +275,8 @@ fun BatchScreen(
                         (inspectedPercent?.let { " · 현재 영상 $it%" } ?: "")
                 )
             },
-            confirmButton = { TextButton(onClick = { inspectionJob?.cancel() }) { Text("분석 취소") } },
+            confirmButton = { TextButton(onClick = { inspectionJob?.cancel() },
+                modifier = Modifier.heightIn(min = 48.dp), shape = CutShape) { Text("분석 취소") } },
             containerColor = CutColors.panel,
             shape = CutDialogShape,
         )
@@ -285,7 +287,8 @@ fun BatchScreen(
             onDismissRequest = model::clearNotification,
             title = { QuickCutDialogHeading("안내") },
             text = { Text(notice) },
-            confirmButton = { TextButton(onClick = model::clearNotification) { Text("확인") } },
+            confirmButton = { TextButton(onClick = model::clearNotification,
+                modifier = Modifier.heightIn(min = 48.dp), shape = CutShape) { Text("확인") } },
             containerColor = CutColors.panel,
             shape = CutDialogShape,
         )
@@ -666,7 +669,8 @@ private fun PresetEditor(model: BatchViewModel, disabled: Boolean) {
                     verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     item {
                         OutlinedButton(onClick = { model.chooseTemplate(null) }, enabled = !disabled,
-                            modifier = Modifier.fillMaxWidth().testTag("batch-template-direct")) { Text("직접 설정") }
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                                .testTag("batch-template-direct")) { Text("직접 설정") }
                     }
                     items(model.templates, key = { it.id }) { template ->
                         Column(

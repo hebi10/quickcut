@@ -157,6 +157,19 @@ class DialogDesignInstrumentedTest {
     }
 
     @Test
+    fun exportInspectionAt200PercentKeepsProgressAndCancelVisible() {
+        compose.setContent {
+            val density = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides Density(density.density, 2f)) {
+                QuickCutTheme { ExportInspectionDialog(progress = 37, onCancel = {}) }
+            }
+        }
+        compose.onNodeWithText("원본 분석 37%", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("분석 취소").assertIsDisplayed().assertHeightIsAtLeast(48.dp)
+        capture("dialog_export_analysis_large_font")
+    }
+
+    @Test
     fun longDialogHeadingRemainsCompleteWithLargeFont() {
         val title = "영상 저장을 취소할까요?"
         compose.setContent {

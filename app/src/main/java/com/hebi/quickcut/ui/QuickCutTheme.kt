@@ -15,20 +15,22 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 object CutColors {
-    val background = Color(0xFF0B0810)
-    val surface = Color(0xFF191324)
-    val panel = Color(0xFF292039)
-    val border = Color(0xFF4B3C61)
+    val background = Color(0xFF0F0B1A)
+    val surface = Color(0xFF1A1329)
+    val panel = Color(0xFF251B38)
+    val border = Color(0xFF2A233D)
     val primaryText = Color(0xFFF8F6FF)
     val secondaryText = Color(0xFFCFC6DF)
     val mutedText = Color(0xFFA79AB9)
-    val accent = Color(0xFF8B5CF6)
-    val onAccent = Color(0xFF0B0810)
+    val accent = Color(0xFF7C5AED)
+    val onAccent = Color(0xFFFFFFFF)
     val accentMuted = Color(0xFF382252)
-    val secondaryAccent = Color(0xFFC4B5FD)
+    val secondaryAccent = Color(0xFFA78BFA)
     val brandDeep = Color(0xFF6D28D9)
     val brandLight = Color(0xFFA78BFA)
-    val success = Color(0xFF22C55E)
+    val success = Color(0xFF8DDAAD)
+    val warning = Color(0xFFF3C76C)
+    val error = Color(0xFFFF6E80)
 }
 
 private val colorScheme = darkColorScheme(
@@ -55,7 +57,25 @@ private val colorScheme = darkColorScheme(
     surfaceContainer = CutColors.surface,
     surfaceContainerHigh = CutColors.panel,
     surfaceContainerHighest = CutColors.panel,
+    error = CutColors.error,
+    onError = CutColors.background,
 )
+
+object CutSpacing {
+    val xs = 4.dp
+    val sm = 8.dp
+    val md = 12.dp
+    val lg = 16.dp
+    val xl = 24.dp
+    val xxl = 32.dp
+}
+
+object CutSizes {
+    val touchTarget = 48.dp
+    val appBar = 56.dp
+    val primaryButton = 52.dp
+    val icon = 24.dp
+}
 
 val CutShape = RoundedCornerShape(14.dp)
 val CutPanelShape = RoundedCornerShape(20.dp)

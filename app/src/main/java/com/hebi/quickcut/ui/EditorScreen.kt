@@ -66,7 +66,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -298,7 +300,8 @@ fun EditorScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Image(painterResource(R.drawable.quickcut_new_edit),
-                    contentDescription = null, modifier = Modifier.size(108.dp))
+                    contentDescription = null, modifier = Modifier.size(108.dp),
+                    colorFilter = ColorFilter.tint(CutColors.secondaryAccent))
                 Text("편집할 영상이 없습니다.", color = CutColors.primaryText,
                     style = MaterialTheme.typography.titleMedium)
                 Text("실행을 취소하거나 다른 영상을 추가할 수 있습니다.",
@@ -392,7 +395,7 @@ fun EditorScreen(
                                     Text("클립 " + (model.timeline.clips.indexOf(it) + 1),
                                         color = CutColors.primaryText,
                                         fontWeight = FontWeight.SemiBold)
-                                    Text(formatTime(it.durationMs), color = CutColors.accent)
+                                    Text(formatTime(it.durationMs), color = CutColors.secondaryAccent)
                                 }
                                 Spacer(Modifier.height(12.dp))
                                 ToolButtons(
@@ -481,7 +484,7 @@ fun EditorScreen(
     if (showDelete) {
         AlertDialog(
             onDismissRequest = { showDelete = false },
-            title = { Text("클립을 삭제할까요?") },
+            title = { QuickCutDialogHeading("클립을 삭제할까요?") },
             text = { Text("선택한 구간만 편집 목록에서 제거합니다. 원본 영상은 삭제되지 않습니다.") },
             confirmButton = {
                 Button(
@@ -506,7 +509,7 @@ fun EditorScreen(
         val index = model.timeline.clips.indexOfFirst { it.id == model.selectedId }
         AlertDialog(
             onDismissRequest = { showMove = false },
-            title = { Text("클립 순서 변경") },
+            title = { QuickCutDialogHeading("클립 순서 변경") },
             text = { Text("선택한 클립을 앞이나 뒤로 이동합니다.") },
             confirmButton = {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -545,7 +548,8 @@ private fun EditorHeader(
     canRedo: Boolean,
     canSave: Boolean,
 ) {
-    BoxWithConstraints(Modifier.fillMaxWidth().background(CutColors.background)
+    BoxWithConstraints(Modifier.fillMaxWidth()
+        .background(Brush.horizontalGradient(listOf(CutColors.panel, CutColors.background)))
         .padding(horizontal = 8.dp)) {
         val compactHeader = maxWidth < 380.dp ||
             (LocalDensity.current.fontScale >= 1.5f && maxWidth < 600.dp)
@@ -666,6 +670,8 @@ private fun ToolButtons(
 ) {
     if (vertical) {
         Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            Text("편집 도구", color = CutColors.secondaryAccent,
+                style = MaterialTheme.typography.titleSmall)
             selected?.let {
                 Text(if (it.muted) "원본 소리: 음소거" else "원본 소리: 유지",
                     color = CutColors.secondaryText, fontSize = 12.sp)
@@ -703,6 +709,9 @@ private fun ToolButtons(
         }
     } else {
         Column(Modifier.fillMaxWidth()) {
+            Text("편집 도구", color = CutColors.secondaryAccent,
+                style = MaterialTheme.typography.titleSmall,
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp))
             selected?.let {
                 Text(if (it.muted) "원본 소리: 음소거" else "원본 소리: 유지",
                     color = CutColors.secondaryText, fontSize = 12.sp,
@@ -772,7 +781,7 @@ private fun TrimEditor(
     val valid = TrimInput.selectedRange(startText, endText, clip.sourceDurationMs) != null
     SideEffect { onValidityChange(valid) }
     Column(modifier.background(CutColors.surface, CutPanelShape).padding(vertical = 8.dp)) {
-        Text("자르기 범위", color = CutColors.accent, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        Text("자르기 범위", color = CutColors.secondaryAccent, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
         RangeSlider(
             value = clip.startMs.toFloat()..clip.endMs.toFloat(),
             onValueChange = { range ->

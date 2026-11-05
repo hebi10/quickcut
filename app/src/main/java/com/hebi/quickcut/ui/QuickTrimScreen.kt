@@ -28,6 +28,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.ContentCut
 import androidx.compose.material.icons.outlined.VolumeOff
 import androidx.compose.material.icons.outlined.VolumeUp
 import androidx.compose.material3.Button
@@ -52,6 +53,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -278,7 +280,9 @@ fun QuickTrimScreen(
         val compactHeader = maxWidth < 400.dp || (fontScale >= 1.5f && maxWidth < 600.dp)
         val sideBySide = maxWidth >= 480.dp && maxWidth > maxHeight
         Column(Modifier.fillMaxSize()) {
-            Column(Modifier.fillMaxWidth().background(CutColors.background).padding(horizontal = 8.dp)) {
+            Column(Modifier.fillMaxWidth()
+                .background(Brush.horizontalGradient(listOf(CutColors.panel, CutColors.background)))
+                .padding(horizontal = 8.dp)) {
                 Row(
                     Modifier.fillMaxWidth().heightIn(min = 56.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -286,6 +290,9 @@ fun QuickTrimScreen(
                     IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
                         Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "뒤로가기")
                     }
+                    Icon(Icons.Outlined.ContentCut, contentDescription = null,
+                        tint = CutColors.secondaryAccent, modifier = Modifier.size(22.dp))
+                    Spacer(Modifier.width(8.dp))
                     Text("빠른 자르기", color = CutColors.primaryText,
                         fontSize = 20.sp, fontWeight = FontWeight.SemiBold,
                         modifier = Modifier.weight(1f))
@@ -439,9 +446,9 @@ private fun QuickTrimControls(
         ) {
                 Column(
                     Modifier.fillMaxWidth()
-                        .background(CutColors.panel, CutShape)
-                        .border(1.dp, CutColors.border, CutShape)
-                        .padding(12.dp),
+                        .background(CutColors.accentMuted, CutPanelShape)
+                        .border(1.dp, CutColors.accent.copy(alpha = 0.65f), CutPanelShape)
+                        .padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(5.dp),
                 ) {
                     Text("원본 " + formatTime(clip.sourceDurationMs),
@@ -449,9 +456,11 @@ private fun QuickTrimControls(
                     Text("남길 원본 구간 " + formatTime(clip.startMs) + " – " + formatTime(clip.endMs),
                         color = CutColors.secondaryText, fontSize = 13.sp)
                     Text("결과 " + formatTime(clip.durationMs),
-                        color = CutColors.accent, fontSize = 15.sp,
+                        color = CutColors.secondaryAccent, fontSize = 15.sp,
                         fontWeight = FontWeight.SemiBold)
                 }
+                Text("자르기 범위", color = CutColors.secondaryAccent,
+                    style = MaterialTheme.typography.titleSmall)
                 TrimSecondsRow(
                     label = "앞부분 삭제",
                     value = leadingText,

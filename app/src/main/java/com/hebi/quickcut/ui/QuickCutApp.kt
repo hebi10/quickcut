@@ -6,7 +6,6 @@ import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -25,8 +24,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.CheckCircleOutline
 import androidx.compose.material.icons.outlined.VideoLibrary
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -52,9 +53,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -62,7 +64,6 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
-import com.hebi.quickcut.R
 import com.hebi.quickcut.QuickCutApplication
 import com.hebi.quickcut.batch.BatchScreen
 import com.hebi.quickcut.batch.BatchViewModel
@@ -390,7 +391,7 @@ fun QuickCutApp(
                 if (!model.isRecoveringExport && !model.hasUnresolvedExport)
                     dismissedRecoveryNotice = model.exportRecoveryNotice
             },
-            title = { Text("이전 저장 확인") },
+            title = { QuickCutDialogHeading("이전 저장 확인") },
             text = { Text(if (model.isRecoveringExport) "중단된 저장 파일과 완료 여부를 확인하고 있습니다."
                 else model.exportRecoveryNotice.orEmpty()) },
             confirmButton = {
@@ -508,7 +509,7 @@ fun QuickCutApp(
     model.errorMessage?.let { text ->
         AlertDialog(
             onDismissRequest = model::dismissError,
-            title = { Text("안내") },
+            title = { QuickCutDialogHeading("안내") },
             text = { Column { Text(text); ExportDiagnosticButton() } },
             confirmButton = {
                 TextButton(onClick = model::dismissError, shape = CutShape,
@@ -522,7 +523,7 @@ fun QuickCutApp(
     if (model.showExitConfirmation) {
         AlertDialog(
             onDismissRequest = model::hideExitConfirmation,
-            title = { Text("편집을 종료할까요?") },
+            title = { QuickCutDialogHeading("편집을 종료할까요?") },
             text = { Text("저장하지 않은 편집 내용이 사라집니다.") },
             confirmButton = {
                 Button(
@@ -583,7 +584,7 @@ private fun LastSettingsDialog(
     val tail = timeValue(tailText)
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("마지막 사용 설정") },
+        title = { QuickCutDialogHeading("마지막 사용 설정") },
         text = {
             Column(
                 modifier = Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
@@ -660,7 +661,7 @@ internal fun RestoreRecoveryDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("이전 편집 복원") },
+        title = { QuickCutDialogHeading("이전 편집 복원") },
         text = {
             Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -718,7 +719,7 @@ internal fun CenterStatus(
             CircularProgressIndicator(modifier = Modifier.size(112.dp))
         } else {
             Box(contentAlignment = Alignment.Center,
-                modifier = Modifier.background(CutColors.surface, RoundedCornerShape(80.dp)).padding(16.dp)) {
+                modifier = Modifier.background(CutColors.accentMuted, CircleShape).padding(16.dp)) {
                 CircularProgressIndicator(
                     progress = { progress / 100f },
                     modifier = Modifier.size(132.dp),
@@ -761,15 +762,25 @@ private fun CompletedScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Image(
-            painter = painterResource(R.drawable.quickcut_saved),
-            contentDescription = null,
-            modifier = Modifier.size(104.dp),
-        )
+        Box(
+            modifier = Modifier.size(104.dp)
+                .background(
+                    Brush.linearGradient(listOf(CutColors.brandLight, CutColors.brandDeep)),
+                    CircleShape,
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Outlined.CheckCircleOutline,
+                contentDescription = null,
+                tint = Color.White,
+                modifier = Modifier.size(64.dp),
+            )
+        }
         Spacer(Modifier.height(16.dp))
-        Text("저장 완료", color = CutColors.primaryText, fontSize = 28.sp, fontWeight = FontWeight.SemiBold)
+        Text("저장 완료", color = CutColors.primaryText, fontSize = 28.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(10.dp))
-        Text("영상이 갤러리에 저장되었습니다.", color = CutColors.secondaryText)
+        Text("영상이 갤러리에 저장되었어요.", color = CutColors.secondaryText)
         Text(exportReportText(exportReport), color = CutColors.secondaryText)
         ExportDiagnosticButton()
         if (savedDateMode == SaveDateMode.ORIGINAL) {

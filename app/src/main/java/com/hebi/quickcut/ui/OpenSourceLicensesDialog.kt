@@ -55,7 +55,7 @@ internal fun OpenSourceLicensesDialog(onDismiss: () -> Unit) {
     }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(selected ?: "오픈소스 라이선스") },
+        title = { QuickCutDialogHeading(selected ?: "오픈소스 라이선스") },
         text = {
             if (selected == null) {
                 Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),

@@ -38,7 +38,7 @@ internal fun SaveOptionsDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("저장 설정") },
+        title = { QuickCutDialogHeading("저장 설정") },
         text = {
             Column(
                 modifier = Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
@@ -115,7 +115,7 @@ internal fun OriginalActionEnableDialog(
     val permanent = action == OriginalAction.DELETE
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("원본 자동 처리 활성화") },
+        title = { QuickCutDialogHeading("원본 자동 처리 활성화") },
         text = {
             Column(
                 modifier = Modifier.heightIn(max = 400.dp).verticalScroll(rememberScrollState()),
@@ -155,7 +155,7 @@ internal fun ExportModeDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("저장 방식 선택") },
+        title = { QuickCutDialogHeading("저장 방식 선택") },
         text = {
             Column(
                 modifier = Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
@@ -236,7 +236,7 @@ internal fun exportReportText(report: ExportReport?): String {
 internal fun ExportInspectionDialog(progress: Int? = null, onCancel: () -> Unit) {
     AlertDialog(
         onDismissRequest = onCancel,
-        title = { Text("저장 방식 분석 중") },
+        title = { QuickCutDialogHeading("저장 방식 분석 중") },
         text = {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 CircularProgressIndicator(modifier = Modifier.size(32.dp))
@@ -256,7 +256,7 @@ internal fun ExportInspectionDialog(progress: Int? = null, onCancel: () -> Unit)
 internal fun ExportCancelDialog(canCancel: Boolean, onCancel: () -> Unit, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("영상 저장을 취소할까요?") },
+        title = { QuickCutDialogHeading("영상 저장을 취소할까요?") },
         text = {
             Text(if (canCancel) "완료되지 않은 출력 파일은 정리하고 원본 영상은 유지합니다."
                 else "갤러리에 결과물을 등록하고 있습니다. 완료 단계에서는 취소할 수 없습니다.")

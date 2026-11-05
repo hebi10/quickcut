@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <bitmap xmlns:android="http://schemas.android.com/apk/res/android"
-    android:src="@drawable/quickcut_launcher_art"
+    android:src="@drawable/quickcut_launcher_monochrome"
     android:gravity="fill"
+    android:tint="#FFFFFFFF"
     android:filter="true" />

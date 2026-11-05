@@ -42,7 +42,7 @@ private fun PrivacyPolicyDialog(onDismiss: () -> Unit) {
     }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("개인정보처리방침") },
+        title = { QuickCutDialogHeading("개인정보처리방침") },
         text = {
             SelectionContainer {
                 Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),

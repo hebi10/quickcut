@@ -41,11 +41,11 @@ internal fun ExportDiagnosticButton(operationId: String? = null, label: String =
         selected = operationId?.let(loaded::record)
         missing = operationId != null && selected == null
         copied = false
-    }, shape = CutShape) { Text(label) }
+    }, shape = CutShape, modifier = Modifier.heightIn(min = 48.dp)) { Text(label) }
     history?.let { records ->
         AlertDialog(
             onDismissRequest = { history = null },
-            title = { Text(if (selected == null) "편집·저장 진단 기록" else "저장 작업 진단") },
+            title = { QuickCutDialogHeading(if (selected == null) "편집·저장 진단 기록" else "저장 작업 진단") },
             text = {
                 Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(10.dp)) {

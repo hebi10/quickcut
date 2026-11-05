@@ -81,6 +81,7 @@ import com.hebi.quickcut.media.MediaOperationDiagnostics
 import com.hebi.quickcut.ui.CutChoice
 import com.hebi.quickcut.ui.CutChoiceDropdown
 import com.hebi.quickcut.ui.CutColors
+import com.hebi.quickcut.ui.QuickCutDialogHeading
 import com.hebi.quickcut.ui.CutPanelShape
 import com.hebi.quickcut.ui.CutDialogShape
 import com.hebi.quickcut.ui.CutShape
@@ -218,7 +219,7 @@ fun BatchScreen(
     if (showStopConfirmation) {
         AlertDialog(
             onDismissRequest = { showStopConfirmation = false },
-            title = { Text("일괄 저장을 중단할까요?") },
+            title = { QuickCutDialogHeading("일괄 저장을 중단할까요?") },
             text = { Text("이미 저장된 영상은 유지하고 진행 중인 파일은 취소합니다.") },
             confirmButton = {
                 Button(enabled = !model.isFinalizing, onClick = {
@@ -264,7 +265,7 @@ fun BatchScreen(
     if (inspecting) {
         AlertDialog(
             onDismissRequest = { inspectionJob?.cancel() },
-            title = { Text("저장할 영상 확인 중") },
+            title = { QuickCutDialogHeading("저장할 영상 확인 중") },
             text = {
                 Text(
                     "키프레임과 자르기 설정을 확인하고 있습니다. 긴 영상은 분석에 시간이 걸릴 수 있습니다." +
@@ -281,7 +282,7 @@ fun BatchScreen(
     model.notification?.let { notice ->
         AlertDialog(
             onDismissRequest = model::clearNotification,
-            title = { Text("안내") },
+            title = { QuickCutDialogHeading("안내") },
             text = { Text(notice) },
             confirmButton = { TextButton(onClick = model::clearNotification) { Text("확인") } },
             containerColor = CutColors.panel,
@@ -339,7 +340,7 @@ internal fun BatchReviewDialog(
                                 Text("자동 저장 확인", style = MaterialTheme.typography.titleLarge,
                                     fontWeight = FontWeight.SemiBold)
                                 Text("정확한 위치 $exactCount · 추천 위치 $recommendedCount · 제외 $skippedCount",
-                                    style = MaterialTheme.typography.bodySmall, color = CutColors.accent)
+                                    style = MaterialTheme.typography.bodySmall, color = CutColors.secondaryAccent)
                             }
                         }
                         item {
@@ -481,8 +482,12 @@ private fun BatchHeader(onBack: () -> Unit) {
             Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "뒤로가기",
                 tint = CutColors.accent)
         }
-        Text("일괄 편집", fontSize = 22.sp, fontWeight = FontWeight.SemiBold,
-            color = CutColors.primaryText, modifier = Modifier.weight(1f))
+        Column(Modifier.weight(1f)) {
+            Text("일괄 편집", fontSize = 22.sp, fontWeight = FontWeight.SemiBold,
+                color = CutColors.primaryText)
+            Text("여러 영상을 같은 설정으로 정리하세요.",
+                color = CutColors.secondaryText, style = MaterialTheme.typography.bodySmall)
+        }
     }
 }
 
@@ -493,11 +498,11 @@ private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
     var pendingOriginalAction by rememberSaveable { mutableStateOf<OriginalAction?>(null) }
     Column(
         modifier = Modifier.fillMaxWidth().background(CutColors.surface, CutPanelShape)
-            .border(1.dp, CutColors.border, CutPanelShape).padding(14.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+            .border(1.dp, CutColors.accent.copy(alpha = 0.35f), CutPanelShape).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("1. 영상 선택", color = CutColors.primaryText,
+            Text("1. 영상 선택", color = CutColors.secondaryAccent,
                 style = MaterialTheme.typography.titleMedium)
             val addModifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)
                 .testTag("batch-add-videos")

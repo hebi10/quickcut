@@ -884,7 +884,7 @@ internal fun CenterStatus(
             OutlinedButton(onClick = onCancel, shape = CutShape,
                 modifier = Modifier.widthIn(max = 440.dp).fillMaxWidth()
                     .heightIn(min = CutSizes.primaryButton)) {
-                Text("저장 취소")
+                Text("취소")
             }
         }
     }

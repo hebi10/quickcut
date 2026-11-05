@@ -645,12 +645,20 @@ private fun StartScreen(
     dateMode: SaveDateMode,
     onPreferences: () -> Unit,
     onLicenses: () -> Unit,
+    projects: List<com.hebi.quickcut.editor.SavedProject>,
+    onOpenProject: (String) -> Unit,
+    onDeleteProject: (String) -> Unit,
+    onGallery: () -> Unit,
 ) {
     StudioStartScreen(
         onQuick = onQuick, onSelect = onSelect, onBatch = onBatch,
         canRestore = canRestore, onRestore = onRestore,
         quickSettings = quickSettings, dateMode = dateMode,
         onPreferences = onPreferences, onLicenses = onLicenses,
+        projects = projects,
+        onOpenProject = onOpenProject,
+        onDeleteProject = onDeleteProject,
+        onGallery = onGallery,
     )
 }
 

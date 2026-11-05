@@ -456,7 +456,7 @@ private fun QuickTrimControls(
                     Text("남길 원본 구간 " + formatTime(clip.startMs) + " – " + formatTime(clip.endMs),
                         color = CutColors.secondaryText, fontSize = 13.sp)
                     Text("결과 " + formatTime(clip.durationMs),
-                        color = CutColors.accent, fontSize = 15.sp,
+                        color = CutColors.secondaryAccent, fontSize = 15.sp,
                         fontWeight = FontWeight.SemiBold)
                 }
                 Text("자르기 범위", color = CutColors.secondaryAccent,

@@ -197,7 +197,7 @@ private fun StudioModeCard(title: String, subtitle: String, icon: ImageVector,
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(title, fontWeight = FontWeight.SemiBold,
                     style = MaterialTheme.typography.titleSmall)
-                Text(subtitle, color = if (primary) CutColors.onAccent.copy(alpha = 0.8f)
+                Text(subtitle, color = if (primary) CutColors.onAccent
                     else CutColors.secondaryText, style = MaterialTheme.typography.bodySmall)
             }
             Icon(Icons.AutoMirrored.Outlined.ArrowForward, contentDescription = null,

@@ -340,7 +340,7 @@ internal fun BatchReviewDialog(
                                 Text("자동 저장 확인", style = MaterialTheme.typography.titleLarge,
                                     fontWeight = FontWeight.SemiBold)
                                 Text("정확한 위치 $exactCount · 추천 위치 $recommendedCount · 제외 $skippedCount",
-                                    style = MaterialTheme.typography.bodySmall, color = CutColors.accent)
+                                    style = MaterialTheme.typography.bodySmall, color = CutColors.secondaryAccent)
                             }
                         }
                         item {

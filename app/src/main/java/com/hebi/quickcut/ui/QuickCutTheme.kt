@@ -23,7 +23,7 @@ object CutColors {
     val secondaryText = Color(0xFFCFC6DF)
     val mutedText = Color(0xFFA79AB9)
     val accent = Color(0xFF8B5CF6)
-    val onAccent = Color(0xFFFFFFFF)
+    val onAccent = Color(0xFF0B0810)
     val accentMuted = Color(0xFF382252)
     val secondaryAccent = Color(0xFFC4B5FD)
     val brandDeep = Color(0xFF6D28D9)
@@ -35,7 +35,7 @@ private val colorScheme = darkColorScheme(
     primary = CutColors.accent,
     onPrimary = CutColors.onAccent,
     primaryContainer = CutColors.accentMuted,
-    onPrimaryContainer = CutColors.accent,
+    onPrimaryContainer = CutColors.secondaryAccent,
     secondary = CutColors.secondaryAccent,
     onSecondary = CutColors.background,
     secondaryContainer = CutColors.panel,

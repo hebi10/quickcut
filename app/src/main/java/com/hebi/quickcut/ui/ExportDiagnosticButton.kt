@@ -41,7 +41,7 @@ internal fun ExportDiagnosticButton(operationId: String? = null, label: String =
         selected = operationId?.let(loaded::record)
         missing = operationId != null && selected == null
         copied = false
-    }, shape = CutShape) { Text(label) }
+    }, shape = CutShape, modifier = Modifier.heightIn(min = 48.dp)) { Text(label) }
     history?.let { records ->
         AlertDialog(
             onDismissRequest = { history = null },

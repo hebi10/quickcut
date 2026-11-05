@@ -395,7 +395,7 @@ fun EditorScreen(
                                     Text("클립 " + (model.timeline.clips.indexOf(it) + 1),
                                         color = CutColors.primaryText,
                                         fontWeight = FontWeight.SemiBold)
-                                    Text(formatTime(it.durationMs), color = CutColors.accent)
+                                    Text(formatTime(it.durationMs), color = CutColors.secondaryAccent)
                                 }
                                 Spacer(Modifier.height(12.dp))
                                 ToolButtons(
@@ -781,7 +781,7 @@ private fun TrimEditor(
     val valid = TrimInput.selectedRange(startText, endText, clip.sourceDurationMs) != null
     SideEffect { onValidityChange(valid) }
     Column(modifier.background(CutColors.surface, CutPanelShape).padding(vertical = 8.dp)) {
-        Text("자르기 범위", color = CutColors.accent, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        Text("자르기 범위", color = CutColors.secondaryAccent, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
         RangeSlider(
             value = clip.startMs.toFloat()..clip.endMs.toFloat(),
             onValueChange = { range ->

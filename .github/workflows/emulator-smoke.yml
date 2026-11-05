@@ -228,7 +228,7 @@ jobs:
           arch: x86_64
           profile: pixel_6
           disk-size: 2048M
-          ram-size: ${{ matrix.api == 36 && '2048M' || '1536M' }}
+          ram-size: ${{ (matrix.api == 35 || matrix.api == 36) && '2048M' || '1536M' }}
           heap-size: 256M
           emulator-boot-timeout: 300
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -no-metrics -partition-size 2048

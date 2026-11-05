@@ -36,6 +36,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RangeSlider
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -314,6 +315,13 @@ fun QuickTrimScreen(
                     QuickTrimControls(
                         clip, leadingText, trailingText, valid, canSave,
                         ::changeLeading, ::changeTrailing,
+                        onRangeChange = { start, end ->
+                            val lead = secondsText(start)
+                            val tail = secondsText(clip.sourceDurationMs - end)
+                            leadingText = lead
+                            trailingText = tail
+                            updateTrim(lead, tail)
+                        },
                         onToggleMute = {
                             model.toggleMute()
                             settings.saveQuick(settings.loadQuick().copy(muteAudio = !clip.muted))
@@ -329,6 +337,13 @@ fun QuickTrimScreen(
                 QuickTrimControls(
                     clip, leadingText, trailingText, valid, canSave,
                     ::changeLeading, ::changeTrailing,
+                    onRangeChange = { start, end ->
+                        val lead = secondsText(start)
+                        val tail = secondsText(clip.sourceDurationMs - end)
+                        leadingText = lead
+                        trailingText = tail
+                        updateTrim(lead, tail)
+                    },
                     onToggleMute = {
                         model.toggleMute()
                         settings.saveQuick(settings.loadQuick().copy(muteAudio = !clip.muted))
@@ -433,6 +448,7 @@ private fun QuickTrimControls(
     canSave: Boolean,
     onLeadingChange: (String) -> Unit,
     onTrailingChange: (String) -> Unit,
+    onRangeChange: (Long, Long) -> Unit,
     onToggleMute: () -> Unit,
     onSave: () -> Unit,
     onSaveOptions: () -> Unit,
@@ -482,6 +498,39 @@ private fun QuickTrimControls(
                 }
                 Text("자르기 범위", color = CutColors.primaryText,
                     style = MaterialTheme.typography.titleMedium)
+                Column(
+                    modifier = Modifier.fillMaxWidth()
+                        .background(CutColors.surface, CutShape)
+                        .padding(CutSpacing.md),
+                    verticalArrangement = Arrangement.spacedBy(CutSpacing.xs),
+                ) {
+                    ClipThumbnail(clip.uri, clip.startMs,
+                        Modifier.fillMaxWidth().height(56.dp))
+                    if (clip.sourceDurationMs >= 100L) {
+                        RangeSlider(
+                            value = clip.startMs.toFloat()..clip.endMs.toFloat(),
+                            onValueChange = { range ->
+                                val start = range.start.toLong().coerceAtLeast(0L)
+                                val end = range.endInclusive.toLong()
+                                    .coerceAtMost(clip.sourceDurationMs)
+                                if (end - start >= 100L) onRangeChange(start, end)
+                            },
+                            valueRange = 0f..clip.sourceDurationMs.toFloat(),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text(formatTime(clip.startMs),
+                            color = CutColors.secondaryAccent,
+                            style = MaterialTheme.typography.labelMedium)
+                        Text(formatTime(clip.endMs),
+                            color = CutColors.secondaryAccent,
+                            style = MaterialTheme.typography.labelMedium)
+                    }
+                }
                 TrimSecondsRow(
                     label = "앞부분 삭제",
                     value = leadingText,

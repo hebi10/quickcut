@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -63,18 +64,22 @@ fun TimelineStrip(
 ) {
     var zoom by rememberSaveable { mutableFloatStateOf(1f) }
     val totalDurationMs = remember(timeline) { timeline.totalDurationMs }
-    Column(modifier.background(CutColors.surface, CutPanelShape).padding(vertical = 10.dp)) {
+    Column(modifier.background(CutColors.surface, CutPanelShape)
+        .border(1.dp, CutColors.border, CutPanelShape)
+        .padding(vertical = CutSpacing.sm)) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                "전체 " + formatTime(totalDurationMs),
-                fontSize = 11.sp,
-                color = CutColors.secondaryText,
-                modifier = Modifier.weight(1f),
-            )
+            Column(Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(CutSpacing.xs)) {
+                Text("타임라인", style = MaterialTheme.typography.titleSmall,
+                    color = CutColors.primaryText)
+                Text("전체 " + formatTime(totalDurationMs),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = CutColors.secondaryText)
+            }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = { zoom = (zoom / 2f).coerceAtLeast(1f) },
                     enabled = zoom > 1f, shape = CutShape,

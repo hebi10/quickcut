@@ -550,8 +550,8 @@ private fun EditorHeader(
     canSave: Boolean,
 ) {
     BoxWithConstraints(Modifier.fillMaxWidth()
-        .background(Brush.horizontalGradient(listOf(CutColors.panel, CutColors.background)))
-        .padding(horizontal = 8.dp)) {
+        .background(CutColors.surface)
+        .padding(horizontal = CutSpacing.sm)) {
         val compactHeader = maxWidth < 380.dp ||
             (LocalDensity.current.fontScale >= 1.5f && maxWidth < 600.dp)
         val historyAndSave: @Composable () -> Unit = {
@@ -570,17 +570,18 @@ private fun EditorHeader(
                 colors = ButtonDefaults.buttonColors(
                     containerColor = CutColors.accent, contentColor = CutColors.onAccent,
                 )) {
-                Text("영상 저장", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                Text("영상 저장", style = MaterialTheme.typography.labelLarge)
             }
         }
         Column {
-            Row(Modifier.fillMaxWidth().heightIn(min = 56.dp),
+            Row(Modifier.fillMaxWidth().heightIn(min = CutSizes.appBar),
                 verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
                     Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "편집 종료")
                 }
-                Text("상세 편집", color = CutColors.primaryText, fontSize = 20.sp,
-                    fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                Text("상세 편집", color = CutColors.primaryText,
+                    style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.weight(1f))
                 if (!compactHeader) historyAndSave()
             }
             if (compactHeader) {
@@ -671,8 +672,8 @@ private fun ToolButtons(
 ) {
     if (vertical) {
         Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
-            Text("편집 도구", color = CutColors.secondaryAccent,
-                style = MaterialTheme.typography.titleSmall)
+            Text("편집 도구", color = CutColors.primaryText,
+                style = MaterialTheme.typography.titleMedium)
             selected?.let {
                 Text(if (it.muted) "원본 소리: 음소거" else "원본 소리: 유지",
                     color = CutColors.secondaryText, fontSize = 12.sp)
@@ -710,9 +711,9 @@ private fun ToolButtons(
         }
     } else {
         Column(Modifier.fillMaxWidth()) {
-            Text("편집 도구", color = CutColors.secondaryAccent,
-                style = MaterialTheme.typography.titleSmall,
-                modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp))
+            Text("편집 도구", color = CutColors.primaryText,
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(horizontal = CutSpacing.lg, vertical = CutSpacing.sm))
             selected?.let {
                 Text(if (it.muted) "원본 소리: 음소거" else "원본 소리: 유지",
                     color = CutColors.secondaryText, fontSize = 12.sp,
@@ -721,8 +722,8 @@ private fun ToolButtons(
             Row(
                 modifier = Modifier.fillMaxWidth()
                     .horizontalScroll(rememberScrollState())
-                    .background(CutColors.background)
-                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                    .background(CutColors.surface)
+                    .padding(horizontal = CutSpacing.md, vertical = CutSpacing.sm),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 actions.forEach { item ->

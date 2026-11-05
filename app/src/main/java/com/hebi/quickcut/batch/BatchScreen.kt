@@ -82,6 +82,7 @@ import com.hebi.quickcut.ui.CutChoice
 import com.hebi.quickcut.ui.CutChoiceDropdown
 import com.hebi.quickcut.ui.CutColors
 import com.hebi.quickcut.ui.CutPanelShape
+import com.hebi.quickcut.ui.CutDialogShape
 import com.hebi.quickcut.ui.CutShape
 import com.hebi.quickcut.ui.exportReportText
 import com.hebi.quickcut.ui.FastCutPreview
@@ -231,7 +232,7 @@ fun BatchScreen(
                 }
             },
             containerColor = CutColors.panel,
-            shape = CutPanelShape,
+            shape = CutDialogShape,
         )
     }
 
@@ -273,7 +274,7 @@ fun BatchScreen(
             },
             confirmButton = { TextButton(onClick = { inspectionJob?.cancel() }) { Text("분석 취소") } },
             containerColor = CutColors.panel,
-            shape = CutPanelShape,
+            shape = CutDialogShape,
         )
     }
 
@@ -284,7 +285,7 @@ fun BatchScreen(
             text = { Text(notice) },
             confirmButton = { TextButton(onClick = model::clearNotification) { Text("확인") } },
             containerColor = CutColors.panel,
-            shape = CutPanelShape,
+            shape = CutDialogShape,
         )
     }
 
@@ -324,7 +325,7 @@ internal fun BatchReviewDialog(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
                 .widthIn(max = 680.dp).fillMaxWidth().fillMaxHeight(0.94f).testTag("batch-review-dialog"),
             color = CutColors.panel, contentColor = CutColors.primaryText,
-            shape = CutPanelShape,
+            shape = CutDialogShape,
         ) {
             BoxWithConstraints(Modifier.fillMaxSize()) {
                 val footerMaxHeight = maxHeight * 0.45f
@@ -347,8 +348,8 @@ internal fun BatchReviewDialog(
                                 verticalArrangement = Arrangement.spacedBy(8.dp),
                             ) {
                                 templateSummary?.let { Text(it) }
-                                Text("파일마다 저장할 위치를 선택해 주세요. 정확한 위치는 원래 구간을 유지하며 " +
-                                    "필요하면 자동 변환합니다. 추천 위치는 표시된 구간으로 조정해 영상 변환 없이 저장합니다.",
+                                Text("파일별 저장 방식을 확인해 주세요. 정확한 위치는 요청한 구간을 유지하고 " +
+                                    "필요하면 변환합니다. 추천 위치는 구간을 조정해 영상 변환을 피합니다.",
                                     color = CutColors.secondaryText, style = MaterialTheme.typography.bodySmall)
                                 Text("저장 가능한 영상 ${overview.ready}개 · 저장할 수 없는 영상 ${overview.skipped}개",
                                     style = MaterialTheme.typography.bodySmall)
@@ -370,9 +371,8 @@ internal fun BatchReviewDialog(
                                     Text("전체 자동 저장")
                                 }
                                 if (overview.reviewedFiles.any { it.canRecommend }) {
-                                    Text("아래 단축 버튼은 위 추천 구간을 모두 적용합니다. " +
-                                        "${overview.adjustedFast}개를 고속 저장하고 ${overview.adjustedSkips}개는 건너뜁니다. " +
-                                        "이미 고속 저장 가능한 구간은 유지하며 소리는 필요하면 변환합니다.",
+                                    Text("추천 위치를 일괄 적용하면 ${overview.adjustedFast}개를 고속 저장하고 " +
+                                        "${overview.adjustedSkips}개를 건너뜁니다. 소리는 필요할 때 변환합니다.",
                                         color = CutColors.secondaryText, style = MaterialTheme.typography.bodySmall)
                                 }
                             }
@@ -646,12 +646,14 @@ private fun PresetEditor(model: BatchViewModel, disabled: Boolean) {
         }
     }
     if (showManager) Dialog(onDismissRequest = { showManager = false }) {
-        Surface(Modifier.fillMaxWidth().heightIn(max = 640.dp).testTag("batch-template-dialog"), shape = CutPanelShape,
+        Surface(Modifier.fillMaxWidth().heightIn(max = 640.dp).testTag("batch-template-dialog"), shape = CutDialogShape,
             color = CutColors.panel, contentColor = CutColors.primaryText) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("내 템플릿", style = MaterialTheme.typography.titleLarge)
-                Text("템플릿은 자르기와 음소거 설정만 저장합니다. 날짜와 원본 처리는 현재 설정을 사용합니다.",
-                    style = MaterialTheme.typography.bodySmall)
+                Text("저장된 템플릿 ${model.templates.size}개",
+                    style = MaterialTheme.typography.bodySmall, color = CutColors.secondaryText)
+                Text("템플릿에는 자르기·음소거 설정만 저장합니다. 저장 날짜와 원본 처리 설정은 변경되지 않습니다.",
+                    style = MaterialTheme.typography.bodySmall, color = CutColors.secondaryText)
                 LazyColumn(Modifier.weight(1f, fill = false).fillMaxWidth().testTag("batch-template-list"),
                     verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     item {
@@ -659,30 +661,38 @@ private fun PresetEditor(model: BatchViewModel, disabled: Boolean) {
                             modifier = Modifier.fillMaxWidth().testTag("batch-template-direct")) { Text("직접 설정") }
                     }
                     items(model.templates, key = { it.id }) { template ->
-                        Column(Modifier.fillMaxWidth().background(CutColors.surface, CutShape).padding(10.dp)) {
+                        Column(
+                            Modifier.fillMaxWidth().background(CutColors.surface, CutShape)
+                                .border(1.dp, CutColors.border, CutShape).padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
                             Text((if (model.selectedTemplateId == template.id) "✓ " else "") + template.name)
                             Text(BatchTimeInput.summary(template), style = MaterialTheme.typography.bodySmall)
                             OutlinedButton(onClick = { model.chooseTemplate(template.id) }, enabled = !disabled,
-                                modifier = Modifier.fillMaxWidth().testTag("batch-template-${template.id}-choose")) { Text("이 템플릿 선택") }
+                                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                                    .testTag("batch-template-${template.id}-choose")) { Text("이 템플릿 선택") }
                             TextButton(onClick = {
                                 model.removeTemplate(context, template.id)
-                            }, enabled = !disabled, modifier = Modifier.testTag("batch-template-${template.id}-remove")) { Text("삭제") }
+                            }, enabled = !disabled, modifier = Modifier.heightIn(min = 48.dp)
+                                    .testTag("batch-template-${template.id}-remove")) { Text("삭제") }
                         }
                     }
                     item {
                         OutlinedTextField(value = model.draftName, onValueChange = { model.draftName = it.take(40) },
                             enabled = !disabled, label = { Text("템플릿 이름") }, singleLine = true,
-                            modifier = Modifier.fillMaxWidth().testTag("batch-template-name"))
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).testTag("batch-template-name"))
                     }
                     item {
                         OutlinedButton(onClick = { model.saveTemplate(context, asNew = true) },
-                            enabled = !disabled && model.templates.size < 30, modifier = Modifier.fillMaxWidth()) { Text("새 템플릿으로 저장") }
+                            enabled = !disabled && model.templates.size < 30,
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("새 템플릿으로 저장") }
                         if (model.templates.size >= 30) Text("템플릿은 최대 30개까지 저장할 수 있습니다.")
                         if (model.selectedTemplateId != null) OutlinedButton(onClick = { model.saveTemplate(context) },
-                            enabled = !disabled, modifier = Modifier.fillMaxWidth()) { Text("선택 템플릿 수정 저장") }
+                            enabled = !disabled, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("선택 템플릿 수정 저장") }
                     }
                 }
-                TextButton(onClick = { showManager = false }, modifier = Modifier.align(Alignment.End)) { Text("닫기") }
+                TextButton(onClick = { showManager = false },
+                    modifier = Modifier.align(Alignment.End).heightIn(min = 48.dp)) { Text("닫기") }
             }
         }
     }

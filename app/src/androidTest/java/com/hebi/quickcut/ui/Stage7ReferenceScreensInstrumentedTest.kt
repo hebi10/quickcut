@@ -97,7 +97,7 @@ class Stage7ReferenceScreensInstrumentedTest {
                 // API 29 shell may still access the app-specific external files directory.
                 shell("cp ${local.absolutePath} $dest")
             }
-            check(shell("wc -c $dest").substringBefore(' ').toLongOrNull() == local.length()) {
+            check(shell("wc -c $dest").trim().substringBefore(' ').toLongOrNull() == local.length()) {
                 "Reference screenshot was not preserved: $name"
             }
     }

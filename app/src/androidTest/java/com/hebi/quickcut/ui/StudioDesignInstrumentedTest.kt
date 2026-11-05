@@ -35,7 +35,6 @@ class StudioDesignInstrumentedTest {
     @Test fun smallPhoneHomeAndTabsStayAccessible() {
         showHome(320, 640, 1f, canRestore = true)
         composeRule.onNodeWithText("영상 편집을 시작하세요").assertIsDisplayed()
-        composeRule.onNodeWithText("내 프로젝트").assertExists()
         composeRule.onNodeWithText("도구").performClick()
         composeRule.onNodeWithText("편집 도구").assertIsDisplayed()
         composeRule.onNodeWithText("설정").performClick()

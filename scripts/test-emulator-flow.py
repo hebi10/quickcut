@@ -44,6 +44,11 @@ if name == "gradle":
     (reports / "index.html").write_text(phase + " report")
     sys.exit(status)
 if name == "adb":
+    if args[:3] == ["exec-out", "run-as", "com.hebi.quickcut"]:
+        if os.environ.get("STAGE7_CAPTURE_STATUS") == "1":
+            sys.exit(42)
+        sys.stdout.buffer.write(b"stub-png-evidence")
+        sys.exit(0)
     if args[:3] == ["shell", "pm", "path"]:
         sys.exit(int(os.environ.get("RETAINED_APK_STATUS", "0")))
     if args and args[0] == "pull":
@@ -131,6 +136,12 @@ class EmulatorFlowTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("failed or skipped", result.stdout + result.stderr)
 
+    def test_stage7_capture_failure_remains_a_required_gate(self):
+        result, _, _, phases = self.run_flow(STAGE7_CAPTURE_STATUS=1)
+        self.assertEqual(phases, ["preflight", "full"])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Stage 7 screenshot missing or empty", result.stdout + result.stderr)
+
     def test_both_successful_phases_run_all_gates_and_return_success(self):
         result, root, events, phases = self.run_flow()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -139,6 +150,8 @@ class EmulatorFlowTest(unittest.TestCase):
         self.assertTrue((root / "quickcut-native-preflight-results/results/TEST-preflight.xml").is_file())
         self.assertEqual(sum(e[0] == "python3" and any("verify-android-main10.py" in a for a in e) for e in events), 2)
         self.assertIn("152 distinct tests", result.stdout)
+        for image in ("stage7_home.png", "stage7_projects_empty.png", "stage7_onboarding.png"):
+            self.assertTrue((root / "quickcut-design-review" / image).is_file())
         timed = [e[1:3] for e in events if e[0] == "timeout" and len(e) > 3 and e[3] == "gradle"]
         self.assertEqual(timed, [["--kill-after=30s", "10m"], ["--kill-after=30s", "20m"]])
         self.assertIn("/data/local/tmp/quickcut-native-diagnostics", (root / "quickcut-native-preflight-results/diagnostics/evidence.txt").read_text())

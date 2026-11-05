@@ -114,8 +114,9 @@ internal fun StudioStartScreen(
                 }
                 when (selectedTab) {
                     0 -> {
-                        Text("영상 편집을 시작하세요", color = CutColors.primaryText,
-                            style = MaterialTheme.typography.headlineSmall)
+                        Text("빠르고 간편한 영상 편집",
+                            color = CutColors.secondaryText,
+                            style = MaterialTheme.typography.bodyMedium)
                         Button(onClick = onQuick, shape = CutShape,
                             modifier = Modifier.fillMaxWidth()
                                 .heightIn(min = 92.dp)) {
@@ -125,12 +126,20 @@ internal fun StudioStartScreen(
                             Column {
                                 Text("+ 영상 편집 시작하기",
                                     style = MaterialTheme.typography.titleMedium)
-                                Text("영상 선택 후 빠른 자르기",
+                                Text("영상 선택 후 바로 편집할 수 있어요.",
                                     style = MaterialTheme.typography.bodySmall)
                             }
                         }
-                        Text("내 프로젝트", color = CutColors.primaryText,
-                            style = MaterialTheme.typography.titleMedium)
+                        Row(Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("내 프로젝트", color = CutColors.primaryText,
+                                style = MaterialTheme.typography.titleMedium)
+                            TextButton(onClick = { selectedTab = 1 },
+                                modifier = Modifier.heightIn(min = CutSizes.touchTarget)) {
+                                Text("전체 보기 >", color = CutColors.secondaryAccent)
+                            }
+                        }
                         projects.take(3).forEach { project ->
                             ProjectCard(project, onOpenProject, onDeleteProject)
                         }
@@ -143,18 +152,18 @@ internal fun StudioStartScreen(
                                 Text("이전 편집 이어서 진행")
                             }
                         } else {
-                            CutInfoSection(
-                                title = "최근 편집 없음",
-                                message = "저장된 편집 작업이 없습니다. 새 영상을 선택해 주세요.",
-                            )
+                            if (projects.isEmpty()) {
+                                Text("최근 편집한 프로젝트가 없습니다.",
+                                    color = CutColors.secondaryText,
+                                    style = MaterialTheme.typography.bodySmall)
+                            }
                         }
-                        Text("편집 도구", color = CutColors.primaryText,
-                            style = MaterialTheme.typography.titleMedium)
-                        OutlinedButton(onClick = onGallery,
+                        OutlinedButton(onClick = { selectedTab = 2 },
                             modifier = Modifier.fillMaxWidth()
                                 .heightIn(min = CutSizes.primaryButton),
-                            shape = CutShape) { Text("영상 갤러리") }
-                        StudioModes(onQuick, onBatch, onSelect)
+                            shape = CutShape) {
+                            Text("편집 도구 보기")
+                        }
                     }
                     1 -> {
                         Text("내 프로젝트", style = MaterialTheme.typography.headlineSmall,
@@ -184,6 +193,10 @@ internal fun StudioStartScreen(
                     2 -> {
                         Text("편집 도구", color = CutColors.primaryText,
                             style = MaterialTheme.typography.headlineSmall)
+                        OutlinedButton(onClick = onGallery,
+                            modifier = Modifier.fillMaxWidth()
+                                .heightIn(min = CutSizes.primaryButton),
+                            shape = CutShape) { Text("영상 갤러리") }
                         StudioModes(onQuick, onBatch, onSelect)
                     }
                     3 -> {
@@ -200,8 +213,11 @@ internal fun StudioStartScreen(
                 }
             }
         }
-        NavigationBar(containerColor = CutColors.surface,
-            tonalElevation = 0.dp) {
+        NavigationBar(
+            modifier = Modifier.fillMaxWidth().height(72.dp),
+            containerColor = CutColors.surface,
+            tonalElevation = 0.dp,
+        ) {
             val icons = listOf(
                 Icons.Outlined.Home, Icons.Outlined.FolderOpen,
                 Icons.Outlined.Build, Icons.Outlined.Settings,

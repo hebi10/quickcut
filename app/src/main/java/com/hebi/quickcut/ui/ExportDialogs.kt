@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -21,6 +22,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.DialogProperties
 import com.hebi.quickcut.editor.OriginalAction
 import com.hebi.quickcut.media.ExportAssessment
 import com.hebi.quickcut.media.ExportMethod
@@ -38,6 +40,8 @@ internal fun SaveOptionsDialog(
     onDismiss: () -> Unit,
 ) {
     AlertDialog(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = CutSpacing.lg).widthIn(max = 480.dp),
+        properties = DialogProperties(usePlatformDefaultWidth = false),
         onDismissRequest = onDismiss,
         title = { QuickCutDialogHeading("저장 설정") },
         text = {
@@ -129,6 +133,8 @@ internal fun OriginalActionEnableDialog(
 ) {
     val permanent = action == OriginalAction.DELETE
     AlertDialog(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = CutSpacing.lg).widthIn(max = 480.dp),
+        properties = DialogProperties(usePlatformDefaultWidth = false),
         onDismissRequest = onDismiss,
         title = { QuickCutDialogHeading("원본 자동 처리 활성화") },
         text = {
@@ -172,6 +178,8 @@ internal fun ExportModeDialog(
     onDismiss: () -> Unit,
 ) {
     AlertDialog(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = CutSpacing.lg).widthIn(max = 480.dp),
+        properties = DialogProperties(usePlatformDefaultWidth = false),
         onDismissRequest = onDismiss,
         title = { QuickCutDialogHeading("저장 방식 선택") },
         text = {
@@ -257,6 +265,8 @@ internal fun exportReportText(report: ExportReport?): String {
 @Composable
 internal fun ExportInspectionDialog(progress: Int? = null, onCancel: () -> Unit) {
     AlertDialog(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = CutSpacing.lg).widthIn(max = 480.dp),
+        properties = DialogProperties(usePlatformDefaultWidth = false),
         onDismissRequest = onCancel,
         title = { QuickCutDialogHeading("저장 방식 분석 중") },
         text = {
@@ -285,6 +295,8 @@ internal fun ExportInspectionDialog(progress: Int? = null, onCancel: () -> Unit)
 @Composable
 internal fun ExportCancelDialog(canCancel: Boolean, onCancel: () -> Unit, onDismiss: () -> Unit) {
     AlertDialog(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = CutSpacing.lg).widthIn(max = 480.dp),
+        properties = DialogProperties(usePlatformDefaultWidth = false),
         onDismissRequest = onDismiss,
         title = { QuickCutDialogHeading("영상 저장을 취소할까요?") },
         text = {

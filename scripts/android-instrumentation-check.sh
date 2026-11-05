@@ -85,6 +85,17 @@ fi
 if ! timeout --kill-after=2s 10s adb pull /data/local/tmp/quickcut-design-review quickcut-design-review; then
   echo "::warning::Optional design screenshots were unavailable; instrumentation results are unchanged."
 fi
+# Stage 7 screenshots are stored in the debuggable app's private files. Pull
+# them with run-as instead of relying on scoped-storage shell access or UIAutomation pipes.
+mkdir -p quickcut-design-review
+for file in stage7_home.png stage7_projects_empty.png stage7_onboarding.png; do
+  if timeout --kill-after=2s 20s adb exec-out run-as com.hebi.quickcut cat "files/design-review/$file" > "quickcut-design-review/$file" && [[ -s "quickcut-design-review/$file" ]]; then
+    echo "Stage 7 screenshot preserved: $file"
+  else
+    echo "::error::Stage 7 screenshot missing or empty: $file"
+    if [[ "$first_failure" -eq 0 ]]; then first_failure=1; fi
+  fi
+done
 if [[ "$first_failure" -ne 0 ]]; then
   echo "::error::Instrumentation failed; preserving the first failure (exit $first_failure)."
   exit "$first_failure"

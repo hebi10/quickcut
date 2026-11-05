@@ -42,9 +42,20 @@ internal fun SaveOptionsDialog(
         title = { QuickCutDialogHeading("저장 설정") },
         text = {
             Column(
-                modifier = Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(CutSpacing.md),
             ) {
+                Text("저장 정보", color = CutColors.secondaryAccent,
+                    style = MaterialTheme.typography.titleMedium)
+                Text("원본 영상의 해상도와 프레임 속도를 유지하며, " +
+                    "가능한 경우 고속 저장을 사용합니다. 실제 처리 방식은 저장 전 분석합니다.",
+                    color = CutColors.secondaryText,
+                    style = MaterialTheme.typography.bodySmall)
+                Text("저장 위치", color = CutColors.primaryText,
+                    style = MaterialTheme.typography.titleSmall)
+                Text("기기 갤러리에 저장",
+                    color = CutColors.secondaryText,
+                    style = MaterialTheme.typography.bodyMedium)
                 Text("원본 동영상", color = CutColors.primaryText,
                     style = MaterialTheme.typography.titleSmall)
                 CutChoiceDropdown(

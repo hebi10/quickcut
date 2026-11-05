@@ -343,7 +343,7 @@ class TrimInputInstrumentedTest {
             composeRule.runOnUiThread { model.restoreSavedSession(context) }
         } else {
             nextUri = Uri.fromFile(source)
-            composeRule.onNodeWithText("상세 편집").performClick()
+            composeRule.onNodeWithText("상세 편집").performScrollTo().performClick()
         }
         composeRule.waitUntil(25_000L) { model.page == QuickCutPage.EDITOR }
         composeRule.waitForIdle()
@@ -512,8 +512,9 @@ class TrimInputInstrumentedTest {
             model.seek(123L)
         }
         showQuick()
-        composeRule.onNodeWithText("남길 원본 구간 " + formatTime(234L) + " – " + formatTime(2_345L))
-            .performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("남길 구간").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText(formatTime(234L) + " – " + formatTime(2_345L)).assertIsDisplayed()
+        composeRule.onNodeWithText("결과 영상").assertIsDisplayed()
         composeRule.onNodeWithText("결과 " + formatTime(123L) + " / " + formatTime(2_111L))
             .assertIsDisplayed()
         composeRule.onNodeWithContentDescription("결과 미리보기 위치").assertIsDisplayed()

@@ -69,9 +69,11 @@ internal fun SaveOptionsDialog(
                     onSelected = onOriginalActionChange,
                 )
                 if (originalAction == OriginalAction.DELETE) {
-                    Text("영구 삭제는 복구할 수 없으므로 저장 결과를 확인한 후 진행됩니다.",
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodySmall)
+                    CutInfoSection(
+                        title = "영구 삭제 주의",
+                        message = "영구 삭제는 복구할 수 없습니다. 저장 결과를 확인한 뒤 진행됩니다.",
+                        caution = true,
+                    )
                 }
                 Text("결과 영상 날짜", color = CutColors.primaryText,
                     style = MaterialTheme.typography.titleSmall)
@@ -143,9 +145,11 @@ internal fun OriginalActionEnableDialog(
                 Text("실패·취소·건너뛴 영상의 원본은 유지됩니다.",
                     color = CutColors.secondaryText, style = MaterialTheme.typography.bodySmall)
                 if (permanent) {
-                    Text("영구 삭제한 원본은 복구할 수 없을 수 있습니다.",
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodySmall)
+                    CutInfoSection(
+                        title = "원본 영구 삭제",
+                        message = "영구 삭제한 원본은 복구할 수 없습니다.",
+                        caution = true,
+                    )
                 }
             }
         },
@@ -176,7 +180,11 @@ internal fun ExportModeDialog(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 if (retryingFastExport) {
-                    Text("고속 복사를 완료하지 못했습니다. 요청한 위치를 유지하며 다른 처리 방식으로 저장할 수 있습니다.")
+                    CutInfoSection(
+                        title = "고속 저장 재시도",
+                        message = "고속 복사가 실패했습니다. 요청한 위치를 유지하며 다른 방식으로 저장할 수 있습니다.",
+                        caution = true,
+                    )
                 }
                 Text(assessment.explanation)
                 Text(
@@ -280,8 +288,13 @@ internal fun ExportCancelDialog(canCancel: Boolean, onCancel: () -> Unit, onDism
         onDismissRequest = onDismiss,
         title = { QuickCutDialogHeading("영상 저장을 취소할까요?") },
         text = {
-            Text(if (canCancel) "완료되지 않은 출력 파일은 정리하고 원본 영상은 유지합니다."
-                else "갤러리에 결과물을 등록하고 있습니다. 완료 단계에서는 취소할 수 없습니다.")
+            CutInfoSection(
+                title = if (canCancel) "저장 중단 확인" else "저장 완료 처리 중",
+                message = if (canCancel)
+                    "완료되지 않은 출력 파일은 정리하고 원본 영상은 유지합니다."
+                else "갤러리에 결과물을 등록하고 있습니다. 완료 단계에서는 취소할 수 없습니다.",
+                caution = canCancel,
+            )
         },
         confirmButton = {
             Button(onClick = onCancel, enabled = canCancel, shape = CutShape,

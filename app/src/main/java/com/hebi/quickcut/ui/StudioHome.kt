@@ -60,6 +60,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.hebi.quickcut.R
 import com.hebi.quickcut.media.SaveDateMode
+import com.hebi.quickcut.editor.SavedProject
 import com.hebi.quickcut.settings.QuickTrimSettings
 
 @Composable
@@ -87,6 +88,10 @@ internal fun StudioStartScreen(
     dateMode: SaveDateMode,
     onPreferences: () -> Unit,
     onLicenses: () -> Unit,
+    projects: List<SavedProject> = emptyList(),
+    onOpenProject: (String) -> Unit = {},
+    onDeleteProject: (String) -> Unit = {},
+    onGallery: () -> Unit = {},
 ) {
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     Column(Modifier.fillMaxSize().background(CutColors.background)) {
@@ -126,6 +131,9 @@ internal fun StudioStartScreen(
                         }
                         Text("내 프로젝트", color = CutColors.primaryText,
                             style = MaterialTheme.typography.titleMedium)
+                        projects.take(3).forEach { project ->
+                            ProjectCard(project, onOpenProject, onDeleteProject)
+                        }
                         if (canRestore) {
                             OutlinedButton(onClick = onRestore, shape = CutShape,
                                 modifier = Modifier.fillMaxWidth()
@@ -144,11 +152,18 @@ internal fun StudioStartScreen(
                         }
                         Text("편집 도구", color = CutColors.primaryText,
                             style = MaterialTheme.typography.titleMedium)
+                        OutlinedButton(onClick = onGallery,
+                            modifier = Modifier.fillMaxWidth()
+                                .heightIn(min = CutSizes.primaryButton),
+                            shape = CutShape) { Text("영상 갤러리") }
                         StudioModes(onQuick, onBatch, onSelect)
                     }
                     1 -> {
                         Text("내 프로젝트", style = MaterialTheme.typography.headlineSmall,
                             color = CutColors.primaryText)
+                        projects.forEach { project ->
+                            ProjectCard(project, onOpenProject, onDeleteProject)
+                        }
                         if (canRestore) {
                             OutlinedButton(onClick = onRestore,
                                 modifier = Modifier.fillMaxWidth()
@@ -161,9 +176,11 @@ internal fun StudioStartScreen(
                             Text("현재 복구할 편집 작업이 없습니다.",
                                 color = CutColors.secondaryText)
                         }
-                        Text("여러 프로젝트의 영구 저장 및 목록 관리는 3단계에서 구현합니다.",
-                            color = CutColors.mutedText,
-                            style = MaterialTheme.typography.bodySmall)
+                        if (projects.isEmpty()) {
+                            Text("저장한 프로젝트가 없습니다. 편집 화면에서 프로젝트를 저장해 보세요.",
+                                color = CutColors.secondaryText,
+                                style = MaterialTheme.typography.bodyMedium)
+                        }
                     }
                     2 -> {
                         Text("편집 도구", color = CutColors.primaryText,

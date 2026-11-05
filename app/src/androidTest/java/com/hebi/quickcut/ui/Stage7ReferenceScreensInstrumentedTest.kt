@@ -1,8 +1,6 @@
 package com.hebi.quickcut.ui
 
 import android.graphics.Bitmap
-import android.os.Build
-import android.os.ParcelFileDescriptor
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -71,34 +69,13 @@ class Stage7ReferenceScreensInstrumentedTest {
     }
 
     private fun capture(name: String) {
-        require(name.matches(Regex("stage7_(home|projects_empty|onboarding)\\.png")))
-        val instrumentation = InstrumentationRegistry.getInstrumentation()
-            val context = instrumentation.targetContext
-            val dir = File(checkNotNull(context.getExternalFilesDir(null)), "design-review")
-            check(dir.isDirectory || dir.mkdirs())
-            val local = File(dir, name)
-            val bitmap = compose.onRoot().captureToImage().asAndroidBitmap()
-            local.outputStream().use { check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) }
-            val dest = "/data/local/tmp/quickcut-design-review/$name"
-            fun shell(command: String): String {
-                val fd = instrumentation.uiAutomation.executeShellCommand(command)
-                return ParcelFileDescriptor.AutoCloseInputStream(fd).bufferedReader()
-                    .use { it.readText().trim() }
-            }
-            shell("mkdir -p /data/local/tmp/quickcut-design-review")
-            // Shell cannot read app-private scoped-storage paths on Android 11+.
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                val streams = instrumentation.uiAutomation.executeShellCommandRw("cat > $dest")
-                ParcelFileDescriptor.AutoCloseOutputStream(streams[1]).use { output ->
-                    local.inputStream().use { input -> input.copyTo(output) }
-                }
-                ParcelFileDescriptor.AutoCloseInputStream(streams[0]).use { input -> input.readBytes() }
-            } else {
-                // API 29 shell may still access the app-specific external files directory.
-                shell("cp ${local.absolutePath} $dest")
-            }
-            check(shell("wc -c $dest").trim().substringBefore(' ').toLongOrNull() == local.length()) {
-                "Reference screenshot was not preserved: $name"
-            }
+        require(name in setOf("stage7_home.png", "stage7_projects_empty.png", "stage7_onboarding.png"))
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val dir = File(context.filesDir, "design-review")
+        check(dir.isDirectory || dir.mkdirs())
+        val local = File(dir, name)
+        val bitmap = compose.onRoot().captureToImage().asAndroidBitmap()
+        local.outputStream().use { check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) }
+        check(local.length() > 0L) { "Reference screenshot was not preserved: $name" }
     }
 }

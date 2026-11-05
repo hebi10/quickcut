@@ -37,6 +37,16 @@ class ProjectStore(context: Context) {
         }.sortedByDescending { it.modifiedAt }
     }.getOrDefault(emptyList())
 
+    fun activeId(): String? =
+        preferences.getString("activeId", null)?.takeIf { id -> list().any { it.id == id } }
+
+    fun setActiveId(id: String?) {
+        require(id == null || list().any { it.id == id })
+        val edit = preferences.edit()
+        if (id == null) edit.remove("activeId") else edit.putString("activeId", id)
+        if (!edit.commit()) throw IOException("프로젝트 선택 상태를 저장하지 못했습니다.")
+    }
+
     fun load(id: String): EditorSessionSnapshot? {
         if (list().none { it.id == id }) return null
         return EditorSessionStore(appContext, preferenceKey(id)).load()
@@ -71,6 +81,7 @@ class ProjectStore(context: Context) {
         val items = list()
         if (items.none { it.id == id }) return
         writeIndex(items.filterNot { it.id == id })
+        if (preferences.getString("activeId", null) == id) setActiveId(null)
         runCatching { EditorSessionStore(appContext, preferenceKey(id)).clear() }
     }
 

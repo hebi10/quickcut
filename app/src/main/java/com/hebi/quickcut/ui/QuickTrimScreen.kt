@@ -516,7 +516,8 @@ private fun QuickTrimControls(
                                 if (end - start >= 100L) onRangeChange(start, end)
                             },
                             valueRange = 0f..clip.sourceDurationMs.toFloat(),
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth()
+                                .semantics { contentDescription = "자르기 구간 조절" },
                         )
                     }
                     Row(

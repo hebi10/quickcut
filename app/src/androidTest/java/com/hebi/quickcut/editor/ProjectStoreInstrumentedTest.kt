@@ -35,9 +35,8 @@ class ProjectStoreInstrumentedTest {
         try {
             store.delete(first.id)
             assertNull(store.load(first.id))
-            val remaining = store.load(second.id)
-            assertNotNull(remaining)
-            assertEquals(secondSource.uri, remaining!!.timeline.clips.single().uri)
+            val remaining = checkNotNull(store.load(second.id))
+            assertEquals(secondSource.uri, remaining.timeline.clips.single().uri)
             assertEquals(750L, remaining.playPositionMs)
             assertNotNull(store.list().firstOrNull { it.id == second.id })
         } finally {

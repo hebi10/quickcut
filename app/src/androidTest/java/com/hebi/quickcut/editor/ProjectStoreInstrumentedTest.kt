@@ -29,6 +29,8 @@ class ProjectStoreInstrumentedTest {
         val created = projects.save(snapshot, name)
         try {
             assertNotNull(projects.list().firstOrNull { it.id == created.id })
+            projects.setActiveId(created.id)
+            assertEquals(created.id, ProjectStore(context).activeId())
             assertEquals(snapshot, projects.load(created.id))
             val updated = projects.save(snapshot.copy(playPositionMs = 700L), "수정됨", created.id)
             assertEquals(created.id, updated.id)
@@ -38,5 +40,6 @@ class ProjectStoreInstrumentedTest {
         }
         assertFalse(projects.list().any { it.id == created.id })
         assertNull(projects.load(created.id))
+        assertNull(projects.activeId())
     }
 }

@@ -32,6 +32,13 @@ class BundleTest(unittest.TestCase):
             b.verify(self.aab, Path('bundletool.jar'), '0.4.17', 23, 'a'*64)
         self.assertTrue(any('dump' in args.args[0] for args in runner.call_args_list))
 
+    def test_allocated_code_can_differ_from_committed_source_base(self):
+        allocated = MANIFEST.replace('"23"', '"24"')
+        with patch.object(b, 'run', return_value=allocated):
+            b.verify(self.aab, Path('bundletool.jar'), '0.4.17', 24, 'a' * 64)
+        with patch.object(b, 'run', return_value=allocated), self.assertRaises(ValueError):
+            b.verify(self.aab, Path('bundletool.jar'), '0.4.17', 23, 'a' * 64)
+
     def test_wrong_package_name_or_code_rejected(self):
         for manifest in (MANIFEST.replace('com.hebi.quickcut','com.other.app'), MANIFEST.replace('0.4.17','0.4.18'), MANIFEST.replace('"23"','"24"')):
             with self.subTest(manifest=manifest), patch.object(b,'run',return_value=manifest), self.assertRaises(ValueError):

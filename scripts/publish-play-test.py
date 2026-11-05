@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+import subprocess
 import sys
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
@@ -14,6 +15,7 @@ from urllib.request import Request, urlopen
 PACKAGE = 'com.hebi.quickcut'
 API_ROOT = 'https://androidpublisher.googleapis.com'
 API_PATH = '/androidpublisher/v3/applications/' + PACKAGE
+MAX_VERSION_CODE = 2100000000
 
 
 class APIError(RuntimeError):
@@ -91,7 +93,79 @@ def resolve_tracks(tracks, target, closed):
 
 
 def version_codes(track):
-    return [int(code) for release in track.get('releases', []) for code in release.get('versionCodes', [])]
+    return [version_code(code) for release in track.get('releases', []) for code in release.get('versionCodes', [])]
+
+
+def version_code(value):
+    if not ((type(value) is int or isinstance(value, str)) and re.fullmatch(r'[1-9][0-9]*', str(value))):
+        raise ValueError('versionCode must be a positive integer')
+    code = int(value)
+    if code > MAX_VERSION_CODE:
+        raise ValueError('versionCode exceeds the Google Play limit')
+    return code
+
+
+def inventory_codes(tracks, bundles, apks):
+    return ({version_code(b['versionCode']) for b in bundles}
+            | {version_code(a['versionCode']) for a in apks}
+            | {c for t in tracks for c in version_codes(t)})
+
+
+def inventory_list(api, path, field):
+    response = api.request('GET', path)
+    records = response.get(field, [])
+    if not isinstance(records, list) or any(not isinstance(record, dict) for record in records):
+        raise ValueError('Malformed Play ' + field + ' inventory')
+    return records
+
+
+def allocate_version_code(api, source_code, target='internal', closed='alpha'):
+    source_code = version_code(source_code)
+    edit_id = api.request('POST', '/edits', {})['id']
+    if not re.fullmatch(r'[a-zA-Z0-9_-]+', edit_id):
+        raise ValueError('Unexpected edit identifier')
+    edit = '/edits/' + edit_id
+    try:
+        tracks = inventory_list(api, edit + '/tracks', 'tracks')
+        bundles = inventory_list(api, edit + '/bundles', 'bundles')
+        apks = inventory_list(api, edit + '/apks', 'apks')
+        selected = resolve_tracks(tracks, target, closed)
+        maximum = max(inventory_codes(tracks, bundles, apks), default=0)
+        allocated = version_code(max(source_code, maximum + 1))
+        return {'package': PACKAGE, 'source_version_code': source_code,
+                'observed_max_version_code': maximum, 'allocated_version_code': allocated,
+                'target': target, 'tracks': selected}
+    finally:
+        api.request('DELETE', edit)
+
+
+def version_plan(allocation, version, sha, tree):
+    if not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', version):
+        raise ValueError('Invalid source versionName')
+    if not all(re.fullmatch(r'[0-9a-f]{40}', identity) for identity in (sha, tree)):
+        raise ValueError('Invalid source commit or tree')
+    source = version_code(allocation['source_version_code'])
+    code = version_code(allocation['allocated_version_code'])
+    maximum = allocation['observed_max_version_code']
+    if (type(maximum) is not int or not 0 <= maximum < MAX_VERSION_CODE
+            or code != max(source, maximum + 1) or allocation['package'] != PACKAGE
+            or allocation.get('gradle_property', 'quickcutTestVersionCode=' + str(code))
+            != 'quickcutTestVersionCode=' + str(code)):
+        raise ValueError('Inconsistent Play version allocation')
+    return dict(allocation, source_sha=sha, source_tree=tree, version_name=version,
+                gradle_property='quickcutTestVersionCode=' + str(code))
+
+
+def bundle_hash(bundle):
+    with Path(bundle).open('rb') as stream:
+        return hashlib.file_digest(stream, 'sha256').hexdigest()
+
+
+def require_bundle_hash(record, expected):
+    digest = record.get('sha256', '')
+    if not isinstance(digest, str) or not re.fullmatch(r'[0-9a-fA-F]{64}', digest) or digest.lower() != expected:
+        raise ValueError('Play bundle SHA256 differs from the signed candidate; refusing existing-code reuse')
+    return digest.lower()
 
 
 def completed(track, code):
@@ -121,25 +195,31 @@ def authorize_target(target, event_name, event):
 
 
 def publish(api, bundle, code, version, notes, target='internal', closed='alpha'):
-    if code <= 0 or not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', version):
+    code = version_code(code)
+    if not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', version):
         raise ValueError('Invalid source version')
     if not notes.strip() or len(notes) > 500:
         raise ValueError('Korean release notes must contain 1–500 characters')
+    candidate_hash = bundle_hash(bundle)
     edit_id = api.request('POST', '/edits', {})['id']
     if not re.fullmatch(r'[a-zA-Z0-9_-]+', edit_id):
         raise ValueError('Unexpected edit identifier')
     edit = '/edits/' + edit_id
     commit_attempted = False
     try:
-        tracks = api.request('GET', edit + '/tracks').get('tracks', [])
+        tracks = inventory_list(api, edit + '/tracks', 'tracks')
         selected = resolve_tracks(tracks, target, closed)
-        bundles = api.request('GET', edit + '/bundles').get('bundles', [])
-        apks = api.request('GET', edit + '/apks').get('apks', [])
-        bundle_codes = {int(b['versionCode']) for b in bundles}
-        apk_codes = {int(a['versionCode']) for a in apks}
-        all_codes = bundle_codes | apk_codes | {c for t in tracks for c in version_codes(t)}
+        bundles = inventory_list(api, edit + '/bundles', 'bundles')
+        apks = inventory_list(api, edit + '/apks', 'apks')
+        bundle_codes = {version_code(b['versionCode']) for b in bundles}
+        all_codes = inventory_codes(tracks, bundles, apks)
         if all_codes and max(all_codes) > code:
-            raise ValueError('A newer versionCode already exists in Play; increment the committed source versionCode')
+            raise ValueError('A newer versionCode appeared after allocation; rerun to allocate a fresh code')
+        existing = [b for b in bundles if version_code(b['versionCode']) == code]
+        if code in all_codes:
+            if len(existing) != 1:
+                raise ValueError('versionCode already exists without exactly one reusable bundle')
+            require_bundle_hash(existing[0], candidate_hash)
         missing = [name for name in selected if not completed(next(t for t in tracks if t['track'] == name), code)]
         if not missing:
             outcome = 'unchanged'
@@ -149,8 +229,9 @@ def publish(api, bundle, code, version, notes, target='internal', closed='alpha'
                 if code in all_codes:
                     raise ValueError('versionCode already exists without a reusable bundle; increment the committed source versionCode')
                 uploaded = api.request('POST', edit + '/bundles', upload=bundle)
-                if int(uploaded['versionCode']) != code:
+                if version_code(uploaded['versionCode']) != code:
                     raise ValueError('Uploaded bundle versionCode does not match committed source')
+                require_bundle_hash(uploaded, candidate_hash)
             for name in missing:
                 body = {'track': name, 'releases': [{'name': 'QuickCut ' + version,
                         'versionCodes': [str(code)], 'status': 'completed',
@@ -169,7 +250,8 @@ def publish(api, bundle, code, version, notes, target='internal', closed='alpha'
         published = all('RELEASE_LIFECYCLE_STATE_PUBLISHED' in s for s in states.values())
         return {'package': PACKAGE, 'version': version, 'version_code': code,
                 'tracks': selected, 'edit_id': edit_id, 'outcome': outcome,
-                'published': published, 'release_states': states}
+                'published': published, 'release_states': states,
+                'bundle_sha256': candidate_hash, 'server_bundle_sha256': candidate_hash}
     except Exception:
         if not commit_attempted:
             try:
@@ -188,17 +270,29 @@ def main():
     parser.add_argument('--target', choices=('internal', 'closed', 'both'), default='internal')
     parser.add_argument('--closed-track', default='alpha')
     parser.add_argument('--result', type=Path, required=True)
+    parser.add_argument('--version-plan', type=Path)
     args = parser.parse_args()
     event_path = os.environ.get('GITHUB_EVENT_PATH')
     event = json.loads(Path(event_path).read_text(encoding='utf-8')) if event_path else {}
     authorize_target(args.target, os.environ.get('GITHUB_EVENT_NAME', ''), event)
     if not args.bundle.is_file() or not args.bundle.stat().st_size:
         raise ValueError('Signed AAB is missing')
+    plan = None
+    if args.version_plan:
+        plan = json.loads(args.version_plan.read_text(encoding='utf-8'))
+        version_plan(plan, plan['version_name'], plan['source_sha'], plan['source_tree'])
+        if (plan['version_name'] != args.version or plan['allocated_version_code'] != args.version_code
+                or plan.get('bundle_sha256') != bundle_hash(args.bundle)
+                or plan['source_sha'] != os.environ.get('RELEASE_SHA')
+                or plan['target'] != args.target
+                or plan['source_version_code'] != version_code(os.environ['SOURCE_VERSION_CODE'])
+                or plan['source_tree'] != subprocess.check_output(['git', 'rev-parse', 'HEAD^{tree}'], text=True).strip()):
+            raise ValueError('Signed candidate differs from the recorded source/version plan')
     result = publish(PublisherAPI(os.environ.get('PLAY_ACCESS_TOKEN', '')), args.bundle,
                      args.version_code, args.version, args.notes.read_text(encoding='utf-8').strip(),
                      args.target, args.closed_track)
-    with args.bundle.open('rb') as stream:
-        result['bundle_sha256'] = hashlib.file_digest(stream, 'sha256').hexdigest()
+    if plan:
+        result['version_plan'] = plan
     args.result.parent.mkdir(parents=True, exist_ok=True)
     args.result.write_text(json.dumps(result, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
     print(json.dumps(result, ensure_ascii=False))

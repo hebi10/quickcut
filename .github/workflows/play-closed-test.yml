@@ -67,7 +67,7 @@ jobs:
       RELEASE_SHA: ${{ needs.gate.outputs.sha }}
       RELEASE_TAG: ${{ needs.gate.outputs.tag }}
       RELEASE_VERSION: ${{ needs.gate.outputs.version }}
-      RELEASE_VERSION_CODE: ${{ needs.gate.outputs.version_code }}
+      SOURCE_VERSION_CODE: ${{ needs.gate.outputs.version_code }}
       PLAY_TARGET: ${{ needs.gate.outputs.target }}
       PLAY_CLOSED_TRACK: ${{ vars.QUICKCUT_PLAY_CLOSED_TRACK || 'alpha' }}
     steps:
@@ -102,14 +102,42 @@ jobs:
             exit 1
           fi
           test -s "docs/releases/$RELEASE_VERSION.md"
+      - name: Test version allocation and publishing guards
+        run: python3 scripts/test-play-publisher.py
+      - name: Authenticate for read-only Play version planning with WIF
+        if: steps.preflight.outputs.auth_mode == 'wif'
+        id: plan_auth_wif
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.QUICKCUT_PLAY_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.QUICKCUT_PLAY_SERVICE_ACCOUNT }}
+          token_format: access_token
+          access_token_scopes: https://www.googleapis.com/auth/androidpublisher
+          create_credentials_file: false
+          export_environment_variables: false
+      - name: Authenticate for read-only Play version planning with existing JSON
+        if: steps.preflight.outputs.auth_mode == 'json'
+        id: plan_auth_json
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          credentials_json: ${{ secrets.QUICKCUT_PLAY_SERVICE_ACCOUNT_JSON }}
+          token_format: access_token
+          access_token_scopes: https://www.googleapis.com/auth/androidpublisher
+          create_credentials_file: false
+          export_environment_variables: false
+      - name: Allocate a fresh versionCode from all Play tracks bundles and APKs
+        env:
+          PLAY_ACCESS_TOKEN: ${{ steps.plan_auth_wif.outputs.access_token || steps.plan_auth_json.outputs.access_token }}
+        run: |
+          python3 scripts/allocate-play-version.py --source-version-code "$SOURCE_VERSION_CODE" \
+            --version "$RELEASE_VERSION" --source-sha "$RELEASE_SHA" --source-tree "$(git rev-parse HEAD^{tree})" \
+            --target "$PLAY_TARGET" --closed-track "$PLAY_CLOSED_TRACK" --result build/play-version-plan.json
       - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
           distribution: temurin
           java-version: "17"
-      - name: Test Play publishing and signed bundle verification
-        run: |
-          python3 scripts/test-play-publisher.py
-          python3 scripts/test-play-bundle.py
+      - name: Test signed bundle verification
+        run: python3 scripts/test-play-bundle.py
       - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4
         with:
           packages: platform-tools
@@ -167,11 +195,22 @@ jobs:
       - name: Assemble verified delivery and checksums
         run: |
           set -euo pipefail
+          python3 - <<'PYPROVENANCE'
+          import hashlib, json
+          from pathlib import Path
+          path = Path('build/play-version-plan.json')
+          plan = json.loads(path.read_text(encoding='utf-8'))
+          for field, filename in [('apk_sha256', 'app/build/outputs/apk/release/app-release.apk'),
+                                  ('bundle_sha256', 'app/build/outputs/bundle/release/app-release.aab')]:
+              with Path(filename).open('rb') as stream:
+                  plan[field] = hashlib.file_digest(stream, 'sha256').hexdigest()
+          path.write_text(json.dumps(plan, indent=2) + '\n', encoding='utf-8')
+          PYPROVENANCE
           mkdir -p build/play-delivery
           cp app/build/outputs/apk/release/app-release.apk "build/play-delivery/QuickCut-$RELEASE_TAG-release.apk"
           cp app/build/outputs/bundle/release/app-release.aab "build/play-delivery/QuickCut-$RELEASE_TAG-release.aab"
           cp "build/source-delivery/quickcut-corresponding-source-${RELEASE_SHA:0:12}.tar.gz" "build/play-delivery/QuickCut-$RELEASE_TAG-source.tar.gz"
-          cp build/source-delivery/source-identity.json build/source-delivery/UPSTREAM-SOURCE-LOCATIONS.md build/play-delivery/
+          cp build/source-delivery/source-identity.json build/source-delivery/UPSTREAM-SOURCE-LOCATIONS.md build/play-version-plan.json build/play-delivery/
           cp docs/20_NATIVE_SMART_CUT.md "build/play-delivery/QuickCut-$RELEASE_TAG-source-guide.md"
           cp "docs/releases/$RELEASE_VERSION.md" build/play-delivery/release-notes.md
           (
@@ -221,7 +260,7 @@ jobs:
           python3 scripts/publish-play-test.py --bundle app/build/outputs/bundle/release/app-release.aab \
             --version "$RELEASE_VERSION" --version-code "$RELEASE_VERSION_CODE" \
             --notes "docs/releases/$RELEASE_VERSION.md" --target "$PLAY_TARGET" --closed-track "$PLAY_CLOSED_TRACK" \
-            --result build/play-result.json
+            --version-plan build/play-version-plan.json --result build/play-result.json
       - name: Retain nonsecret Play transaction result
         if: always() && steps.final_gate.outputs.ready == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

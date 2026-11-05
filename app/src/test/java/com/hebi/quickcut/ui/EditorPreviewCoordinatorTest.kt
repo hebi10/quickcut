@@ -295,6 +295,208 @@ class EditorPreviewCoordinatorTest {
         assertFalse(player.playing)
     }
 
+    @Test fun initiallyActivePreviewWaitsForReadyOutputBeforePreparingOrPlaying() {
+        var outputReady = false
+        val waiting = previewWithOutput { outputReady }
+
+        assertFalse(waiting.replaceTimeline(timeline))
+        waiting.onModelChanged()
+        waiting.outputChanged()
+        waiting.togglePlayback()
+
+        assertEquals(0, player.preparations)
+        assertFalse(player.resourcesAllocated)
+        assertFalse(player.playing)
+
+        outputReady = true
+        waiting.outputChanged()
+
+        assertEquals(1, player.preparations)
+        assertEquals(timeline, player.preparedTimeline)
+        assertEquals(500L, player.positionMs)
+        assertFalse(player.playing)
+    }
+
+    @Test fun outputReadyLoadsTheLatestCompositionAndSeekFromWhileOutputWasMissing() {
+        var outputReady = false
+        val waiting = previewWithOutput { outputReady }
+        assertFalse(waiting.replaceTimeline(timeline))
+        timeline = timeline.updateRange(1, 2_000L, 7_000L)
+
+        waiting.onModelChanged()
+        waiting.seek(3_456L)
+
+        assertEquals(0, player.preparations)
+        assertTrue(player.seeks.isEmpty())
+        assertEquals(3_456L, position)
+
+        outputReady = true
+        waiting.outputChanged()
+
+        assertEquals(1, player.preparations)
+        assertEquals(timeline, player.preparedTimeline)
+        assertEquals(3_456L, player.positionMs)
+        assertEquals(3_456L, position)
+        assertFalse(player.playing)
+    }
+
+    @Test fun duplicateOutputSignalsDoNotPrepareOrStopAgainOrLoseTheSavedPosition() {
+        var outputReady = false
+        val waiting = previewWithOutput { outputReady }
+        waiting.outputChanged()
+        val initiallyStopped = player.stops
+        waiting.outputChanged()
+        assertEquals(initiallyStopped, player.stops)
+
+        outputReady = true
+        waiting.outputChanged()
+        waiting.outputChanged()
+        assertEquals(1, player.preparations)
+        player.positionMs = 4_567L
+        val stoppedBeforeLoss = player.stops
+
+        outputReady = false
+        waiting.outputChanged()
+        assertEquals(stoppedBeforeLoss + 1, player.stops)
+        player.positionMs = 0L
+        waiting.outputChanged()
+        waiting.pause()
+        waiting.synchronizePosition()
+
+        assertEquals(stoppedBeforeLoss + 1, player.stops)
+        assertEquals(4_567L, position)
+
+        outputReady = true
+        waiting.outputChanged()
+        waiting.outputChanged()
+
+        assertEquals(2, player.preparations)
+        assertEquals(4_567L, player.positionMs)
+        assertEquals(4_567L, position)
+    }
+
+    @Test fun outputLossInvalidatesPauseAndStopCallbacksAfterSavingTheLivePosition() {
+        var outputReady = true
+        val waiting = previewWithOutput { outputReady }
+        waiting.replaceTimeline(timeline)
+        player.positionMs = 2_345L
+        player.playing = true
+        player.duringPause = { player.positionMs = 0L; waiting.synchronizePosition() }
+        player.duringStop = { player.positionMs = 0L; waiting.synchronizePosition() }
+
+        outputReady = false
+        waiting.outputChanged()
+
+        assertEquals(2_345L, position)
+        assertEquals(1, player.stops)
+        assertFalse(player.resourcesAllocated)
+        assertFalse(player.playing)
+        waiting.togglePlayback()
+        assertFalse(player.playing)
+
+        outputReady = true
+        waiting.outputChanged()
+
+        assertEquals(2, player.preparations)
+        assertEquals(2_345L, player.positionMs)
+        assertEquals(2_345L, position)
+        assertFalse(player.playing)
+    }
+
+    @Test fun readyOutputAfterStopCannotPrepareUntilThePreviewBecomesActive() {
+        var outputReady = false
+        val waiting = previewWithOutput { outputReady }
+        waiting.setActive(false)
+
+        outputReady = true
+        waiting.outputChanged()
+        waiting.togglePlayback()
+
+        assertFalse(waiting.replaceTimeline(timeline))
+        assertFalse(waiting.retryPlayback())
+        assertEquals(0, player.preparations)
+        assertFalse(player.resourcesAllocated)
+        assertFalse(player.playing)
+
+        waiting.setActive(true)
+        waiting.outputChanged()
+
+        assertEquals(1, player.preparations)
+        assertEquals(500L, player.positionMs)
+        assertFalse(player.playing)
+    }
+
+    @Test fun failedPreparationOnOutputReadyCannotPublishResetPositionsOrAcceptPlayback() {
+        var outputReady = false
+        val waiting = previewWithOutput { outputReady }
+        position = 2_468L
+        player.duringReplace = { error("decoder unavailable") }
+
+        outputReady = true
+        assertThrows(IllegalStateException::class.java) { waiting.outputChanged() }
+        player.positionMs = 0L
+        waiting.synchronizePosition()
+        waiting.togglePlayback()
+
+        assertEquals(2_468L, position)
+        assertEquals(0, player.preparations)
+        assertFalse(player.resourcesAllocated)
+        assertFalse(player.playing)
+
+        player.duringReplace = null
+        assertTrue(waiting.retryPlayback())
+        assertEquals(2_468L, player.positionMs)
+        assertEquals(2_468L, position)
+        assertTrue(player.playing)
+    }
+
+    @Test fun retryWithoutReadyOutputCannotAcquireDecoderResources() {
+        var outputReady = true
+        val waiting = previewWithOutput { outputReady }
+        waiting.replaceTimeline(timeline)
+        player.positionMs = 3_210L
+        outputReady = false
+        waiting.outputChanged()
+
+        assertFalse(waiting.retryPlayback())
+
+        assertEquals(1, player.preparations)
+        assertEquals(3_210L, position)
+        assertFalse(player.resourcesAllocated)
+        assertFalse(player.playing)
+
+        outputReady = true
+        waiting.outputChanged()
+
+        assertEquals(2, player.preparations)
+        assertEquals(3_210L, player.positionMs)
+        assertFalse(player.playing)
+    }
+
+    @Test fun outputLossAfterPlaybackFailureStillReleasesResourcesOnlyOnce() {
+        var outputReady = true
+        val waiting = previewWithOutput { outputReady }
+        waiting.replaceTimeline(timeline)
+        player.positionMs = 2_345L
+        waiting.synchronizePosition()
+        waiting.playbackFailed()
+        player.positionMs = 0L
+        assertTrue(player.resourcesAllocated)
+
+        outputReady = false
+        waiting.outputChanged()
+        waiting.outputChanged()
+
+        assertEquals(1, player.stops)
+        assertEquals(2_345L, position)
+        assertFalse(player.resourcesAllocated)
+        assertFalse(player.playing)
+    }
+
+    private fun previewWithOutput(canPrepare: () -> Boolean) = EditorPreviewCoordinator(
+        player, { timeline }, { position }, { position = it }, canPrepare = canPrepare,
+    )
+
     private class FakePlayback : EditorPreviewPlayback {
         override var positionMs = 0L
         override var playing = false
@@ -305,10 +507,11 @@ class EditorPreviewCoordinatorTest {
         var preparations = 0
         var resourcesAllocated = false
         var preparedTimeline: EditTimeline? = null
+        var duringPause: (() -> Unit)? = null
         var duringReplace: (() -> Unit)? = null
         var duringSeek: (() -> Unit)? = null
         var duringStop: (() -> Unit)? = null
-        override fun pause() { playing = false }
+        override fun pause() { playing = false; duringPause?.invoke() }
         override fun play() { playing = true }
         override fun stop() {
             stopped = true

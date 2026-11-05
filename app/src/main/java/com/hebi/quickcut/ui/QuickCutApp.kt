@@ -620,7 +620,12 @@ fun QuickCutApp(
         AlertDialog(
             onDismissRequest = model::dismissError,
             title = { QuickCutDialogHeading("안내") },
-            text = { Column { Text(text); ExportDiagnosticButton() } },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(CutSpacing.md)) {
+                    CutInfoSection("작업 안내", text, caution = true)
+                    ExportDiagnosticButton()
+                }
+            },
             confirmButton = {
                 TextButton(onClick = model::dismissError, shape = CutShape,
                     modifier = Modifier.heightIn(min = 48.dp)) { Text("확인") }
@@ -634,7 +639,13 @@ fun QuickCutApp(
         AlertDialog(
             onDismissRequest = model::hideExitConfirmation,
             title = { QuickCutDialogHeading("편집을 종료할까요?") },
-            text = { Text("저장하지 않은 편집 내용이 사라집니다.") },
+            text = {
+                CutInfoSection(
+                    title = "편집 내용 확인",
+                    message = "저장하지 않은 편집 내용이 사라집니다. 원본 영상은 삭제되지 않습니다.",
+                    caution = true,
+                )
+            },
             confirmButton = {
                 Button(
                     onClick = model::discardEditing,
@@ -708,8 +719,10 @@ private fun LastSettingsDialog(
                 modifier = Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Text("새 영상 선택 시 자동 적용됩니다.", color = CutColors.secondaryText,
-                    style = MaterialTheme.typography.bodySmall)
+                CutInfoSection(
+                    title = "빠른 편집 기본값",
+                    message = "새 영상 선택 시 적용됩니다. 기존 영상은 변경되지 않습니다.",
+                )
                 OutlinedTextField(
                     value = headText,
                     onValueChange = { headText = it.take(12) },
@@ -743,9 +756,10 @@ private fun LastSettingsDialog(
                     ),
                     onSelected = { chosenDate = it },
                 )
-                Text("원본 휴지통 이동·영구 삭제는 자동 저장하지 않습니다.",
-                    color = CutColors.secondaryText,
-                    style = MaterialTheme.typography.bodySmall)
+                CutInfoSection(
+                    title = "원본 보호",
+                    message = "원본 휴지통 이동·영구 삭제는 자동 설정하지 않습니다.",
+                )
             }
         },
         confirmButton = {
@@ -783,10 +797,18 @@ internal fun RestoreRecoveryDialog(
         text = {
             Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(notice)
-                Text("편집 내용은 유지됩니다. 원본 영상에 다시 접근할 수 있으면 다시 시도해 주세요.")
+                CutInfoSection(
+                    title = "원본 확인 필요",
+                    message = notice,
+                    caution = true,
+                )
+                Text("편집 기록은 유지됩니다. 원본 영상에 접근할 수 있으면 다시 시도해 주세요.",
+                    color = CutColors.secondaryText,
+                    style = MaterialTheme.typography.bodySmall)
                 if (canReconnect) {
-                    Text("원본 영상이 이동했거나 접근 권한이 바뀌었다면 같은 원본 영상을 다시 선택해 연결할 수 있습니다.")
+                    Text("원본을 찾을 수 없다면 같은 영상을 다시 선택해 연결할 수 있습니다.",
+                        color = CutColors.secondaryText,
+                        style = MaterialTheme.typography.bodySmall)
                     OutlinedButton(onClick = onReconnect, shape = CutShape,
                         modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
                         Text("원본 영상 다시 연결")

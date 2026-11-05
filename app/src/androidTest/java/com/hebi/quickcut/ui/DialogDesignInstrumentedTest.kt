@@ -47,6 +47,7 @@ class DialogDesignInstrumentedTest {
         compose.onNodeWithText("저장 정보").assertExists()
         compose.onNodeWithText("기기 갤러리에 저장").assertExists()
         compose.onNodeWithText("저장 시작").assertIsDisplayed().assertHeightIsAtLeast(48.dp)
+        compose.onNodeWithText("저장 정보").assertExists()
         compose.onNodeWithText("취소").assertIsDisplayed().assertHeightIsAtLeast(48.dp)
         capture("dialog_save_settings")
     }
@@ -59,6 +60,7 @@ class DialogDesignInstrumentedTest {
             }
         }
         compose.onNodeWithText("원본 자동 처리 활성화").assertIsDisplayed()
+        compose.onNodeWithText("원본 영구 삭제").assertExists()
         compose.onNodeWithText("활성화").assertIsDisplayed().assertHeightIsAtLeast(48.dp)
         capture("dialog_original_delete")
     }

@@ -82,7 +82,7 @@ internal fun QuickCutDialogHeading(title: String) {
         ) {
             Icon(icon, contentDescription = null,
                 tint = if (caution) MaterialTheme.colorScheme.onErrorContainer else CutColors.secondaryAccent,
-                modifier = Modifier.size(22.dp))
+                modifier = Modifier.size(CutSizes.icon))
         }
         Text(title, modifier = Modifier.weight(1f), color = CutColors.primaryText,
             fontWeight = FontWeight.SemiBold,

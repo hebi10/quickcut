@@ -486,7 +486,13 @@ fun EditorScreen(
         AlertDialog(
             onDismissRequest = { showDelete = false },
             title = { QuickCutDialogHeading("클립을 삭제할까요?") },
-            text = { Text("선택한 구간만 편집 목록에서 제거합니다. 원본 영상은 삭제되지 않습니다.") },
+            text = {
+                CutInfoSection(
+                    title = "클립 삭제",
+                    message = "선택한 구간만 편집 목록에서 제거합니다. 원본 영상은 삭제되지 않습니다.",
+                    caution = true,
+                )
+            },
             confirmButton = {
                 Button(
                     onClick = {

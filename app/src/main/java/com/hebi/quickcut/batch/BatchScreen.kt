@@ -85,6 +85,7 @@ import com.hebi.quickcut.ui.QuickCutDialogHeading
 import com.hebi.quickcut.ui.CutPanelShape
 import com.hebi.quickcut.ui.CutDialogShape
 import com.hebi.quickcut.ui.CutShape
+import com.hebi.quickcut.ui.CutInfoSection
 import com.hebi.quickcut.ui.exportReportText
 import com.hebi.quickcut.ui.FastCutPreview
 import com.hebi.quickcut.ui.ExportDiagnosticButton
@@ -221,7 +222,13 @@ fun BatchScreen(
         AlertDialog(
             onDismissRequest = { showStopConfirmation = false },
             title = { QuickCutDialogHeading("일괄 저장을 중단할까요?") },
-            text = { Text("이미 저장된 영상은 유지하고 진행 중인 파일은 취소합니다.") },
+            text = {
+                CutInfoSection(
+                    title = "일괄 저장 중단",
+                    message = "이미 저장된 영상은 유지하고 진행 중인 파일은 취소합니다.",
+                    caution = true,
+                )
+            },
             confirmButton = {
                 Button(enabled = !model.isFinalizing, onClick = {
                     showStopConfirmation = false
@@ -286,7 +293,13 @@ fun BatchScreen(
         AlertDialog(
             onDismissRequest = model::clearNotification,
             title = { QuickCutDialogHeading("안내") },
-            text = { Text(notice) },
+            text = {
+                CutInfoSection(
+                    title = "작업 안내",
+                    message = notice,
+                    caution = true,
+                )
+            },
             confirmButton = { TextButton(onClick = model::clearNotification,
                 modifier = Modifier.heightIn(min = 48.dp), shape = CutShape) { Text("확인") } },
             containerColor = CutColors.panel,
@@ -353,9 +366,11 @@ internal fun BatchReviewDialog(
                                 verticalArrangement = Arrangement.spacedBy(8.dp),
                             ) {
                                 templateSummary?.let { Text(it) }
-                                Text("파일별 저장 방식을 확인해 주세요. 정확한 위치는 요청한 구간을 유지하고 " +
-                                    "필요하면 변환합니다. 추천 위치는 구간을 조정해 영상 변환을 피합니다.",
-                                    color = CutColors.secondaryText, style = MaterialTheme.typography.bodySmall)
+                                CutInfoSection(
+                                    title = "저장 방식 확인",
+                                    message = "정확한 위치는 요청한 구간을 유지하고 필요하면 변환합니다. " +
+                                        "추천 위치는 구간을 조정해 영상 변환을 피합니다.",
+                                )
                                 Text("저장 가능한 영상 ${overview.ready}개 · 저장할 수 없는 영상 ${overview.skipped}개",
                                     style = MaterialTheme.typography.bodySmall)
                             }

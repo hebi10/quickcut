@@ -172,7 +172,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     fun reconnectSavedSource(context: Context, replacement: Uri) {
         if (page != QuickCutPage.PICKER || isRecoveringExport || hasUnresolvedExport) return
         val source = reconnectSourceUri ?: return
-        val old = sessionStore.load() ?: return
+        val old = activeProjectId?.let { projectStore.load(it) }
+            ?: sessionStore.load() ?: return
         loadSavedSession(context, old, source to replacement)
     }
 
@@ -227,6 +228,13 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                     if (validationError?.sourceUri == replacement.second.toString())
                         throw IllegalArgumentException("Replacement source validation failed", validationError)
                     sessionStore.save(candidate)
+                    activeProjectId?.let { projectId ->
+                        val currentTitle = savedProjects.firstOrNull { it.id == projectId }?.title
+                        if (currentTitle != null) {
+                            projectStore.save(candidate, currentTitle, projectId)
+                            refreshProjects()
+                        }
+                    }
                 }
                 hasRestorableSession = true
                 if (validationError != null) throw validationError

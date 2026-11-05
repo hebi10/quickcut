@@ -11,6 +11,41 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class ProjectStoreInstrumentedTest {
+    @Test fun deletingOneSavedProjectPreservesAnotherProjectAndItsTimeline() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val store = ProjectStore(context)
+        val firstSource = VideoClip(
+            id = System.nanoTime(),
+            uri = "content://com.hebi.quickcut/first-project-test",
+            sourceDurationMs = 6_000L,
+        )
+        val secondSource = VideoClip(
+            id = firstSource.id + 1L,
+            uri = "content://com.hebi.quickcut/second-project-test",
+            sourceDurationMs = 7_000L,
+        )
+        val first = store.save(
+            EditorSessionSnapshot(EditTimeline(listOf(firstSource)), firstSource.id, 500L, true),
+            "첫 번째 프로젝트",
+        )
+        val second = store.save(
+            EditorSessionSnapshot(EditTimeline(listOf(secondSource)), secondSource.id, 750L, false),
+            "두 번째 프로젝트",
+        )
+        try {
+            store.delete(first.id)
+            assertNull(store.load(first.id))
+            val remaining = store.load(second.id)
+            assertNotNull(remaining)
+            assertEquals(secondSource.uri, remaining!!.timeline.clips.single().uri)
+            assertEquals(750L, remaining.playPositionMs)
+            assertNotNull(store.list().firstOrNull { it.id == second.id })
+        } finally {
+            store.delete(first.id)
+            store.delete(second.id)
+        }
+    }
+
     @Test fun namedProjectsPersistAndDeleteWithoutTouchingOtherSessions() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val projects = ProjectStore(context)

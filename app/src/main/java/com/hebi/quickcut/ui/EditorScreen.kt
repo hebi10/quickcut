@@ -484,7 +484,7 @@ fun EditorScreen(
     if (showDelete) {
         AlertDialog(
             onDismissRequest = { showDelete = false },
-            title = { Text("클립을 삭제할까요?") },
+            title = { QuickCutDialogHeading("클립을 삭제할까요?") },
             text = { Text("선택한 구간만 편집 목록에서 제거합니다. 원본 영상은 삭제되지 않습니다.") },
             confirmButton = {
                 Button(
@@ -509,7 +509,7 @@ fun EditorScreen(
         val index = model.timeline.clips.indexOfFirst { it.id == model.selectedId }
         AlertDialog(
             onDismissRequest = { showMove = false },
-            title = { Text("클립 순서 변경") },
+            title = { QuickCutDialogHeading("클립 순서 변경") },
             text = { Text("선택한 클립을 앞이나 뒤로 이동합니다.") },
             confirmButton = {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

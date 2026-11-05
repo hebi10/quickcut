@@ -391,7 +391,7 @@ fun QuickCutApp(
                 if (!model.isRecoveringExport && !model.hasUnresolvedExport)
                     dismissedRecoveryNotice = model.exportRecoveryNotice
             },
-            title = { Text("이전 저장 확인") },
+            title = { QuickCutDialogHeading("이전 저장 확인") },
             text = { Text(if (model.isRecoveringExport) "중단된 저장 파일과 완료 여부를 확인하고 있습니다."
                 else model.exportRecoveryNotice.orEmpty()) },
             confirmButton = {
@@ -509,7 +509,7 @@ fun QuickCutApp(
     model.errorMessage?.let { text ->
         AlertDialog(
             onDismissRequest = model::dismissError,
-            title = { Text("안내") },
+            title = { QuickCutDialogHeading("안내") },
             text = { Column { Text(text); ExportDiagnosticButton() } },
             confirmButton = {
                 TextButton(onClick = model::dismissError, shape = CutShape,
@@ -523,7 +523,7 @@ fun QuickCutApp(
     if (model.showExitConfirmation) {
         AlertDialog(
             onDismissRequest = model::hideExitConfirmation,
-            title = { Text("편집을 종료할까요?") },
+            title = { QuickCutDialogHeading("편집을 종료할까요?") },
             text = { Text("저장하지 않은 편집 내용이 사라집니다.") },
             confirmButton = {
                 Button(
@@ -584,7 +584,7 @@ private fun LastSettingsDialog(
     val tail = timeValue(tailText)
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("마지막 사용 설정") },
+        title = { QuickCutDialogHeading("마지막 사용 설정") },
         text = {
             Column(
                 modifier = Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
@@ -661,7 +661,7 @@ internal fun RestoreRecoveryDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("이전 편집 복원") },
+        title = { QuickCutDialogHeading("이전 편집 복원") },
         text = {
             Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp)) {

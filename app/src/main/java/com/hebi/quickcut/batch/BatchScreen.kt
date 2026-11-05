@@ -81,6 +81,7 @@ import com.hebi.quickcut.media.MediaOperationDiagnostics
 import com.hebi.quickcut.ui.CutChoice
 import com.hebi.quickcut.ui.CutChoiceDropdown
 import com.hebi.quickcut.ui.CutColors
+import com.hebi.quickcut.ui.QuickCutDialogHeading
 import com.hebi.quickcut.ui.CutPanelShape
 import com.hebi.quickcut.ui.CutDialogShape
 import com.hebi.quickcut.ui.CutShape
@@ -218,7 +219,7 @@ fun BatchScreen(
     if (showStopConfirmation) {
         AlertDialog(
             onDismissRequest = { showStopConfirmation = false },
-            title = { Text("일괄 저장을 중단할까요?") },
+            title = { QuickCutDialogHeading("일괄 저장을 중단할까요?") },
             text = { Text("이미 저장된 영상은 유지하고 진행 중인 파일은 취소합니다.") },
             confirmButton = {
                 Button(enabled = !model.isFinalizing, onClick = {
@@ -264,7 +265,7 @@ fun BatchScreen(
     if (inspecting) {
         AlertDialog(
             onDismissRequest = { inspectionJob?.cancel() },
-            title = { Text("저장할 영상 확인 중") },
+            title = { QuickCutDialogHeading("저장할 영상 확인 중") },
             text = {
                 Text(
                     "키프레임과 자르기 설정을 확인하고 있습니다. 긴 영상은 분석에 시간이 걸릴 수 있습니다." +
@@ -281,7 +282,7 @@ fun BatchScreen(
     model.notification?.let { notice ->
         AlertDialog(
             onDismissRequest = model::clearNotification,
-            title = { Text("안내") },
+            title = { QuickCutDialogHeading("안내") },
             text = { Text(notice) },
             confirmButton = { TextButton(onClick = model::clearNotification) { Text("확인") } },
             containerColor = CutColors.panel,

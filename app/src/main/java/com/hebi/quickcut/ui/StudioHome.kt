@@ -53,7 +53,7 @@ import com.hebi.quickcut.settings.QuickTrimSettings
 internal fun StudioBrand(modifier: Modifier = Modifier) {
     Row(modifier, verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        QuickCutLogo(size = 48.dp)
+        QuickCutLogo(size = CutSizes.touchTarget)
         Column {
             Text("QuickCut", style = MaterialTheme.typography.titleLarge,
                 color = CutColors.primaryText, fontWeight = FontWeight.Bold)
@@ -82,11 +82,11 @@ internal fun StudioStartScreen(
         val compactHero = maxWidth < 380.dp && LocalDensity.current.fontScale >= 1.8f
         Column(
             Modifier.fillMaxSize().verticalScroll(rememberScrollState())
-                .padding(horizontal = if (expanded) 32.dp else 16.dp, vertical = 22.dp),
+                .padding(horizontal = if (expanded) CutSpacing.xxl else CutSpacing.lg, vertical = CutSpacing.xl),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Column(Modifier.widthIn(max = 1000.dp).fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(18.dp)) {
+                verticalArrangement = Arrangement.spacedBy(CutSpacing.lg)) {
                 StudioBrand()
                 if (expanded) {
                     Row(horizontalArrangement = Arrangement.spacedBy(24.dp),
@@ -100,9 +100,9 @@ internal fun StudioStartScreen(
                 }
                 if (canRestore) {
                     OutlinedButton(onClick = onRestore, shape = CutShape,
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
+                        modifier = Modifier.fillMaxWidth().heightIn(min = CutSizes.primaryButton)) {
                         Icon(Icons.Outlined.History, contentDescription = null,
-                            modifier = Modifier.size(20.dp))
+                            modifier = Modifier.size(CutSizes.icon))
                         Spacer(Modifier.width(10.dp))
                         Text("이전 편집 이어서 진행")
                     }
@@ -112,7 +112,7 @@ internal fun StudioStartScreen(
                     ExportDiagnosticButton()
                     PrivacyPolicyButton()
                     TextButton(onClick = onLicenses, shape = CutShape,
-                        modifier = Modifier.heightIn(min = 48.dp)) {
+                        modifier = Modifier.heightIn(min = CutSizes.touchTarget)) {
                         Text("오픈소스 라이선스", color = CutColors.mutedText,
                             style = MaterialTheme.typography.labelMedium)
                     }
@@ -165,7 +165,7 @@ private fun StudioWelcome(showArt: Boolean, onStart: () -> Unit, modifier: Modif
         ) {
             if (LocalDensity.current.fontScale <= 1.4f) {
                 Icon(Icons.Outlined.Movie, contentDescription = null,
-                    modifier = Modifier.size(20.dp))
+                    modifier = Modifier.size(CutSizes.icon))
                 Spacer(Modifier.width(8.dp))
             }
             Text("영상 편집 시작하기", fontWeight = FontWeight.SemiBold)
@@ -230,7 +230,7 @@ private fun StudioSettings(settings: QuickTrimSettings, dateMode: SaveDateMode,
                 Text("마지막 사용 설정", modifier = Modifier.weight(1f),
                     color = CutColors.primaryText, style = MaterialTheme.typography.titleSmall)
                 TextButton(onClick = onPreferences, shape = CutShape,
-                    modifier = Modifier.heightIn(min = 48.dp)) { Text("설정 변경") }
+                    modifier = Modifier.heightIn(min = CutSizes.touchTarget)) { Text("설정 변경") }
             }
         }
         Text("앞 " + (settings.leadingMs / 1_000.0) + "초 삭제 · 뒤 " +

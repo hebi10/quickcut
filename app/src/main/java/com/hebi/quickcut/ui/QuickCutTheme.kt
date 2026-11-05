@@ -56,6 +56,7 @@ private val colorScheme = darkColorScheme(
 
 val CutShape = RoundedCornerShape(14.dp)
 val CutPanelShape = RoundedCornerShape(20.dp)
+val CutDialogShape = RoundedCornerShape(4.dp)
 val CutSmallShape = RoundedCornerShape(8.dp)
 
 private val cutShapes = Shapes(

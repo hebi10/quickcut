@@ -41,8 +41,8 @@ internal fun SaveOptionsDialog(
         title = { Text("저장 설정") },
         text = {
             Column(
-                modifier = Modifier.heightIn(max = 400.dp).verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Text("원본 동영상", color = CutColors.primaryText,
                     style = MaterialTheme.typography.titleSmall)
@@ -74,21 +74,21 @@ internal fun SaveOptionsDialog(
                 )
                 if (dateMode == SaveDateMode.ORIGINAL) {
                     Text(
-                        "원본 날짜를 유지하면서 가능한 원본 복사·부분 처리를 우선 사용합니다. " +
-                            "날짜 기록을 위한 임시 저장 공간이 필요할 수 있습니다.",
+                        "원본 날짜를 유지하며 원본 복사·부분 처리를 우선 시도합니다. " +
+                            "날짜 기록에 추가 저장 공간이 필요할 수 있습니다.",
                         color = CutColors.secondaryText,
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
                 Text(
-                    "여러 원본을 합친 경우 첫 영상 날짜를 사용합니다. 원본 날짜 정보가 없으면 " +
+                    "여러 영상을 합치면 첫 영상 날짜를 사용합니다. 원본 날짜 정보가 없으면 " +
                         "해당 방식의 저장이 취소됩니다.",
                     color = CutColors.secondaryText,
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Text(
-                    "저장이 실패하거나 취소되면 원본은 유지됩니다. " +
-                        "활성화한 원본 처리 설정은 끌 때까지 유지되며 저장 성공 후 Android 승인이 필요합니다.",
+                    "저장 실패·취소 시 원본은 유지됩니다. 원본 처리 설정은 끌 때까지 유지되며, " +
+                        "저장에 성공한 뒤 Android 승인을 요청합니다.",
                     color = CutColors.secondaryText,
                     style = MaterialTheme.typography.bodySmall,
                 )
@@ -102,7 +102,7 @@ internal fun SaveOptionsDialog(
             TextButton(onClick = onDismiss, shape = CutShape) { Text("취소") }
         },
         containerColor = CutColors.panel,
-        shape = CutShape,
+        shape = CutDialogShape,
     )
 }
 
@@ -117,18 +117,27 @@ internal fun OriginalActionEnableDialog(
         onDismissRequest = onDismiss,
         title = { Text("원본 자동 처리 활성화") },
         text = {
-            Text(
-                "새로 저장에 성공한 원본을 " +
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("저장에 성공한 원본만 " +
                     (if (permanent) "영구 삭제" else "휴지통으로 이동") +
-                    "하도록 설정합니다. 새 작업·재편집·앱 재시작 후에도 설정을 끌 때까지 유지됩니다.\n\n" +
-                    "실패·취소·건너뜀 원본은 유지하며 매번 Android 승인이 필요합니다." +
-                    if (permanent) "\n영구 삭제 후에는 복구하지 못할 수 있습니다." else "",
-            )
+                    "하도록 설정합니다.")
+                Text("새 작업·재편집·앱 재시작 후에도 이 설정은 유지되며, " +
+                    "원본 처리는 매번 Android 승인이 필요합니다.",
+                    color = CutColors.secondaryText, style = MaterialTheme.typography.bodySmall)
+                Text("실패·취소·건너뛴 영상의 원본은 유지됩니다.",
+                    color = CutColors.secondaryText, style = MaterialTheme.typography.bodySmall)
+                if (permanent) {
+                    Text("영구 삭제한 원본은 복구할 수 없을 수 있습니다.",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall)
+                }
+            }
         },
-        confirmButton = { Button(onClick = onConfirm, shape = CutShape) { Text("활성화") } },
+        confirmButton = { Button(onClick = onConfirm, shape = CutShape,
+            modifier = Modifier.heightIn(min = 48.dp)) { Text("활성화") } },
         dismissButton = { TextButton(onClick = onDismiss, shape = CutShape) { Text("취소") } },
         containerColor = CutColors.panel,
-        shape = CutShape,
+        shape = CutDialogShape,
     )
 }
 
@@ -146,17 +155,16 @@ internal fun ExportModeDialog(
         title = { Text("저장 방식 선택") },
         text = {
             Column(
-                modifier = Modifier.heightIn(max = 400.dp).verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 if (retryingFastExport) {
                     Text("고속 복사를 완료하지 못했습니다. 요청한 위치를 유지하며 다른 처리 방식으로 저장할 수 있습니다.")
                 }
                 Text(assessment.explanation)
                 Text(
-                    "정확한 위치로 자동 저장은 요청한 구간을 유지합니다. 원본 데이터 복사와 " +
-                        "일부 구간 최적화를 우선 시도하고, 필요하면 전체 재인코딩을 허용합니다. " +
-                        "처리 시간은 영상과 기기에 따라 달라지며 완료 후 실제 처리 방식을 표시합니다.",
+                    "정확한 위치로 저장하면 지정한 시작·끝 시점을 유지합니다. 원본 복사·부분 처리를 " +
+                        "우선 시도하고 필요하면 영상 전체를 변환합니다. 실제 처리 방식은 완료 후 표시합니다.",
                     color = CutColors.secondaryText,
                     style = MaterialTheme.typography.bodySmall,
                 )
@@ -165,9 +173,9 @@ internal fun ExportModeDialog(
                         color = CutColors.secondaryAccent)
                     Text(fastCutSuggestionText(suggestion))
                     FastCutPreview(suggestion)
-                    Text("추천 위치로 저장하면 실제 잘리는 시점이 달라집니다. " +
-                        "위 시간은 원본 영상 기준입니다. 키프레임 간격에 따라 차이가 날 수 있습니다. " +
-                        "추천 위치에 동의하면 구간을 변경하고 영상 재인코딩 없이 저장합니다. 소리는 필요하면 변환합니다.",
+                    Text("추천 위치는 원본 영상의 키프레임을 기준으로 제안합니다. " +
+                        "선택하면 자르는 시점이 변경되고 영상은 재인코딩 없이 저장됩니다. " +
+                        "소리는 필요하면 변환합니다.",
                         color = CutColors.secondaryText, style = MaterialTheme.typography.bodySmall)
                 }
             }
@@ -189,13 +197,13 @@ internal fun ExportModeDialog(
                         modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp), shape = CutShape,
                     ) { Text("정확한 위치로 자동 저장") }
                 }
-                TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth(), shape = CutShape) {
+                TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp), shape = CutShape) {
                     Text("취소")
                 }
             }
         },
         containerColor = CutColors.panel,
-        shape = CutShape,
+        shape = CutDialogShape,
     )
 }
 
@@ -234,9 +242,10 @@ internal fun ExportInspectionDialog(progress: Int? = null, onCancel: () -> Unit)
                     modifier = Modifier.padding(start = 12.dp))
             }
         },
-        confirmButton = { TextButton(onClick = onCancel, shape = CutShape) { Text("분석 취소") } },
+        confirmButton = { TextButton(onClick = onCancel, shape = CutShape,
+            modifier = Modifier.heightIn(min = 48.dp)) { Text("분석 취소") } },
         containerColor = CutColors.panel,
-        shape = CutShape,
+        shape = CutDialogShape,
     )
 }
 
@@ -250,13 +259,14 @@ internal fun ExportCancelDialog(canCancel: Boolean, onCancel: () -> Unit, onDism
                 else "갤러리에 결과물을 등록하고 있습니다. 완료 단계에서는 취소할 수 없습니다.")
         },
         confirmButton = {
-            Button(onClick = onCancel, enabled = canCancel, shape = CutShape) { Text("저장 취소") }
+            Button(onClick = onCancel, enabled = canCancel, shape = CutShape,
+                modifier = Modifier.heightIn(min = 48.dp)) { Text("저장 취소") }
         },
         dismissButton = {
             TextButton(onClick = onDismiss, shape = CutShape) { Text("계속 저장") }
         },
         containerColor = CutColors.panel,
-        shape = CutShape,
+        shape = CutDialogShape,
     )
 }
 

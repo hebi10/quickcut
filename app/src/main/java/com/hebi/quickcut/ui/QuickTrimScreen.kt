@@ -278,7 +278,8 @@ fun QuickTrimScreen(
     BoxWithConstraints(Modifier.fillMaxSize().background(CutColors.background)) {
         val fontScale = LocalDensity.current.fontScale
         val compactHeader = maxWidth < 400.dp || (fontScale >= 1.5f && maxWidth < 600.dp)
-        val sideBySide = maxWidth >= 480.dp && maxWidth > maxHeight
+        val sideBySide = maxWidth >= 480.dp && maxWidth > maxHeight &&
+            maxWidth / fontScale >= 480.dp
         Column(Modifier.fillMaxSize()) {
             Column(Modifier.fillMaxWidth()
                 .background(Brush.horizontalGradient(listOf(CutColors.panel, CutColors.background)))

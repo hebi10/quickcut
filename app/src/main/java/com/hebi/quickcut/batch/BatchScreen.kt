@@ -153,7 +153,8 @@ fun BatchScreen(
 
     BoxWithConstraints(Modifier.fillMaxSize().background(CutColors.background)) {
         val actionsMaxHeight = maxHeight * 0.45f
-        if (maxWidth >= 840.dp) {
+        if (maxWidth >= 840.dp &&
+            maxWidth / LocalDensity.current.fontScale >= 700.dp) {
             Row(Modifier.fillMaxSize()) {
                 Column(
                     modifier = Modifier.width(390.dp)
@@ -509,7 +510,7 @@ private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
             val addContent: @Composable () -> Unit = {
                 Icon(Icons.Outlined.Add, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
-                Text(if (model.isImporting) "영상 불러오는 중" else "영상 여러 개 선택 / 추가")
+                Text(if (model.isImporting) "영상 불러오는 중" else "영상 선택·추가")
             }
             if (model.files.isEmpty()) {
                 Button(onClick = onSelectVideos, enabled = !disabled && !model.isImporting,
@@ -524,10 +525,12 @@ private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
         }
         PresetEditor(model, disabled)
         Text(
-            "2. 자르기 설정 · 마지막 사용값 자동 복원",
+            "2. 자르기 설정",
             color = CutColors.primaryText,
             fontWeight = FontWeight.SemiBold,
         )
+        Text("마지막 사용값은 자동으로 복원됩니다.",
+            style = MaterialTheme.typography.bodySmall, color = CutColors.secondaryText)
         CutChoiceDropdown("편집 방식", model.draftMode, listOf(
             CutChoice(BatchClipMode.REMOVE_EDGES, "앞뒤 구간 자르기"),
             CutChoice(BatchClipMode.KEEP_FIRST, "처음 구간만 남기기"),
@@ -558,7 +561,7 @@ private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
         val template = model.previewTemplate()
         Text(
             template?.let(BatchTimeInput::summary) ?: model.draftError().orEmpty(),
-            color = if (template != null) CutColors.accent else MaterialTheme.colorScheme.error,
+            color = if (template != null) CutColors.secondaryAccent else MaterialTheme.colorScheme.error,
             style = MaterialTheme.typography.bodyMedium,
             modifier = Modifier.fillMaxWidth().testTag("batch-edit-summary"),
         )

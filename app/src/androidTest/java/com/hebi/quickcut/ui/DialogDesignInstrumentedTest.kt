@@ -4,12 +4,21 @@ import android.graphics.Bitmap
 import android.os.ParcelFileDescriptor
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.assertHeightIsAtLeast
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.Box
+import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.width
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.hebi.quickcut.editor.OriginalAction
@@ -17,6 +26,7 @@ import com.hebi.quickcut.media.ExportAssessment
 import com.hebi.quickcut.media.SaveDateMode
 import java.io.File
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -35,6 +45,7 @@ class DialogDesignInstrumentedTest {
         }
         compose.onNodeWithText("저장 설정").assertIsDisplayed()
         compose.onNodeWithText("저장 시작").assertIsDisplayed().assertHeightIsAtLeast(48.dp)
+        compose.onNodeWithText("취소").assertIsDisplayed().assertHeightIsAtLeast(48.dp)
         capture("dialog_save_settings")
     }
 
@@ -71,7 +82,7 @@ class DialogDesignInstrumentedTest {
                 ExportCancelDialog(canCancel = false, onCancel = {}, onDismiss = {})
             }
         }
-        compose.onNodeWithText("계속 저장").assertIsDisplayed()
+        compose.onNodeWithText("계속 저장").assertIsDisplayed().assertHeightIsAtLeast(48.dp)
         compose.onNodeWithText("저장 취소").assertIsNotEnabled()
         capture("dialog_export_finalizing")
     }
@@ -127,6 +138,46 @@ class DialogDesignInstrumentedTest {
         compose.onNodeWithText("오픈소스 라이선스").assertIsDisplayed()
         compose.onNodeWithText("닫기").assertIsDisplayed()
         capture("dialog_licenses")
+    }
+
+    @Test
+    fun saveDialogAt200PercentKeepsSaveAndCancelAccessible() {
+        compose.setContent {
+            val density = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides Density(density.density, 2f)) {
+                QuickCutTheme {
+                    SaveOptionsDialog(OriginalAction.KEEP, {}, SaveDateMode.CURRENT, {},
+                        true, {}, {})
+                }
+            }
+        }
+        compose.onNodeWithText("저장 시작").assertIsDisplayed().assertHeightIsAtLeast(48.dp)
+        compose.onNodeWithText("취소").assertIsDisplayed().assertHeightIsAtLeast(48.dp)
+        capture("dialog_save_large_font")
+    }
+
+    @Test
+    fun longDialogHeadingRemainsCompleteWithLargeFont() {
+        val title = "영상 저장을 취소할까요?"
+        compose.setContent {
+            val density = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides Density(density.density, 1.6f)) {
+                QuickCutTheme {
+                    Box(Modifier.width(236.dp)) { QuickCutDialogHeading(title) }
+                }
+            }
+        }
+        val layouts = mutableListOf<TextLayoutResult>()
+        compose.onNodeWithText(title, useUnmergedTree = true)
+            .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { action ->
+                assertTrue("Title layout should be available", action(layouts))
+            }
+        assertTrue("Title should have text layout", layouts.isNotEmpty())
+        layouts.forEach { layout ->
+            assertTrue("Dialog title should not truncate", !layout.multiParagraph.didExceedMaxLines)
+            assertEquals("Dialog title should keep all characters", title.length,
+                layout.getLineEnd(layout.lineCount - 1, visibleEnd = true))
+        }
     }
 
     private fun capture(name: String) {

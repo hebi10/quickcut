@@ -320,7 +320,8 @@ fun EditorScreen(
             // IME resize must not replace the focused field with another layout's instance.
             val layoutHeight = maxHeight + with(density) { keyboardInset.toDp() }
             val compactHeight = layoutHeight < 480.dp
-            val wide = availableWidth >= 840.dp && !compactHeight
+            val wide = availableWidth >= 840.dp &&
+                availableWidth / density.fontScale >= 700.dp && !compactHeight
             val selected = selectedClip
 
             when {
@@ -695,7 +696,7 @@ private fun ToolButtons(
                         if (item.key == "mute" && selected?.muted == true) Icons.Outlined.VolumeUp else item.icon,
                         contentDescription = null,
                         tint = if (enabled) {
-                            if (active) CutColors.accent else CutColors.primaryText
+                            if (active) CutColors.secondaryAccent else CutColors.primaryText
                         } else CutColors.mutedText,
                         modifier = Modifier.size(22.dp),
                     )
@@ -741,14 +742,14 @@ private fun ToolButtons(
                             if (item.key == "mute" && selected?.muted == true) Icons.Outlined.VolumeUp else item.icon,
                             contentDescription = null,
                             tint = if (!enabled) CutColors.mutedText
-                                else if (active) CutColors.accent else CutColors.primaryText,
+                                else if (active) CutColors.secondaryAccent else CutColors.primaryText,
                             modifier = Modifier.size(23.dp),
                         )
                         Spacer(Modifier.height(6.dp))
                         Text(
                             if (item.key == "mute" && selected?.muted == true) "소리 복원" else item.text,
                             color = if (!enabled) CutColors.mutedText
-                                else if (active) CutColors.accent else CutColors.primaryText,
+                                else if (active) CutColors.secondaryAccent else CutColors.primaryText,
                             fontSize = 12.sp,
                         )
                     }

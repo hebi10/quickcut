@@ -5,6 +5,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -75,8 +76,10 @@ internal fun StudioStartScreen(
     onLicenses: () -> Unit,
 ) {
     BoxWithConstraints(Modifier.fillMaxSize().background(CutColors.background)) {
-        val expanded = maxWidth >= 720.dp
+        val expanded = maxWidth >= 720.dp &&
+            maxWidth / LocalDensity.current.fontScale >= 680.dp
         val showArt = maxWidth >= 340.dp && LocalDensity.current.fontScale <= 1.4f
+        val compactHero = maxWidth < 380.dp && LocalDensity.current.fontScale >= 1.8f
         Column(
             Modifier.fillMaxSize().verticalScroll(rememberScrollState())
                 .padding(horizontal = if (expanded) 32.dp else 16.dp, vertical = 22.dp),
@@ -88,11 +91,11 @@ internal fun StudioStartScreen(
                 if (expanded) {
                     Row(horizontalArrangement = Arrangement.spacedBy(24.dp),
                         verticalAlignment = Alignment.Top) {
-                        StudioWelcome(showArt, onQuick, Modifier.weight(1f))
+                        StudioWelcome(showArt, onQuick, Modifier.weight(1f), compactHero)
                         StudioModes(onQuick, onBatch, onSelect, Modifier.weight(1f))
                     }
                 } else {
-                    StudioWelcome(showArt, onQuick)
+                    StudioWelcome(showArt, onQuick, compactHeadline = compactHero)
                     StudioModes(onQuick, onBatch, onSelect)
                 }
                 if (canRestore) {
@@ -120,7 +123,8 @@ internal fun StudioStartScreen(
 }
 
 @Composable
-private fun StudioWelcome(showArt: Boolean, onStart: () -> Unit, modifier: Modifier = Modifier) {
+private fun StudioWelcome(showArt: Boolean, onStart: () -> Unit, modifier: Modifier = Modifier,
+    compactHeadline: Boolean = false) {
     Column(modifier.fillMaxWidth()
         .background(
             Brush.horizontalGradient(
@@ -136,7 +140,8 @@ private fun StudioWelcome(showArt: Boolean, onStart: () -> Unit, modifier: Modif
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Column(Modifier.weight(1f)) {
                 Text("영상은 빠르게,\n편집은 간단하게.", color = CutColors.primaryText,
-                    style = MaterialTheme.typography.headlineSmall)
+                    style = if (compactHeadline) MaterialTheme.typography.titleMedium.copy(fontSize = 15.sp)
+                        else MaterialTheme.typography.headlineSmall)
                 Spacer(Modifier.height(10.dp))
                 Text("필요한 장면만 자르고 안전하게 저장하세요.",
                     color = CutColors.secondaryText, style = MaterialTheme.typography.bodySmall)
@@ -155,6 +160,7 @@ private fun StudioWelcome(showArt: Boolean, onStart: () -> Unit, modifier: Modif
         Button(
             onClick = onStart,
             shape = CutShape,
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
             modifier = Modifier.fillMaxWidth().heightIn(min = 54.dp),
         ) {
             if (LocalDensity.current.fontScale <= 1.4f) {
@@ -173,11 +179,11 @@ private fun StudioModes(onQuick: () -> Unit, onBatch: () -> Unit,
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text("어떤 영상을 편집할까요?", style = MaterialTheme.typography.titleMedium,
             color = CutColors.primaryText)
-        StudioModeCard("빠른 자르기 · 영상 1개", "가장 빠르게 필요한 구간만 남기기",
+        StudioModeCard("빠른 자르기", "영상 1개 · 필요한 구간만 빠르게 남기기",
             Icons.Outlined.ContentCut, primary = true, onClick = onQuick)
-        StudioModeCard("일괄 편집 · 여러 영상", "여러 영상을 같은 설정으로 한 번에",
+        StudioModeCard("일괄 편집", "여러 영상 · 같은 설정으로 한 번에",
             Icons.Outlined.VideoLibrary, onClick = onBatch)
-        StudioModeCard("상세 편집 (분할·연결·순서 변경)", "자르기·분할·순서 편집을 자유롭게",
+        StudioModeCard("상세 편집", "자르기·분할·순서 변경을 자유롭게",
             Icons.Outlined.Movie, onClick = onSelect)
     }
 }

@@ -327,7 +327,7 @@ class TrimInputInstrumentedTest {
                 QuickCutTheme { QuickCutApp(model, batchModel) }
             }
         }
-        composeRule.onNodeWithText("빠른 자르기 · 영상 1개").performClick()
+        composeRule.onNodeWithText("빠른 자르기").performClick()
         composeRule.waitUntil(25_000L) { model.errorMessage != null }
         composeRule.onNodeWithText("확인", substring = false).performClick()
         if (restore) {
@@ -336,7 +336,7 @@ class TrimInputInstrumentedTest {
             composeRule.runOnUiThread { model.restoreSavedSession(context) }
         } else {
             nextUri = Uri.fromFile(source)
-            composeRule.onNodeWithText("상세 편집 (분할·연결·순서 변경)").performClick()
+            composeRule.onNodeWithText("상세 편집").performClick()
         }
         composeRule.waitUntil(25_000L) { model.page == QuickCutPage.EDITOR }
         composeRule.waitForIdle()

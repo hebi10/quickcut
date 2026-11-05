@@ -62,6 +62,16 @@ class StudioDesignInstrumentedTest {
     }
 
     @Test
+    fun extraLargeFontOnNarrowPhoneKeepsActionsReachable() {
+        checkHome(width = 320, height = 720, fontScale = 2f, screenshotName = "phone_font_200")
+    }
+
+    @Test
+    fun extraLargeFontOnFoldKeepsActionsReachable() {
+        checkHome(width = 840, height = 720, fontScale = 2f, screenshotName = "fold_font_200")
+    }
+
+    @Test
     fun landscapeKeepsAllStartActionsReadableAndReachable() {
         checkHome(width = 640, height = 360, fontScale = 1f, screenshotName = "landscape")
     }
@@ -83,15 +93,18 @@ class StudioDesignInstrumentedTest {
     private fun checkHome(width: Int, height: Int, fontScale: Float, screenshotName: String) {
         val events = mutableListOf<String>()
         showHome(width, height, fontScale, canRestore = true, events = events)
+        if (width == 320 && fontScale >= 2f) {
+            assertLabelIsNotClipped("영상은 빠르게,\n편집은 간단하게.", requireTwoLines = true)
+        }
         captureReviewImage("studio_home_${screenshotName}_top.png")
 
         // Losing the scroll container, constraining a wrapped button's height, or wiring a
         // mode to the wrong callback must fail even when the first viewport looks correct.
         listOf(
             "영상 편집 시작하기",
-            "빠른 자르기 · 영상 1개",
-            "일괄 편집 · 여러 영상",
-            "상세 편집 (분할·연결·순서 변경)",
+            "빠른 자르기",
+            "일괄 편집",
+            "상세 편집",
             "이전 편집 이어서 진행",
             "설정 변경",
             "오픈소스 라이선스",
@@ -99,7 +112,9 @@ class StudioDesignInstrumentedTest {
             val action = composeRule.onNode(hasText(label) and hasClickAction())
                 .performScrollTo().assertIsDisplayed().assertIsEnabled()
                 .assertWidthIsAtLeast(48.dp).assertHeightIsAtLeast(48.dp)
-            assertLabelIsNotClipped(label)
+            assertLabelIsNotClipped(label,
+                requireSingleLine = fontScale >= 1.6f && width == 320 &&
+                    label in setOf("빠른 자르기", "일괄 편집", "상세 편집"))
             if (label == "설정 변경") {
                 captureReviewImage("studio_home_${screenshotName}_settings.png")
             }
@@ -149,7 +164,8 @@ class StudioDesignInstrumentedTest {
         }
     }
 
-    private fun assertLabelIsNotClipped(label: String) {
+    private fun assertLabelIsNotClipped(label: String, requireSingleLine: Boolean = false,
+        requireTwoLines: Boolean = false) {
         val layouts = mutableListOf<TextLayoutResult>()
         composeRule.onNodeWithText(label, useUnmergedTree = true)
             .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { getLayouts ->
@@ -159,6 +175,13 @@ class StudioDesignInstrumentedTest {
         layouts.forEach { layout ->
             assertEquals("The complete action label must be laid out", label, layout.layoutInput.text.text)
             assertTrue("The action label must have a visible line: $label", layout.lineCount > 0)
+            if (requireSingleLine) {
+                assertEquals("Compact home mode titles should not wrap: $label", 1, layout.lineCount)
+            }
+            if (requireTwoLines) {
+                assertEquals("Hero heading should retain its two intentional lines: $label",
+                    2, layout.lineCount)
+            }
             // Spaces consumed at a soft wrap have no painted glyph and can extend past a line.
             val visibleOffsets = label.indices.filterNot { label[it].isWhitespace() }
             val characterBounds = visibleOffsets.map(layout::getBoundingBox)
@@ -241,7 +264,7 @@ class StudioDesignInstrumentedTest {
             Log.i("StudioDesignTest", "Saved screenshot: ${output.absolutePath}")
             // Gradle uninstalls the app after instrumentation, removing external-files images.
             // Copy the review artifacts to a shell-owned directory before that cleanup.
-            require(name.matches(Regex("studio_home_(phone|phone_font_160|landscape|fold)_(top|settings)\\.png")))
+            require(name.matches(Regex("studio_home_(phone|phone_font_160|phone_font_200|landscape|fold|fold_font_200)_(top|settings)\\.png")))
             require(output.absolutePath.matches(Regex("[A-Za-z0-9_./-]+")))
             val destination = "/data/local/tmp/quickcut-design-review/$name"
             fun shell(command: String): String {

@@ -11,7 +11,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.width
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
-import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isSelected
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -37,7 +39,7 @@ class SaveOptionsAccessibilityInstrumentedTest {
             }
         }
         compose.onNodeWithContentDescription("저장 완료 후 원본 동영상 처리: 원본 유지 (기본값)").performClick()
-        compose.onNodeWithText("원본 유지 (기본값)").assertIsSelected()
+        compose.onNode(hasText("원본 유지 (기본값)") and isSelected()).assertIsDisplayed()
         compose.onNodeWithText("원본 휴지통으로 이동").performClick()
         compose.runOnIdle { assertEquals(OriginalAction.TRASH, action.value) }
         compose.onNodeWithContentDescription("저장 날짜: 현재 날짜로 저장 (최신 영상)").performScrollTo().performClick()
@@ -73,11 +75,14 @@ class SaveOptionsAccessibilityInstrumentedTest {
                 }
             }
         }
-        compose.onNodeWithTag("choice").performClick()
-        compose.onNodeWithText("현재 선택").assertIsSelected()
+        compose.onNodeWithTag("choice").assertTextContains("현재 선택", substring = true)
+            .performClick()
+        compose.onNode(hasText("현재 선택") and isSelected()).assertIsDisplayed()
         compose.onNodeWithText("사용 불가").assertIsNotEnabled()
         compose.onNodeWithText("좁은 화면에서도 여러 줄로 표시되는 긴 선택 항목").performClick()
         compose.runOnIdle { assertEquals(2, selection.value) }
+        compose.onNodeWithTag("choice")
+            .assertTextContains("좁은 화면에서도 여러 줄로 표시되는 긴 선택 항목", substring = true)
     }
 
     @Test fun disabledAnchorCannotOpenMenu() {

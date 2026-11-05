@@ -24,6 +24,7 @@ class BatchScreenInstrumentedTest {
     @get:Rule
     val composeRule = createAndroidComposeRule<MainActivity>()
 
+    // Onboarding and the tools tab are now part of the real first-run flow.
     private fun openBatchEditor() {
         if (composeRule.onAllNodesWithText("다음").fetchSemanticsNodes().isNotEmpty()) {
             composeRule.onNodeWithText("다음").performClick()

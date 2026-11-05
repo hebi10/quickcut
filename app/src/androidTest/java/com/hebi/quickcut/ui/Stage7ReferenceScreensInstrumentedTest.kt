@@ -85,7 +85,12 @@ class Stage7ReferenceScreensInstrumentedTest {
                     .use { it.readText().trim() }
             }
             shell("mkdir -p /data/local/tmp/quickcut-design-review")
-            shell("cp ${local.absolutePath} $dest")
+            // Shell cannot read app-private scoped-storage paths on Android 11+.
+            val streams = instrumentation.uiAutomation.executeShellCommandRw("cat > $dest")
+            ParcelFileDescriptor.AutoCloseOutputStream(streams[1]).use { output ->
+                local.inputStream().use { input -> input.copyTo(output) }
+            }
+            ParcelFileDescriptor.AutoCloseInputStream(streams[0]).use { input -> input.readBytes() }
             check(shell("wc -c $dest").substringBefore(' ').toLongOrNull() == local.length()) {
                 "Reference screenshot was not preserved: $name"
             }

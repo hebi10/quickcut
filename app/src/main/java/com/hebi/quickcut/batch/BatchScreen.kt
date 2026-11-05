@@ -293,7 +293,13 @@ fun BatchScreen(
         AlertDialog(
             onDismissRequest = model::clearNotification,
             title = { QuickCutDialogHeading("안내") },
-            text = { Text(notice) },
+            text = {
+                CutInfoSection(
+                    title = "작업 안내",
+                    message = notice,
+                    caution = true,
+                )
+            },
             confirmButton = { TextButton(onClick = model::clearNotification,
                 modifier = Modifier.heightIn(min = 48.dp), shape = CutShape) { Text("확인") } },
             containerColor = CutColors.panel,

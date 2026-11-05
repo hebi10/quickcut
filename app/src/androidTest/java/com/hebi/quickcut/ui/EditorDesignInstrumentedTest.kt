@@ -25,7 +25,8 @@ import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
-import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isSelected
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -133,9 +134,9 @@ class EditorDesignInstrumentedTest {
         compose.onNodeWithTag("batch-save-disabled-reason").assertIsDisplayed()
         capture("editor_design_batch_empty")
         compose.onNodeWithTag("batch-mode").performScrollTo().performClick()
-        compose.onNodeWithText("앞뒤 구간 자르기").assertIsSelected()
+        compose.onNode(hasText("앞뒤 구간 자르기") and isSelected()).assertIsDisplayed()
         capture("editor_design_batch_menu")
-        compose.onNodeWithText("앞뒤 구간 자르기").performClick()
+        compose.onNode(hasText("앞뒤 구간 자르기") and isSelected()).performClick()
         compose.runOnUiThread {
             batch.addVideos(InstrumentationRegistry.getInstrumentation().targetContext, listOf(Uri.fromFile(source)))
         }

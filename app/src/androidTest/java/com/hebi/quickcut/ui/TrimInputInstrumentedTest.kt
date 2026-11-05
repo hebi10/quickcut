@@ -343,6 +343,7 @@ class TrimInputInstrumentedTest {
             composeRule.runOnUiThread { model.restoreSavedSession(context) }
         } else {
             nextUri = Uri.fromFile(source)
+            composeRule.onNodeWithText("도구").performClick()
             composeRule.onNodeWithText("상세 편집").performScrollTo().performClick()
         }
         composeRule.waitUntil(25_000L) { model.page == QuickCutPage.EDITOR }

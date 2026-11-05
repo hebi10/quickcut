@@ -79,8 +79,11 @@ def check_startup(directory):
                 tree = ET.fromstring(xml)
             except ET.ParseError:
                 raise StartupError('Malformed startup UI hierarchy') from None
+            valid_start_labels = ('빠른 자르기', '영상 편집을 시작하세요',
+                                  '빠르고 간편한', '필요한 도구만', '안전하게 저장')
             if any(node.get('package') == 'com.hebi.quickcut' and
-                   '빠른 자르기' in node.get('text', '') for node in tree.iter('node')):
+                   any(label in node.get('text', '') for label in valid_start_labels)
+                   for node in tree.iter('node')):
                 guard()
                 final = resumed_component(adb(['shell', 'dumpsys', 'activity', 'activities'], 'activity.txt'))
                 if final not in APP_COMPONENTS:
@@ -96,7 +99,7 @@ def check_startup(directory):
             raise StartupError('Unexpected resumed activity; refusing relaunch: ' + component)
         if attempt < 4:
             time.sleep(min(2, max(0, deadline - time.monotonic())))
-    raise StartupError('QuickCut foreground and original startup UI were not verified within five probes')
+    raise StartupError('QuickCut foreground and recognized startup UI were not verified within five probes')
 
 
 def main():

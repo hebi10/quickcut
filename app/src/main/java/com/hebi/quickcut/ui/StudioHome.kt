@@ -26,6 +26,19 @@ import androidx.compose.material.icons.outlined.ContentCut
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material.icons.outlined.VideoLibrary
+import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.Build
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.foundation.layout.Box
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Button
@@ -75,48 +88,127 @@ internal fun StudioStartScreen(
     onPreferences: () -> Unit,
     onLicenses: () -> Unit,
 ) {
-    BoxWithConstraints(Modifier.fillMaxSize().background(CutColors.background)) {
-        val expanded = maxWidth >= 720.dp &&
-            maxWidth / LocalDensity.current.fontScale >= 680.dp
-        val showArt = maxWidth >= 340.dp && LocalDensity.current.fontScale <= 1.4f
-        val compactHero = maxWidth < 380.dp && LocalDensity.current.fontScale >= 1.8f
-        Column(
-            Modifier.fillMaxSize().verticalScroll(rememberScrollState())
-                .padding(horizontal = if (expanded) CutSpacing.xxl else CutSpacing.lg, vertical = CutSpacing.xl),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Column(Modifier.widthIn(max = 1000.dp).fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(CutSpacing.lg)) {
-                StudioBrand()
-                if (expanded) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(24.dp),
-                        verticalAlignment = Alignment.Top) {
-                        StudioWelcome(showArt, onQuick, Modifier.weight(1f), compactHero)
-                        StudioModes(onQuick, onBatch, onSelect, Modifier.weight(1f))
+    var selectedTab by rememberSaveable { mutableIntStateOf(0) }
+    Column(Modifier.fillMaxSize().background(CutColors.background)) {
+        Box(Modifier.weight(1f)) {
+            Column(
+                modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+                    .padding(horizontal = CutSpacing.lg, vertical = CutSpacing.xl),
+                verticalArrangement = Arrangement.spacedBy(CutSpacing.xl),
+            ) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween) {
+                    StudioBrand()
+                    if (selectedTab != 3) {
+                        TextButton(onClick = { selectedTab = 3 },
+                            modifier = Modifier.heightIn(min = CutSizes.touchTarget)) {
+                            Icon(Icons.Outlined.Settings, contentDescription = "설정",
+                                tint = CutColors.secondaryAccent)
+                        }
                     }
-                } else {
-                    StudioWelcome(showArt, onQuick, compactHeadline = compactHero)
-                    StudioModes(onQuick, onBatch, onSelect)
                 }
-                if (canRestore) {
-                    OutlinedButton(onClick = onRestore, shape = CutShape,
-                        modifier = Modifier.fillMaxWidth().heightIn(min = CutSizes.primaryButton)) {
-                        Icon(Icons.Outlined.History, contentDescription = null,
+                when (selectedTab) {
+                    0 -> {
+                        Text("영상 편집을 시작하세요", color = CutColors.primaryText,
+                            style = MaterialTheme.typography.headlineSmall)
+                        Button(onClick = onQuick, shape = CutShape,
+                            modifier = Modifier.fillMaxWidth()
+                                .heightIn(min = 92.dp)) {
+                            Icon(Icons.Outlined.ContentCut, contentDescription = null,
+                                modifier = Modifier.size(CutSizes.icon))
+                            Spacer(Modifier.width(CutSpacing.sm))
+                            Column {
+                                Text("+ 영상 편집 시작하기",
+                                    style = MaterialTheme.typography.titleMedium)
+                                Text("영상 선택 후 빠른 자르기",
+                                    style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                        Text("내 프로젝트", color = CutColors.primaryText,
+                            style = MaterialTheme.typography.titleMedium)
+                        if (canRestore) {
+                            OutlinedButton(onClick = onRestore, shape = CutShape,
+                                modifier = Modifier.fillMaxWidth()
+                                    .heightIn(min = 82.dp)) {
+                                Icon(Icons.Outlined.History, contentDescription = null)
+                                Spacer(Modifier.width(CutSpacing.md))
+                                Text("이전 편집 이어서 진행")
+                            }
+                        } else {
+                            Text("저장된 편집 작업이 없습니다. 새 영상을 선택해 주세요.",
+                                modifier = Modifier.fillMaxWidth()
+                                    .background(CutColors.surface, CutPanelShape)
+                                    .padding(CutSpacing.xl),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = CutColors.secondaryText)
+                        }
+                        Text("편집 도구", color = CutColors.primaryText,
+                            style = MaterialTheme.typography.titleMedium)
+                        StudioModes(onQuick, onBatch, onSelect)
+                    }
+                    1 -> {
+                        Text("내 프로젝트", style = MaterialTheme.typography.headlineSmall,
+                            color = CutColors.primaryText)
+                        if (canRestore) {
+                            OutlinedButton(onClick = onRestore,
+                                modifier = Modifier.fillMaxWidth()
+                                    .heightIn(min = 80.dp), shape = CutShape) {
+                                Icon(Icons.Outlined.History, contentDescription = null)
+                                Spacer(Modifier.width(CutSpacing.sm))
+                                Text("이전 편집 이어서 진행")
+                            }
+                        } else {
+                            Text("현재 복구할 편집 작업이 없습니다.",
+                                color = CutColors.secondaryText)
+                        }
+                        Text("여러 프로젝트의 영구 저장 및 목록 관리는 3단계에서 구현합니다.",
+                            color = CutColors.mutedText,
+                            style = MaterialTheme.typography.bodySmall)
+                    }
+                    2 -> {
+                        Text("편집 도구", color = CutColors.primaryText,
+                            style = MaterialTheme.typography.headlineSmall)
+                        StudioModes(onQuick, onBatch, onSelect)
+                    }
+                    3 -> {
+                        Text("설정", color = CutColors.primaryText,
+                            style = MaterialTheme.typography.headlineSmall)
+                        StudioSettings(quickSettings, dateMode, onPreferences)
+                        ExportDiagnosticButton()
+                        PrivacyPolicyButton()
+                        TextButton(onClick = onLicenses,
+                            modifier = Modifier.heightIn(min = CutSizes.touchTarget)) {
+                            Text("오픈소스 라이선스")
+                        }
+                    }
+                }
+            }
+        }
+        NavigationBar(containerColor = CutColors.surface,
+            tonalElevation = 0.dp) {
+            val icons = listOf(
+                Icons.Outlined.Home, Icons.Outlined.FolderOpen,
+                Icons.Outlined.Build, Icons.Outlined.Settings,
+            )
+            val labels = listOf("홈", "프로젝트", "도구", "설정")
+            labels.forEachIndexed { index, label ->
+                NavigationBarItem(
+                    selected = selectedTab == index,
+                    onClick = { selectedTab = index },
+                    icon = {
+                        Icon(icons[index], contentDescription = null,
                             modifier = Modifier.size(CutSizes.icon))
-                        Spacer(Modifier.width(10.dp))
-                        Text("이전 편집 이어서 진행")
-                    }
-                }
-                StudioSettings(quickSettings, dateMode, onPreferences)
-                Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End) {
-                    ExportDiagnosticButton()
-                    PrivacyPolicyButton()
-                    TextButton(onClick = onLicenses, shape = CutShape,
-                        modifier = Modifier.heightIn(min = CutSizes.touchTarget)) {
-                        Text("오픈소스 라이선스", color = CutColors.mutedText,
-                            style = MaterialTheme.typography.labelMedium)
-                    }
-                }
+                    },
+                    label = { Text(label) },
+                    alwaysShowLabel = true,
+                    colors = NavigationBarItemDefaults.colors(
+                        selectedIconColor = CutColors.accent,
+                        selectedTextColor = CutColors.secondaryAccent,
+                        indicatorColor = CutColors.accentMuted,
+                        unselectedIconColor = CutColors.mutedText,
+                        unselectedTextColor = CutColors.mutedText,
+                    ),
+                )
             }
         }
     }

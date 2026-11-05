@@ -19,6 +19,7 @@ import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -139,6 +140,11 @@ class EditorRecoveryUiInstrumentedTest {
                 CompositionLocalProvider(LocalActivityResultRegistryOwner provides owner) {
                     if (visible.value) QuickCutTheme { QuickCutApp(editor, batchModel) }
                 }
+            }
+            if (compose.onAllNodesWithText("다음").fetchSemanticsNodes().isNotEmpty()) {
+                compose.onNodeWithText("다음").performClick()
+                compose.onNodeWithText("다음").performClick()
+                compose.onNodeWithText("시작하기").performClick()
             }
             compose.onNodeWithText("이전 편집 이어서 진행").performScrollTo().performClick()
             compose.waitUntil(25_000L) { editor.restoreRecoveryNotice != null && editor.page == QuickCutPage.PICKER }

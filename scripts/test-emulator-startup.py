@@ -75,6 +75,11 @@ class StartupTest(unittest.TestCase):
         self.check(device)
         self.assertEqual(len(device.launches()),1)
 
+    def test_new_reference_onboarding_and_home_are_recognized(self):
+        for title in ('빠르고 간편한 영상 편집', '영상 편집을 시작하세요'):
+            with self.subTest(title=title):
+                self.check(Device([APP], text=title))
+
     def test_home_never_yields_foreground_fails_after_at_most_one_relaunch(self):
         device=Device([HOME])
         with self.assertRaises(s.StartupError): self.check(device)

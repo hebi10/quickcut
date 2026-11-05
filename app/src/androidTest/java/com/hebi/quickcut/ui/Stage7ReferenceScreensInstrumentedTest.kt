@@ -1,6 +1,7 @@
 package com.hebi.quickcut.ui
 
 import android.graphics.Bitmap
+import android.os.Build
 import android.os.ParcelFileDescriptor
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.background
@@ -85,8 +86,18 @@ class Stage7ReferenceScreensInstrumentedTest {
                     .use { it.readText().trim() }
             }
             shell("mkdir -p /data/local/tmp/quickcut-design-review")
-            shell("cp ${local.absolutePath} $dest")
-            check(shell("wc -c $dest").substringBefore(' ').toLongOrNull() == local.length()) {
+            // Shell cannot read app-private scoped-storage paths on Android 11+.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val streams = instrumentation.uiAutomation.executeShellCommandRw("cat > $dest")
+                ParcelFileDescriptor.AutoCloseOutputStream(streams[1]).use { output ->
+                    local.inputStream().use { input -> input.copyTo(output) }
+                }
+                ParcelFileDescriptor.AutoCloseInputStream(streams[0]).use { input -> input.readBytes() }
+            } else {
+                // API 29 shell may still access the app-specific external files directory.
+                shell("cp ${local.absolutePath} $dest")
+            }
+            check(shell("wc -c $dest").trim().substringBefore(' ').toLongOrNull() == local.length()) {
                 "Reference screenshot was not preserved: $name"
             }
     }

@@ -169,7 +169,7 @@ class EditorDesignInstrumentedTest {
         compose.onNodeWithTag("batch-leading-seconds").performScrollTo().assertIsDisplayed()
             .assertHeightIsAtLeast(56.dp)
         compose.onNodeWithTag("batch-save-disabled-reason").assertIsDisplayed()
-        capture("editor_design_batch_font_200")
+        capture("editor_design_batch_extra_large_font")
     }
 
     @Test fun quickAndDetailedShowResultTimeWithoutChangingTrimBounds() {

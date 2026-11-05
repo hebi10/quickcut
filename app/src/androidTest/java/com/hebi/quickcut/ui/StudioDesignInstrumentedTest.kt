@@ -256,7 +256,7 @@ class StudioDesignInstrumentedTest {
             Log.i("StudioDesignTest", "Saved screenshot: ${output.absolutePath}")
             // Gradle uninstalls the app after instrumentation, removing external-files images.
             // Copy the review artifacts to a shell-owned directory before that cleanup.
-            require(name.matches(Regex("studio_home_(phone|phone_font_160|landscape|fold)_(top|settings)\\.png")))
+            require(name.matches(Regex("studio_home_(phone|phone_font_160|phone_font_200|landscape|fold|fold_font_200)_(top|settings)\\.png")))
             require(output.absolutePath.matches(Regex("[A-Za-z0-9_./-]+")))
             val destination = "/data/local/tmp/quickcut-design-review/$name"
             fun shell(command: String): String {

@@ -153,7 +153,7 @@ class DialogDesignInstrumentedTest {
         }
         compose.onNodeWithText("저장 시작").assertIsDisplayed().assertHeightIsAtLeast(48.dp)
         compose.onNodeWithText("취소").assertIsDisplayed().assertHeightIsAtLeast(48.dp)
-        capture("dialog_save_font_200")
+        capture("dialog_save_large_font")
     }
 
     @Test

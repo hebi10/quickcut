@@ -5,6 +5,7 @@ import android.os.ParcelFileDescriptor
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -71,6 +72,7 @@ class DialogDesignInstrumentedTest {
             }
         }
         compose.onNodeWithText("계속 저장").assertIsDisplayed()
+        compose.onNodeWithText("저장 취소").assertIsNotEnabled()
         capture("dialog_export_finalizing")
     }
 
@@ -82,6 +84,49 @@ class DialogDesignInstrumentedTest {
         compose.onNodeWithText("개인정보처리방침").performClick()
         compose.onNodeWithText("닫기").assertIsDisplayed()
         capture("dialog_privacy_policy")
+    }
+
+    @Test
+    fun exportCancelDialogCanStopUnfinishedOutput() {
+        compose.setContent {
+            QuickCutTheme { ExportCancelDialog(canCancel = true, onCancel = {}, onDismiss = {}) }
+        }
+        compose.onNodeWithText("저장 취소").assertIsDisplayed()
+        capture("dialog_export_cancel")
+    }
+
+    @Test
+    fun previousEditRecoveryDialogOffersReconnect() {
+        compose.setContent {
+            QuickCutTheme {
+                RestoreRecoveryDialog(
+                    notice = "원본 영상 접근을 확인해 주세요.",
+                    canReconnect = true, onRetry = {}, onReconnect = {}, onDismiss = {},
+                )
+            }
+        }
+        compose.onNodeWithText("원본 영상 다시 연결").assertIsDisplayed()
+        capture("dialog_edit_recovery")
+    }
+
+    @Test
+    fun diagnosticRecordDialogIsReadable() {
+        compose.setContent {
+            QuickCutTheme { ExportDiagnosticButton() }
+        }
+        compose.onNodeWithText("최근 작업 진단").performClick()
+        compose.onNodeWithText("편집·저장 진단 기록").assertIsDisplayed()
+        capture("dialog_diagnostics")
+    }
+
+    @Test
+    fun licenseDialogKeepsListAndCloseVisible() {
+        compose.setContent {
+            QuickCutTheme { OpenSourceLicensesDialog(onDismiss = {}) }
+        }
+        compose.onNodeWithText("오픈소스 라이선스").assertIsDisplayed()
+        compose.onNodeWithText("닫기").assertIsDisplayed()
+        capture("dialog_licenses")
     }
 
     private fun capture(name: String) {

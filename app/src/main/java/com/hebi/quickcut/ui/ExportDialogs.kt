@@ -117,7 +117,10 @@ internal fun OriginalActionEnableDialog(
         onDismissRequest = onDismiss,
         title = { Text("원본 자동 처리 활성화") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(
+                modifier = Modifier.heightIn(max = 400.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
                 Text("저장에 성공한 원본만 " +
                     (if (permanent) "영구 삭제" else "휴지통으로 이동") +
                     "하도록 설정합니다.")

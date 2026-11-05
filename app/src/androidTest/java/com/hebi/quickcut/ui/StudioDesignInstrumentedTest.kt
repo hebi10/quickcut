@@ -88,6 +88,7 @@ class StudioDesignInstrumentedTest {
         // Losing the scroll container, constraining a wrapped button's height, or wiring a
         // mode to the wrong callback must fail even when the first viewport looks correct.
         listOf(
+            "영상 편집 시작하기",
             "빠른 자르기 · 영상 1개",
             "일괄 편집 · 여러 영상",
             "상세 편집 (분할·연결·순서 변경)",
@@ -107,7 +108,7 @@ class StudioDesignInstrumentedTest {
 
         composeRule.runOnIdle {
             assertEquals(
-                listOf("quick", "batch", "detailed", "restore", "preferences", "licenses"),
+                listOf("quick", "quick", "batch", "detailed", "restore", "preferences", "licenses"),
                 events,
             )
         }

@@ -15,17 +15,20 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 object CutColors {
-    val background = Color(0xFF101D19)
-    val surface = Color(0xFF182A23)
-    val panel = Color(0xFF20362D)
-    val border = Color(0xFF365246)
-    val primaryText = Color(0xFFF0F7F1)
-    val secondaryText = Color(0xFFB4C9BE)
-    val mutedText = Color(0xFF8DA99A)
-    val accent = Color(0xFFB9F3C3)
-    val onAccent = Color(0xFF14271D)
-    val accentMuted = Color(0xFF294B38)
-    val secondaryAccent = Color(0xFFF5B790)
+    val background = Color(0xFF0B0810)
+    val surface = Color(0xFF191324)
+    val panel = Color(0xFF292039)
+    val border = Color(0xFF4B3C61)
+    val primaryText = Color(0xFFF8F6FF)
+    val secondaryText = Color(0xFFCFC6DF)
+    val mutedText = Color(0xFFA79AB9)
+    val accent = Color(0xFF8B5CF6)
+    val onAccent = Color(0xFFFFFFFF)
+    val accentMuted = Color(0xFF382252)
+    val secondaryAccent = Color(0xFFC4B5FD)
+    val brandDeep = Color(0xFF6D28D9)
+    val brandLight = Color(0xFFA78BFA)
+    val success = Color(0xFF22C55E)
 }
 
 private val colorScheme = darkColorScheme(
@@ -56,15 +59,15 @@ private val colorScheme = darkColorScheme(
 
 val CutShape = RoundedCornerShape(14.dp)
 val CutPanelShape = RoundedCornerShape(20.dp)
-val CutDialogShape = RoundedCornerShape(4.dp)
-val CutSmallShape = RoundedCornerShape(8.dp)
+val CutDialogShape = RoundedCornerShape(16.dp)
+val CutSmallShape = RoundedCornerShape(10.dp)
 
 private val cutShapes = Shapes(
     extraSmall = CutSmallShape,
     small = CutShape,
     medium = CutShape,
     large = CutPanelShape,
-    extraLarge = RoundedCornerShape(28.dp),
+    extraLarge = RoundedCornerShape(24.dp),
 )
 
 private val cutTypography = Typography(

@@ -35,6 +35,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
@@ -49,13 +51,12 @@ import com.hebi.quickcut.settings.QuickTrimSettings
 internal fun StudioBrand(modifier: Modifier = Modifier) {
     Row(modifier, verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        Image(painterResource(R.drawable.quickcut_mark), contentDescription = null,
-            modifier = Modifier.size(44.dp))
+        QuickCutLogo(size = 48.dp)
         Column {
             Text("QuickCut", style = MaterialTheme.typography.titleLarge,
                 color = CutColors.primaryText, fontWeight = FontWeight.Bold)
-            Text("POCKET CUT STUDIO", color = CutColors.mutedText,
-                fontSize = 10.sp, letterSpacing = 1.4.sp)
+            Text("빠르고 간편한 영상 편집", color = CutColors.secondaryText,
+                fontSize = 11.sp, letterSpacing = 0.2.sp)
         }
     }
 }
@@ -74,14 +75,14 @@ internal fun StudioStartScreen(
 ) {
     BoxWithConstraints(Modifier.fillMaxSize().background(CutColors.background)) {
         val expanded = maxWidth >= 720.dp
-        val showArt = maxWidth >= 340.dp && LocalDensity.current.fontScale <= 1.3f
+        val showArt = maxWidth >= 340.dp && LocalDensity.current.fontScale <= 1.4f
         Column(
             Modifier.fillMaxSize().verticalScroll(rememberScrollState())
-                .padding(horizontal = if (expanded) 32.dp else 20.dp, vertical = 24.dp),
+                .padding(horizontal = if (expanded) 32.dp else 16.dp, vertical = 22.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Column(Modifier.widthIn(max = 1000.dp).fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(22.dp)) {
+                verticalArrangement = Arrangement.spacedBy(18.dp)) {
                 StudioBrand()
                 if (expanded) {
                     Row(horizontalArrangement = Arrangement.spacedBy(24.dp),
@@ -120,23 +121,33 @@ internal fun StudioStartScreen(
 @Composable
 private fun StudioWelcome(showArt: Boolean, modifier: Modifier = Modifier) {
     Column(modifier.fillMaxWidth()
-        .background(CutColors.panel, CutShape)
-        .border(1.dp, CutColors.border, CutShape).padding(20.dp)) {
-        Text("나만의 작은 편집실", color = CutColors.secondaryAccent,
+        .background(
+            Brush.horizontalGradient(
+                listOf(CutColors.brandDeep.copy(alpha = 0.86f), CutColors.panel, CutColors.surface),
+            ),
+            CutPanelShape,
+        )
+        .border(1.dp, CutColors.brandLight.copy(alpha = 0.55f), CutPanelShape).padding(20.dp)) {
+        Text("FAST · SIMPLE · FOCUSED", color = CutColors.secondaryAccent,
             style = MaterialTheme.typography.labelMedium)
         Spacer(Modifier.height(12.dp))
         Row(verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Column(Modifier.weight(1f)) {
-                Text("좋은 장면만,\n가볍게 남기세요.", color = CutColors.primaryText,
+                Text("영상은 빠르게,\n편집은 간단하게.", color = CutColors.primaryText,
                     style = MaterialTheme.typography.headlineSmall)
                 Spacer(Modifier.height(10.dp))
-                Text("필요한 구간만 빠르게 잘라 저장하세요.",
+                Text("필요한 장면만 자르고 안전하게 저장하세요.",
                     color = CutColors.secondaryText, style = MaterialTheme.typography.bodySmall)
             }
             if (showArt) {
-                Image(painterResource(R.drawable.quickcut_studio), contentDescription = null,
-                    modifier = Modifier.width(132.dp).height(100.dp), contentScale = ContentScale.Fit)
+                Image(
+                    painter = painterResource(R.drawable.quickcut_studio),
+                    contentDescription = null,
+                    modifier = Modifier.width(132.dp).height(100.dp),
+                    contentScale = ContentScale.Fit,
+                    colorFilter = ColorFilter.tint(CutColors.secondaryAccent),
+                )
             }
         }
     }
@@ -146,13 +157,13 @@ private fun StudioWelcome(showArt: Boolean, modifier: Modifier = Modifier) {
 private fun StudioModes(onQuick: () -> Unit, onBatch: () -> Unit,
     onSelect: () -> Unit, modifier: Modifier = Modifier) {
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("편집 모드", style = MaterialTheme.typography.titleMedium,
+        Text("어떤 영상을 편집할까요?", style = MaterialTheme.typography.titleMedium,
             color = CutColors.primaryText)
-        StudioModeCard("빠른 자르기 · 영상 1개", "앞뒤 구간을 덜어내고 간편하게",
+        StudioModeCard("빠른 자르기 · 영상 1개", "가장 빠르게 필요한 구간만 남기기",
             Icons.Outlined.ContentCut, primary = true, onClick = onQuick)
-        StudioModeCard("일괄 편집 · 여러 영상", "내 프리셋으로 여러 영상을 한 번에",
+        StudioModeCard("일괄 편집 · 여러 영상", "여러 영상을 같은 설정으로 한 번에",
             Icons.Outlined.VideoLibrary, onClick = onBatch)
-        StudioModeCard("상세 편집 (분할·연결·순서 변경)", "구간을 나누고 원하는 순서로",
+        StudioModeCard("상세 편집 (분할·연결·순서 변경)", "자르기·분할·순서 편집을 자유롭게",
             Icons.Outlined.Movie, onClick = onSelect)
     }
 }
@@ -165,7 +176,7 @@ private fun StudioModeCard(title: String, subtitle: String, icon: ImageVector,
         color = if (primary) CutColors.accent else CutColors.surface,
         contentColor = foreground,
         border = if (primary) null else BorderStroke(1.dp, CutColors.border),
-        modifier = Modifier.fillMaxWidth().heightIn(min = 82.dp)) {
+        modifier = Modifier.fillMaxWidth().heightIn(min = 84.dp)) {
         Row(Modifier.padding(horizontal = 16.dp, vertical = 16.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -186,8 +197,8 @@ private fun StudioModeCard(title: String, subtitle: String, icon: ImageVector,
 @Composable
 private fun StudioSettings(settings: QuickTrimSettings, dateMode: SaveDateMode,
     onPreferences: () -> Unit) {
-    Column(Modifier.fillMaxWidth().background(CutColors.surface, CutShape)
-        .border(1.dp, CutColors.border, CutShape).padding(16.dp),
+    Column(Modifier.fillMaxWidth().background(CutColors.surface, CutPanelShape)
+        .border(1.dp, CutColors.border, CutPanelShape).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text("마지막 사용 설정", modifier = Modifier.weight(1f),

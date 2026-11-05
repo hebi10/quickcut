@@ -196,6 +196,8 @@ class EditorDesignInstrumentedTest {
         }
         waitForPreview(ExoPlayer::class.java)
         capture("editor_design_quick_trim")
+        compose.onNodeWithText("결과 영상").assertIsDisplayed()
+        compose.onNodeWithContentDescription("자르기 구간 조절").assertExists()
         compose.onNodeWithText("영상 저장").assertIsDisplayed().assertIsEnabled()
         compose.runOnIdle {
             assertEquals(4_000L, editor.timeline.clips.single().startMs)

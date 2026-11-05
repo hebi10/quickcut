@@ -307,6 +307,10 @@ fun QuickCutApp(
         )
     }
 
+    BackHandler(enabled = selectedGalleryUris.isNotEmpty() && model.page == QuickCutPage.PICKER) {
+        selectedGalleryUris = emptyList()
+    }
+
     BackHandler(enabled = onboardingComplete && !showBatch && model.page != QuickCutPage.PICKER &&
         model.page != QuickCutPage.IMPORTING) {
         when (model.page) {

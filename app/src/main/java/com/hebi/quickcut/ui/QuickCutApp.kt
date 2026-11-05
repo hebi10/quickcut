@@ -105,6 +105,12 @@ fun QuickCutApp(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val settings = remember(context) { QuickCutSettings(context) }
+    val onboardingPreferences = remember(context) {
+        context.getSharedPreferences("quickcut_onboarding", android.content.Context.MODE_PRIVATE)
+    }
+    var onboardingComplete by rememberSaveable {
+        mutableStateOf(onboardingPreferences.getBoolean("complete", false))
+    }
     val lifecycleState by lifecycleOwner.lifecycle.currentStateFlow.collectAsState()
     val coroutineScope = rememberCoroutineScope()
     var showBatch by rememberSaveable { mutableStateOf(false) }
@@ -264,7 +270,7 @@ fun QuickCutApp(
         if (showBatch) batchModel.loadTemplates(context)
     }
 
-    BackHandler(enabled = !showBatch && model.page != QuickCutPage.PICKER &&
+    BackHandler(enabled = onboardingComplete && !showBatch && model.page != QuickCutPage.PICKER &&
         model.page != QuickCutPage.IMPORTING) {
         when (model.page) {
             QuickCutPage.EDITOR -> model.requestExit()
@@ -281,7 +287,12 @@ fun QuickCutApp(
             .background(CutColors.background)
             .safeDrawingPadding(),
     ) {
-        if (showBatch) {
+        if (!onboardingComplete && model.page == QuickCutPage.PICKER && !showBatch) {
+            QuickCutWelcome(onFinish = {
+                onboardingPreferences.edit().putBoolean("complete", true).apply()
+                onboardingComplete = true
+            })
+        } else if (showBatch) {
             BatchScreen(
                 model = batchModel,
                 onSelectVideos = { batchPicker.launch(arrayOf("video/*")) },

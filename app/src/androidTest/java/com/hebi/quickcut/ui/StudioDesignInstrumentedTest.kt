@@ -89,9 +89,9 @@ class StudioDesignInstrumentedTest {
         // mode to the wrong callback must fail even when the first viewport looks correct.
         listOf(
             "영상 편집 시작하기",
-            "빠른 자르기 · 영상 1개",
-            "일괄 편집 · 여러 영상",
-            "상세 편집 (분할·연결·순서 변경)",
+            "빠른 자르기",
+            "일괄 편집",
+            "상세 편집",
             "이전 편집 이어서 진행",
             "설정 변경",
             "오픈소스 라이선스",
@@ -99,7 +99,9 @@ class StudioDesignInstrumentedTest {
             val action = composeRule.onNode(hasText(label) and hasClickAction())
                 .performScrollTo().assertIsDisplayed().assertIsEnabled()
                 .assertWidthIsAtLeast(48.dp).assertHeightIsAtLeast(48.dp)
-            assertLabelIsNotClipped(label)
+            assertLabelIsNotClipped(label,
+                requireSingleLine = fontScale >= 1.6f && width == 320 &&
+                    label in setOf("빠른 자르기", "일괄 편집", "상세 편집"))
             if (label == "설정 변경") {
                 captureReviewImage("studio_home_${screenshotName}_settings.png")
             }
@@ -149,7 +151,7 @@ class StudioDesignInstrumentedTest {
         }
     }
 
-    private fun assertLabelIsNotClipped(label: String) {
+    private fun assertLabelIsNotClipped(label: String, requireSingleLine: Boolean = false) {
         val layouts = mutableListOf<TextLayoutResult>()
         composeRule.onNodeWithText(label, useUnmergedTree = true)
             .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { getLayouts ->
@@ -159,6 +161,9 @@ class StudioDesignInstrumentedTest {
         layouts.forEach { layout ->
             assertEquals("The complete action label must be laid out", label, layout.layoutInput.text.text)
             assertTrue("The action label must have a visible line: $label", layout.lineCount > 0)
+            if (requireSingleLine) {
+                assertEquals("Compact home mode titles should not wrap: $label", 1, layout.lineCount)
+            }
             // Spaces consumed at a soft wrap have no painted glyph and can extend past a line.
             val visibleOffsets = label.indices.filterNot { label[it].isWhitespace() }
             val characterBounds = visibleOffsets.map(layout::getBoundingBox)

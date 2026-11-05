@@ -28,6 +28,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
@@ -90,6 +91,7 @@ internal fun <T> CutChoiceDropdown(
                     } else null,
                     enabled = option.enabled,
                     modifier = Modifier.heightIn(min = 48.dp)
+                        .testTag("cut-choice-option-${option.label}")
                         .semantics { this.selected = option.value == selected },
                     onClick = {
                         expanded = false

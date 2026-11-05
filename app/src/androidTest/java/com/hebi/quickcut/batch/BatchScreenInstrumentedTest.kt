@@ -186,6 +186,6 @@ class BatchScreenInstrumentedTest {
 
     private fun choose(tag: String, label: String) {
         composeRule.onNodeWithTag(tag).performScrollTo().performClick()
-        composeRule.onNodeWithText(label, useUnmergedTree = true).performClick()
+        composeRule.onNodeWithTag("cut-choice-option-$label").performClick()
     }
 }

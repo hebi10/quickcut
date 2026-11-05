@@ -93,6 +93,9 @@ class StudioDesignInstrumentedTest {
     private fun checkHome(width: Int, height: Int, fontScale: Float, screenshotName: String) {
         val events = mutableListOf<String>()
         showHome(width, height, fontScale, canRestore = true, events = events)
+        if (width == 320 && fontScale >= 2f) {
+            assertLabelIsNotClipped("영상은 빠르게,\n편집은 간단하게.", requireTwoLines = true)
+        }
         captureReviewImage("studio_home_${screenshotName}_top.png")
 
         // Losing the scroll container, constraining a wrapped button's height, or wiring a
@@ -161,7 +164,8 @@ class StudioDesignInstrumentedTest {
         }
     }
 
-    private fun assertLabelIsNotClipped(label: String, requireSingleLine: Boolean = false) {
+    private fun assertLabelIsNotClipped(label: String, requireSingleLine: Boolean = false,
+        requireTwoLines: Boolean = false) {
         val layouts = mutableListOf<TextLayoutResult>()
         composeRule.onNodeWithText(label, useUnmergedTree = true)
             .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { getLayouts ->
@@ -173,6 +177,10 @@ class StudioDesignInstrumentedTest {
             assertTrue("The action label must have a visible line: $label", layout.lineCount > 0)
             if (requireSingleLine) {
                 assertEquals("Compact home mode titles should not wrap: $label", 1, layout.lineCount)
+            }
+            if (requireTwoLines) {
+                assertEquals("Hero heading should retain its two intentional lines: $label",
+                    2, layout.lineCount)
             }
             // Spaces consumed at a soft wrap have no painted glyph and can extend past a line.
             val visibleOffsets = label.indices.filterNot { label[it].isWhitespace() }

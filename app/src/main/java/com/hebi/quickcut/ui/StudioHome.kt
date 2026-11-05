@@ -79,6 +79,7 @@ internal fun StudioStartScreen(
         val expanded = maxWidth >= 720.dp &&
             maxWidth / LocalDensity.current.fontScale >= 680.dp
         val showArt = maxWidth >= 340.dp && LocalDensity.current.fontScale <= 1.4f
+        val compactHero = maxWidth < 380.dp && LocalDensity.current.fontScale >= 1.8f
         Column(
             Modifier.fillMaxSize().verticalScroll(rememberScrollState())
                 .padding(horizontal = if (expanded) 32.dp else 16.dp, vertical = 22.dp),
@@ -90,11 +91,11 @@ internal fun StudioStartScreen(
                 if (expanded) {
                     Row(horizontalArrangement = Arrangement.spacedBy(24.dp),
                         verticalAlignment = Alignment.Top) {
-                        StudioWelcome(showArt, onQuick, Modifier.weight(1f))
+                        StudioWelcome(showArt, onQuick, Modifier.weight(1f), compactHero)
                         StudioModes(onQuick, onBatch, onSelect, Modifier.weight(1f))
                     }
                 } else {
-                    StudioWelcome(showArt, onQuick)
+                    StudioWelcome(showArt, onQuick, compactHeadline = compactHero)
                     StudioModes(onQuick, onBatch, onSelect)
                 }
                 if (canRestore) {
@@ -122,7 +123,8 @@ internal fun StudioStartScreen(
 }
 
 @Composable
-private fun StudioWelcome(showArt: Boolean, onStart: () -> Unit, modifier: Modifier = Modifier) {
+private fun StudioWelcome(showArt: Boolean, onStart: () -> Unit, modifier: Modifier = Modifier,
+    compactHeadline: Boolean = false) {
     Column(modifier.fillMaxWidth()
         .background(
             Brush.horizontalGradient(
@@ -138,7 +140,8 @@ private fun StudioWelcome(showArt: Boolean, onStart: () -> Unit, modifier: Modif
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Column(Modifier.weight(1f)) {
                 Text("영상은 빠르게,\n편집은 간단하게.", color = CutColors.primaryText,
-                    style = MaterialTheme.typography.headlineSmall)
+                    style = if (compactHeadline) MaterialTheme.typography.titleMedium.copy(fontSize = 15.sp)
+                        else MaterialTheme.typography.headlineSmall)
                 Spacer(Modifier.height(10.dp))
                 Text("필요한 장면만 자르고 안전하게 저장하세요.",
                     color = CutColors.secondaryText, style = MaterialTheme.typography.bodySmall)

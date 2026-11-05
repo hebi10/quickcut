@@ -2,7 +2,6 @@ package com.hebi.quickcut.ui
 
 import android.graphics.Bitmap
 import android.os.ParcelFileDescriptor
-import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -72,8 +71,7 @@ class Stage7ReferenceScreensInstrumentedTest {
 
     private fun capture(name: String) {
         require(name.matches(Regex("stage7_(home|projects_empty|onboarding)\\.png")))
-        runCatching {
-            val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
             val context = instrumentation.targetContext
             val dir = File(checkNotNull(context.getExternalFilesDir(null)), "design-review")
             check(dir.isDirectory || dir.mkdirs())
@@ -88,7 +86,8 @@ class Stage7ReferenceScreensInstrumentedTest {
             }
             shell("mkdir -p /data/local/tmp/quickcut-design-review")
             shell("cp ${local.absolutePath} $dest")
-            check(shell("wc -c $dest").substringBefore(' ').toLongOrNull() == local.length())
-        }.onFailure { Log.w("Stage7Reference", "Screenshot unavailable: $name", it) }
+            check(shell("wc -c $dest").substringBefore(' ').toLongOrNull() == local.length()) {
+                "Reference screenshot was not preserved: $name"
+            }
     }
 }

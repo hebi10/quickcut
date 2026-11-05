@@ -27,6 +27,7 @@ import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material.icons.outlined.VideoLibrary
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Button
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -87,11 +88,11 @@ internal fun StudioStartScreen(
                 if (expanded) {
                     Row(horizontalArrangement = Arrangement.spacedBy(24.dp),
                         verticalAlignment = Alignment.Top) {
-                        StudioWelcome(showArt, Modifier.weight(1f))
+                        StudioWelcome(showArt, onQuick, Modifier.weight(1f))
                         StudioModes(onQuick, onBatch, onSelect, Modifier.weight(1f))
                     }
                 } else {
-                    StudioWelcome(showArt)
+                    StudioWelcome(showArt, onQuick)
                     StudioModes(onQuick, onBatch, onSelect)
                 }
                 if (canRestore) {
@@ -119,7 +120,7 @@ internal fun StudioStartScreen(
 }
 
 @Composable
-private fun StudioWelcome(showArt: Boolean, modifier: Modifier = Modifier) {
+private fun StudioWelcome(showArt: Boolean, onStart: () -> Unit, modifier: Modifier = Modifier) {
     Column(modifier.fillMaxWidth()
         .background(
             Brush.horizontalGradient(
@@ -149,6 +150,17 @@ private fun StudioWelcome(showArt: Boolean, modifier: Modifier = Modifier) {
                     colorFilter = ColorFilter.tint(CutColors.secondaryAccent),
                 )
             }
+        }
+        Spacer(Modifier.height(16.dp))
+        Button(
+            onClick = onStart,
+            shape = CutShape,
+            modifier = Modifier.fillMaxWidth().heightIn(min = 54.dp),
+        ) {
+            Icon(Icons.Outlined.Movie, contentDescription = null,
+                modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("영상 편집 시작하기", fontWeight = FontWeight.SemiBold)
         }
     }
 }

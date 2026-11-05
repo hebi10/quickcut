@@ -44,6 +44,8 @@ class DialogDesignInstrumentedTest {
             }
         }
         compose.onNodeWithText("저장 설정").assertIsDisplayed()
+        compose.onNodeWithText("저장 정보").assertExists()
+        compose.onNodeWithText("기기 갤러리에 저장").assertExists()
         compose.onNodeWithText("저장 시작").assertIsDisplayed().assertHeightIsAtLeast(48.dp)
         compose.onNodeWithText("취소").assertIsDisplayed().assertHeightIsAtLeast(48.dp)
         capture("dialog_save_settings")

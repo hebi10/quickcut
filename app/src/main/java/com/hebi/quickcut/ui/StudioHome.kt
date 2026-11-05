@@ -173,11 +173,11 @@ private fun StudioModes(onQuick: () -> Unit, onBatch: () -> Unit,
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text("어떤 영상을 편집할까요?", style = MaterialTheme.typography.titleMedium,
             color = CutColors.primaryText)
-        StudioModeCard("빠른 자르기 · 영상 1개", "가장 빠르게 필요한 구간만 남기기",
+        StudioModeCard("빠른 자르기", "영상 1개 · 필요한 구간만 빠르게 남기기",
             Icons.Outlined.ContentCut, primary = true, onClick = onQuick)
-        StudioModeCard("일괄 편집 · 여러 영상", "여러 영상을 같은 설정으로 한 번에",
+        StudioModeCard("일괄 편집", "여러 영상 · 같은 설정으로 한 번에",
             Icons.Outlined.VideoLibrary, onClick = onBatch)
-        StudioModeCard("상세 편집 (분할·연결·순서 변경)", "자르기·분할·순서 편집을 자유롭게",
+        StudioModeCard("상세 편집", "자르기·분할·순서 변경을 자유롭게",
             Icons.Outlined.Movie, onClick = onSelect)
     }
 }

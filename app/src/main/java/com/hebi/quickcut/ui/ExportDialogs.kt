@@ -99,7 +99,8 @@ internal fun SaveOptionsDialog(
                 modifier = Modifier.heightIn(min = 52.dp)) { Text("저장 시작") }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss, shape = CutShape) { Text("취소") }
+            TextButton(onClick = onDismiss, shape = CutShape,
+                modifier = Modifier.heightIn(min = 48.dp)) { Text("취소") }
         },
         containerColor = CutColors.panel,
         shape = CutDialogShape,
@@ -138,7 +139,8 @@ internal fun OriginalActionEnableDialog(
         },
         confirmButton = { Button(onClick = onConfirm, shape = CutShape,
             modifier = Modifier.heightIn(min = 48.dp)) { Text("활성화") } },
-        dismissButton = { TextButton(onClick = onDismiss, shape = CutShape) { Text("취소") } },
+        dismissButton = { TextButton(onClick = onDismiss, shape = CutShape,
+            modifier = Modifier.heightIn(min = 48.dp)) { Text("취소") } },
         containerColor = CutColors.panel,
         shape = CutDialogShape,
     )
@@ -266,7 +268,8 @@ internal fun ExportCancelDialog(canCancel: Boolean, onCancel: () -> Unit, onDism
                 modifier = Modifier.heightIn(min = 48.dp)) { Text("저장 취소") }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss, shape = CutShape) { Text("계속 저장") }
+            TextButton(onClick = onDismiss, shape = CutShape,
+                modifier = Modifier.heightIn(min = 48.dp)) { Text("계속 저장") }
         },
         containerColor = CutColors.panel,
         shape = CutDialogShape,

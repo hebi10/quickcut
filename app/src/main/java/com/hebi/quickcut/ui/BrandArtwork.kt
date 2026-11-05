@@ -59,6 +59,7 @@ internal fun QuickCutLogo(size: Dp, modifier: Modifier = Modifier) {
 
 @Composable
 internal fun QuickCutDialogHeading(title: String) {
+    val caution = title.contains("삭제") || title.contains("취소") || title.contains("종료")
     val icon = when {
         title.contains("삭제") -> Icons.Outlined.DeleteOutline
         title.contains("취소") || title.contains("종료") -> Icons.Outlined.WarningAmber
@@ -76,13 +77,14 @@ internal fun QuickCutDialogHeading(title: String) {
         Box(
             modifier = Modifier.size(36.dp)
                 .clip(RoundedCornerShape(10.dp))
-                .background(CutColors.accentMuted),
+                .background(if (caution) MaterialTheme.colorScheme.errorContainer else CutColors.accentMuted),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(icon, contentDescription = null, tint = CutColors.secondaryAccent,
+            Icon(icon, contentDescription = null,
+                tint = if (caution) MaterialTheme.colorScheme.onErrorContainer else CutColors.secondaryAccent,
                 modifier = Modifier.size(22.dp))
         }
-        Text(title, color = CutColors.primaryText,
+        Text(title, modifier = Modifier.weight(1f), color = CutColors.primaryText,
             fontWeight = FontWeight.SemiBold,
             style = MaterialTheme.typography.titleLarge)
     }

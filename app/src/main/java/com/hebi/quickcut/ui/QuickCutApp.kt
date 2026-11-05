@@ -780,11 +780,17 @@ private fun CompletedScreen(
         Spacer(Modifier.height(16.dp))
         Text("저장 완료", color = CutColors.primaryText, fontSize = 28.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(10.dp))
-        Text("영상이 갤러리에 저장되었어요.", color = CutColors.secondaryText)
-        Text(exportReportText(exportReport), color = CutColors.secondaryText)
+        Text("영상이 갤러리에 저장되었어요.", color = CutColors.secondaryText,
+            textAlign = TextAlign.Center)
+        Spacer(Modifier.height(8.dp))
+        Text(exportReportText(exportReport),
+            modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth(),
+            color = CutColors.secondaryText,
+            style = MaterialTheme.typography.bodySmall)
         ExportDiagnosticButton()
         if (savedDateMode == SaveDateMode.ORIGINAL) {
-            Text("원본 날짜 기준으로 저장했습니다.", color = CutColors.secondaryText)
+            Text("원본 날짜 기준으로 저장했습니다.", color = CutColors.secondaryText,
+                textAlign = TextAlign.Center)
         }
         Spacer(Modifier.height(28.dp))
         if (videoUri != null) {

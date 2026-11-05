@@ -157,9 +157,11 @@ private fun StudioWelcome(showArt: Boolean, onStart: () -> Unit, modifier: Modif
             shape = CutShape,
             modifier = Modifier.fillMaxWidth().heightIn(min = 54.dp),
         ) {
-            Icon(Icons.Outlined.Movie, contentDescription = null,
-                modifier = Modifier.size(20.dp))
-            Spacer(Modifier.width(8.dp))
+            if (LocalDensity.current.fontScale <= 1.4f) {
+                Icon(Icons.Outlined.Movie, contentDescription = null,
+                    modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(8.dp))
+            }
             Text("영상 편집 시작하기", fontWeight = FontWeight.SemiBold)
         }
     }

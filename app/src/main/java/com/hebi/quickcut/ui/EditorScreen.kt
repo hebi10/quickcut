@@ -66,7 +66,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -298,7 +300,8 @@ fun EditorScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Image(painterResource(R.drawable.quickcut_new_edit),
-                    contentDescription = null, modifier = Modifier.size(108.dp))
+                    contentDescription = null, modifier = Modifier.size(108.dp),
+                    colorFilter = ColorFilter.tint(CutColors.secondaryAccent))
                 Text("편집할 영상이 없습니다.", color = CutColors.primaryText,
                     style = MaterialTheme.typography.titleMedium)
                 Text("실행을 취소하거나 다른 영상을 추가할 수 있습니다.",
@@ -545,7 +548,8 @@ private fun EditorHeader(
     canRedo: Boolean,
     canSave: Boolean,
 ) {
-    BoxWithConstraints(Modifier.fillMaxWidth().background(CutColors.background)
+    BoxWithConstraints(Modifier.fillMaxWidth()
+        .background(Brush.horizontalGradient(listOf(CutColors.panel, CutColors.background)))
         .padding(horizontal = 8.dp)) {
         val compactHeader = maxWidth < 380.dp ||
             (LocalDensity.current.fontScale >= 1.5f && maxWidth < 600.dp)
@@ -666,6 +670,8 @@ private fun ToolButtons(
 ) {
     if (vertical) {
         Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            Text("편집 도구", color = CutColors.secondaryAccent,
+                style = MaterialTheme.typography.titleSmall)
             selected?.let {
                 Text(if (it.muted) "원본 소리: 음소거" else "원본 소리: 유지",
                     color = CutColors.secondaryText, fontSize = 12.sp)
@@ -703,6 +709,9 @@ private fun ToolButtons(
         }
     } else {
         Column(Modifier.fillMaxWidth()) {
+            Text("편집 도구", color = CutColors.secondaryAccent,
+                style = MaterialTheme.typography.titleSmall,
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp))
             selected?.let {
                 Text(if (it.muted) "원본 소리: 음소거" else "원본 소리: 유지",
                     color = CutColors.secondaryText, fontSize = 12.sp,

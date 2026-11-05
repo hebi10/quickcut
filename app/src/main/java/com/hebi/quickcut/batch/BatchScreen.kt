@@ -481,8 +481,12 @@ private fun BatchHeader(onBack: () -> Unit) {
             Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "뒤로가기",
                 tint = CutColors.accent)
         }
-        Text("일괄 편집", fontSize = 22.sp, fontWeight = FontWeight.SemiBold,
-            color = CutColors.primaryText, modifier = Modifier.weight(1f))
+        Column(Modifier.weight(1f)) {
+            Text("일괄 편집", fontSize = 22.sp, fontWeight = FontWeight.SemiBold,
+                color = CutColors.primaryText)
+            Text("여러 영상을 같은 설정으로 정리하세요.",
+                color = CutColors.secondaryText, style = MaterialTheme.typography.bodySmall)
+        }
     }
 }
 
@@ -493,11 +497,11 @@ private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
     var pendingOriginalAction by rememberSaveable { mutableStateOf<OriginalAction?>(null) }
     Column(
         modifier = Modifier.fillMaxWidth().background(CutColors.surface, CutPanelShape)
-            .border(1.dp, CutColors.border, CutPanelShape).padding(14.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+            .border(1.dp, CutColors.accent.copy(alpha = 0.35f), CutPanelShape).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("1. 영상 선택", color = CutColors.primaryText,
+            Text("1. 영상 선택", color = CutColors.secondaryAccent,
                 style = MaterialTheme.typography.titleMedium)
             val addModifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)
                 .testTag("batch-add-videos")

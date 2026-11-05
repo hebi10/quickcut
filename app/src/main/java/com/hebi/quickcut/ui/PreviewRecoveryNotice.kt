@@ -17,6 +17,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.res.painterResource
 import com.hebi.quickcut.R
 import androidx.compose.ui.unit.dp
@@ -36,7 +37,8 @@ internal fun PreviewRecoveryNotice(message: String, onRetry: () -> Unit) {
         Row(verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Image(painterResource(R.drawable.quickcut_preview_error),
-                contentDescription = null, modifier = Modifier.size(64.dp))
+                contentDescription = null, modifier = Modifier.size(64.dp),
+                colorFilter = ColorFilter.tint(CutColors.secondaryAccent))
             Column(Modifier.weight(1f)) {
                 Text("미리보기 확인 필요", color = CutColors.secondaryAccent)
                 Text(message, color = CutColors.primaryText)

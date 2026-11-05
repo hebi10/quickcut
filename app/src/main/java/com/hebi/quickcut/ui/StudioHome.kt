@@ -75,7 +75,8 @@ internal fun StudioStartScreen(
     onLicenses: () -> Unit,
 ) {
     BoxWithConstraints(Modifier.fillMaxSize().background(CutColors.background)) {
-        val expanded = maxWidth >= 720.dp
+        val expanded = maxWidth >= 720.dp &&
+            maxWidth / LocalDensity.current.fontScale >= 680.dp
         val showArt = maxWidth >= 340.dp && LocalDensity.current.fontScale <= 1.4f
         Column(
             Modifier.fillMaxSize().verticalScroll(rememberScrollState())

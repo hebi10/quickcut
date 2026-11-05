@@ -62,6 +62,16 @@ class StudioDesignInstrumentedTest {
     }
 
     @Test
+    fun extraLargeFontOnNarrowPhoneKeepsActionsReachable() {
+        checkHome(width = 320, height = 720, fontScale = 2f, screenshotName = "phone_font_200")
+    }
+
+    @Test
+    fun extraLargeFontOnFoldKeepsActionsReachable() {
+        checkHome(width = 840, height = 720, fontScale = 2f, screenshotName = "fold_font_200")
+    }
+
+    @Test
     fun landscapeKeepsAllStartActionsReadableAndReachable() {
         checkHome(width = 640, height = 360, fontScale = 1f, screenshotName = "landscape")
     }

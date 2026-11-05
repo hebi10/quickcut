@@ -153,7 +153,8 @@ fun BatchScreen(
 
     BoxWithConstraints(Modifier.fillMaxSize().background(CutColors.background)) {
         val actionsMaxHeight = maxHeight * 0.45f
-        if (maxWidth >= 840.dp) {
+        if (maxWidth >= 840.dp &&
+            maxWidth / LocalDensity.current.fontScale >= 700.dp) {
             Row(Modifier.fillMaxSize()) {
                 Column(
                     modifier = Modifier.width(390.dp)

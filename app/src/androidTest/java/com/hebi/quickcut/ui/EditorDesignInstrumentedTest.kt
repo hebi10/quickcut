@@ -159,6 +159,19 @@ class EditorDesignInstrumentedTest {
         capture("editor_design_batch_large_font")
     }
 
+    @Test fun extraLargeFontBatchKeepsInputsAndSaveReasonReachable() {
+        showBatch(fontScale = 2f)
+        compose.onNodeWithTag("batch-add-videos").performScrollTo().assertIsDisplayed()
+            .assertHeightIsAtLeast(48.dp)
+        compose.onNodeWithTag("batch-mode").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("batch-leading-minutes").performScrollTo().assertIsDisplayed()
+            .assertHeightIsAtLeast(56.dp)
+        compose.onNodeWithTag("batch-leading-seconds").performScrollTo().assertIsDisplayed()
+            .assertHeightIsAtLeast(56.dp)
+        compose.onNodeWithTag("batch-save-disabled-reason").assertIsDisplayed()
+        capture("editor_design_batch_font_200")
+    }
+
     @Test fun quickAndDetailedShowResultTimeWithoutChangingTrimBounds() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         compose.runOnUiThread {

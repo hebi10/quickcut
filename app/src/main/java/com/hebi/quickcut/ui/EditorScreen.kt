@@ -320,7 +320,8 @@ fun EditorScreen(
             // IME resize must not replace the focused field with another layout's instance.
             val layoutHeight = maxHeight + with(density) { keyboardInset.toDp() }
             val compactHeight = layoutHeight < 480.dp
-            val wide = availableWidth >= 840.dp && !compactHeight
+            val wide = availableWidth >= 840.dp &&
+                availableWidth / density.fontScale >= 700.dp && !compactHeight
             val selected = selectedClip
 
             when {

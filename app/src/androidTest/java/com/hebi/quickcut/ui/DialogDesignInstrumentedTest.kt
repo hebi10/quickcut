@@ -12,6 +12,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.Box
+import androidx.compose.ui.Modifier
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalDensity
@@ -137,6 +138,22 @@ class DialogDesignInstrumentedTest {
         compose.onNodeWithText("오픈소스 라이선스").assertIsDisplayed()
         compose.onNodeWithText("닫기").assertIsDisplayed()
         capture("dialog_licenses")
+    }
+
+    @Test
+    fun saveDialogAt200PercentKeepsSaveAndCancelAccessible() {
+        compose.setContent {
+            val density = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides Density(density.density, 2f)) {
+                QuickCutTheme {
+                    SaveOptionsDialog(OriginalAction.KEEP, {}, SaveDateMode.CURRENT, {},
+                        true, {}, {})
+                }
+            }
+        }
+        compose.onNodeWithText("저장 시작").assertIsDisplayed().assertHeightIsAtLeast(48.dp)
+        compose.onNodeWithText("취소").assertIsDisplayed().assertHeightIsAtLeast(48.dp)
+        capture("dialog_save_font_200")
     }
 
     @Test

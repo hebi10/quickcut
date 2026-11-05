@@ -43,6 +43,7 @@ class PrivacyPolicyInstrumentedTest {
             }
         }
 
+        compose.onNodeWithText("설정").performClick()
         compose.onNodeWithText("개인정보처리방침").performScrollTo().performClick()
         compose.onNodeWithText("시행일: 2026년 11월 2일", substring = true).assertIsDisplayed()
         compose.onNodeWithText("asdlkj0104@gmail.com", substring = true)

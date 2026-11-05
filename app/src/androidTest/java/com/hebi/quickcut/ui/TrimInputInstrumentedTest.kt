@@ -31,6 +31,7 @@ import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -327,6 +328,12 @@ class TrimInputInstrumentedTest {
                 QuickCutTheme { QuickCutApp(model, batchModel) }
             }
         }
+        if (composeRule.onAllNodesWithText("다음").fetchSemanticsNodes().isNotEmpty()) {
+            composeRule.onNodeWithText("다음").performClick()
+            composeRule.onNodeWithText("다음").performClick()
+            composeRule.onNodeWithText("시작하기").performClick()
+        }
+        composeRule.onNodeWithText("도구").performClick()
         composeRule.onNodeWithText("빠른 자르기").performClick()
         composeRule.waitUntil(25_000L) { model.errorMessage != null }
         composeRule.onNodeWithText("확인", substring = false).performClick()

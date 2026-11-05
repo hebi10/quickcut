@@ -45,7 +45,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     private val projectStore = ProjectStore(application)
     var savedProjects by mutableStateOf(projectStore.list())
         private set
-    var activeProjectId by mutableStateOf<String?>(null)
+    var activeProjectId by mutableStateOf(projectStore.activeId())
         private set
 
     fun refreshProjects() { savedProjects = projectStore.list() }
@@ -56,6 +56,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             projectStore.save(snapshotSession(), title, activeProjectId)
         }.onSuccess {
             activeProjectId = it.id
+            projectStore.setActiveId(it.id)
             refreshProjects()
         }.onFailure {
             reportError(it.localizedMessage ?: "프로젝트를 저장하지 못했습니다.")
@@ -67,6 +68,10 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         val snapshot = projectStore.load(id)
         if (snapshot == null) {
             reportError("프로젝트를 불러올 수 없습니다.")
+            return
+        }
+        runCatching { projectStore.setActiveId(id) }.onFailure {
+            reportError("프로젝트 선택 상태를 기록하지 못했습니다.")
             return
         }
         activeProjectId = id
@@ -528,7 +533,10 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 restoreRecoveryNotice = null
                 hasSourceReconnect = false
                 reconnectSourceUri = null
-                if (!append) activeProjectId = null
+                if (!append) {
+                    activeProjectId = null
+                    runCatching { projectStore.setActiveId(null) }
+                }
                 val wasAppending = append
                 if (wasAppending) {
                     recordChange()
@@ -894,6 +902,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         }
         hasRestorableSession = false
         activeProjectId = null
+        runCatching { projectStore.setActiveId(null) }
         timeline = EditTimeline()
         quickMode = false
         isTrimInputValid = true

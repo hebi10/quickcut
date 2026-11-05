@@ -51,7 +51,8 @@ internal fun ExportDiagnosticButton(operationId: String? = null, label: String =
                     verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     val record = selected
                     if (record != null) {
-                        TextButton(onClick = { selected = null; copied = false }) { Text("기록 목록으로") }
+                        TextButton(onClick = { selected = null; copied = false },
+                            modifier = Modifier.heightIn(min = 48.dp)) { Text("기록 목록으로") }
                         SelectionContainer { Text(record.text) }
                     } else {
                         Text("최근 ${ExportDiagnosticHistory.RECENT_LIMIT}건과 실패 ${ExportDiagnosticHistory.FAILURE_LIMIT}건을 기기에 보관합니다. 자동 전송하지 않습니다.",
@@ -76,7 +77,9 @@ internal fun ExportDiagnosticButton(operationId: String? = null, label: String =
                         (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
                             .setPrimaryClip(ClipData.newPlainText("QuickCut 편집·저장 진단", record.text))
                         copied = true
-                    }) { Text(if (copied) "복사됨" else "진단 복사") }
+                    }, modifier = Modifier.heightIn(min = 48.dp)) {
+                        Text(if (copied) "복사됨" else "진단 복사")
+                    }
                 }
             },
             dismissButton = { TextButton(onClick = { history = null }, modifier = Modifier.heightIn(min = 48.dp)) { Text("닫기") } },

@@ -220,11 +220,18 @@ private fun StudioSettings(settings: QuickTrimSettings, dateMode: SaveDateMode,
     Column(Modifier.fillMaxWidth().background(CutColors.surface, CutPanelShape)
         .border(1.dp, CutColors.border, CutPanelShape).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("마지막 사용 설정", modifier = Modifier.weight(1f),
-                color = CutColors.primaryText, style = MaterialTheme.typography.titleSmall)
+        if (LocalDensity.current.fontScale >= 1.6f) {
+            Text("마지막 사용 설정", color = CutColors.primaryText,
+                style = MaterialTheme.typography.titleSmall)
             TextButton(onClick = onPreferences, shape = CutShape,
-                modifier = Modifier.heightIn(min = 48.dp)) { Text("설정 변경") }
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("설정 변경") }
+        } else {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("마지막 사용 설정", modifier = Modifier.weight(1f),
+                    color = CutColors.primaryText, style = MaterialTheme.typography.titleSmall)
+                TextButton(onClick = onPreferences, shape = CutShape,
+                    modifier = Modifier.heightIn(min = 48.dp)) { Text("설정 변경") }
+            }
         }
         Text("앞 " + (settings.leadingMs / 1_000.0) + "초 삭제 · 뒤 " +
             (settings.trailingMs / 1_000.0) + "초 삭제",

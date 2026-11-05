@@ -18,6 +18,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.hebi.quickcut.editor.OriginalAction
@@ -240,11 +241,19 @@ internal fun ExportInspectionDialog(progress: Int? = null, onCancel: () -> Unit)
         onDismissRequest = onCancel,
         title = { QuickCutDialogHeading("저장 방식 분석 중") },
         text = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                CircularProgressIndicator(modifier = Modifier.size(32.dp))
-                Text((progress?.let { "원본 분석 ${it.coerceIn(0, 100)}%\n" } ?: "원본 분석 준비 중\n") +
-                    "키프레임과 구간 연결, 저장 공간을 확인하고 있습니다. 긴 영상은 분석에 시간이 걸릴 수 있습니다.",
-                    modifier = Modifier.padding(start = 12.dp))
+            val analysisText = (progress?.let { "원본 분석 ${it.coerceIn(0, 100)}%\n" } ?: "원본 분석 준비 중\n") +
+                "키프레임과 구간 연결, 저장 공간을 확인하고 있습니다. 긴 영상은 분석에 시간이 걸릴 수 있습니다."
+            if (LocalDensity.current.fontScale >= 1.6f) {
+                Column(Modifier.heightIn(max = 280.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    CircularProgressIndicator(modifier = Modifier.size(32.dp))
+                    Text(analysisText)
+                }
+            } else {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(modifier = Modifier.size(32.dp))
+                    Text(analysisText, modifier = Modifier.padding(start = 12.dp))
+                }
             }
         },
         confirmButton = { TextButton(onClick = onCancel, shape = CutShape,

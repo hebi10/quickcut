@@ -95,6 +95,7 @@ class StudioDesignInstrumentedTest {
         showHome(width, height, fontScale, canRestore = true, events = events)
         if (width == 320 && fontScale >= 2f) {
             assertLabelIsNotClipped("영상은 빠르게,\n편집은 간단하게.", requireTwoLines = true)
+            assertLabelIsNotClipped("마지막 사용 설정")
         }
         captureReviewImage("studio_home_${screenshotName}_top.png")
 

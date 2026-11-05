@@ -11,6 +11,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.width
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isSelected
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -74,11 +75,14 @@ class SaveOptionsAccessibilityInstrumentedTest {
                 }
             }
         }
-        compose.onNodeWithTag("choice").performClick()
+        compose.onNodeWithTag("choice").assertTextContains("현재 선택", substring = true)
+            .performClick()
         compose.onNode(hasText("현재 선택") and isSelected()).assertIsDisplayed()
         compose.onNodeWithText("사용 불가").assertIsNotEnabled()
         compose.onNodeWithText("좁은 화면에서도 여러 줄로 표시되는 긴 선택 항목").performClick()
         compose.runOnIdle { assertEquals(2, selection.value) }
+        compose.onNodeWithTag("choice")
+            .assertTextContains("좁은 화면에서도 여러 줄로 표시되는 긴 선택 항목", substring = true)
     }
 
     @Test fun disabledAnchorCannotOpenMenu() {

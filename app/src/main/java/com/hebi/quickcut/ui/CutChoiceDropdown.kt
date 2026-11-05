@@ -62,7 +62,8 @@ internal fun <T> CutChoiceDropdown(
             contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
         ) {
             Row(
-                modifier = Modifier.fillMaxWidth().clearAndSetSemantics { },
+                modifier = Modifier.fillMaxWidth()
+                    .then(if (expanded) Modifier.clearAndSetSemantics { } else Modifier),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {

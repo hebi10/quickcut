@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -360,8 +359,8 @@ private fun QuickPreview(
     outputChanged: () -> Unit,
 ) {
     Column(modifier.padding(horizontal = 12.dp)) {
-        Box(Modifier.weight(1f).fillMaxWidth().clip(CutPanelShape).background(Color.Black)
-            .border(1.dp, CutColors.border, CutPanelShape), contentAlignment = Alignment.Center) {
+        Box(Modifier.weight(1f).fillMaxWidth().clip(CutShape).background(Color.Black)
+            .border(1.dp, CutColors.border, CutShape), contentAlignment = Alignment.Center) {
             key(player) {
                 AndroidView(
                     factory = { ctx ->
@@ -439,8 +438,11 @@ private fun QuickTrimControls(
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
                 Column(
-                    Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    Modifier.fillMaxWidth()
+                        .background(CutColors.panel, CutShape)
+                        .border(1.dp, CutColors.border, CutShape)
+                        .padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(5.dp),
                 ) {
                     Text("원본 " + formatTime(clip.sourceDurationMs),
                         color = CutColors.secondaryText, fontSize = 13.sp)
@@ -535,14 +537,14 @@ private fun TrimSecondsRow(
         Text(label, color = CutColors.primaryText, fontSize = 14.sp,
             modifier = Modifier.fillMaxWidth())
         Row(
-            Modifier.fillMaxWidth().height(IntrinsicSize.Min),
+            Modifier.fillMaxWidth().heightIn(min = 56.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
         OutlinedButton(
             onClick = { onStep(-1_000L) },
             contentPadding = PaddingValues(0.dp),
-            modifier = Modifier.width(48.dp).fillMaxHeight().semantics {
+            modifier = Modifier.width(52.dp).height(56.dp).semantics {
                 contentDescription = "$label 1초 감소"
             },
             shape = CutShape,
@@ -560,14 +562,14 @@ private fun TrimSecondsRow(
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
             shape = CutShape,
-            modifier = Modifier.weight(1f).semantics {
+            modifier = Modifier.weight(1f).heightIn(min = 56.dp).semantics {
                 contentDescription = "$label 시간(초)"
             },
         )
         OutlinedButton(
             onClick = { onStep(1_000L) },
             contentPadding = PaddingValues(0.dp),
-            modifier = Modifier.width(48.dp).fillMaxHeight().semantics {
+            modifier = Modifier.width(52.dp).height(56.dp).semantics {
                 contentDescription = "$label 1초 증가"
             },
             shape = CutShape,

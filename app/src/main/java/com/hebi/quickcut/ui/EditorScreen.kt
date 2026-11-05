@@ -1,5 +1,6 @@
 package com.hebi.quickcut.ui
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -68,6 +69,7 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
@@ -85,6 +87,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.transformer.CompositionPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import com.hebi.quickcut.R
 import com.hebi.quickcut.editor.EditTimeline
 import com.hebi.quickcut.editor.EditorViewModel
 import com.hebi.quickcut.editor.TrimInput
@@ -294,8 +297,14 @@ fun EditorScreen(
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Text("영상이 없습니다. 실행 취소하거나 영상을 추가하세요.", color = CutColors.secondaryText)
-                TextButton(onClick = addVideos, shape = CutShape) { Text("영상 추가") }
+                Image(painterResource(R.drawable.quickcut_new_edit),
+                    contentDescription = null, modifier = Modifier.size(108.dp))
+                Text("편집할 영상이 없습니다.", color = CutColors.primaryText,
+                    style = MaterialTheme.typography.titleMedium)
+                Text("실행을 취소하거나 다른 영상을 추가할 수 있습니다.",
+                    color = CutColors.secondaryText)
+                Button(onClick = addVideos, shape = CutShape,
+                    modifier = Modifier.heightIn(min = 52.dp)) { Text("영상 추가") }
             }
             return@Column
         }
@@ -590,8 +599,8 @@ private fun PreviewPanel(
     Column(modifier.background(CutColors.background)) {
         Box(
             modifier = Modifier.weight(1f).fillMaxWidth()
-                .clip(CutPanelShape).background(Color.Black)
-                .border(1.dp, CutColors.border, CutPanelShape),
+                .clip(CutShape).background(Color.Black)
+                .border(1.dp, CutColors.border, CutShape),
             contentAlignment = Alignment.Center,
         ) {
             AndroidView(

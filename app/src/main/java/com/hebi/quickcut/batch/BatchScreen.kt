@@ -497,6 +497,8 @@ private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("1. 영상 선택", color = CutColors.primaryText,
+                style = MaterialTheme.typography.titleMedium)
             val addModifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)
                 .testTag("batch-add-videos")
             val addContent: @Composable () -> Unit = {
@@ -515,8 +517,9 @@ private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
                 style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.testTag("batch-selection-count"))
         }
+        PresetEditor(model, disabled)
         Text(
-            "자르기 설정 · 마지막 사용값 자동 복원",
+            "2. 자르기 설정 · 마지막 사용값 자동 복원",
             color = CutColors.primaryText,
             fontWeight = FontWeight.SemiBold,
         )
@@ -615,7 +618,6 @@ private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
                 )
             }
         }
-        PresetEditor(model, disabled)
     }
     pendingOriginalAction?.let { action ->
         OriginalActionEnableDialog(action,
@@ -709,7 +711,7 @@ private fun BatchDurationField(
                 placeholder = { Text("0") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 isError = error != null,
-                modifier = Modifier.weight(1f).testTag("$tag-minutes")
+                modifier = Modifier.weight(1f).heightIn(min = 56.dp).testTag("$tag-minutes")
                     .semantics { contentDescription = "$title, 분" },
                 singleLine = true,
                 shape = CutShape,
@@ -722,7 +724,7 @@ private fun BatchDurationField(
                 placeholder = { Text("0") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 isError = error != null,
-                modifier = Modifier.weight(1f).testTag("$tag-seconds")
+                modifier = Modifier.weight(1f).heightIn(min = 56.dp).testTag("$tag-seconds")
                     .semantics { contentDescription = "$title, 초" },
                 singleLine = true,
                 shape = CutShape,
@@ -762,6 +764,8 @@ private fun BatchActions(
         }
         when (model.runState) {
             BatchRunState.SETUP -> {
+                Text("3. 저장", color = CutColors.primaryText,
+                    style = MaterialTheme.typography.titleMedium)
                 val disabledReason = when {
                     inspecting -> "저장할 영상을 확인 중입니다."
                     model.isImporting -> "영상을 불러온 뒤 저장할 수 있습니다."

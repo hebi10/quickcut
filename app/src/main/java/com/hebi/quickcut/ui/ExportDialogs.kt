@@ -44,6 +44,8 @@ internal fun SaveOptionsDialog(
                 modifier = Modifier.heightIn(max = 400.dp).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                Text("원본 동영상", color = CutColors.primaryText,
+                    style = MaterialTheme.typography.titleSmall)
                 CutChoiceDropdown(
                     label = "저장 완료 후 원본 동영상 처리",
                     selected = originalAction,
@@ -54,6 +56,13 @@ internal fun SaveOptionsDialog(
                     ),
                     onSelected = onOriginalActionChange,
                 )
+                if (originalAction == OriginalAction.DELETE) {
+                    Text("영구 삭제는 복구할 수 없으므로 저장 결과를 확인한 후 진행됩니다.",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall)
+                }
+                Text("결과 영상 날짜", color = CutColors.primaryText,
+                    style = MaterialTheme.typography.titleSmall)
                 CutChoiceDropdown(
                     label = "저장 날짜",
                     selected = dateMode,
@@ -86,7 +95,8 @@ internal fun SaveOptionsDialog(
             }
         },
         confirmButton = {
-            Button(onClick = onSave, enabled = canSave, shape = CutShape) { Text("저장 시작") }
+            Button(onClick = onSave, enabled = canSave, shape = CutShape,
+                modifier = Modifier.heightIn(min = 52.dp)) { Text("저장 시작") }
         },
         dismissButton = {
             TextButton(onClick = onDismiss, shape = CutShape) { Text("취소") }
@@ -151,10 +161,12 @@ internal fun ExportModeDialog(
                     style = MaterialTheme.typography.bodySmall,
                 )
                 assessment.suggestion?.let { suggestion ->
-                    Text("고속 저장 추천 위치", style = MaterialTheme.typography.titleSmall)
+                    Text("고속 저장 추천 위치", style = MaterialTheme.typography.titleSmall,
+                        color = CutColors.secondaryAccent)
                     Text(fastCutSuggestionText(suggestion))
                     FastCutPreview(suggestion)
-                    Text("위 시간은 원본 영상 기준입니다. 키프레임 간격에 따라 차이가 날 수 있습니다. " +
+                    Text("추천 위치로 저장하면 실제 잘리는 시점이 달라집니다. " +
+                        "위 시간은 원본 영상 기준입니다. 키프레임 간격에 따라 차이가 날 수 있습니다. " +
                         "추천 위치에 동의하면 구간을 변경하고 영상 재인코딩 없이 저장합니다. 소리는 필요하면 변환합니다.",
                         color = CutColors.secondaryText, style = MaterialTheme.typography.bodySmall)
                 }
@@ -164,13 +176,13 @@ internal fun ExportModeDialog(
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (onSuggestedCut != null) {
                     Button(
-                        onClick = onSuggestedCut, enabled = canSave,
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp), shape = CutShape,
-                    ) { Text("추천 위치로 고속 저장") }
-                    OutlinedButton(
                         onClick = onAllowReencode, enabled = canSave,
                         modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp), shape = CutShape,
                     ) { Text("정확한 위치로 자동 저장") }
+                    OutlinedButton(
+                        onClick = onSuggestedCut, enabled = canSave,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp), shape = CutShape,
+                    ) { Text("추천 위치로 고속 저장") }
                 } else {
                     Button(
                         onClick = onAllowReencode, enabled = canSave,

@@ -13,9 +13,9 @@ data class EditorSessionSnapshot(
 )
 
 /** Crash/force-stop recovery for local selections with still-readable source URIs. */
-class EditorSessionStore(context: Context) {
+class EditorSessionStore(context: Context, preferencesName: String = "quickcut_editor_session_v1") {
     private val preferences = context.applicationContext.getSharedPreferences(
-        "quickcut_editor_session_v1", Context.MODE_PRIVATE,
+        preferencesName, Context.MODE_PRIVATE,
     )
 
     fun load(): EditorSessionSnapshot? {

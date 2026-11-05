@@ -114,6 +114,10 @@ fun QuickCutApp(
     val lifecycleState by lifecycleOwner.lifecycle.currentStateFlow.collectAsState()
     val coroutineScope = rememberCoroutineScope()
     var showBatch by rememberSaveable { mutableStateOf(false) }
+    var selectedGalleryUris by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
+    var showProjectSave by rememberSaveable { mutableStateOf(false) }
+    var projectName by rememberSaveable { mutableStateOf("") }
+
     var showLastSettings by rememberSaveable { mutableStateOf(false) }
     var showLicenses by rememberSaveable { mutableStateOf(false) }
     var exportReview by remember { mutableStateOf<ExportReview?>(null) }
@@ -239,6 +243,13 @@ fun QuickCutApp(
             }
         }
     }
+    val galleryPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickMultipleVisualMedia(30)
+    ) { uris ->
+        if (uris.isNotEmpty()) {
+            selectedGalleryUris = (selectedGalleryUris + uris.map { it.toString() }).distinct()
+        }
+    }
     val quickPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri ->
@@ -270,6 +281,36 @@ fun QuickCutApp(
         if (showBatch) batchModel.loadTemplates(context)
     }
 
+    if (showProjectSave) {
+        AlertDialog(
+            onDismissRequest = { showProjectSave = false },
+            title = { Text("프로젝트 저장") },
+            text = {
+                OutlinedTextField(
+                    value = projectName,
+                    onValueChange = { projectName = it.take(80) },
+                    label = { Text("프로젝트 이름") },
+                    singleLine = true,
+                )
+            },
+            confirmButton = {
+                Button(onClick = {
+                    model.saveCurrentProject(projectName)
+                    showProjectSave = false
+                }, enabled = projectName.isNotBlank()) { Text("저장") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showProjectSave = false }) { Text("취소") }
+            },
+            containerColor = CutColors.panel,
+            shape = CutDialogShape,
+        )
+    }
+
+    BackHandler(enabled = selectedGalleryUris.isNotEmpty() && model.page == QuickCutPage.PICKER) {
+        selectedGalleryUris = emptyList()
+    }
+
     BackHandler(enabled = onboardingComplete && !showBatch && model.page != QuickCutPage.PICKER &&
         model.page != QuickCutPage.IMPORTING) {
         when (model.page) {
@@ -287,7 +328,25 @@ fun QuickCutApp(
             .background(CutColors.background)
             .safeDrawingPadding(),
     ) {
-        if (!onboardingComplete && model.page == QuickCutPage.PICKER && !showBatch) {
+        if (onboardingComplete && !showBatch && model.page == QuickCutPage.PICKER &&
+            selectedGalleryUris.isNotEmpty()) {
+            SelectedVideoGallery(
+                uris = selectedGalleryUris,
+                onAdd = {
+                    galleryPicker.launch(
+                        androidx.activity.result.PickVisualMediaRequest(
+                            ActivityResultContracts.PickVisualMedia.VideoOnly
+                        )
+                    )
+                },
+                onImport = { selections ->
+                    selectedGalleryUris = emptyList()
+                    model.changeQuickMode(false)
+                    model.importVideos(context, selections.map(android.net.Uri::parse))
+                },
+                onDismiss = { selectedGalleryUris = emptyList() },
+            )
+        } else if (!onboardingComplete && model.page == QuickCutPage.PICKER && !showBatch) {
             QuickCutWelcome(onFinish = {
                 onboardingPreferences.edit().putBoolean("complete", true).apply()
                 onboardingComplete = true
@@ -332,9 +391,30 @@ fun QuickCutApp(
                 dateMode = selectedSaveDateMode,
                 onPreferences = { showLastSettings = true },
                 onLicenses = { showLicenses = true },
+                projects = model.savedProjects,
+                onOpenProject = { model.openProject(context, it) },
+                onDeleteProject = model::deleteProject,
+                onGallery = {
+                    galleryPicker.launch(
+                        androidx.activity.result.PickVisualMediaRequest(
+                            ActivityResultContracts.PickVisualMedia.VideoOnly
+                        )
+                    )
+                },
             )
             QuickCutPage.IMPORTING -> ImportingStatus(onCancel = model::cancelImport)
             QuickCutPage.EDITOR -> {
+                Column(Modifier.fillMaxSize()) {
+                    TextButton(
+                        onClick = {
+                            projectName = model.savedProjects
+                                .firstOrNull { it.id == model.activeProjectId }?.title
+                                ?: "새 프로젝트"
+                            showProjectSave = true
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                            .heightIn(min = CutSizes.touchTarget),
+                    ) { Text("프로젝트 저장") }
                 if (model.quickMode && model.timeline.clips.size == 1) {
                     QuickTrimScreen(
                         model = model,
@@ -350,6 +430,7 @@ fun QuickCutApp(
                         addVideos = { picker.launch(arrayOf("video/*")) },
                         save = openSaveOptions,
                     )
+                }
                 }
             }
             QuickCutPage.EXPORTING -> CenterStatus(
@@ -564,12 +645,20 @@ private fun StartScreen(
     dateMode: SaveDateMode,
     onPreferences: () -> Unit,
     onLicenses: () -> Unit,
+    projects: List<com.hebi.quickcut.editor.SavedProject>,
+    onOpenProject: (String) -> Unit,
+    onDeleteProject: (String) -> Unit,
+    onGallery: () -> Unit,
 ) {
     StudioStartScreen(
         onQuick = onQuick, onSelect = onSelect, onBatch = onBatch,
         canRestore = canRestore, onRestore = onRestore,
         quickSettings = quickSettings, dateMode = dateMode,
         onPreferences = onPreferences, onLicenses = onLicenses,
+        projects = projects,
+        onOpenProject = onOpenProject,
+        onDeleteProject = onDeleteProject,
+        onGallery = onGallery,
     )
 }
 

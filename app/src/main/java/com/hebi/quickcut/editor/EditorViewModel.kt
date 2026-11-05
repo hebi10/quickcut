@@ -42,6 +42,49 @@ enum class QuickCutPage {
 class EditorViewModel(application: Application) : AndroidViewModel(application) {
     private val settings = QuickCutSettings(application)
     private val sessionStore = EditorSessionStore(application)
+    private val projectStore = ProjectStore(application)
+    var savedProjects by mutableStateOf(projectStore.list())
+        private set
+    var activeProjectId by mutableStateOf(projectStore.activeId())
+        private set
+
+    fun refreshProjects() { savedProjects = projectStore.list() }
+
+    fun saveCurrentProject(title: String) {
+        if (page != QuickCutPage.EDITOR || timeline.isEmpty) return
+        runCatching {
+            projectStore.save(snapshotSession(), title, activeProjectId)
+        }.onSuccess {
+            activeProjectId = it.id
+            projectStore.setActiveId(it.id)
+            refreshProjects()
+        }.onFailure {
+            reportError(it.localizedMessage ?: "프로젝트를 저장하지 못했습니다.")
+        }
+    }
+
+    fun openProject(context: Context, id: String) {
+        if (page != QuickCutPage.PICKER || isRecoveringExport || hasUnresolvedExport) return
+        val snapshot = projectStore.load(id)
+        if (snapshot == null) {
+            reportError("프로젝트를 불러올 수 없습니다.")
+            return
+        }
+        runCatching { projectStore.setActiveId(id) }.onFailure {
+            reportError("프로젝트 선택 상태를 기록하지 못했습니다.")
+            return
+        }
+        activeProjectId = id
+        loadSavedSession(context, snapshot)
+    }
+
+    fun deleteProject(id: String) {
+        runCatching { projectStore.delete(id) }.onSuccess {
+            if (activeProjectId == id) activeProjectId = null
+            refreshProjects()
+        }.onFailure { reportError("프로젝트를 삭제하지 못했습니다.") }
+    }
+
     private val exportStore = SingleExportStore(application)
     private var sessionSaveJob: Job? = null
     var isRecoveringExport by mutableStateOf(exportStore.hasRecord())
@@ -129,7 +172,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     fun reconnectSavedSource(context: Context, replacement: Uri) {
         if (page != QuickCutPage.PICKER || isRecoveringExport || hasUnresolvedExport) return
         val source = reconnectSourceUri ?: return
-        val old = sessionStore.load() ?: return
+        val old = activeProjectId?.let { projectStore.load(it) }
+            ?: sessionStore.load() ?: return
         loadSavedSession(context, old, source to replacement)
     }
 
@@ -184,6 +228,13 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                     if (validationError?.sourceUri == replacement.second.toString())
                         throw IllegalArgumentException("Replacement source validation failed", validationError)
                     sessionStore.save(candidate)
+                    activeProjectId?.let { projectId ->
+                        val currentTitle = savedProjects.firstOrNull { it.id == projectId }?.title
+                        if (currentTitle != null) {
+                            projectStore.save(candidate, currentTitle, projectId)
+                            refreshProjects()
+                        }
+                    }
                 }
                 hasRestorableSession = true
                 if (validationError != null) throw validationError
@@ -490,6 +541,10 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 restoreRecoveryNotice = null
                 hasSourceReconnect = false
                 reconnectSourceUri = null
+                if (!append) {
+                    activeProjectId = null
+                    runCatching { projectStore.setActiveId(null) }
+                }
                 val wasAppending = append
                 if (wasAppending) {
                     recordChange()
@@ -854,6 +909,8 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             return
         }
         hasRestorableSession = false
+        activeProjectId = null
+        runCatching { projectStore.setActiveId(null) }
         timeline = EditTimeline()
         quickMode = false
         isTrimInputValid = true

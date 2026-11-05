@@ -143,12 +143,10 @@ internal fun StudioStartScreen(
                                 Text("이전 편집 이어서 진행")
                             }
                         } else {
-                            Text("저장된 편집 작업이 없습니다. 새 영상을 선택해 주세요.",
-                                modifier = Modifier.fillMaxWidth()
-                                    .background(CutColors.surface, CutPanelShape)
-                                    .padding(CutSpacing.xl),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = CutColors.secondaryText)
+                            CutInfoSection(
+                                title = "최근 편집 없음",
+                                message = "저장된 편집 작업이 없습니다. 새 영상을 선택해 주세요.",
+                            )
                         }
                         Text("편집 도구", color = CutColors.primaryText,
                             style = MaterialTheme.typography.titleMedium)
@@ -177,9 +175,10 @@ internal fun StudioStartScreen(
                                 color = CutColors.secondaryText)
                         }
                         if (projects.isEmpty()) {
-                            Text("저장한 프로젝트가 없습니다. 편집 화면에서 프로젝트를 저장해 보세요.",
-                                color = CutColors.secondaryText,
-                                style = MaterialTheme.typography.bodyMedium)
+                            CutInfoSection(
+                                title = "프로젝트 없음",
+                                message = "저장한 프로젝트가 없습니다. 편집 화면에서 프로젝트를 저장해 보세요.",
+                            )
                         }
                     }
                     2 -> {

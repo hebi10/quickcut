@@ -213,8 +213,11 @@ internal fun StudioStartScreen(
                 }
             }
         }
-        NavigationBar(containerColor = CutColors.surface,
-            tonalElevation = 0.dp) {
+        NavigationBar(
+            modifier = Modifier.fillMaxWidth().height(72.dp),
+            containerColor = CutColors.surface,
+            tonalElevation = 0.dp,
+        ) {
             val icons = listOf(
                 Icons.Outlined.Home, Icons.Outlined.FolderOpen,
                 Icons.Outlined.Build, Icons.Outlined.Settings,

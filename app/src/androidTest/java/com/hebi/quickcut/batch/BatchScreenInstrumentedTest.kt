@@ -3,10 +3,13 @@ package com.hebi.quickcut.batch
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextReplacement
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.hebi.quickcut.MainActivity
@@ -139,9 +142,13 @@ class BatchScreenInstrumentedTest {
             org.junit.Assert.assertEquals(2, added.size)
             composeRule.onNodeWithText("일괄 편집 · 여러 영상").performClick()
             composeRule.onNodeWithTag("batch-template-manager").performScrollTo().performClick()
-            composeRule.onNodeWithTag("batch-template-${added.first().id}-choose").performScrollTo().performClick()
+            composeRule.onNodeWithTag("batch-template-list")
+                .performScrollToNode(hasTestTag("batch-template-${added.first().id}-choose"))
+            composeRule.onNodeWithTag("batch-template-${added.first().id}-choose").performClick()
             composeRule.runOnIdle { model.draftName = "unsaved draft" }
-            composeRule.onNodeWithTag("batch-template-${added.last().id}-remove").performScrollTo().performClick()
+            composeRule.onNodeWithTag("batch-template-list")
+                .performScrollToNode(hasTestTag("batch-template-${added.last().id}-remove"))
+            composeRule.onNodeWithTag("batch-template-${added.last().id}-remove").performClick()
             composeRule.onNodeWithText("확인").performClick()
             composeRule.onNodeWithTag("batch-template-list").assertExists()
             composeRule.runOnIdle {
@@ -150,10 +157,16 @@ class BatchScreenInstrumentedTest {
                 org.junit.Assert.assertFalse(model.templates.any { it.id == added.last().id })
             }
             composeRule.runOnIdle { model.draftName = "" }
-            composeRule.onNodeWithText("선택 템플릿 수정 저장").performScrollTo().performClick()
+            composeRule.onNodeWithTag("batch-template-list")
+                .performScrollToNode(hasText("선택 템플릿 수정 저장"))
+            composeRule.onNodeWithText("선택 템플릿 수정 저장").performClick()
             composeRule.onNodeWithText("확인").performClick()
-            composeRule.onNodeWithTag("batch-template-name").performScrollTo().performTextReplacement("updated template")
-            composeRule.onNodeWithText("선택 템플릿 수정 저장").performScrollTo().performClick()
+            composeRule.onNodeWithTag("batch-template-list")
+                .performScrollToNode(hasTestTag("batch-template-name"))
+            composeRule.onNodeWithTag("batch-template-name").performTextReplacement("updated template")
+            composeRule.onNodeWithTag("batch-template-list")
+                .performScrollToNode(hasText("선택 템플릿 수정 저장"))
+            composeRule.onNodeWithText("선택 템플릿 수정 저장").performClick()
             composeRule.onNodeWithText("확인").performClick()
             composeRule.runOnIdle {
                 org.junit.Assert.assertEquals("updated template", model.templates.first { it.id == added.first().id }.name)

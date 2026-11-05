@@ -282,10 +282,10 @@ fun QuickTrimScreen(
             maxWidth / fontScale >= 480.dp
         Column(Modifier.fillMaxSize()) {
             Column(Modifier.fillMaxWidth()
-                .background(Brush.horizontalGradient(listOf(CutColors.panel, CutColors.background)))
-                .padding(horizontal = 8.dp)) {
+                .background(CutColors.surface)
+                .padding(horizontal = CutSpacing.sm)) {
                 Row(
-                    Modifier.fillMaxWidth().heightIn(min = 56.dp),
+                    Modifier.fillMaxWidth().heightIn(min = CutSizes.appBar),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
@@ -295,7 +295,7 @@ fun QuickTrimScreen(
                         tint = CutColors.secondaryAccent, modifier = Modifier.size(22.dp))
                     Spacer(Modifier.width(8.dp))
                     Text("빠른 자르기", color = CutColors.primaryText,
-                        fontSize = 20.sp, fontWeight = FontWeight.SemiBold,
+                        style = MaterialTheme.typography.titleLarge,
                         modifier = Modifier.weight(1f))
                     if (!compactHeader) DetailedEditButton(openDetailed)
                 }
@@ -447,21 +447,41 @@ private fun QuickTrimControls(
         ) {
                 Column(
                     Modifier.fillMaxWidth()
-                        .background(CutColors.accentMuted, CutPanelShape)
-                        .border(1.dp, CutColors.accent.copy(alpha = 0.65f), CutPanelShape)
-                        .padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(5.dp),
+                        .background(CutColors.surface, CutPanelShape)
+                        .border(1.dp, CutColors.border, CutPanelShape)
+                        .padding(CutSpacing.lg),
+                    verticalArrangement = Arrangement.spacedBy(CutSpacing.sm),
                 ) {
-                    Text("원본 " + formatTime(clip.sourceDurationMs),
-                        color = CutColors.secondaryText, fontSize = 13.sp)
-                    Text("남길 원본 구간 " + formatTime(clip.startMs) + " – " + formatTime(clip.endMs),
-                        color = CutColors.secondaryText, fontSize = 13.sp)
-                    Text("결과 " + formatTime(clip.durationMs),
-                        color = CutColors.secondaryAccent, fontSize = 15.sp,
-                        fontWeight = FontWeight.SemiBold)
+                    Text("선택한 영상", color = CutColors.secondaryAccent,
+                        style = MaterialTheme.typography.titleSmall)
+                    Row(Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("원본 길이", color = CutColors.secondaryText,
+                            style = MaterialTheme.typography.bodySmall)
+                        Text(formatTime(clip.sourceDurationMs), color = CutColors.primaryText,
+                            style = MaterialTheme.typography.titleSmall)
+                    }
+                    Row(Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("남길 구간", color = CutColors.secondaryText,
+                            style = MaterialTheme.typography.bodySmall)
+                        Text(formatTime(clip.startMs) + " – " + formatTime(clip.endMs),
+                            color = CutColors.primaryText,
+                            style = MaterialTheme.typography.titleSmall)
+                    }
+                    Row(Modifier.fillMaxWidth()
+                        .background(CutColors.accentMuted, CutSmallShape)
+                        .padding(CutSpacing.md),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically) {
+                        Text("결과 영상", color = CutColors.secondaryAccent,
+                            style = MaterialTheme.typography.titleSmall)
+                        Text(formatTime(clip.durationMs), color = CutColors.primaryText,
+                            style = MaterialTheme.typography.titleMedium)
+                    }
                 }
-                Text("자르기 범위", color = CutColors.secondaryAccent,
-                    style = MaterialTheme.typography.titleSmall)
+                Text("자르기 범위", color = CutColors.primaryText,
+                    style = MaterialTheme.typography.titleMedium)
                 TrimSecondsRow(
                     label = "앞부분 삭제",
                     value = leadingText,
@@ -524,8 +544,8 @@ private fun QuickTrimControls(
         Button(
                 onClick = onSave,
                 enabled = canSave,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
-                    .heightIn(min = 52.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = CutSpacing.lg, vertical = CutSpacing.sm)
+                    .heightIn(min = CutSizes.primaryButton),
                 shape = CutShape,
                 colors = ButtonDefaults.buttonColors(
                     containerColor = CutColors.accent, contentColor = CutColors.onAccent,

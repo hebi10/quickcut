@@ -1,5 +1,6 @@
 package com.hebi.quickcut.ui
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.lazy.LazyColumn
@@ -57,7 +58,8 @@ internal fun OpenSourceLicensesDialog(onDismiss: () -> Unit) {
         title = { Text(selected ?: "오픈소스 라이선스") },
         text = {
             if (selected == null) {
-                Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+                Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     SelectionContainer {
                         Text("QuickCut에 포함된 소프트웨어의 저작권과 사용 조건입니다. " +
                             "이 통합판은 GPLv3에 따라 제공됩니다.\n\n" +
@@ -67,7 +69,8 @@ internal fun OpenSourceLicensesDialog(onDismiss: () -> Unit) {
                             "개발 저장소:\nhttps://github.com/hebi10/quickcut")
                     }
                     names.forEach { name ->
-                        TextButton(onClick = { selected = name }, shape = CutShape) {
+                        TextButton(onClick = { selected = name }, shape = CutShape,
+                            modifier = Modifier.heightIn(min = 48.dp)) {
                             Text(name)
                         }
                     }
@@ -84,14 +87,16 @@ internal fun OpenSourceLicensesDialog(onDismiss: () -> Unit) {
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss, shape = CutShape) { Text("닫기") }
+            TextButton(onClick = onDismiss, shape = CutShape,
+                modifier = Modifier.heightIn(min = 48.dp)) { Text("닫기") }
         },
         dismissButton = {
             if (selected != null) {
-                TextButton(onClick = { selected = null }, shape = CutShape) { Text("목록") }
+                TextButton(onClick = { selected = null }, shape = CutShape,
+                    modifier = Modifier.heightIn(min = 48.dp)) { Text("목록") }
             }
         },
         containerColor = CutColors.panel,
-        shape = CutShape,
+        shape = CutDialogShape,
     )
 }

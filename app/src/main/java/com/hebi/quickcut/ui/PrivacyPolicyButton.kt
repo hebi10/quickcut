@@ -1,5 +1,6 @@
 package com.hebi.quickcut.ui
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.rememberScrollState
@@ -44,15 +45,17 @@ private fun PrivacyPolicyDialog(onDismiss: () -> Unit) {
         title = { Text("개인정보처리방침") },
         text = {
             SelectionContainer {
-                Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
-                    paragraphs.forEach { Text(it + "\n") }
+                Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    paragraphs.forEach { Text(it) }
                 }
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss, shape = CutShape) { Text("닫기") }
+            TextButton(onClick = onDismiss, shape = CutShape,
+                modifier = Modifier.heightIn(min = 48.dp)) { Text("닫기") }
         },
         containerColor = CutColors.panel,
-        shape = CutShape,
+        shape = CutDialogShape,
     )
 }

@@ -394,13 +394,14 @@ fun QuickCutApp(
             text = { Text(if (model.isRecoveringExport) "중단된 저장 파일과 완료 여부를 확인하고 있습니다."
                 else model.exportRecoveryNotice.orEmpty()) },
             confirmButton = {
-                TextButton(enabled = !model.isRecoveringExport, onClick = {
+                TextButton(enabled = !model.isRecoveringExport,
+                modifier = Modifier.heightIn(min = 48.dp), onClick = {
                     if (model.hasUnresolvedExport) model.retryExportRecovery()
                     else dismissedRecoveryNotice = model.exportRecoveryNotice
                 }) { Text(if (model.hasUnresolvedExport) "다시 확인" else "확인") }
             },
             dismissButton = { ExportDiagnosticButton() },
-            containerColor = CutColors.panel, shape = CutShape,
+            containerColor = CutColors.panel, shape = CutDialogShape,
         )
     }
 
@@ -510,10 +511,11 @@ fun QuickCutApp(
             title = { Text("안내") },
             text = { Column { Text(text); ExportDiagnosticButton() } },
             confirmButton = {
-                TextButton(onClick = model::dismissError, shape = CutShape) { Text("확인") }
+                TextButton(onClick = model::dismissError, shape = CutShape,
+                    modifier = Modifier.heightIn(min = 48.dp)) { Text("확인") }
             },
             containerColor = CutColors.panel,
-            shape = CutShape,
+            shape = CutDialogShape,
         )
     }
 
@@ -525,14 +527,16 @@ fun QuickCutApp(
             confirmButton = {
                 Button(
                     onClick = model::discardEditing,
+                    modifier = Modifier.heightIn(min = 48.dp),
                     shape = CutShape,
                 ) { Text("나가기") }
             },
             dismissButton = {
-                TextButton(onClick = model::hideExitConfirmation, shape = CutShape) { Text("계속 편집") }
+                TextButton(onClick = model::hideExitConfirmation, shape = CutShape,
+                    modifier = Modifier.heightIn(min = 48.dp)) { Text("계속 편집") }
             },
             containerColor = CutColors.panel,
-            shape = CutShape,
+            shape = CutDialogShape,
         )
     }
 }
@@ -582,8 +586,8 @@ private fun LastSettingsDialog(
         title = { Text("마지막 사용 설정") },
         text = {
             Column(
-                modifier = Modifier.verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Text("새 영상 선택 시 자동 적용됩니다.", color = CutColors.secondaryText,
                     style = MaterialTheme.typography.bodySmall)
@@ -593,7 +597,7 @@ private fun LastSettingsDialog(
                     label = { Text("앞부분 자르기 (초)") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
                 )
                 OutlinedTextField(
                     value = tailText,
@@ -601,7 +605,7 @@ private fun LastSettingsDialog(
                     label = { Text("뒷부분 자르기 (초)") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
                 )
                 Row(
                     Modifier.fillMaxWidth().heightIn(min = 48.dp)
@@ -633,14 +637,16 @@ private fun LastSettingsDialog(
                     onDismiss()
                 },
                 enabled = head != null && tail != null,
+                modifier = Modifier.heightIn(min = 48.dp),
                 shape = CutShape,
             ) { Text("설정 저장") }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss, shape = CutShape) { Text("취소") }
+            TextButton(onClick = onDismiss, shape = CutShape,
+                modifier = Modifier.heightIn(min = 48.dp)) { Text("취소") }
         },
         containerColor = CutColors.panel,
-        shape = CutShape,
+        shape = CutDialogShape,
     )
 }
 
@@ -680,7 +686,7 @@ internal fun RestoreRecoveryDialog(
                 Text("닫기")
             }
         },
-        containerColor = CutColors.panel, shape = CutShape,
+        containerColor = CutColors.panel, shape = CutDialogShape,
     )
 }
 

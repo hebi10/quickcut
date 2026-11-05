@@ -490,13 +490,15 @@ fun EditorScreen(
                         showDelete = false
                     },
                     shape = CutShape,
+                    modifier = Modifier.heightIn(min = 48.dp),
                 ) { Text("삭제") }
             },
             dismissButton = {
-                TextButton(onClick = { showDelete = false }, shape = CutShape) { Text("취소") }
+                TextButton(onClick = { showDelete = false }, shape = CutShape,
+                    modifier = Modifier.heightIn(min = 48.dp)) { Text("취소") }
             },
             containerColor = CutColors.panel,
-            shape = CutPanelShape,
+            shape = CutDialogShape,
         )
     }
 
@@ -512,19 +514,22 @@ fun EditorScreen(
                         enabled = index > 0,
                         onClick = { model.moveSelected(-1); showMove = false },
                         shape = CutShape,
+                        modifier = Modifier.heightIn(min = 48.dp),
                     ) { Text("앞으로") }
                     Button(
                         enabled = index >= 0 && index < model.timeline.clips.lastIndex,
                         onClick = { model.moveSelected(1); showMove = false },
                         shape = CutShape,
+                        modifier = Modifier.heightIn(min = 48.dp),
                     ) { Text("뒤로") }
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showMove = false }, shape = CutShape) { Text("닫기") }
+                TextButton(onClick = { showMove = false }, shape = CutShape,
+                    modifier = Modifier.heightIn(min = 48.dp)) { Text("닫기") }
             },
             containerColor = CutColors.panel,
-            shape = CutPanelShape,
+            shape = CutDialogShape,
         )
     }
 }

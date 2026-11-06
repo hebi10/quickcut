@@ -676,8 +676,8 @@ private fun PresetEditor(model: BatchViewModel, disabled: Boolean) {
         onDismissRequest = { showManager = false },
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
-        Surface(Modifier.fillMaxWidth().padding(horizontal = 16.dp)
-            .widthIn(max = 480.dp).heightIn(max = 640.dp)
+        Surface(Modifier.padding(horizontal = 16.dp).widthIn(max = 480.dp)
+            .fillMaxWidth().heightIn(max = 640.dp)
             .testTag("batch-template-dialog"), shape = CutDialogShape,
             color = CutColors.panel, contentColor = CutColors.primaryText) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {

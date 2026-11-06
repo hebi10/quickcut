@@ -19,6 +19,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -138,7 +139,7 @@ class Stage13ReferenceScreensInstrumentedTest {
         }
         compose.onNodeWithText("프로젝트").performClick()
         compose.onNodeWithText("프로젝트 없음").assertIsDisplayed()
-        compose.onNodeWithText("영상 편집 시작하기").assertIsDisplayed()
+        compose.onNodeWithText("영상 편집 시작하기").performScrollTo().assertIsDisplayed()
         capture("stage13_projects_empty_large_font.png")
     }
 

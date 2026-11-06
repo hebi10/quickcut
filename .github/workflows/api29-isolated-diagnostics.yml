@@ -1,0 +1,94 @@
+name: API29 isolated export diagnostics
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/api29-isolated-diagnostics.yml"
+      - "scripts/android-api29-stall-probe.sh"
+      - "app/src/androidTest/java/com/hebi/quickcut/export/BackgroundMedia3ExportInstrumentedTest.kt"
+      - "app/src/androidTest/java/com/hebi/quickcut/media/BatchDateExportInstrumentedTest.kt"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  focused:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [media3, date]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.4.1"
+      - name: Reclaim runner disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/powershell
+          sudo rm -rf /usr/local/lib/android/sdk/ndk
+          sudo apt-get clean
+      - name: Install native build prerequisites
+        timeout-minutes: 10
+        run: |
+          if [[ -f /etc/apt/apt-mirrors.txt ]] && grep -q '^https://archive\.ubuntu\.com/ubuntu/' /etc/apt/apt-mirrors.txt; then
+            sudo sed -i '\|^http://azure\.archive\.ubuntu\.com/ubuntu/[[:space:]]*priority:1$|d' /etc/apt/apt-mirrors.txt
+          fi
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update -qq
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends cmake nasm pkg-config ffmpeg
+      - name: Install Android SDK and NDK
+        run: sdkmanager --install "platforms;android-36" "build-tools;36.0.0" "ndk;27.3.13750724"
+      - name: Restore native cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            build/native-smartcut
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: native-smartcut-${{ runner.os }}-${{ hashFiles('scripts/build-native-smartcut.sh', 'scripts/native-smartcut-sources.json') }}-${{ hashFiles('native/**') }}
+          restore-keys: |
+            native-smartcut-${{ runner.os }}-${{ hashFiles('scripts/build-native-smartcut.sh', 'scripts/native-smartcut-sources.json') }}-
+            native-smartcut-${{ runner.os }}-
+      - name: Build native smart-cut engine
+        run: bash scripts/build-native-smartcut.sh
+      - name: Assemble test APK
+        run: gradle --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest
+      - name: Enable emulator KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Focused ${{ matrix.mode }} test on fresh API29 emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 29
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disk-size: 2048M
+          ram-size: 2048M
+          heap-size: 256M
+          emulator-boot-timeout: 300
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -no-metrics -partition-size 2048
+          disable-animations: true
+          script: bash scripts/android-api29-stall-probe.sh "${{ matrix.mode }}"
+      - name: Preserve focused XML and phase logcat
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quickcut-api29-focused-${{ matrix.mode }}
+          path: quickcut-api29-probe/${{ matrix.mode }}/
+          if-no-files-found: warn

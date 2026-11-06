@@ -59,3 +59,11 @@
 - 인물·풍경·세로 영상 등 실제 사용자 미디어의 썸네일 품질
 - Android Photo Picker 실제 권한 UX와 Play 테스트 설치본
 - 시스템 스플래시 및 제조사 커스텀 UI
+
+## 13단계 추가 — 런처 브랜드 아이콘 동기화
+
+- 기존 APK의 `ic_launcher_foreground.xml`이 민트색 Pocket Cut Studio 마크의 `quickcut_launcher_monochrome.png`를 흰색으로 틴트해 표시하는 것을 확인. 화면 내부 `QuickCutLogo`와 보라색 리디자인 시안의 가위·재생 마크와 불일치.
+- 새 적응형 아이콘: 기존 브랜드 배경색 `#6D28D9` 위 흰색 가위·재생 표식. `drawable/ic_launcher_foreground.xml`의 네이티브 VectorDrawable로 표현하며 민트 로고 이미지는 더 이상 런처에 참조하지 않는다.
+- Android 8+ 적응형 아이콘의 `foreground`는 새 표식을 사용하고, Android 13+ 단색 테마 아이콘의 `monochrome`도 동일 표식으로 연결. Manifest의 앱 아이콘/원형 아이콘 및 시스템 기본 스플래시는 기존 `@mipmap/ic_launcher`를 유지해 새 자산을 공유.
+- Android build에서 `scripts/test-launcher-icon.py`로 Manifest 및 v26/v33 아이콘 리소스를 검사한다. 앱 이름·인코더·앱 패키지/서명·Play 테스트 트랙 설정은 변경하지 않는다.
+- Google Play 스토어 등록정보의 512px 그래픽은 Android APK 런처 리소스와 별개이므로 자동 변경 완료로 간주하지 않는다.

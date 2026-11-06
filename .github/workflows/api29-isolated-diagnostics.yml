@@ -1,4 +1,4 @@
-name: API29 isolated export diagnostics
+name: API29 Media3 system-image comparison
 
 on:
   pull_request:
@@ -18,12 +18,13 @@ permissions:
 
 jobs:
   focused:
+    name: Media3 on ${{ matrix.system_image }}
     runs-on: ubuntu-24.04
     timeout-minutes: 50
     strategy:
       fail-fast: false
       matrix:
-        mode: [media3, date]
+        system_image: [google_apis, default]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v5
@@ -88,11 +89,11 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-      - name: Focused ${{ matrix.mode }} test on fresh API29 emulator
+      - name: Focused Media3 test on API29 ${{ matrix.system_image }} emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 29
-          target: google_apis
+          target: ${{ matrix.system_image }}
           arch: x86_64
           profile: pixel_6
           disk-size: 2048M
@@ -101,11 +102,11 @@ jobs:
           emulator-boot-timeout: 300
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -no-metrics -partition-size 2048
           disable-animations: true
-          script: bash scripts/android-api29-stall-probe.sh "${{ matrix.mode }}"
+          script: bash scripts/android-api29-stall-probe.sh media3 "${{ matrix.system_image }}"
       - name: Preserve focused XML and phase logcat
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: quickcut-api29-focused-${{ matrix.mode }}
-          path: quickcut-api29-probe/${{ matrix.mode }}/
+          name: quickcut-api29-media3-${{ matrix.system_image }}
+          path: quickcut-api29-probe/media3-${{ matrix.system_image }}/
           if-no-files-found: warn

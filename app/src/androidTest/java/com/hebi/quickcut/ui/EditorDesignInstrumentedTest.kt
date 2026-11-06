@@ -207,11 +207,45 @@ class EditorDesignInstrumentedTest {
         waitForPreview(CompositionPlayer::class.java)
         compose.onNodeWithText("상세 편집").assertIsDisplayed()
         compose.onNodeWithText("확대 1배").assertIsDisplayed()
+        compose.onNodeWithTag("editor-preview-overlay-play").assertIsDisplayed()
+        listOf("trim", "split", "delete", "move", "mute").forEach { action ->
+            compose.onNodeWithTag("editor-tool-$action")
+                .assertIsDisplayed().assertHeightIsAtLeast(48.dp)
+        }
         capture("editor_design_detailed")
         compose.runOnIdle {
             assertEquals(4_000L, editor.timeline.clips.single().startMs)
             assertEquals(7_400L, editor.timeline.clips.single().endMs)
         }
+    }
+
+    @Test fun narrowDetailedEditorShowsAllFiveToolsWithoutScrolling() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        compose.runOnUiThread {
+            editor.changeQuickMode(false)
+            editor.importVideos(context, listOf(Uri.fromFile(source)))
+        }
+        compose.waitUntil(25_000L) { editor.page == QuickCutPage.EDITOR }
+        compose.setContent {
+            DeviceConfigurationOverride(
+                DeviceConfigurationOverride.ForcedSize(DpSize(320.dp, 800.dp))
+            ) {
+                QuickCutTheme {
+                    Box(Modifier.fillMaxSize().background(CutColors.background).safeDrawingPadding()) {
+                        EditorScreen(editor, {}, {})
+                    }
+                }
+            }
+        }
+        compose.onNodeWithText("상세 편집").assertIsDisplayed()
+        compose.onNodeWithText("영상 저장").assertIsDisplayed()
+        compose.onNodeWithText("타임라인").assertIsDisplayed()
+        compose.onNodeWithTag("editor-preview-overlay-play").assertIsDisplayed()
+        listOf("trim", "split", "delete", "move", "mute").forEach { action ->
+            compose.onNodeWithTag("editor-tool-$action")
+                .assertIsDisplayed().assertHeightIsAtLeast(48.dp)
+        }
+        capture("editor_design_detailed_narrow")
     }
 
     private fun showBatch(fontScale: Float) {

@@ -221,6 +221,8 @@ jobs:
           print('Host monitor stopped.', flush=True)
           PY
       - name: Launch QuickCut on API ${{ matrix.api }} emulator
+        env:
+          QUICKCUT_EMULATOR_API: ${{ matrix.api }}
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: ${{ matrix.api }}
@@ -228,7 +230,7 @@ jobs:
           arch: x86_64
           profile: pixel_6
           disk-size: 2048M
-          ram-size: ${{ (matrix.api == 35 || matrix.api == 36) && '2048M' || '1536M' }}
+          ram-size: 2048M
           heap-size: 256M
           emulator-boot-timeout: 300
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -no-metrics -partition-size 2048

@@ -10,6 +10,7 @@ import android.os.ParcelFileDescriptor
 import android.os.PowerManager
 import android.provider.MediaStore
 import android.provider.Settings
+import android.util.Log
 import androidx.lifecycle.Lifecycle
 import androidx.test.ext.junit.rules.ActivityScenarioRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -53,6 +54,7 @@ class BackgroundMedia3ExportInstrumentedTest {
     private val context get() = instrumentation.targetContext
     private val power get() = context.getSystemService(PowerManager::class.java)
     private lateinit var model: EditorViewModel
+    private fun trace(stage: String) { Log.i("QuickCutApi29Probe", "media3.$stage") }
     private lateinit var sessionStore: EditorSessionStore
     private var previousSession: EditorSessionSnapshot? = null
     private val sources = mutableListOf<File>()
@@ -61,6 +63,7 @@ class BackgroundMedia3ExportInstrumentedTest {
 
     @Before
     fun importDistinctSourcesForAnAudibleMedia3Composition() = runBlocking {
+        trace("before.start")
         if (Build.VERSION.SDK_INT >= 33) {
             instrumentation.uiAutomation.grantRuntimePermission(
                 context.packageName, Manifest.permission.POST_NOTIFICATIONS,
@@ -97,15 +100,19 @@ class BackgroundMedia3ExportInstrumentedTest {
         assertEquals(72_000L, model.timeline.totalDurationMs)
         originalGalleryRows = galleryRows()
         originalStagingFiles = cachedMp4Files()
+        trace("before.ready")
     }
 
     @After
     fun finishWorkRestoreDisplayAndRemoveOnlyTestOutputs() = runBlocking {
+        trace("after.start")
         shell("input keyevent KEYCODE_WAKEUP")
         shell("wm dismiss-keyguard")
+        trace("after.displayRestored")
         if (::model.isInitialized) {
             withContext(Dispatchers.Main) { model.cancelExport() }
             awaitExportStopped()
+            trace("after.exportStopped")
             originalGalleryRows?.let { before ->
                 (galleryRows() - before).forEach { context.contentResolver.delete(it, null, null) }
             }
@@ -113,16 +120,21 @@ class BackgroundMedia3ExportInstrumentedTest {
         }
         sources.forEach { it.delete() }
         if (::sessionStore.isInitialized) previousSession?.let(sessionStore::save) ?: sessionStore.clear()
+        trace("after.wakeRequested")
         wakeAndBringTaskToFront()
+        trace("after.done")
         Unit
     }
 
     @Test
     fun media3ProcessingPublishesAValidOutputAfterAppSwitchAndScreenOff() = runBlocking {
+        trace("publish.body.start")
         // Catches export being tied to the visible Activity or losing its processing
         // resources during ON_STOP. Completion while still offscreen is the contract.
         startExportAndMoveOffscreenAfterProgress()
+        trace("publish.offscreen")
         awaitExportStopped()
+        trace("publish.exportStopped")
 
         assertFalse("The display must stay off through Media3 completion", power.isInteractive)
         assertEquals("Media3 must finish offscreen: ${model.errorMessage}",
@@ -142,20 +154,25 @@ class BackgroundMedia3ExportInstrumentedTest {
         assertEquals("An export must publish exactly one output", setOf(output),
             galleryRows() - checkNotNull(originalGalleryRows))
         assertEquals("Completed processing must remove its staged MP4", originalStagingFiles, cachedMp4Files())
+        trace("publish.body.done")
     }
 
     @Test
     fun cancellingOffscreenMedia3ProcessingLeavesNoGalleryOutputOrStagedWriter() = runBlocking {
+        trace("cancel.body.start")
         // Catches cancellation being lost while offscreen or cleanup releasing the
         // foreground lease before the Media3 writer and output have been removed.
         startExportAndMoveOffscreenAfterProgress()
+        trace("cancel.offscreen")
         withContext(Dispatchers.Main) {
             assertEquals("Cancellation must happen during processing", QuickCutPage.EXPORTING, model.page)
             assertFalse("Cancellation must precede gallery finalization", model.isFinalizing)
             assertEquals(FastExportReason.MULTIPLE_SOURCES, model.exportDiagnostics.smartCutReason)
             model.cancelExport()
         }
+        trace("cancel.requested")
         awaitExportStopped()
+        trace("cancel.exportStopped")
 
         assertFalse("Cancellation must finish without waking the display", power.isInteractive)
         assertEquals(QuickCutPage.EDITOR, model.page)
@@ -167,6 +184,7 @@ class BackgroundMedia3ExportInstrumentedTest {
             originalGalleryRows, galleryRows())
         assertEquals("The writer must stop before its foreground lease ends",
             originalStagingFiles, cachedMp4Files())
+        trace("cancel.body.done")
     }
 
     private suspend fun startExportAndMoveOffscreenAfterProgress() {

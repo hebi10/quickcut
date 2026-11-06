@@ -72,13 +72,26 @@ fun TimelineStrip(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Column(Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(CutSpacing.xs)) {
-                Text("타임라인", style = MaterialTheme.typography.titleSmall,
-                    color = CutColors.primaryText)
-                Text("전체 " + formatTime(totalDurationMs),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = CutColors.secondaryText)
+            if (LocalDensity.current.fontScale >= 1.4f) {
+                Column(Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(CutSpacing.xs)) {
+                    Text("타임라인", style = MaterialTheme.typography.titleSmall,
+                        color = CutColors.primaryText)
+                    Text("전체 " + formatTime(totalDurationMs),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = CutColors.secondaryText)
+                }
+            } else {
+                Row(Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("타임라인", style = MaterialTheme.typography.titleSmall,
+                        color = CutColors.primaryText)
+                    Text("전체 " + formatTime(totalDurationMs),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = CutColors.secondaryText,
+                        maxLines = 1)
+                }
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = { zoom = (zoom / 2f).coerceAtLeast(1f) },
@@ -93,7 +106,7 @@ fun TimelineStrip(
                     modifier = Modifier.size(48.dp), contentPadding = PaddingValues(0.dp)) { Text("+") }
             }
         }
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(6.dp))
         LazyRow(
             modifier = Modifier.fillMaxWidth(),
             contentPadding = PaddingValues(horizontal = 12.dp),
@@ -117,7 +130,7 @@ fun TimelineStrip(
                 BoxWithConstraints(
                     modifier = Modifier
                         .offset { IntOffset(dragOffsetPx.roundToInt(), 0) }
-                        .width(tileWidth).height(86.dp)
+                        .width(tileWidth).height(78.dp)
                         .border(
                             width = if (selected) 2.dp else 1.dp,
                             color = if (selected) CutColors.accent else CutColors.border,

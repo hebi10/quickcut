@@ -2,6 +2,7 @@ package com.hebi.quickcut.media
 
 import android.net.Uri
 import android.provider.MediaStore
+import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.hebi.quickcut.batch.BatchPlan
@@ -14,14 +15,21 @@ import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
+import org.junit.After
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class BatchDateExportInstrumentedTest {
     private val expectedOriginalDate = Instant.parse("2021-01-01T00:00:00Z").toEpochMilli()
+    private fun trace(stage: String) { Log.i("QuickCutApi29Probe", "batchdate.$stage") }
+
+    @Before fun beforeProbe() { trace("before") }
+    @After fun afterProbe() { trace("after") }
 
     private suspend fun exportFixture(dateMode: SaveDateMode, verify: (Uri) -> Unit) {
+        trace("${dateMode.name}.fixture.start")
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val input = File(context.cacheDir, "quickcut_batch_date_input.mp4")
         InstrumentationRegistry.getInstrumentation().context.assets
@@ -40,6 +48,7 @@ class BatchDateExportInstrumentedTest {
             assertTrue("Batch template must create a clip", planned is BatchPlan.Ready)
             val timeline = (planned as BatchPlan.Ready).timeline
             assertEquals(metadata.durationMs - 1_000L, timeline.totalDurationMs)
+            trace("${dateMode.name}.export.start")
             val output = withTimeout(120_000L) {
                 VideoExporter(context).export(
                     timeline = timeline,
@@ -49,6 +58,7 @@ class BatchDateExportInstrumentedTest {
                     outputBaseName = "test_original_video.mp4",
                 )
             }
+            trace("${dateMode.name}.export.done")
             try {
                 assertTrue(MediaReader.metadata(context, output).durationMs > 1_500L)
                 verify(output)
@@ -59,11 +69,16 @@ class BatchDateExportInstrumentedTest {
                 }
                 assertNotNull(displayName)
                 assertTrue(displayName!!.contains("test_original_video_QuickCut_"))
+                trace("${dateMode.name}.assertions.done")
             } finally {
+                trace("${dateMode.name}.outputCleanup.start")
                 context.contentResolver.delete(output, null, null)
+                trace("${dateMode.name}.outputCleanup.done")
             }
         } finally {
+            trace("${dateMode.name}.inputCleanup.start")
             input.delete()
+            trace("${dateMode.name}.inputCleanup.done")
         }
     }
 

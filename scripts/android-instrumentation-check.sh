@@ -51,8 +51,11 @@ printf 'gradle_exit=%s\nphase_exit=%s\n' "$preflight_gradle_status" "$first_fail
 # using fresh XML so a preflight report cannot satisfy the unfiltered gate.
 rm -rf "$RESULTS" "$REPORTS" quickcut-main10-full
 run_checked "Clear full-suite Main10 evidence" timeout --kill-after=2s 10s adb shell rm -rf /data/local/tmp/quickcut-main10
-# API29 can complete over 230 cases before reaching 15 minutes; retain a bounded full-suite budget.
-run_checked "Full instrumentation suite" timeout --kill-after=30s 20m gradle --no-daemon \
+# Keep the full, unfiltered suite mandatory. Android 10 media exports can run slowly
+# under software decoding; extend its bounded budget without relaxing any gate.
+full_suite_budget=20m
+if [[ "${QUICKCUT_EMULATOR_API:-}" == 29 ]]; then full_suite_budget=30m; fi
+run_checked "Full instrumentation suite" timeout --kill-after=30s "$full_suite_budget" gradle --no-daemon \
   -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true :app:connectedDebugAndroidTest
 run_checked "Pull full-suite Main10 evidence" timeout --kill-after=2s 10s adb pull /data/local/tmp/quickcut-main10 quickcut-main10-full
 run_checked "Verify full-suite Main10 evidence" python3 "$SCRIPT_DIR/verify-android-main10.py" quickcut-main10-full

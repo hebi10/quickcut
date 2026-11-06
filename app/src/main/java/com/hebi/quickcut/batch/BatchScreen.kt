@@ -774,9 +774,17 @@ private fun PresetEditor(model: BatchViewModel, disabled: Boolean) {
                             modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).testTag("batch-template-name"))
                     }
                     item {
-                        OutlinedButton(onClick = { model.saveTemplate(context, asNew = true) },
+                        Button(onClick = { model.saveTemplate(context, asNew = true) },
                             enabled = !disabled && model.templates.size < 30,
-                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("새 템플릿으로 저장") }
+                            shape = CutShape,
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+                            if (LocalDensity.current.fontScale < 1.5f) {
+                                Icon(Icons.Outlined.Add, contentDescription = null,
+                                    modifier = Modifier.size(20.dp))
+                                Spacer(Modifier.width(8.dp))
+                            }
+                            Text("새 템플릿으로 저장")
+                        }
                         if (model.templates.size >= 30) Text("템플릿은 최대 30개까지 저장할 수 있습니다.")
                         if (model.selectedTemplateId != null) OutlinedButton(onClick = { model.saveTemplate(context) },
                             enabled = !disabled, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("선택 템플릿 수정 저장") }

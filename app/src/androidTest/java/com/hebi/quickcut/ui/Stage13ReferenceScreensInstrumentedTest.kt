@@ -16,6 +16,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
@@ -86,6 +87,7 @@ class Stage13ReferenceScreensInstrumentedTest {
             }
         }
         compose.onNodeWithText("테스트 영상 1").assertIsDisplayed()
+        waitForDecodedThumbnails()
         capture("stage13_home_populated.png")
         compose.onNodeWithText("프로젝트").performClick()
         compose.onNodeWithText("테스트 영상 2").assertIsDisplayed()
@@ -112,6 +114,7 @@ class Stage13ReferenceScreensInstrumentedTest {
         compose.onNodeWithTag("gallery-grid").assertIsDisplayed()
         compose.onNodeWithTag("gallery-item-0").assertIsDisplayed()
         compose.onNodeWithTag("gallery-item-1").assertIsDisplayed()
+        waitForDecodedThumbnails()
         compose.onNodeWithText("2개 선택").assertIsDisplayed()
         capture("stage13_gallery_selected.png")
         compose.onNodeWithTag("gallery-item-1").performClick()
@@ -141,6 +144,12 @@ class Stage13ReferenceScreensInstrumentedTest {
         compose.onNodeWithText("프로젝트 없음").assertIsDisplayed()
         compose.onNodeWithText("영상 편집 시작하기").performScrollTo().assertIsDisplayed()
         capture("stage13_projects_empty_large_font.png")
+    }
+
+    private fun waitForDecodedThumbnails() {
+        compose.waitUntil(15_000L) {
+            compose.onAllNodesWithTag("clip-thumbnail-frame").fetchSemanticsNodes().size >= 2
+        }
     }
 
     private fun capture(name: String) {

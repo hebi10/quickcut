@@ -45,6 +45,8 @@ if name == "gradle":
     sys.exit(status)
 if name == "adb":
     if args[:3] == ["exec-out", "run-as", "com.hebi.quickcut"]:
+        if os.environ.get("STAGE13_CAPTURE_STATUS") == "1" and any("stage13_" in a for a in args):
+            sys.exit(43)
         if os.environ.get("STAGE7_CAPTURE_STATUS") == "1":
             sys.exit(42)
         sys.stdout.buffer.write(b"stub-png-evidence")
@@ -150,6 +152,12 @@ class EmulatorFlowTest(unittest.TestCase):
         self.assertEqual(timed, [["--kill-after=30s", "10m"], ["--kill-after=30s", "30m"]])
         self.assertIn("152 distinct tests", result.stdout)
 
+    def test_stage13_capture_failure_remains_a_required_gate(self):
+        result, _, _, phases = self.run_flow(STAGE13_CAPTURE_STATUS=1)
+        self.assertEqual(phases, ["preflight", "full"])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Stage 13 screenshot missing or empty", result.stdout + result.stderr)
+
     def test_both_successful_phases_run_all_gates_and_return_success(self):
         result, root, events, phases = self.run_flow()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -158,7 +166,10 @@ class EmulatorFlowTest(unittest.TestCase):
         self.assertTrue((root / "quickcut-native-preflight-results/results/TEST-preflight.xml").is_file())
         self.assertEqual(sum(e[0] == "python3" and any("verify-android-main10.py" in a for a in e) for e in events), 2)
         self.assertIn("152 distinct tests", result.stdout)
-        for image in ("stage7_home.png", "stage7_projects_empty.png", "stage7_onboarding.png"):
+        for image in ("stage7_home.png", "stage7_projects_empty.png", "stage7_onboarding.png",
+                      "stage13_home_populated.png", "stage13_projects_populated.png",
+                      "stage13_tools.png", "stage13_settings.png", "stage13_gallery_selected.png",
+                      "stage13_gallery_one_selected.png", "stage13_projects_empty_large_font.png"):
             self.assertTrue((root / "quickcut-design-review" / image).is_file())
         timed = [e[1:3] for e in events if e[0] == "timeout" and len(e) > 3 and e[3] == "gradle"]
         self.assertEqual(timed, [["--kill-after=30s", "10m"], ["--kill-after=30s", "20m"]])

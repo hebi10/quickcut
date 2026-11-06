@@ -30,6 +30,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.ContentCut
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -671,13 +672,21 @@ private fun PresetEditor(model: BatchViewModel, disabled: Boolean) {
             Text("템플릿 관리")
         }
     }
-    if (showManager) Dialog(onDismissRequest = { showManager = false }) {
-        Surface(Modifier.fillMaxWidth().heightIn(max = 640.dp).testTag("batch-template-dialog"), shape = CutDialogShape,
+    if (showManager) Dialog(
+        onDismissRequest = { showManager = false },
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Surface(Modifier.fillMaxWidth().padding(horizontal = 16.dp)
+            .widthIn(max = 480.dp).heightIn(max = 640.dp)
+            .testTag("batch-template-dialog"), shape = CutDialogShape,
             color = CutColors.panel, contentColor = CutColors.primaryText) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("내 템플릿", style = MaterialTheme.typography.titleLarge)
-                Text("저장된 템플릿 ${model.templates.size}개",
-                    style = MaterialTheme.typography.bodySmall, color = CutColors.secondaryText)
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("내 템플릿", style = MaterialTheme.typography.titleLarge)
+                    Text("${model.templates.size}개 저장됨",
+                        style = MaterialTheme.typography.bodySmall, color = CutColors.secondaryAccent)
+                }
                 Text("템플릿에는 자르기·음소거 설정만 저장합니다. 저장 날짜와 원본 처리 설정은 변경되지 않습니다.",
                     style = MaterialTheme.typography.bodySmall, color = CutColors.secondaryText)
                 LazyColumn(Modifier.weight(1f, fill = false).fillMaxWidth().testTag("batch-template-list"),
@@ -687,21 +696,76 @@ private fun PresetEditor(model: BatchViewModel, disabled: Boolean) {
                             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
                                 .testTag("batch-template-direct")) { Text("직접 설정") }
                     }
+                    if (model.templates.isEmpty()) {
+                        item {
+                            Text("저장된 템플릿이 없습니다. 설정을 입력하고 새 템플릿을 저장하세요.",
+                                color = CutColors.secondaryText,
+                                style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
                     items(model.templates, key = { it.id }) { template ->
+                        val isSelected = model.selectedTemplateId == template.id
                         Column(
                             Modifier.fillMaxWidth().background(CutColors.surface, CutShape)
-                                .border(1.dp, CutColors.border, CutShape).padding(12.dp),
+                                .border(1.dp,
+                                    if (isSelected) CutColors.accent else CutColors.border,
+                                    CutShape).padding(12.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            Text((if (model.selectedTemplateId == template.id) "✓ " else "") + template.name)
-                            Text(BatchTimeInput.summary(template), style = MaterialTheme.typography.bodySmall)
-                            OutlinedButton(onClick = { model.chooseTemplate(template.id) }, enabled = !disabled,
-                                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
-                                    .testTag("batch-template-${template.id}-choose")) { Text("이 템플릿 선택") }
-                            TextButton(onClick = {
-                                model.removeTemplate(context, template.id)
-                            }, enabled = !disabled, modifier = Modifier.heightIn(min = 48.dp)
-                                    .testTag("batch-template-${template.id}-remove")) { Text("삭제") }
+                            Row(Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Box(Modifier.size(44.dp).background(CutColors.accentMuted, CutShape),
+                                    contentAlignment = Alignment.Center) {
+                                    Icon(Icons.Outlined.ContentCut, contentDescription = null,
+                                        tint = CutColors.secondaryAccent)
+                                }
+                                Column(Modifier.weight(1f),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Text(template.name, style = MaterialTheme.typography.titleSmall,
+                                        color = CutColors.primaryText, maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis)
+                                    Text(BatchTimeInput.summary(template),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = CutColors.secondaryText, maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis)
+                                }
+                                if (isSelected) {
+                                    Text("선택됨", style = MaterialTheme.typography.labelSmall,
+                                        color = CutColors.secondaryAccent)
+                                }
+                            }
+                            if (LocalDensity.current.fontScale >= 1.5f) {
+                                OutlinedButton(onClick = { model.chooseTemplate(template.id) },
+                                    enabled = !disabled,
+                                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                                        .testTag("batch-template-${template.id}-choose")) {
+                                    Text("이 템플릿 선택")
+                                }
+                                TextButton(onClick = { model.removeTemplate(context, template.id) },
+                                    enabled = !disabled,
+                                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                                        .testTag("batch-template-${template.id}-remove")) {
+                                    Text("삭제", color = CutColors.error)
+                                }
+                            } else {
+                                Row(Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically) {
+                                    OutlinedButton(onClick = { model.chooseTemplate(template.id) },
+                                        enabled = !disabled,
+                                        modifier = Modifier.weight(1f).heightIn(min = 48.dp)
+                                            .testTag("batch-template-${template.id}-choose")) {
+                                        Text("이 템플릿 선택")
+                                    }
+                                    TextButton(onClick = { model.removeTemplate(context, template.id) },
+                                        enabled = !disabled,
+                                        modifier = Modifier.heightIn(min = 48.dp)
+                                            .testTag("batch-template-${template.id}-remove")) {
+                                        Text("삭제", color = CutColors.error)
+                                    }
+                                }
+                            }
                         }
                     }
                     item {

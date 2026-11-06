@@ -148,7 +148,8 @@ class Stage13ReferenceScreensInstrumentedTest {
 
     private fun waitForDecodedThumbnails() {
         compose.waitUntil(15_000L) {
-            compose.onAllNodesWithTag("clip-thumbnail-frame").fetchSemanticsNodes().size >= 2
+            compose.onAllNodesWithTag("clip-thumbnail-frame", useUnmergedTree = true)
+                .fetchSemanticsNodes().size >= 2
         }
     }
 

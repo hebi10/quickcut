@@ -237,6 +237,7 @@ class EditorDesignInstrumentedTest {
                 }
             }
         }
+        waitForPreview(CompositionPlayer::class.java)
         compose.onNodeWithText("상세 편집").assertIsDisplayed()
         compose.onNodeWithText("영상 저장").assertIsDisplayed()
         compose.onNodeWithText("타임라인").assertIsDisplayed()

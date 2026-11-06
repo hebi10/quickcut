@@ -99,6 +99,18 @@ for file in stage7_home.png stage7_projects_empty.png stage7_onboarding.png; do
     if [[ "$first_failure" -eq 0 ]]; then first_failure=1; fi
   fi
 done
+# Stage 13 reference states are rendered from decoded local video fixtures, not demo placeholders.
+# Keep them as a separate required screenshot set without weakening the Stage 7 evidence.
+for file in stage13_home_populated.png stage13_projects_populated.png stage13_tools.png \
+    stage13_settings.png stage13_gallery_selected.png stage13_gallery_one_selected.png \
+    stage13_projects_empty_large_font.png; do
+  if timeout --kill-after=2s 20s adb exec-out run-as com.hebi.quickcut cat "files/design-review/$file" > "quickcut-design-review/$file" && [[ -s "quickcut-design-review/$file" ]]; then
+    echo "Stage 13 screenshot preserved: $file"
+  else
+    echo "::error::Stage 13 screenshot missing or empty: $file"
+    if [[ "$first_failure" -eq 0 ]]; then first_failure=1; fi
+  fi
+done
 if [[ "$first_failure" -ne 0 ]]; then
   echo "::error::Instrumentation failed; preserving the first failure (exit $first_failure)."
   exit "$first_failure"

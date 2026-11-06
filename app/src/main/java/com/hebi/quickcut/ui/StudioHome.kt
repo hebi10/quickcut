@@ -114,9 +114,6 @@ internal fun StudioStartScreen(
                 }
                 when (selectedTab) {
                     0 -> {
-                        Text("빠르고 간편한 영상 편집",
-                            color = CutColors.secondaryText,
-                            style = MaterialTheme.typography.bodyMedium)
                         Button(onClick = onQuick, shape = CutShape,
                             modifier = Modifier.fillMaxWidth()
                                 .heightIn(min = 92.dp)) {
@@ -179,15 +176,16 @@ internal fun StudioStartScreen(
                                 Spacer(Modifier.width(CutSpacing.sm))
                                 Text("이전 편집 이어서 진행")
                             }
-                        } else {
-                            Text("현재 복구할 편집 작업이 없습니다.",
-                                color = CutColors.secondaryText)
                         }
                         if (projects.isEmpty()) {
                             CutInfoSection(
                                 title = "프로젝트 없음",
-                                message = "저장한 프로젝트가 없습니다. 편집 화면에서 프로젝트를 저장해 보세요.",
+                                message = "영상 편집 후 프로젝트를 저장하면 여기에서 이어서 작업할 수 있습니다.",
                             )
+                            Button(onClick = onQuick, modifier = Modifier.fillMaxWidth()
+                                .heightIn(min = CutSizes.primaryButton), shape = CutShape) {
+                                Text("영상 편집 시작하기")
+                            }
                         }
                     }
                     2 -> {

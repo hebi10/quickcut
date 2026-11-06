@@ -20,6 +20,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import com.hebi.quickcut.media.MediaReader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -42,7 +43,7 @@ fun ClipThumbnail(uri: String, timeMs: Long, modifier: Modifier = Modifier) {
                 bitmap = image,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxSize().testTag("clip-thumbnail-frame"),
             )
         } else {
             Icon(Icons.Outlined.VideoLibrary, contentDescription = null, tint = CutColors.mutedText)

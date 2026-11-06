@@ -1,9 +1,11 @@
 package com.hebi.quickcut.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -14,8 +16,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material3.AlertDialog
@@ -33,6 +36,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hebi.quickcut.editor.SavedProject
@@ -48,6 +52,7 @@ internal fun ProjectCard(
     var confirmDelete by remember(item.id) { mutableStateOf(false) }
     Row(
         Modifier.fillMaxWidth().background(CutColors.surface, CutShape)
+            .border(1.dp, CutColors.border, CutShape)
             .clickable { onOpen(item.id) }.padding(CutSpacing.md),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(CutSpacing.md),
@@ -90,42 +95,61 @@ internal fun SelectedVideoGallery(
     onDismiss: () -> Unit,
 ) {
     var selected by remember(uris) { mutableStateOf(uris.toSet()) }
-    Column(Modifier.fillMaxSize().background(CutColors.background)
-        .padding(CutSpacing.lg),
-        verticalArrangement = Arrangement.spacedBy(CutSpacing.md)) {
-        Text("영상 선택", style = MaterialTheme.typography.headlineSmall,
-            color = CutColors.primaryText)
-        Text("선택한 영상을 확인하고 편집에 사용할 항목을 고르세요.",
-            color = CutColors.secondaryText, style = MaterialTheme.typography.bodyMedium)
-        LazyVerticalGrid(
-            columns = GridCells.Adaptive(112.dp),
-            modifier = Modifier.weight(1f),
-            horizontalArrangement = Arrangement.spacedBy(CutSpacing.sm),
-            verticalArrangement = Arrangement.spacedBy(CutSpacing.sm),
-        ) {
-            items(uris, key = { it }) { uri ->
-                val isSelected = uri in selected
-                Column(
-                    Modifier.background(if (isSelected) CutColors.accentMuted else CutColors.surface,
-                        CutShape).clickable {
-                        selected = if (isSelected) selected - uri else selected + uri
-                    }.padding(CutSpacing.xs),
-                ) {
-                    Box {
-                        ClipThumbnail(uri, 0L, Modifier.fillMaxWidth().height(100.dp))
-                        if (isSelected) {
-                            Text("선택", color = CutColors.primaryText,
-                                modifier = Modifier.align(Alignment.TopEnd)
-                                    .background(CutColors.accent, CutSmallShape)
-                                    .padding(horizontal = 6.dp, vertical = 2.dp))
+    Column(
+        Modifier.fillMaxSize().background(CutColors.background).padding(CutSpacing.lg),
+        verticalArrangement = Arrangement.spacedBy(CutSpacing.md),
+    ) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onDismiss, modifier = Modifier.size(48.dp)) {
+                    Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "선택 닫기")
+                }
+                Text("영상 선택", style = MaterialTheme.typography.headlineSmall,
+                    color = CutColors.primaryText)
+            }
+            Text("${selected.size}개 선택", color = CutColors.secondaryAccent,
+                style = MaterialTheme.typography.labelMedium)
+        }
+        Text("추가한 영상에서 편집할 항목을 선택하세요.",
+            color = CutColors.secondaryText, style = MaterialTheme.typography.bodySmall)
+        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+            val columns = if (maxWidth < 600.dp) GridCells.Fixed(2)
+                else GridCells.Adaptive(160.dp)
+            LazyVerticalGrid(
+                columns = columns,
+                modifier = Modifier.fillMaxSize().testTag("gallery-grid"),
+                horizontalArrangement = Arrangement.spacedBy(CutSpacing.sm),
+                verticalArrangement = Arrangement.spacedBy(CutSpacing.sm),
+            ) {
+                itemsIndexed(uris, key = { _, uri -> uri }) { index, uri ->
+                    val isSelected = uri in selected
+                    Column(
+                        Modifier.background(
+                            if (isSelected) CutColors.accentMuted else CutColors.surface, CutShape
+                        ).border(1.dp,
+                            if (isSelected) CutColors.accent else CutColors.border, CutShape)
+                            .testTag("gallery-item-$index")
+                            .clickable {
+                                selected = if (isSelected) selected - uri else selected + uri
+                            }.padding(CutSpacing.xs),
+                        verticalArrangement = Arrangement.spacedBy(CutSpacing.xs),
+                    ) {
+                        Box {
+                            ClipThumbnail(uri, 0L, Modifier.fillMaxWidth().height(124.dp))
+                            if (isSelected) {
+                                Text("✓", color = CutColors.onAccent,
+                                    modifier = Modifier.align(Alignment.TopEnd)
+                                        .background(CutColors.accent, CutSmallShape)
+                                        .padding(horizontal = 8.dp, vertical = 3.dp))
+                            }
                         }
+                        Text("영상 ${index + 1}", color = CutColors.primaryText,
+                            style = MaterialTheme.typography.labelMedium)
                     }
-                    Text("영상", color = CutColors.secondaryText,
-                        style = MaterialTheme.typography.labelMedium)
                 }
             }
         }
-        Text("${selected.size}개 선택", color = CutColors.secondaryAccent)
         Row(horizontalArrangement = Arrangement.spacedBy(CutSpacing.sm)) {
             OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f)
                 .heightIn(min = CutSizes.primaryButton), shape = CutShape) {
@@ -138,10 +162,11 @@ internal fun SelectedVideoGallery(
         }
         Button(onClick = { onImport(uris.filter { it in selected }) },
             enabled = selected.isNotEmpty(),
-            modifier = Modifier.fillMaxWidth().heightIn(min = CutSizes.primaryButton),
+            modifier = Modifier.fillMaxWidth().heightIn(min = CutSizes.primaryButton)
+                .testTag("gallery-import"),
             shape = CutShape) {
             Icon(Icons.Outlined.Movie, contentDescription = null)
-            Text("선택한 영상 편집")
+            Text("선택한 영상 편집 (${selected.size})")
         }
     }
 }

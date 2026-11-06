@@ -84,6 +84,7 @@ jobs:
           python3 scripts/test-emulator-startup.py
           python3 scripts/test-emulator-flow.py
           python3 scripts/test-dialog-geometry.py
+          python3 scripts/test-launcher-icon.py
           python3 scripts/test-release-gate.py
           python3 scripts/test-play-publisher.py
           python3 scripts/test-play-bundle.py

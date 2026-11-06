@@ -10,11 +10,13 @@ import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.DeviceConfigurationOverride
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.ForcedSize
+import androidx.compose.ui.test.FontScale
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
@@ -64,8 +66,23 @@ class Stage7ReferenceScreensInstrumentedTest {
                 }
             }
         }
+        compose.onNodeWithTag("quickcut-onboarding-artwork").assertIsDisplayed()
         compose.onNodeWithText("다음").assertIsDisplayed()
         capture("stage7_onboarding.png")
+    }
+
+    @Test fun onboardingIllustrationAndNextActionRemainVisibleWithLargeFont() {
+        compose.setContent {
+            DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(320.dp, 640.dp))) {
+                DeviceConfigurationOverride(DeviceConfigurationOverride.FontScale(1.6f)) {
+                    QuickCutTheme {
+                        QuickCutWelcome(onFinish = {})
+                    }
+                }
+            }
+        }
+        compose.onNodeWithTag("quickcut-onboarding-artwork").assertIsDisplayed()
+        compose.onNodeWithText("다음").assertIsDisplayed()
     }
 
     private fun capture(name: String) {

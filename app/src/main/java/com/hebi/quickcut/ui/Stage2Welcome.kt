@@ -1,5 +1,6 @@
 package com.hebi.quickcut.ui
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -13,7 +14,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.ContentCut
 import androidx.compose.material.icons.outlined.PlayCircleOutline
 import androidx.compose.material.icons.outlined.VideoLibrary
 import androidx.compose.material3.Button
@@ -28,9 +28,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.hebi.quickcut.R
 
 private data class WelcomePage(val title: String, val detail: String)
 
@@ -44,6 +50,7 @@ private val welcomePages = listOf(
 internal fun QuickCutWelcome(onFinish: () -> Unit) {
     var index by rememberSaveable { mutableIntStateOf(0) }
     val page = welcomePages[index]
+    val compactArtwork = LocalDensity.current.fontScale >= 1.6f
     Column(
         modifier = Modifier.fillMaxSize().background(CutColors.background)
             .padding(horizontal = CutSpacing.xl, vertical = CutSpacing.xxl),
@@ -53,18 +60,40 @@ internal fun QuickCutWelcome(onFinish: () -> Unit) {
         Spacer(Modifier.height(20.dp))
         Column(horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(CutSpacing.xl)) {
-            Box(
-                modifier = Modifier.size(128.dp)
-                    .background(CutColors.accentMuted, CutPanelShape),
-                contentAlignment = Alignment.Center,
-            ) {
-                val icon = when (index) {
-                    0 -> Icons.Outlined.ContentCut
-                    1 -> Icons.Outlined.PlayCircleOutline
-                    else -> Icons.Outlined.VideoLibrary
+            if (index == 0) {
+                Box(
+                    modifier = Modifier.fillMaxWidth()
+                        .height(if (compactArtwork) 142.dp else 188.dp)
+                        .testTag("quickcut-onboarding-artwork"),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Image(
+                        painter = painterResource(R.drawable.quickcut_studio),
+                        contentDescription = null,
+                        colorFilter = ColorFilter.tint(CutColors.secondaryAccent),
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxWidth(0.88f)
+                            .height(if (compactArtwork) 122.dp else 166.dp),
+                    )
+                    QuickCutLogo(
+                        size = if (compactArtwork) 44.dp else 56.dp,
+                        modifier = Modifier.align(Alignment.BottomEnd)
+                            .padding(end = CutSpacing.lg, bottom = CutSpacing.sm),
+                    )
                 }
-                Icon(icon, contentDescription = null, tint = CutColors.secondaryAccent,
-                    modifier = Modifier.size(80.dp))
+            } else {
+                Box(
+                    modifier = Modifier.size(if (compactArtwork) 106.dp else 128.dp)
+                        .background(CutColors.accentMuted, CutPanelShape),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        if (index == 1) Icons.Outlined.PlayCircleOutline else Icons.Outlined.VideoLibrary,
+                        contentDescription = null,
+                        tint = CutColors.secondaryAccent,
+                        modifier = Modifier.size(if (compactArtwork) 68.dp else 80.dp),
+                    )
+                }
             }
             Text(page.title.replace("\\n", "\n"), color = CutColors.primaryText,
                 style = MaterialTheme.typography.headlineMedium,

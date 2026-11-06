@@ -142,6 +142,14 @@ class EmulatorFlowTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Stage 7 screenshot missing or empty", result.stdout + result.stderr)
 
+    def test_api29_keeps_full_suite_and_uses_bounded_30m_budget(self):
+        result, _, events, phases = self.run_flow(QUICKCUT_EMULATOR_API="29")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(phases, ["preflight", "full"])
+        timed = [e[1:3] for e in events if e[0] == "timeout" and len(e) > 3 and e[3] == "gradle"]
+        self.assertEqual(timed, [["--kill-after=30s", "10m"], ["--kill-after=30s", "30m"]])
+        self.assertIn("152 distinct tests", result.stdout)
+
     def test_both_successful_phases_run_all_gates_and_return_success(self):
         result, root, events, phases = self.run_flow()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

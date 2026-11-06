@@ -461,41 +461,6 @@ private fun QuickTrimControls(
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-                Column(
-                    Modifier.fillMaxWidth()
-                        .background(CutColors.surface, CutPanelShape)
-                        .border(1.dp, CutColors.border, CutPanelShape)
-                        .padding(CutSpacing.lg),
-                    verticalArrangement = Arrangement.spacedBy(CutSpacing.sm),
-                ) {
-                    Text("선택한 영상", color = CutColors.secondaryAccent,
-                        style = MaterialTheme.typography.titleSmall)
-                    Row(Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("원본 길이", color = CutColors.secondaryText,
-                            style = MaterialTheme.typography.bodySmall)
-                        Text(formatTime(clip.sourceDurationMs), color = CutColors.primaryText,
-                            style = MaterialTheme.typography.titleSmall)
-                    }
-                    Row(Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("남길 구간", color = CutColors.secondaryText,
-                            style = MaterialTheme.typography.bodySmall)
-                        Text(formatTime(clip.startMs) + " – " + formatTime(clip.endMs),
-                            color = CutColors.primaryText,
-                            style = MaterialTheme.typography.titleSmall)
-                    }
-                    Row(Modifier.fillMaxWidth()
-                        .background(CutColors.accentMuted, CutSmallShape)
-                        .padding(CutSpacing.md),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically) {
-                        Text("결과 영상", color = CutColors.secondaryAccent,
-                            style = MaterialTheme.typography.titleSmall)
-                        Text(formatTime(clip.durationMs), color = CutColors.primaryText,
-                            style = MaterialTheme.typography.titleMedium)
-                    }
-                }
                 Text("자르기 범위", color = CutColors.primaryText,
                     style = MaterialTheme.typography.titleMedium)
                 Column(
@@ -531,6 +496,83 @@ private fun QuickTrimControls(
                             color = CutColors.secondaryAccent,
                             style = MaterialTheme.typography.labelMedium)
                     }
+                }
+                if (LocalDensity.current.fontScale >= 1.5f) {
+                Column(
+                    Modifier.fillMaxWidth()
+                        .background(CutColors.surface, CutPanelShape)
+                        .border(1.dp, CutColors.border, CutPanelShape)
+                        .padding(CutSpacing.lg),
+                    verticalArrangement = Arrangement.spacedBy(CutSpacing.sm),
+                ) {
+                    Text("선택한 영상", color = CutColors.secondaryAccent,
+                        style = MaterialTheme.typography.titleSmall)
+                    Row(Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("원본 길이", color = CutColors.secondaryText,
+                            style = MaterialTheme.typography.bodySmall)
+                        Text(formatTime(clip.sourceDurationMs), color = CutColors.primaryText,
+                            style = MaterialTheme.typography.titleSmall)
+                    }
+                    Row(Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("남길 구간", color = CutColors.secondaryText,
+                            style = MaterialTheme.typography.bodySmall)
+                        Text(formatTime(clip.startMs) + " – " + formatTime(clip.endMs),
+                            color = CutColors.primaryText,
+                            style = MaterialTheme.typography.titleSmall)
+                    }
+                    Row(Modifier.fillMaxWidth()
+                        .background(CutColors.accentMuted, CutSmallShape)
+                        .padding(CutSpacing.md),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically) {
+                        Text("결과 영상", color = CutColors.secondaryAccent,
+                            style = MaterialTheme.typography.titleSmall)
+                        Text(formatTime(clip.durationMs), color = CutColors.primaryText,
+                            style = MaterialTheme.typography.titleMedium)
+                    }
+                }
+                } else {
+                Column(
+                    Modifier.fillMaxWidth()
+                        .background(CutColors.surface, CutPanelShape)
+                        .border(1.dp, CutColors.border, CutPanelShape)
+                        .padding(CutSpacing.md),
+                    verticalArrangement = Arrangement.spacedBy(CutSpacing.sm),
+                ) {
+                    Text("선택한 영상", color = CutColors.secondaryAccent,
+                        style = MaterialTheme.typography.titleSmall)
+                    Row(Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(CutSpacing.sm),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(CutSpacing.xs)) {
+                            Text("원본 길이", color = CutColors.secondaryText,
+                                style = MaterialTheme.typography.bodySmall)
+                            Text(formatTime(clip.sourceDurationMs), color = CutColors.primaryText,
+                                style = MaterialTheme.typography.titleSmall)
+                        }
+                        Column(Modifier.weight(1.35f),
+                            verticalArrangement = Arrangement.spacedBy(CutSpacing.xs)) {
+                            Text("남길 구간", color = CutColors.secondaryText,
+                                style = MaterialTheme.typography.bodySmall)
+                            Text(formatTime(clip.startMs) + " – " + formatTime(clip.endMs),
+                                color = CutColors.primaryText,
+                                style = MaterialTheme.typography.labelMedium,
+                                maxLines = 2)
+                        }
+                        Column(Modifier.weight(1f)
+                            .background(CutColors.accentMuted, CutSmallShape)
+                            .padding(CutSpacing.sm),
+                            verticalArrangement = Arrangement.spacedBy(CutSpacing.xs)) {
+                            Text("결과 영상", color = CutColors.secondaryAccent,
+                                style = MaterialTheme.typography.bodySmall)
+                            Text(formatTime(clip.durationMs), color = CutColors.primaryText,
+                                style = MaterialTheme.typography.titleSmall)
+                        }
+                    }
+                }
                 }
                 TrimSecondsRow(
                     label = "앞부분 삭제",

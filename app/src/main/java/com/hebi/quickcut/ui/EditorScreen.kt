@@ -1,6 +1,7 @@
 package com.hebi.quickcut.ui
 
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -78,6 +79,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -558,9 +560,9 @@ private fun EditorHeader(
     BoxWithConstraints(Modifier.fillMaxWidth()
         .background(CutColors.surface)
         .padding(horizontal = CutSpacing.sm)) {
-        val compactHeader = maxWidth < 380.dp ||
-            (LocalDensity.current.fontScale >= 1.5f && maxWidth < 600.dp)
-        val historyAndSave: @Composable () -> Unit = {
+        val compactHeader = maxWidth < 500.dp ||
+            (LocalDensity.current.fontScale >= 1.5f && maxWidth < 700.dp)
+        val historyActions: @Composable () -> Unit = {
             IconButton(onClick = onUndo, enabled = canUndo, modifier = Modifier.size(48.dp)) {
                 Icon(Icons.Outlined.Undo, contentDescription = "실행 취소")
             }
@@ -569,14 +571,6 @@ private fun EditorHeader(
             }
             IconButton(onClick = onAdd, modifier = Modifier.size(48.dp)) {
                 Icon(Icons.Outlined.Add, contentDescription = "영상 추가")
-            }
-            Button(onClick = onSave, enabled = canSave,
-                modifier = Modifier.heightIn(min = 48.dp), shape = CutShape,
-                contentPadding = PaddingValues(horizontal = 14.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = CutColors.accent, contentColor = CutColors.onAccent,
-                )) {
-                Text("영상 저장", style = MaterialTheme.typography.labelLarge)
             }
         }
         Column {
@@ -588,13 +582,21 @@ private fun EditorHeader(
                 Text("상세 편집", color = CutColors.primaryText,
                     style = MaterialTheme.typography.titleLarge,
                     modifier = Modifier.weight(1f))
-                if (!compactHeader) historyAndSave()
+                if (!compactHeader) historyActions()
+                Button(onClick = onSave, enabled = canSave,
+                    modifier = Modifier.heightIn(min = 48.dp), shape = CutShape,
+                    contentPadding = PaddingValues(horizontal = 14.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = CutColors.accent, contentColor = CutColors.onAccent,
+                    )) {
+                    Text("영상 저장", style = MaterialTheme.typography.labelLarge)
+                }
             }
             if (compactHeader) {
-                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
-                    .padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.End) {
-                    historyAndSave()
+                Row(Modifier.fillMaxWidth().padding(bottom = 4.dp),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically) {
+                    historyActions()
                 }
             }
         }
@@ -632,6 +634,18 @@ private fun PreviewPanel(
                 update = { view -> view.player = player },
                 modifier = Modifier.fillMaxSize(),
             )
+            if (!playing) {
+                IconButton(
+                    onClick = onPlay,
+                    modifier = Modifier.size(64.dp)
+                        .background(Color.Black.copy(alpha = 0.62f), CircleShape)
+                        .testTag("editor-preview-overlay-play"),
+                ) {
+                    Icon(Icons.Outlined.PlayArrow,
+                        contentDescription = "미리보기 중앙 재생",
+                        tint = Color.White, modifier = Modifier.size(36.dp))
+                }
+            }
         }
         PreviewPlaybackControls(playing, timelineDuration, currentPosition, onPlay, onSeek,
             modifier = Modifier.padding(vertical = if (compact) 0.dp else 4.dp))
@@ -657,7 +671,9 @@ internal fun PreviewPlaybackControls(
         }
         Column(Modifier.weight(1f).padding(end = 8.dp)) {
             Text("결과 " + formatTime(currentPosition) + " / " + formatTime(timelineDuration),
-                color = CutColors.secondaryText, fontSize = 12.sp)
+                color = CutColors.primaryText, fontSize = 12.sp,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.testTag("editor-playback-time"))
             Slider(
                 value = currentPosition.toFloat().coerceIn(0f, timelineDuration.coerceAtLeast(1L).toFloat()),
                 onValueChange = { onSeek(it.roundToLong()) },
@@ -688,27 +704,26 @@ private fun ToolButtons(
                 val active = item.key == "trim" && showTrim
                 val enabled = selected != null && (item.key != "split" || model.canSplitSelected)
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 54.dp)
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 54.dp)
                         .background(if (active) CutColors.accentMuted else CutColors.panel, CutShape)
                         .border(1.dp, if (active) CutColors.accent else CutColors.border, CutShape)
-                        .clip(CutShape)
+                        .clip(CutShape).testTag("editor-tool-${item.key}")
                         .clickable(enabled = enabled) { onAction(item.key) }
                         .padding(horizontal = 12.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     Icon(
-                        if (item.key == "mute" && selected?.muted == true) Icons.Outlined.VolumeUp else item.icon,
+                        if (item.key == "mute" && selected?.muted == true)
+                            Icons.Outlined.VolumeUp else item.icon,
                         contentDescription = null,
-                        tint = if (enabled) {
-                            if (active) CutColors.secondaryAccent else CutColors.primaryText
-                        } else CutColors.mutedText,
+                        tint = if (!enabled) CutColors.mutedText
+                            else if (active) CutColors.secondaryAccent else CutColors.primaryText,
                         modifier = Modifier.size(22.dp),
                     )
                     Text(
-                        if (item.key == "mute" && selected?.muted == true) "소리 복원" else item.text,
+                        if (item.key == "mute" && selected?.muted == true)
+                            "소리 복원" else item.text,
                         color = if (enabled) CutColors.primaryText else CutColors.mutedText,
                         fontSize = 14.sp,
                     )
@@ -717,52 +732,91 @@ private fun ToolButtons(
         }
     } else {
         Column(Modifier.fillMaxWidth()) {
-            Text("편집 도구", color = CutColors.primaryText,
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.padding(horizontal = CutSpacing.lg, vertical = CutSpacing.sm))
-            selected?.let {
-                Text(if (it.muted) "원본 소리: 음소거" else "원본 소리: 유지",
-                    color = CutColors.secondaryText, fontSize = 12.sp,
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp))
-            }
             Row(
-                modifier = Modifier.fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
-                    .background(CutColors.surface)
-                    .padding(horizontal = CutSpacing.md, vertical = CutSpacing.sm),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                Modifier.fillMaxWidth()
+                    .padding(horizontal = CutSpacing.md, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                actions.forEach { item ->
-                    val active = item.key == "trim" && showTrim
-                    val enabled = selected != null && (item.key != "split" || model.canSplitSelected)
-                    Column(
-                        modifier = Modifier.widthIn(min = 76.dp).heightIn(min = 78.dp)
-                            .background(if (active) CutColors.accentMuted else CutColors.surface, CutShape)
-                            .border(1.dp, if (active) CutColors.accent else CutColors.border, CutShape)
-                            .clip(CutShape)
-                            .clickable(enabled = enabled) { onAction(item.key) }
-                            .padding(8.dp),
-                        verticalArrangement = Arrangement.Center,
-                        horizontalAlignment = Alignment.CenterHorizontally,
+                Text("편집 도구", color = CutColors.primaryText,
+                    style = MaterialTheme.typography.titleSmall)
+                selected?.let {
+                    Text(if (it.muted) "원본 소리: 음소거" else "원본 소리: 유지",
+                        color = CutColors.secondaryText, fontSize = 11.sp)
+                }
+            }
+            BoxWithConstraints(Modifier.fillMaxWidth()) {
+                val fitAllTools = maxWidth >= 320.dp && LocalDensity.current.fontScale < 1.5f
+                if (fitAllTools) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().background(CutColors.surface)
+                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
-                        Icon(
-                            if (item.key == "mute" && selected?.muted == true) Icons.Outlined.VolumeUp else item.icon,
-                            contentDescription = null,
-                            tint = if (!enabled) CutColors.mutedText
-                                else if (active) CutColors.secondaryAccent else CutColors.primaryText,
-                            modifier = Modifier.size(23.dp),
-                        )
-                        Spacer(Modifier.height(6.dp))
-                        Text(
-                            if (item.key == "mute" && selected?.muted == true) "소리 복원" else item.text,
-                            color = if (!enabled) CutColors.mutedText
-                                else if (active) CutColors.secondaryAccent else CutColors.primaryText,
-                            fontSize = 12.sp,
-                        )
+                        actions.forEach { item ->
+                            ToolTile(item, selected, model, onAction, showTrim,
+                                modifier = Modifier.weight(1f))
+                        }
+                    }
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                            .background(CutColors.surface)
+                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        actions.forEach { item ->
+                            ToolTile(item, selected, model, onAction, showTrim,
+                                modifier = Modifier.width(70.dp))
+                        }
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun ToolTile(
+    item: ActionItem,
+    selected: VideoClip?,
+    model: EditorViewModel,
+    onAction: (String) -> Unit,
+    showTrim: Boolean,
+    modifier: Modifier,
+) {
+    val active = item.key == "trim" && showTrim
+    val enabled = selected != null && (item.key != "split" || model.canSplitSelected)
+    Column(
+        modifier = modifier.heightIn(min = 74.dp)
+            .background(if (active) CutColors.accentMuted else CutColors.surface, CutShape)
+            .border(1.dp, if (active) CutColors.accent else CutColors.border, CutShape)
+            .clip(CutShape).testTag("editor-tool-${item.key}")
+            .clickable(enabled = enabled) { onAction(item.key) }
+            .padding(horizontal = 3.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Icon(
+            if (item.key == "mute" && selected?.muted == true)
+                Icons.Outlined.VolumeUp else item.icon,
+            contentDescription = null,
+            tint = if (!enabled) CutColors.mutedText
+                else if (active) CutColors.secondaryAccent else CutColors.primaryText,
+            modifier = Modifier.size(22.dp),
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            if (item.key == "mute" && selected?.muted == true)
+                "소리 복원" else item.text,
+            color = if (!enabled) CutColors.mutedText
+                else if (active) CutColors.secondaryAccent else CutColors.primaryText,
+            fontSize = 11.sp,
+            lineHeight = 13.sp,
+            textAlign = TextAlign.Center,
+            maxLines = 2,
+        )
     }
 }
 

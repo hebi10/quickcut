@@ -121,6 +121,28 @@ for file in stage15_export_auto.png stage15_export_quality.png \
     if [[ "$first_failure" -eq 0 ]]; then first_failure=1; fi
   fi
 done
+# A failed adb cat may write an error string and still produce a non-empty file.
+# Require PNG signature, IHDR integrity and plausible device dimensions.
+run_checked "Verify Stage 15 screenshots are actual PNG images" python3 - <<'PYVERIFY'
+from pathlib import Path
+import struct
+import zlib
+
+for name in ("stage15_export_auto.png", "stage15_export_quality.png", "stage15_export_unsupported.png"):
+    path = Path("quickcut-design-review") / name
+    data = path.read_bytes() if path.exists() else b""
+    if len(data) < 33 or data[:8] != bytes.fromhex("89504e470d0a1a0a"):
+        raise SystemExit(f"Not a PNG screenshot: {path}")
+    if struct.unpack(">I", data[8:12])[0] != 13 or data[12:16] != b"IHDR":
+        raise SystemExit(f"Missing PNG IHDR: {path}")
+    width, height = struct.unpack(">II", data[16:24])
+    if not (200 <= width <= 10000 and 200 <= height <= 10000):
+        raise SystemExit(f"Invalid screenshot dimensions: {path} ({width}x{height})")
+    recorded = struct.unpack(">I", data[29:33])[0]
+    if recorded != zlib.crc32(data[12:29]) & 0xffffffff:
+        raise SystemExit(f"Corrupted PNG IHDR checksum: {path}")
+    print(f"Verified Stage 15 PNG: {name} ({width}x{height})")
+PYVERIFY
 if [[ "$first_failure" -ne 0 ]]; then
   echo "::error::Instrumentation failed; preserving the first failure (exit $first_failure)."
   exit "$first_failure"

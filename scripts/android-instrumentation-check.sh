@@ -240,6 +240,8 @@ for name in ("stage18_text_empty.png", "stage18_text_selected.png",
         raise SystemExit(f"Corrupt Stage 18 PNG: {p}")
     print(f"Verified Stage 18 PNG: {name} {w}x{h}")
 PYSTAGE18
+run_checked "Stage 20 mandatory test and PNG evidence" python3 "$SCRIPT_DIR/stage20-evidence-verify.py" \
+  --xml "$RESULTS" --screenshots quickcut-design-review
 if [[ "$first_failure" -ne 0 ]]; then
   echo "::error::Instrumentation failed; preserving the first failure (exit $first_failure)."
   exit "$first_failure"

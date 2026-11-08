@@ -59,6 +59,17 @@ run_checked "Full instrumentation suite" timeout --kill-after=30s "$full_suite_b
   -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true :app:connectedDebugAndroidTest
 run_checked "Pull full-suite Main10 evidence" timeout --kill-after=2s 10s adb pull /data/local/tmp/quickcut-main10 quickcut-main10-full
 run_checked "Verify full-suite Main10 evidence" python3 "$SCRIPT_DIR/verify-android-main10.py" quickcut-main10-full
+# Only fixture-generated MP4s are archived; never capture user-selected media.
+mkdir -p quickcut-stage20-media
+for name in stage17-source.mp4 stage17-output.mp4 stage17-audio-track.txt; do
+  if timeout --kill-after=2s 12s adb exec-out run-as com.hebi.quickcut cat "files/stage20-audio-evidence/$name" > "quickcut-stage20-media/$name" \
+      && [[ -s "quickcut-stage20-media/$name" ]]; then
+    echo "Synthetic MP4 audio QA evidence captured: $name"
+  else
+    rm -f "quickcut-stage20-media/$name"
+    echo "::warning::Synthetic audio evidence unavailable: $name"
+  fi
+done
 run_checked "Verify full-suite XML" python3 - <<'PYCODE'
 from pathlib import Path
 import xml.etree.ElementTree as ET

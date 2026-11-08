@@ -327,6 +327,13 @@ jobs:
           name: quickcut-stage20-evidence-api-${{ matrix.api }}
           path: quickcut-stage20-evidence/verified-screens-and-tests.json
           if-no-files-found: warn
+      - name: Upload synthetic MP4 audio verification fixtures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quickcut-stage20-audio-api-${{ matrix.api }}
+          path: quickcut-stage20-media/
+          if-no-files-found: warn
       - name: Upload instrumentation test results
         if: always()
         uses: actions/upload-artifact@v4

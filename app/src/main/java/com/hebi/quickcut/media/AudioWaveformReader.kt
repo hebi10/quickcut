@@ -66,7 +66,9 @@ object AudioWaveformReader {
                     if (inputIndex >= 0) {
                         val buffer = decoder.getInputBuffer(inputIndex) ?: break
                         val timeUs = extractor.sampleTime
-                        val bytes = if (timeUs in 0L until windowEndUs) {
+                        // AAC encoder priming may expose a negative presentation timestamp.
+                        // -1 alone means MediaExtractor EOS; retain other preroll samples.
+                        val bytes = if (timeUs != -1L && timeUs < windowEndUs) {
                             extractor.readSampleData(buffer, 0)
                         } else -1
                         if (bytes < 0) {

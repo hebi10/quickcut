@@ -1,6 +1,10 @@
 package com.hebi.quickcut.media
 
 import android.net.Uri
+import android.content.Context
+import android.media.MediaExtractor
+import android.media.MediaFormat
+import java.security.MessageDigest
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.hebi.quickcut.editor.AudioAdjustment
@@ -25,6 +29,7 @@ class Stage17AudioExportInstrumentedTest {
         instrumentation.context.assets.open("quickcut_keyframes.mp4").use { input ->
             source.outputStream().use { output -> input.copyTo(output) }
         }
+        val sourceHash = sha256(source)
         var output: Uri? = null
         try {
             val uri = Uri.fromFile(source)
@@ -51,6 +56,7 @@ class Stage17AudioExportInstrumentedTest {
                 exportMode = ExportMode.ALLOW_REENCODE,
             )
             MediaReader.validateExport(context, requireNotNull(output), duration, true)
+            saveSyntheticMp4Evidence(context, source, requireNotNull(output))
             val reference = AudioWaveformReader.read(context, uri, 0L, duration)
             assertTrue("Original source audio could not be decoded", reference != null)
             val waveform = AudioWaveformReader.read(context, requireNotNull(output), 0L, duration)
@@ -66,10 +72,60 @@ class Stage17AudioExportInstrumentedTest {
                 (peaks.take(3).maxOrNull() ?: 0f) < middle * 0.75f)
             assertTrue("Fade-out is not present: last=${peaks.takeLast(3)} middle=$middle",
                 (peaks.takeLast(3).maxOrNull() ?: 0f) < middle * 0.75f)
-            assertTrue("The source was modified", source.length() > 0L)
+            assertEquals("The source MP4 bytes changed", sourceHash, sha256(source))
         } finally {
             output?.let { context.contentResolver.delete(it, null, null) }
             source.delete()
+        }
+    }
+
+    private fun sha256(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(file.readBytes())
+        return digest.joinToString("") { "%02x".format(it) }
+    }
+
+    private fun saveSyntheticMp4Evidence(context: Context, source: File, output: Uri) {
+        val folder = File(context.filesDir, "stage20-audio-evidence")
+        check(folder.isDirectory || folder.mkdirs())
+        source.copyTo(File(folder, "stage17-source.mp4"), overwrite = true)
+        val saved = File(folder, "stage17-output.mp4")
+        requireNotNull(context.contentResolver.openInputStream(output)).use { input ->
+            saved.outputStream().use { destination -> input.copyTo(destination) }
+        }
+        check(saved.length() > 0L)
+        val detail = listOf(
+            "sourceSha256=" + sha256(source),
+            "outputSha256=" + sha256(saved),
+            "source=" + inspectSyntheticAudio(context, Uri.fromFile(source)),
+            "output=" + inspectSyntheticAudio(context, output),
+        )
+        File(folder, "stage17-audio-track.txt").writeText(detail.joinToString("\n") + "\n")
+    }
+
+    private fun inspectSyntheticAudio(context: Context, uri: Uri): String {
+        val extractor = MediaExtractor()
+        return try {
+            extractor.setDataSource(context, uri, null)
+            val index = (0 until extractor.trackCount).firstOrNull {
+                extractor.getTrackFormat(it).getString(MediaFormat.KEY_MIME)
+                    ?.startsWith("audio/") == true
+            } ?: return "audioTrackMissing"
+            val format = extractor.getTrackFormat(index)
+            val mime = format.getString(MediaFormat.KEY_MIME)
+            extractor.selectTrack(index)
+            val times = mutableListOf<Long>()
+            repeat(12) {
+                val time = extractor.sampleTime
+                if (time != -1L) {
+                    times += time
+                    extractor.advance()
+                }
+            }
+            "mime=$mime, sampleTimesUs=${times.joinToString(",")}"
+        } catch (error: Exception) {
+            "readError=${error.javaClass.simpleName}"
+        } finally {
+            extractor.release()
         }
     }
 

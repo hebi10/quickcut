@@ -48,6 +48,8 @@ import androidx.media3.transformer.CompositionPlayer
 import androidx.media3.ui.PlayerView
 import android.net.Uri
 import com.hebi.quickcut.editor.AudioAdjustment
+import com.hebi.quickcut.editor.AudioEnvelope
+import com.hebi.quickcut.media.AudioWaveform
 import com.hebi.quickcut.editor.EditTimeline
 import com.hebi.quickcut.editor.VideoClip
 import com.hebi.quickcut.editor.formatTime
@@ -92,15 +94,17 @@ fun AudioEditorScreen(
         delay(250)
         previewAdjustment = draft
     }
-    val waveform by produceState<com.hebi.quickcut.media.AudioWaveform?>(
-        null, clip.uri, clip.startMs, clip.endMs, clip.hasAudio,
+    val waveformResult by produceState<WaveformResult>(
+        WaveformResult(loading = true),
+        clip.uri, clip.startMs, clip.endMs, clip.hasAudio,
     ) {
-        if (clip.hasAudio) {
-            value = AudioWaveformReader.read(
+        value = WaveformResult(
+            loading = false,
+            waveform = if (clip.hasAudio) AudioWaveformReader.read(
                 context.applicationContext, Uri.parse(clip.uri),
                 clip.startMs, clip.durationMs,
-            )
-        }
+            ) else null,
+        )
     }
     val editable = clip.hasAudio && !clip.muted
     val limitMs = minOf(clip.durationMs, 5_000L)
@@ -138,23 +142,29 @@ fun AudioEditorScreen(
                     style = MaterialTheme.typography.bodySmall)
             }
 
-            Text("오디오 파형", color = CutColors.primaryText,
+            Text("소리 적용 예상 파형", color = CutColors.primaryText,
                 style = MaterialTheme.typography.titleMedium)
             if (!clip.hasAudio) {
                 Text("이 영상에는 오디오 트랙이 없습니다.",
                     color = CutColors.secondaryText, style = MaterialTheme.typography.bodySmall)
-            } else if (waveform == null) {
-                Text("파형 미리보기를 불러올 수 없습니다. 소리 조절과 저장은 계속 사용할 수 있습니다.",
+            } else if (waveformResult.loading) {
+                Text("오디오 파형을 분석하고 있습니다.",
+                    color = CutColors.secondaryText, style = MaterialTheme.typography.bodySmall)
+            } else if (waveformResult.waveform == null) {
+                Text("파형을 불러오지 못했습니다. 소리 조절과 저장은 계속 사용할 수 있습니다.",
                     color = CutColors.secondaryText, style = MaterialTheme.typography.bodySmall)
             } else {
-                val peaks = requireNotNull(waveform)
+                val peaks = requireNotNull(waveformResult.waveform)
                 Canvas(Modifier.fillMaxWidth().height(76.dp)
                     .background(CutColors.surface).testTag("audio-waveform")) {
                     val center = size.height / 2f
                     val step = size.width / peaks.peaks.size
                     peaks.peaks.forEachIndexed { index, peak ->
                         val x = step * (index + 0.5f)
-                        val height = (peak.coerceIn(0f, 1f) * center * 0.85f)
+                        val time = peaks.sampledDurationMs.toDouble() * (index + 0.5) /
+                            peaks.peaks.size
+                        val applied = peak * AudioEnvelope.gainAtMs(draft, clip.durationMs, time)
+                        val height = (applied.coerceIn(0f, 1f) * center * 0.85f)
                             .coerceAtLeast(2.dp.toPx())
                         drawLine(CutColors.accent, Offset(x, center - height),
                             Offset(x, center + height), strokeWidth = step * 0.55f)
@@ -222,3 +232,8 @@ fun AudioEditorScreen(
         }
     }
 }
+
+private data class WaveformResult(
+    val loading: Boolean,
+    val waveform: AudioWaveform? = null,
+)

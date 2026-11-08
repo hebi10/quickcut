@@ -41,6 +41,15 @@ class CropGeometryTest {
         assertTrue(expanded.right <= 1f && expanded.bottom <= 1f)
     }
 
+    @Test fun extremeZoomPreservesPresetAspectAtMinimumCropSize() {
+        val region = CropGeometry.centerForRatio(1920, 1080, CropRatio.VERTICAL)
+        val resized = region.zoom(1_000f)
+        assertClose(9f / 16f,
+            (resized.width * 1920f) / (resized.height * 1080f))
+        assertTrue(resized.left >= 0f && resized.top >= 0f)
+        assertTrue(resized.right <= 1f && resized.bottom <= 1f)
+    }
+
     @Test fun freeResizeClampsEdgesAndKeepsValidRegion() {
         val region = CropRegion(0.3f, 0.2f, 0.7f, 0.8f)
         val resized = region.resize(0.9f, 0.95f)

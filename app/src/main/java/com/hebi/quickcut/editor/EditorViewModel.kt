@@ -676,6 +676,21 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         selectedId?.let { moveClip(it, direction) }
     }
 
+    fun applyTextLayers(id: Long, layers: List<TextLayer>) {
+        if (isRecoveringExport || hasUnresolvedExport || ExportWorkMonitor.isRunning) return
+        if (timeline.clipAt(id) == null) return
+        val edited = try { timeline.updateTextLayers(id, layers) }
+            catch (error: IllegalArgumentException) {
+                reportError(error.localizedMessage ?: "텍스트 설정을 확인해 주세요.")
+                return
+            }
+        if (edited == timeline) return
+        recordChange()
+        timeline = edited
+        needsReencodeConsent = false
+        saveSessionSoon()
+    }
+
     fun toggleMute() {
         if (isRecoveringExport || hasUnresolvedExport) return
         val id = selectedId ?: return

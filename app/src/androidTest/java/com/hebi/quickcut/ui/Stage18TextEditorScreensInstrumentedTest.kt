@@ -63,9 +63,11 @@ class Stage18TextEditorScreensInstrumentedTest {
         }
         compose.onNodeWithTag("text-layer-add").performScrollTo().assertIsEnabled()
         capture("stage18_text_empty.png")
-        compose.onNodeWithTag("text-layer-add").performClick()
+        // Screenshot may restore the initial viewport; always reveal the action before tapping.
+        compose.onNodeWithTag("text-layer-add").performScrollTo().performClick()
         compose.waitForIdle()
         compose.onNodeWithTag("text-layer-input").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("text-invalid").performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("text-apply").assertIsNotEnabled()
         compose.onNodeWithTag("text-layer-input").performTextInput("테스트 영상 문구")
         compose.onNodeWithTag("text-apply").assertIsEnabled()

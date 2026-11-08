@@ -70,7 +70,7 @@ class Stage20EvidenceTest(unittest.TestCase):
         verified = json.loads(manifest.read_text(encoding="utf-8"))
         self.assertEqual(verified["schemaVersion"], 2)
         self.assertEqual(len(verified["screenshots"]), 18)
-        self.assertEqual(len(verified["androidTestClasses"]), 12)
+        self.assertEqual(len(verified["androidTestClasses"]), len(gate.REQUIRED_TEST_CLASSES))
         self.assertEqual(len(verified["screenshots"][0]["sha256"]), 64)
 
     def test_ci_manifest_distinguishes_pr_head_from_tested_merge(self) -> None:
@@ -121,8 +121,13 @@ class Stage20EvidenceTest(unittest.TestCase):
         self.assertFalse(manifest.exists())
 
     def test_legacy_suite_count_does_not_replace_required_class_identity(self) -> None:
-        self.write_xml(remove=gate.REQUIRED_TEST_CLASSES[-1])
+        self.write_xml(remove="com.hebi.quickcut.media.Stage20RecoveryInstrumentedTest")
         with self.assertRaisesRegex(ValueError, "Stage20RecoveryInstrumentedTest"):
+            gate.validate_instrumentation(self.reports)
+
+    def test_theme_mode_class_is_a_required_release_gate(self) -> None:
+        self.write_xml(remove="com.hebi.quickcut.ui.ThemeModeInstrumentedTest")
+        with self.assertRaisesRegex(ValueError, "ThemeModeInstrumentedTest"):
             gate.validate_instrumentation(self.reports)
 
     def test_missing_png_fails(self) -> None:

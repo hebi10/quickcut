@@ -120,7 +120,7 @@ object AudioWaveformReader {
                 }
             }
             if (sampledFrames == 0) return null
-            AudioWaveform(peaks.toList(), sampledMs)
+            return AudioWaveform(peaks.toList(), sampledMs)
         } finally {
             runCatching { decoder?.stop() }
             runCatching { decoder?.release() }

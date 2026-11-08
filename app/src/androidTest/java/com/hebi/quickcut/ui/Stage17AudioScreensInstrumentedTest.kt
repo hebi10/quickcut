@@ -79,8 +79,9 @@ class Stage17AudioScreensInstrumentedTest {
         compose.onNodeWithTag("audio-volume").assertIsNotEnabled()
         compose.onNodeWithTag("audio-mute-toggle").assertIsEnabled()
         capture("stage17_audio_muted.png")
-        compose.onNodeWithTag("audio-mute-toggle").performClick()
-        compose.onNodeWithTag("audio-volume").assertIsEnabled()
+        compose.onNodeWithTag("audio-mute-toggle").performScrollTo().performClick()
+        compose.waitForIdle()
+        compose.onNodeWithTag("audio-volume").performScrollTo().assertIsEnabled()
         compose.onNodeWithTag("audio-apply").assertIsEnabled()
     }
 

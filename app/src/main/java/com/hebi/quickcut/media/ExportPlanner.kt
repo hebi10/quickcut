@@ -38,8 +38,9 @@ object ExportPlanner {
     ): ExportAssessment = withContext(Dispatchers.IO) {
         var assessment = when {
             timeline.isEmpty -> ExportAssessment(false, "편집할 영상이 없습니다.")
-            timeline.clips.any { it.crop != null } -> ExportAssessment(
-                false, "화면 비율 또는 크롭이 적용된 영상입니다. 선택한 화면 영역을 유지하려면 재인코딩이 필요합니다."
+            timeline.clips.any { it.crop != null || it.textLayers.isNotEmpty() ||
+                (it.hasAudio && !it.muted && !it.audio.isDefault) } -> ExportAssessment(
+                false, "크롭·텍스트·오디오 효과가 적용됐습니다. 저장 전에 재인코딩 승인이 필요합니다."
             )
             timeline.clips.size > 1 -> ExportAssessment(
                 false, "구간 연결도 자동 저장할 수 있습니다. 같은 원본의 구간은 부분 처리를 우선 시도하며, 필요하면 전체 처리로 이어집니다."
@@ -65,7 +66,8 @@ object ExportPlanner {
         }
         if (timeline.isEmpty) return@withContext assessment
         if (!assessment.fastAvailable && assessment.suggestion == null &&
-            timeline.clips.none { it.crop != null }) {
+            timeline.clips.none { it.crop != null || it.textLayers.isNotEmpty() ||
+                (it.hasAudio && !it.muted && !it.audio.isDefault) }) {
             NativeSmartCutTrimmer.suggestCopyRangesUs(context, timeline, onProgress)?.let { ranges ->
                 if (ranges == timeline.clips.map { it.startUs to it.endUs }) {
                     assessment = ExportAssessment(true,

@@ -39,7 +39,13 @@ object CompositionFactory {
             .setDurationUs(clip.sourceDurationMs * 1_000L)
             .setRemoveAudio(clip.muted || !clip.hasAudio)
             .apply {
-                cropEffect(clip)?.let { setEffects(Effects(emptyList(), listOf(it))) }
+                val audio = ClipAudioEffects.processors(clip)
+                val video = mutableListOf<Effect>()
+                cropEffect(clip)?.let(video::add)
+                video.addAll(TextOverlayEffects.videoEffects(clip.textLayers))
+                if (audio.isNotEmpty() || video.isNotEmpty()) {
+                    setEffects(Effects(audio, video))
+                }
             }
             .build()
 
@@ -48,12 +54,13 @@ object CompositionFactory {
         val items = timeline.clips.map { clip ->
             val effects = mutableListOf<Effect>()
             cropEffect(clip)?.let(effects::add)
+            effects.addAll(TextOverlayEffects.videoEffects(clip.textLayers))
             effects.add(Presentation.createForShortSide(profile.shortSide))
             profile.targetFps?.let {
                 effects.add(FrameDropEffect.createDefaultFrameDropEffect(it.toFloat()))
             }
             editedClip(clip).buildUpon()
-                .setEffects(Effects(emptyList(), effects))
+                .setEffects(Effects(ClipAudioEffects.processors(clip), effects))
                 .build()
         }
         val withAudio = timeline.clips.any { !it.muted && it.hasAudio }

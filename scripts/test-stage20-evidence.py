@@ -61,11 +61,12 @@ class Stage20EvidenceTest(unittest.TestCase):
 
     def test_manifest_is_created_only_after_complete_evidence(self) -> None:
         manifest = self.reports.parent / "release" / "proof.json"
-        with patch.object(sys, "argv", [
-            "stage20-evidence-verify.py", "--xml", str(self.reports),
-            "--screenshots", str(self.images), "--manifest", str(manifest),
-        ]):
-            self.assertEqual(gate.main(), 0)
+        with patch.dict(os.environ, {"GITHUB_ACTIONS": "false"}):
+            with patch.object(sys, "argv", [
+                "stage20-evidence-verify.py", "--xml", str(self.reports),
+                "--screenshots", str(self.images), "--manifest", str(manifest),
+            ]):
+                self.assertEqual(gate.main(), 0)
         verified = json.loads(manifest.read_text(encoding="utf-8"))
         self.assertEqual(verified["schemaVersion"], 2)
         self.assertEqual(len(verified["screenshots"]), 18)

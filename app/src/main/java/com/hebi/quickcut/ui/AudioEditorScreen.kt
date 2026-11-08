@@ -167,7 +167,8 @@ fun AudioEditorScreen(
                         val x = step * (index + 0.5f)
                         val time = peaks.sampledDurationMs.toDouble() * (index + 0.5) /
                             peaks.peaks.size
-                        val applied = peak * AudioEnvelope.gainAtMs(draft, clip.durationMs, time)
+                        val applied = if (muted) 0f else
+                            peak * AudioEnvelope.gainAtMs(draft, clip.durationMs, time)
                         val height = (applied.coerceIn(0f, 1f) * center * 0.85f)
                             .coerceAtLeast(2.dp.toPx())
                         drawLine(CutColors.accent, Offset(x, center - height),

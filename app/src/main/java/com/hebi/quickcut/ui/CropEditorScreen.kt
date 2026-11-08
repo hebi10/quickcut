@@ -2,6 +2,7 @@ package com.hebi.quickcut.ui
 
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -77,6 +78,7 @@ fun CropEditorScreen(
     onApply: (CropRegion?) -> Unit,
     onCancel: () -> Unit,
 ) {
+    BackHandler(onBack = onCancel)
     val context = LocalContext.current
     val source by produceState<CropPreviewSource?>(null, clip.uri, clip.startMs) {
         value = withContext(Dispatchers.IO) {

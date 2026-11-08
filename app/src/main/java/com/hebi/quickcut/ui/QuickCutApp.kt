@@ -79,6 +79,8 @@ import com.hebi.quickcut.export.ExportWorkMonitor
 import com.hebi.quickcut.media.OriginalMediaActions
 import com.hebi.quickcut.media.SaveDateMode
 import com.hebi.quickcut.media.ExportMode
+import com.hebi.quickcut.media.ExportQualitySettings
+import com.hebi.quickcut.media.ExportQualityInspector
 import com.hebi.quickcut.media.ExportPlanner
 import com.hebi.quickcut.media.ExportAssessment
 import com.hebi.quickcut.media.ExportReport
@@ -96,6 +98,7 @@ private data class ExportReview(
     val originalAction: OriginalAction,
     val dateMode: SaveDateMode,
     val retryingFastExport: Boolean = false,
+    val outputQuality: ExportQualitySettings = ExportQualitySettings(),
 )
 
 @Composable
@@ -137,9 +140,12 @@ fun QuickCutApp(
         mutableStateOf(settings.loadSaveDate())
     }
     var draftSaveDateMode by remember { mutableStateOf(selectedSaveDateMode) }
+    var selectedOutputQuality by remember { mutableStateOf(ExportQualitySettings()) }
+    var draftOutputQuality by remember { mutableStateOf(selectedOutputQuality) }
     val openSaveOptions: () -> Unit = {
         if (model.canStartExport && !inspectingExport) {
             draftSaveDateMode = selectedSaveDateMode
+            draftOutputQuality = selectedOutputQuality
             showSaveOptions = true
         }
     }
@@ -159,6 +165,7 @@ fun QuickCutApp(
             val reviewedTimeline = model.timeline
             val reviewedAction = selectedSaveAction
             val reviewedDate = selectedSaveDateMode
+            val reviewedQuality = selectedOutputQuality
             inspectingExport = true
             inspectionProgress = null
             inspectionJob = coroutineScope.launch {
@@ -169,10 +176,23 @@ fun QuickCutApp(
                 var diagnosticStatus = "실패"
                 var diagnosticError: Throwable? = null
                 try {
-                    val assessment = ExportPlanner.analyze(
-                        context.applicationContext, reviewedTimeline, reviewedDate,
-                        onProgress = { inspectionProgress = it },
-                    )
+                    val assessment = if (reviewedQuality.isAutomatic) {
+                        ExportPlanner.analyze(
+                            context.applicationContext, reviewedTimeline, reviewedDate,
+                            onProgress = { inspectionProgress = it },
+                        )
+                    } else {
+                        val evaluation = ExportQualityInspector.inspect(
+                            context.applicationContext, reviewedTimeline, reviewedQuality
+                        )
+                        val plan = evaluation.plan ?: error(
+                            evaluation.error ?: "내보내기 설정을 확인할 수 없습니다."
+                        )
+                        ExportAssessment(
+                            false, "선택한 출력: ${plan.detail}\n" +
+                                "선택한 화질을 적용하기 위해 영상을 재인코딩합니다."
+                        )
+                    }
                     diagnosticStatus = "완료"
                     if (!model.canStartExport || model.timeline != reviewedTimeline) return@launch
                     if (assessment.fastAvailable && !model.needsReencodeConsent) {
@@ -181,10 +201,11 @@ fun QuickCutApp(
                             reviewedAction,
                             reviewedDate,
                             ExportMode.FAST_ONLY,
+                            outputQuality = reviewedQuality,
                         )
                     } else {
                         exportReview = ExportReview(assessment, reviewedTimeline,
-                            reviewedAction, reviewedDate)
+                            reviewedAction, reviewedDate, outputQuality = reviewedQuality)
                     }
                 } catch (cancelled: CancellationException) {
                     diagnosticStatus = "취소"
@@ -223,6 +244,9 @@ fun QuickCutApp(
         if (model.page != QuickCutPage.EDITOR) {
             exportReview = null
             showSaveOptions = false
+        }
+        if (model.page == QuickCutPage.PICKER || model.page == QuickCutPage.COMPLETED) {
+            selectedOutputQuality = ExportQualitySettings()
         }
     }
     val originalActionLauncher = rememberLauncherForActivityResult(
@@ -537,10 +561,14 @@ fun QuickCutApp(
             },
             dateMode = draftSaveDateMode,
             onDateModeChange = { draftSaveDateMode = it },
+            timeline = model.timeline,
+            outputQuality = draftOutputQuality,
+            onOutputQualityChange = { draftOutputQuality = it },
             canSave = model.canStartExport && !inspectingExport,
             onSave = {
                 if (model.canStartExport && !inspectingExport) {
                     selectedSaveDateMode = draftSaveDateMode
+                    selectedOutputQuality = draftOutputQuality
                     showSaveOptions = false
                     beginExportAfterReview()
                 }
@@ -588,7 +616,7 @@ fun QuickCutApp(
                 if (model.canStartExport && model.timeline == review.timeline) {
                     exportReview = null
                     model.startExport(context, review.originalAction, review.dateMode,
-                        ExportMode.ALLOW_REENCODE)
+                        ExportMode.ALLOW_REENCODE, outputQuality = review.outputQuality)
                 }
             },
             onSuggestedCut = if (suggestion != null && !review.retryingFastExport) {

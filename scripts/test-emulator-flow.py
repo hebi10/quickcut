@@ -222,7 +222,7 @@ class EmulatorFlowTest(unittest.TestCase):
         result, _, _, phases = self.run_flow(STAGE14_CAPTURE_STATUS=1)
         self.assertEqual(phases, ["preflight", "full"])
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("Invalid Stage", result.stdout + result.stderr)
+        self.assertIn("Missing/corrupt PNG evidence", result.stdout + result.stderr)
 
     def test_stage13_capture_failure_remains_a_required_gate(self):
         result, _, _, phases = self.run_flow(STAGE13_CAPTURE_STATUS=1)

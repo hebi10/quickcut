@@ -18,6 +18,8 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
@@ -63,9 +65,13 @@ class Stage18TextEditorScreensInstrumentedTest {
         }
         compose.onNodeWithTag("text-layer-add").performScrollTo().assertIsEnabled()
         capture("stage18_text_empty.png")
-        // Screenshot may restore the initial viewport; always reveal the action before tapping.
-        compose.onNodeWithTag("text-layer-add").performScrollTo().performClick()
-        compose.waitForIdle()
+        // Replay a physical tap after revealing the button; semantics-only click can be
+        // acknowledged even when the emulator has not delivered the touch to the UI.
+        compose.onNodeWithTag("text-layer-add").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("text-layer-add").performTouchInput { click() }
+        compose.waitUntil(10_000L) {
+            compose.onAllNodesWithTag("text-layer-input").fetchSemanticsNodes().isNotEmpty()
+        }
         compose.onNodeWithTag("text-layer-input").performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("text-invalid").performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("text-apply").assertIsNotEnabled()
@@ -106,26 +112,39 @@ class Stage18TextEditorScreensInstrumentedTest {
         compose.waitForIdle()
         val dir = File(InstrumentationRegistry.getInstrumentation().targetContext.filesDir, "design-review")
         check(dir.isDirectory || dir.mkdirs())
-        val bitmap = InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
-            ?: error("Android 화면 캡처 실패")
+        val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+        var verified: Bitmap? = null
+        // SwiftShader sometimes returns a transient white frame while the Compose surface
+        // is being updated. Retry a bounded number of real captures; never accept a blank PNG.
+        for (attempt in 1..6) {
+            compose.waitForIdle()
+            val candidate = automation.takeScreenshot()
+            if (candidate != null) {
+                val step = maxOf(1, candidate.width / 40)
+                var scanned = 0
+                var dark = 0
+                for (y in candidate.height / 12 until candidate.height * 3 / 4 step step) {
+                    for (x in 0 until candidate.width step step) {
+                        val pixel = candidate.getPixel(x, y)
+                        if (Color.red(pixel) < 96 && Color.green(pixel) < 96 &&
+                            Color.blue(pixel) < 110
+                        ) dark++
+                        scanned++
+                    }
+                }
+                if (dark * 25 > scanned) {
+                    verified = candidate
+                    break
+                }
+                candidate.recycle()
+            }
+            if (attempt < 6) Thread.sleep(300L)
+        }
+        val bitmap = checkNotNull(verified) {
+            "Text editor screenshot is blank or hidden after 6 Android captures: $name"
+        }
         val target = File(dir, name)
         try {
-            // Only genuine visible editor frames count as release evidence.
-            val step = maxOf(1, bitmap.width / 40)
-            var scanned = 0
-            var dark = 0
-            for (y in bitmap.height / 12 until bitmap.height * 3 / 4 step step) {
-                for (x in 0 until bitmap.width step step) {
-                    val pixel = bitmap.getPixel(x, y)
-                    if (Color.red(pixel) < 96 && Color.green(pixel) < 96 &&
-                        Color.blue(pixel) < 110
-                    ) dark++
-                    scanned++
-                }
-            }
-            check(dark * 25 > scanned) {
-                "Text editor screenshot is blank or hidden: $name"
-            }
             target.outputStream().use { check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) }
         } finally {
             bitmap.recycle()

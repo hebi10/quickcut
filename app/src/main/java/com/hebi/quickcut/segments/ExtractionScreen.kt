@@ -77,7 +77,8 @@ import com.hebi.quickcut.ui.CutShape
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-@OptIn(ExperimentalMaterial3Api::class, UnstableApi::class)
+@androidx.annotation.OptIn(markerClass = [UnstableApi::class])
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ExtractionScreen(
     model: ExtractionViewModel,
@@ -262,7 +263,7 @@ fun ExtractionScreen(
     }
 }
 
-@OptIn(UnstableApi::class)
+@androidx.annotation.OptIn(markerClass = [UnstableApi::class])
 @Composable
 private fun ExtractionPlayer(player: ExoPlayer) {
     Surface(shape = CutShape, color = Color.Black,

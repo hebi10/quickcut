@@ -53,29 +53,25 @@ internal fun QuickCutDialogHeading(title: String) {
     val palette = LocalCutPalette.current
     val caution = title.contains("삭제") || title.contains("취소") || title.contains("종료")
     val icon = when {
-        title.contains("삭제") -> Icons.Outlined.DeleteOutline
-        title.contains("취소") || title.contains("종료") -> Icons.Outlined.WarningAmber
-        title.contains("복원") -> Icons.Outlined.History
+        title.contains("삭제") -> CutIcons.Delete
+        title.contains("취소") || title.contains("종료") -> CutIcons.Warning
+        title.contains("복원") -> CutIcons.Restore
         title.contains("라이선스") || title.contains("개인정보") || title.contains("진단") ->
-            Icons.Outlined.Info
-        title.contains("저장") -> Icons.Outlined.Save
-        else -> Icons.Outlined.Settings
+            CutIcons.Info
+        title.contains("저장") -> CutIcons.Save
+        else -> CutIcons.Settings
     }
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Box(
-            modifier = Modifier.size(36.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(if (caution) MaterialTheme.colorScheme.errorContainer else palette.accentMuted),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(icon, contentDescription = null,
-                tint = if (caution) MaterialTheme.colorScheme.onErrorContainer else palette.secondaryAccent,
-                modifier = Modifier.size(CutSizes.icon))
-        }
+        Icon(
+            icon,
+            contentDescription = null,
+            tint = if (caution) palette.error else palette.secondaryAccent,
+            modifier = Modifier.size(CutSizes.icon),
+        )
         Text(title, modifier = Modifier.weight(1f), color = palette.primaryText,
             fontWeight = FontWeight.SemiBold,
             style = MaterialTheme.typography.titleLarge)

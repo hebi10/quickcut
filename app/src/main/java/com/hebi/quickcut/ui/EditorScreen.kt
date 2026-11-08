@@ -115,14 +115,14 @@ private data class ActionItem(
 )
 
 private val actions = listOf(
-    ActionItem("trim", "자르기", Icons.Outlined.ContentCut),
-    ActionItem("split", "분할", Icons.Outlined.CallSplit),
-    ActionItem("delete", "삭제", Icons.Outlined.DeleteOutline),
-    ActionItem("move", "순서", Icons.Outlined.Reorder),
-    ActionItem("mute", "음소거", Icons.Outlined.VolumeOff),
-    ActionItem("crop", "비율·크롭", Icons.Outlined.Crop),
-    ActionItem("audio", "오디오", Icons.Outlined.VolumeUp),
-    ActionItem("text", "텍스트", Icons.Outlined.TextFields),
+    ActionItem("trim", "자르기", CutIcons.Trim),
+    ActionItem("split", "분할", CutIcons.Split),
+    ActionItem("delete", "삭제", CutIcons.Delete),
+    ActionItem("move", "순서", CutIcons.Reorder),
+    ActionItem("mute", "음소거", CutIcons.Mute),
+    ActionItem("crop", "비율·크롭", CutIcons.Crop),
+    ActionItem("audio", "오디오", CutIcons.Volume),
+    ActionItem("text", "텍스트", CutIcons.Text),
 )
 
 @OptIn(UnstableApi::class, ExperimentalApi::class)
@@ -612,20 +612,20 @@ private fun EditorHeader(
             (LocalDensity.current.fontScale >= 1.5f && maxWidth < 700.dp)
         val historyActions: @Composable () -> Unit = {
             IconButton(onClick = onUndo, enabled = canUndo, modifier = Modifier.size(48.dp)) {
-                Icon(Icons.Outlined.Undo, contentDescription = "실행 취소")
+                Icon(CutIcons.Undo, contentDescription = "실행 취소")
             }
             IconButton(onClick = onRedo, enabled = canRedo, modifier = Modifier.size(48.dp)) {
-                Icon(Icons.Outlined.Redo, contentDescription = "다시 실행")
+                Icon(CutIcons.Redo, contentDescription = "다시 실행")
             }
             IconButton(onClick = onAdd, modifier = Modifier.size(48.dp)) {
-                Icon(Icons.Outlined.Add, contentDescription = "영상 추가")
+                Icon(CutIcons.Add, contentDescription = "영상 추가")
             }
         }
         Column {
             Row(Modifier.fillMaxWidth().heightIn(min = CutSizes.appBar),
                 verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
-                    Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "편집 종료")
+                    Icon(CutIcons.Back, contentDescription = "편집 종료")
                 }
                 Text("상세 편집", color = palette.primaryText,
                     style = MaterialTheme.typography.titleLarge,
@@ -690,7 +690,7 @@ private fun PreviewPanel(
                         .background(Color.Black.copy(alpha = 0.62f), CircleShape)
                         .testTag("editor-preview-overlay-play"),
                 ) {
-                    Icon(Icons.Outlined.PlayArrow,
+                    Icon(CutIcons.Play,
                         contentDescription = "미리보기 중앙 재생",
                         tint = Color.White, modifier = Modifier.size(36.dp))
                 }
@@ -716,7 +716,7 @@ internal fun PreviewPlaybackControls(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         IconButton(onClick = onPlay, modifier = Modifier.size(48.dp)) {
-            Icon(if (playing) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
+            Icon(if (playing) CutIcons.Pause else CutIcons.Play,
                 contentDescription = if (playing) "일시정지" else "재생")
         }
         Column(Modifier.weight(1f).padding(end = 8.dp)) {
@@ -767,11 +767,11 @@ private fun ToolButtons(
                 ) {
                     Icon(
                         if (item.key == "mute" && selected?.muted == true)
-                            Icons.Outlined.VolumeUp else item.icon,
+                            CutIcons.Volume else item.icon,
                         contentDescription = null,
                         tint = if (!enabled) palette.mutedText
                             else if (active) palette.secondaryAccent else palette.primaryText,
-                        modifier = Modifier.size(22.dp),
+                        modifier = Modifier.size(CutSizes.icon),
                     )
                     Text(
                         if (item.key == "mute" && selected?.muted == true)
@@ -854,11 +854,11 @@ private fun ToolTile(
     ) {
         Icon(
             if (item.key == "mute" && selected?.muted == true)
-                Icons.Outlined.VolumeUp else item.icon,
+                CutIcons.Volume else item.icon,
             contentDescription = null,
             tint = if (!enabled) palette.mutedText
                 else if (active) palette.secondaryAccent else palette.primaryText,
-            modifier = Modifier.size(22.dp),
+            modifier = Modifier.size(CutSizes.icon),
         )
         Spacer(Modifier.height(4.dp))
         Text(

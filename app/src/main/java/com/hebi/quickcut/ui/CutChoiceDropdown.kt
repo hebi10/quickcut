@@ -47,6 +47,7 @@ internal fun <T> CutChoiceDropdown(
     modifier: Modifier = Modifier,
     onSelected: (T) -> Unit,
 ) {
+    val palette = LocalCutPalette.current
     var expanded by remember { mutableStateOf(false) }
     var anchorWidth by remember { mutableIntStateOf(0) }
     val density = LocalDensity.current
@@ -70,7 +71,7 @@ internal fun <T> CutChoiceDropdown(
             ) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text(label, style = MaterialTheme.typography.labelSmall,
-                        color = CutColors.secondaryText)
+                        color = palette.secondaryText)
                     Text(currentLabel, style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Medium)
                 }
@@ -87,7 +88,7 @@ internal fun <T> CutChoiceDropdown(
                 DropdownMenuItem(
                     text = { Text(option.label) },
                     trailingIcon = if (option.value == selected) {
-                        { Icon(Icons.Outlined.Check, contentDescription = null, tint = CutColors.accent) }
+                        { Icon(Icons.Outlined.Check, contentDescription = null, tint = palette.accent) }
                     } else null,
                     enabled = option.enabled,
                     modifier = Modifier.heightIn(min = 48.dp)

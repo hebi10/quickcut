@@ -27,6 +27,7 @@ import kotlinx.coroutines.withContext
 
 @Composable
 fun ClipThumbnail(uri: String, timeMs: Long, modifier: Modifier = Modifier) {
+    val palette = LocalCutPalette.current
     val context = LocalContext.current
     val sampledTimeMs = timeMs / 2_000L * 2_000L
     var frame by remember(uri, sampledTimeMs) { mutableStateOf<ImageBitmap?>(null) }
@@ -36,7 +37,7 @@ fun ClipThumbnail(uri: String, timeMs: Long, modifier: Modifier = Modifier) {
         }
         frame = bitmap?.asImageBitmap()
     }
-    Box(modifier = modifier.background(CutColors.panel), contentAlignment = Alignment.Center) {
+    Box(modifier = modifier.background(palette.panel), contentAlignment = Alignment.Center) {
         val image = frame
         if (image != null) {
             Image(
@@ -46,7 +47,7 @@ fun ClipThumbnail(uri: String, timeMs: Long, modifier: Modifier = Modifier) {
                 modifier = Modifier.fillMaxSize().testTag("clip-thumbnail-frame"),
             )
         } else {
-            Icon(Icons.Outlined.VideoLibrary, contentDescription = null, tint = CutColors.mutedText)
+            Icon(Icons.Outlined.VideoLibrary, contentDescription = null, tint = palette.mutedText)
         }
     }
 }

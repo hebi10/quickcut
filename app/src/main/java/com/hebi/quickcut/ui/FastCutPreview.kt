@@ -55,6 +55,7 @@ internal fun FastCutPreview(suggestion: FastCutSuggestion) {
 @OptIn(UnstableApi::class, ExperimentalApi::class)
 @Composable
 private fun FastCutPreviewContent(suggestion: FastCutSuggestion) {
+    val palette = LocalCutPalette.current
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val targets = remember(suggestion) { FastCutPreviewPlan.targets(suggestion) }
@@ -143,7 +144,7 @@ private fun FastCutPreviewContent(suggestion: FastCutSuggestion) {
             BoundaryFrame("추천", suggestion.adjusted, target, previewActive, Modifier.weight(1f))
         }
         Text("위 이미지는 경계 시각에 가장 가까운 화면입니다. 아래 재생으로 실제 남길 구간을 확인하세요.",
-            style = MaterialTheme.typography.bodySmall, color = CutColors.secondaryText)
+            style = MaterialTheme.typography.bodySmall, color = palette.secondaryText)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = { play(suggestion.requested, "요청 위치") }, modifier = Modifier.weight(1f), shape = CutShape) {
                 Text("요청 재생")
@@ -165,7 +166,7 @@ private fun FastCutPreviewContent(suggestion: FastCutSuggestion) {
             )
         }
         if (playbackError) Text("이 기기에서 미리보기를 재생하지 못했습니다. 시간 안내를 확인한 뒤 저장 방식을 직접 선택할 수 있습니다.",
-            color = CutColors.secondaryText, style = MaterialTheme.typography.bodySmall)
+            color = palette.secondaryText, style = MaterialTheme.typography.bodySmall)
         Text("미리보기만으로 자르기 위치가 변경되지는 않습니다.", style = MaterialTheme.typography.bodySmall)
     }
 }

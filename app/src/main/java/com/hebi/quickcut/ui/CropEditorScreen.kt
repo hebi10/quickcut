@@ -80,6 +80,7 @@ fun CropEditorScreen(
     onApply: (CropRegion?) -> Unit,
     onCancel: () -> Unit,
 ) {
+    val palette = LocalCutPalette.current
     BackHandler(onBack = onCancel)
     val context = LocalContext.current
     val source by produceState<CropPreviewSource?>(null, clip.uri, clip.startMs) {
@@ -117,15 +118,15 @@ fun CropEditorScreen(
         mutableStateOf(if (clip.crop == null) CropRatio.ORIGINAL else CropRatio.FREE)
     }
 
-    Column(Modifier.fillMaxSize().background(CutColors.background)) {
+    Column(Modifier.fillMaxSize().background(palette.background)) {
       Column(Modifier.weight(1f).verticalScroll(rememberScrollState())
         .padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically) {
             Column {
-                Text("화면 비율·크롭", color = CutColors.primaryText,
+                Text("화면 비율·크롭", color = palette.primaryText,
                     style = MaterialTheme.typography.titleLarge)
-                Text("선택한 클립에만 적용", color = CutColors.secondaryText,
+                Text("선택한 클립에만 적용", color = palette.secondaryText,
                     style = MaterialTheme.typography.bodySmall)
             }
             IconButton(onClick = onCancel, modifier = Modifier.size(48.dp)) {
@@ -137,10 +138,10 @@ fun CropEditorScreen(
             Box(Modifier.fillMaxWidth().height(220.dp), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator()
             }
-            Text("원본 프레임 정보를 확인하고 있습니다.", color = CutColors.secondaryText)
+            Text("원본 프레임 정보를 확인하고 있습니다.", color = palette.secondaryText)
         } else if (source?.width == 0 || source?.height == 0) {
             Text("영상 프레임 정보를 읽지 못했습니다. 원본 파일을 확인해 주세요.",
-                color = CutColors.error)
+                color = palette.error)
             OutlinedButton(onClick = onCancel) { Text("편집 화면으로") }
         } else {
             val active = requireNotNull(source)
@@ -173,21 +174,21 @@ fun CropEditorScreen(
                             drawRect(shade, Offset(0f, top), Size(left, bottom - top))
                             drawRect(shade, Offset(right, top), Size(size.width - right, bottom - top))
                             drawRect(shade, Offset(0f, bottom), Size(size.width, size.height - bottom))
-                            drawRect(CutColors.secondaryAccent, Offset(left, top),
+                            drawRect(palette.secondaryAccent, Offset(left, top),
                                 Size(right - left, bottom - top), style = Stroke(width = 3.dp.toPx()))
                             for (i in 1..2) {
                                 val x = left + (right - left) * i / 3f
                                 val y = top + (bottom - top) * i / 3f
-                                drawLine(CutColors.secondaryAccent.copy(alpha = 0.55f),
+                                drawLine(palette.secondaryAccent.copy(alpha = 0.55f),
                                     Offset(x, top), Offset(x, bottom), strokeWidth = 1.dp.toPx())
-                                drawLine(CutColors.secondaryAccent.copy(alpha = 0.55f),
+                                drawLine(palette.secondaryAccent.copy(alpha = 0.55f),
                                     Offset(left, y), Offset(right, y), strokeWidth = 1.dp.toPx())
                             }
                             for (corner in listOf(
                                 Offset(left, top), Offset(right, top),
                                 Offset(left, bottom), Offset(right, bottom)
                             )) {
-                                drawCircle(CutColors.primaryText, radius = 5.dp.toPx(), center = corner)
+                                drawCircle(palette.primaryText, radius = 5.dp.toPx(), center = corner)
                             }
                         }
                 ) {
@@ -202,9 +203,9 @@ fun CropEditorScreen(
                 }
             }
             Text("영상을 손가락으로 이동하고 두 손가락으로 확대·축소할 수 있습니다.",
-                color = CutColors.secondaryText, style = MaterialTheme.typography.bodySmall)
+                color = palette.secondaryText, style = MaterialTheme.typography.bodySmall)
 
-            Text("화면 비율", color = CutColors.primaryText,
+            Text("화면 비율", color = palette.primaryText,
                 style = MaterialTheme.typography.titleMedium)
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -221,16 +222,16 @@ fun CropEditorScreen(
                             .testTag("crop-preset-${ratio.name}")
                             .semantics { this.selected = preset == ratio },
                         border = androidx.compose.foundation.BorderStroke(1.dp,
-                            if (preset == ratio) CutColors.accent else CutColors.border),
+                            if (preset == ratio) palette.accent else palette.border),
                         shape = CutShape,
                     ) {
                         Text(ratio.label,
-                            color = if (preset == ratio) CutColors.secondaryAccent
-                                else CutColors.primaryText)
+                            color = if (preset == ratio) palette.secondaryAccent
+                                else palette.primaryText)
                     }
                 }
             }
-            Text("위치 및 확대", color = CutColors.primaryText,
+            Text("위치 및 확대", color = palette.primaryText,
                 style = MaterialTheme.typography.titleSmall)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = { region = region.zoom(1f / 1.15f) },
@@ -243,15 +244,15 @@ fun CropEditorScreen(
                     modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text("확대") }
             }
             if (preset == CropRatio.FREE) {
-                Text("자유 비율 크기", color = CutColors.primaryText,
+                Text("자유 비율 크기", color = palette.primaryText,
                     style = MaterialTheme.typography.titleSmall)
                 Text("가로 ${(region.width * 100f).toInt()}%",
-                    color = CutColors.secondaryText)
+                    color = palette.secondaryText)
                 Slider(value = region.width, onValueChange = {
                     region = region.resize(it, region.height)
                 }, valueRange = 0.05f..1f, modifier = Modifier.testTag("crop-free-width"))
                 Text("세로 ${(region.height * 100f).toInt()}%",
-                    color = CutColors.secondaryText)
+                    color = palette.secondaryText)
                 Slider(value = region.height, onValueChange = {
                     region = region.resize(region.width, it)
                 }, valueRange = 0.05f..1f, modifier = Modifier.testTag("crop-free-height"))
@@ -265,12 +266,12 @@ fun CropEditorScreen(
                 shape = CutShape,
             ) { Text("원본 비율로 초기화") }
             Text("크롭 적용 시 영상 재인코딩이 필요하며, 저장 전에 별도로 확인합니다.",
-                color = CutColors.secondaryText,
+                color = palette.secondaryText,
                 style = MaterialTheme.typography.bodySmall)
         }
       }
       Row(
-          Modifier.fillMaxWidth().background(CutColors.surface).padding(12.dp),
+          Modifier.fillMaxWidth().background(palette.surface).padding(12.dp),
           verticalAlignment = Alignment.CenterVertically,
           horizontalArrangement = Arrangement.spacedBy(12.dp),
       ) {

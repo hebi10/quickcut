@@ -67,17 +67,18 @@ internal fun ExportQualitySection(
     evaluation: QualityEvaluation?,
     onChange: (ExportQualitySettings) -> Unit,
 ) {
+    val palette = LocalCutPalette.current
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(CutSpacing.md)) {
         ExportQualityThumbnail(timeline)
-        Text("내보내기 화질", color = CutColors.secondaryAccent,
+        Text("내보내기 화질", color = palette.secondaryAccent,
             style = MaterialTheme.typography.titleMedium)
         Text(
             "자동은 기존 고속 저장 방식을 유지합니다. 옵션을 변경하면 재인코딩 승인을 요청합니다.",
-            color = CutColors.secondaryText,
+            color = palette.secondaryText,
             style = MaterialTheme.typography.bodySmall,
         )
         Text("해상도", style = MaterialTheme.typography.titleSmall,
-            color = CutColors.primaryText)
+            color = palette.primaryText)
         ExportOptionRow(
             prefix = "export-quality-resolution",
             options = ExportResolution.entries.map { CutChoice(it, it.label) },
@@ -85,7 +86,7 @@ internal fun ExportQualitySection(
             onSelected = { onChange(settings.copy(resolution = it)) },
         )
         Text("FPS (초당 프레임)", style = MaterialTheme.typography.titleSmall,
-            color = CutColors.primaryText)
+            color = palette.primaryText)
         ExportOptionRow(
             prefix = "export-quality-fps",
             options = ExportFrameRate.entries.map { CutChoice(it, it.label) },
@@ -94,7 +95,7 @@ internal fun ExportQualitySection(
         )
         Text("압축 품질: ${settings.quality.label}",
             style = MaterialTheme.typography.titleSmall,
-            color = CutColors.primaryText)
+            color = palette.primaryText)
         androidx.compose.material3.Slider(
             value = settings.quality.ordinal.toFloat(),
             onValueChange = { raw ->
@@ -114,32 +115,32 @@ internal fun ExportQualitySection(
                         .heightIn(min = 44.dp),
                 ) {
                     Text(option.label,
-                        color = if (settings.quality == option) CutColors.secondaryAccent
-                            else CutColors.secondaryText,
+                        color = if (settings.quality == option) palette.secondaryAccent
+                            else palette.secondaryText,
                         style = MaterialTheme.typography.labelSmall)
                 }
             }
         }
         androidx.compose.material3.Surface(
-            shape = CutShape, color = CutColors.surface,
-            border = androidx.compose.foundation.BorderStroke(1.dp, CutColors.border),
+            shape = CutShape, color = palette.surface,
+            border = androidx.compose.foundation.BorderStroke(1.dp, palette.border),
         ) {
             Column(Modifier.fillMaxWidth().padding(12.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 when {
                     settings.isAutomatic -> Text(
                         "자동 · 원본 품질 및 기존 빠른 저장 유지",
-                        color = CutColors.primaryText,
+                        color = palette.primaryText,
                         style = MaterialTheme.typography.bodySmall,
                     )
                     evaluation == null -> Text(
                         "영상 특성과 기기 지원 여부를 확인하고 있습니다.",
-                        color = CutColors.secondaryText,
+                        color = palette.secondaryText,
                         style = MaterialTheme.typography.bodySmall,
                     )
                     evaluation.error != null -> Text(
                         evaluation.error,
-                        color = CutColors.error,
+                        color = palette.error,
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.testTag("export-quality-unavailable"),
                     )
@@ -147,12 +148,12 @@ internal fun ExportQualitySection(
                         Text(
                             "예상 출력 · ${evaluation.plan.detail}",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = CutColors.primaryText,
+                            color = palette.primaryText,
                             modifier = Modifier.testTag("export-quality-estimate"),
                         )
                         Text("예상 용량은 추정치이며 실제 결과와 차이가 날 수 있습니다.",
                             style = MaterialTheme.typography.bodySmall,
-                            color = CutColors.secondaryText)
+                            color = palette.secondaryText)
                     }
                 }
             }
@@ -168,7 +169,8 @@ private fun <T> ExportOptionRow(
     onSelected: (T) -> Unit,
 ) {
     Row(
-        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        Modifier.f
+    val palette = LocalCutPalette.currentillMaxWidth().horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         options.forEach { option ->
@@ -178,17 +180,17 @@ private fun <T> ExportOptionRow(
                 modifier = Modifier.heightIn(min = 48.dp).widthIn(min = 64.dp)
                     .testTag("$prefix-${option.value}")
                     .semantics { this.selected = chosen },
-                color = if (chosen) CutColors.accentMuted else CutColors.surface,
-                contentColor = if (chosen) CutColors.primaryText else CutColors.secondaryText,
+                color = if (chosen) palette.accentMuted else palette.surface,
+                contentColor = if (chosen) palette.primaryText else palette.secondaryText,
                 border = androidx.compose.foundation.BorderStroke(1.dp,
-                    if (chosen) CutColors.accent else CutColors.border),
+                    if (chosen) palette.accent else palette.border),
                 shape = CutShape,
             ) {
                 Box(Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
                     contentAlignment = Alignment.Center) {
                     Text(if (option.label == "자동 · 원본 기준") "자동" else option.label,
                         style = MaterialTheme.typography.bodySmall,
-                        color = if (chosen) CutColors.primaryText else CutColors.secondaryText)
+                        color = if (chosen) palette.primaryText else palette.secondaryText)
                 }
             }
         }
@@ -197,7 +199,8 @@ private fun <T> ExportOptionRow(
 
 @Composable
 private fun ExportQualityThumbnail(timeline: EditTimeline) {
-    val first = timeline.clips.firstOrNull() ?: return
+    val first = timeline.clips.firstOrNull(
+    val palette = LocalCutPalette.current) ?: return
     val context = LocalContext.current
     val frame by produceState<android.graphics.Bitmap?>(null, first.uri, first.startMs) {
         value = withContext(Dispatchers.IO) {
@@ -209,7 +212,7 @@ private fun ExportQualityThumbnail(timeline: EditTimeline) {
         contentAlignment = Alignment.Center,
     ) {
         if (frame == null) {
-            Text("원본 영상 미리보기", color = CutColors.secondaryText,
+            Text("원본 영상 미리보기", color = palette.secondaryText,
                 style = MaterialTheme.typography.bodySmall)
         } else {
             Image(
@@ -224,7 +227,7 @@ private fun ExportQualityThumbnail(timeline: EditTimeline) {
             color = Color.White,
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.align(Alignment.BottomEnd)
-                .padding(8.dp).background(CutColors.background.copy(alpha = 0.8f))
+                .padding(8.dp).background(palette.background.copy(alpha = 0.8f))
                 .padding(horizontal = 6.dp, vertical = 2.dp),
         )
     }

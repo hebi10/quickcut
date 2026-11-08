@@ -66,6 +66,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import com.hebi.quickcut.editor.TrimInput
@@ -76,7 +77,7 @@ import com.hebi.quickcut.ui.CutShape
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, UnstableApi::class)
 @Composable
 fun ExtractionScreen(
     model: ExtractionViewModel,
@@ -260,6 +261,7 @@ fun ExtractionScreen(
     }
 }
 
+@OptIn(UnstableApi::class)
 @Composable
 private fun ExtractionPlayer(player: ExoPlayer) {
     Surface(shape = CutShape, color = Color.Black,

@@ -6,6 +6,9 @@ Read-only validation. Never mutates a user's videos or project data.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
+import os
 from pathlib import Path
 import struct
 import sys
@@ -143,9 +146,38 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--xml", type=Path, required=True)
     parser.add_argument("--screenshots", type=Path, required=True)
+    parser.add_argument("--manifest", type=Path)
     args = parser.parse_args()
     tests = validate_instrumentation(args.xml)
     images = validate_screenshots(args.screenshots)
+    if args.manifest is not None:
+        snapshots = []
+        for stage, filenames in SCREENSHOTS.items():
+            for name in filenames:
+                path = args.screenshots / name
+                width, height = verify_png(path)
+                snapshots.append({
+                    "stage": stage,
+                    "filename": name,
+                    "width": width,
+                    "height": height,
+                    "bytes": path.stat().st_size,
+                    "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                })
+        manifest = {
+            "schemaVersion": 1,
+            "gitSha": os.environ.get("GITHUB_SHA", "unknown"),
+            "androidTestClasses": list(REQUIRED_TEST_CLASSES),
+            "verifiedAndroidTestClassCount": tests,
+            "screenshots": snapshots,
+        }
+        args.manifest.parent.mkdir(parents=True, exist_ok=True)
+        temporary = args.manifest.with_name(args.manifest.name + ".tmp")
+        temporary.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+        temporary.replace(args.manifest)
+        print(f"Stage 20 integrity manifest saved: {args.manifest}")
     print(f"Stage 20 release gate: {tests} named test classes / {images} PNGs verified")
     return 0
 

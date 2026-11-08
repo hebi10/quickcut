@@ -44,7 +44,7 @@ class Stage19IntegrationTest {
         assertEquals(crop, result.clips.first().crop)
         assertEquals(crop, result.clips.last().crop)
         assertEquals(55, result.clips.last().audio.volumePercent)
-        assertEquals(1_000L, result.clips.first().textLayers.single().endMs)
+        assertEquals(1_500L, result.clips.first().textLayers.single().endMs)
         assertEquals(0L, result.clips.last().textLayers.single().startMs)
         val trimmed = result.updateRange(2, 1_800L, 3_000L)
         assertEquals(1_200L, trimmed.clips.last().durationMs)

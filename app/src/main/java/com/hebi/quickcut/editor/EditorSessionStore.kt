@@ -34,6 +34,25 @@ class EditorSessionStore(context: Context, preferencesName: String = "quickcut_e
                     endMs = clip.getLong("end"),
                     muted = clip.optBoolean("muted", false),
                     hasAudio = clip.optBoolean("hasAudio", true),
+                    textLayers = clip.optJSONArray("textLayers")?.let { array ->
+                        (0 until array.length()).map { i ->
+                            val entry = array.getJSONObject(i)
+                            TextLayer(
+                                id = entry.getLong("id"),
+                                text = entry.getString("text"),
+                                startMs = entry.getLong("startMs"),
+                                endMs = entry.getLong("endMs"),
+                                x = entry.optDouble("x", 0.5).toFloat(),
+                                y = entry.optDouble("y", 0.78).toFloat(),
+                                size = entry.optInt("size", 100),
+                                color = TextLayerColor.valueOf(entry.optString("color", "WHITE")),
+                                alignment = TextLayerAlignment.valueOf(
+                                    entry.optString("alignment", "CENTER"),
+                                ),
+                                darkBackground = entry.optBoolean("darkBackground", false),
+                            )
+                        }.also { TextLayerPolicy.validate(it, clip.getLong("end") - clip.getLong("start")) }
+                    } ?: emptyList(),
                     preciseRange = if (clip.isNull("preciseStartUs") && clip.isNull("preciseEndUs")) null
                         else PreciseClipRange(clip.getLong("preciseStartUs"), clip.getLong("preciseEndUs")),
                 )
@@ -66,10 +85,26 @@ class EditorSessionStore(context: Context, preferencesName: String = "quickcut_e
                 put("hasAudio", it.hasAudio)
                 put("preciseStartUs", it.preciseRange?.startUs ?: JSONObject.NULL)
                 put("preciseEndUs", it.preciseRange?.endUs ?: JSONObject.NULL)
+                put("textLayers", JSONArray().apply {
+                    it.textLayers.forEach { layer ->
+                        put(JSONObject().apply {
+                            put("id", layer.id)
+                            put("text", layer.text)
+                            put("startMs", layer.startMs)
+                            put("endMs", layer.endMs)
+                            put("x", layer.x.toDouble())
+                            put("y", layer.y.toDouble())
+                            put("size", layer.size)
+                            put("color", layer.color.name)
+                            put("alignment", layer.alignment.name)
+                            put("darkBackground", layer.darkBackground)
+                        })
+                    }
+                })
             })
         }
         val data = JSONObject().apply {
-            put("schemaVersion", 2)
+            put("schemaVersion", 3)
             put("clips", array)
             put("selectedId", snapshot.selectedId ?: JSONObject.NULL)
             put("positionMs", snapshot.playPositionMs)

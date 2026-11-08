@@ -225,4 +225,23 @@ ffmpeg -hide_banner -loglevel error -y \
   app/src/androidTest/assets/quickcut_unequal_tail.mp4
 rm -rf "$fixture_work"
 
+# CI hardware keyboard may suppress Gboard. Require the actual software IME for UI tests.
+adb shell settings put secure show_ime_with_hard_keyboard 1
+ime_setting=$(adb shell settings get secure show_ime_with_hard_keyboard | tr -d '\r')
+if [ "$ime_setting" != "1" ]; then
+  echo "::error::Software keyboard visibility setting was not enabled (value: $ime_setting)"
+  exit 1
+fi
+
+if [ "${QUICKCUT_EMULATOR_API:-}" = "29" ]; then
+  mkdir -p quickcut-host-diagnostics
+  adb shell cat /proc/meminfo > quickcut-host-diagnostics/android-memory-api29-before.txt
+  mem_total_kb=$(awk '$1 == "MemTotal:" {print $2}' quickcut-host-diagnostics/android-memory-api29-before.txt | tr -d '\r')
+  if [[ ! "$mem_total_kb" =~ ^[0-9]+$ ]] || (( mem_total_kb < 2700000 )); then
+    echo "::error::API 29 emulator RAM configuration is unexpectedly low: ${mem_total_kb:-unavailable} kB"
+    exit 1
+  fi
+  echo "API 29 emulator memory verified: $mem_total_kb kB"
+fi
+
 bash "$(dirname -- "${BASH_SOURCE[0]}")/android-instrumentation-check.sh"

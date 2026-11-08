@@ -132,6 +132,7 @@ class EmulatorFlowTest(unittest.TestCase):
         self.assertEqual((root / "quickcut-native-preflight-results/reports/index.html").read_text(), "preflight report")
         self.assertIn("full.Suite", (root / "app/build/outputs/androidTest-results/connected/TEST-full.xml").read_text())
         self.assertFalse((root / "stale-preflight-observed").exists())
+        self.assertFalse((root / "quickcut-stage20-evidence/verified-screens-and-tests.json").exists())
 
     def test_preflight_timeout_still_runs_full_and_keeps_timeout_status(self):
         result, _, _, phases = self.run_flow(preflight=124)
@@ -238,6 +239,7 @@ class EmulatorFlowTest(unittest.TestCase):
         self.assertTrue((root / "quickcut-native-preflight-results/results/TEST-preflight.xml").is_file())
         self.assertEqual(sum(e[0] == "python3" and any("verify-android-main10.py" in a for a in e) for e in events), 2)
         self.assertIn("152 distinct tests", result.stdout)
+        self.assertTrue((root / "quickcut-stage20-evidence/verified-screens-and-tests.json").is_file())
         for image in ("stage7_home.png", "stage7_projects_empty.png", "stage7_onboarding.png",
                       "stage13_home_populated.png", "stage13_projects_populated.png",
                       "stage13_tools.png", "stage13_settings.png", "stage13_gallery_selected.png",

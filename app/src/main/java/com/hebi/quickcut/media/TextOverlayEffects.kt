@@ -10,11 +10,11 @@ import android.text.style.RelativeSizeSpan
 import android.text.style.StyleSpan
 import androidx.annotation.OptIn
 import androidx.media3.common.Effect
-import androidx.media3.common.OverlaySettings
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.effect.OverlayEffect
 import androidx.media3.effect.StaticOverlaySettings
 import androidx.media3.effect.TextOverlay
+import androidx.media3.effect.TimestampWrapper
 import com.hebi.quickcut.editor.TextLayer
 import com.hebi.quickcut.editor.TextLayerAlignment
 
@@ -24,7 +24,13 @@ object TextOverlayEffects {
     fun videoEffects(layers: List<TextLayer>): List<Effect> {
         val active = layers.filter { it.text.isNotBlank() }
         if (active.isEmpty()) return emptyList()
-        return listOf(OverlayEffect(active.map(::effect)))
+        return active.map { layer ->
+            TimestampWrapper(
+                OverlayEffect(listOf(effect(layer))),
+                layer.startMs * 1_000L,
+                layer.endMs * 1_000L,
+            )
+        }
     }
 
     fun visibleText(layer: TextLayer, presentationTimeUs: Long): String =
@@ -51,16 +57,10 @@ object TextOverlayEffects {
                     Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
             }
         }
-        val empty = SpannableString("")
         val settings = StaticOverlaySettings.Builder()
             .setBackgroundFrameAnchor(2f * layer.x - 1f, 1f - 2f * layer.y)
             .setOverlayFrameAnchor(0f, 0f)
             .build()
-        return object : TextOverlay() {
-            override fun getText(presentationTimeUs: Long): SpannableString =
-                if (visibleText(layer, presentationTimeUs).isNotEmpty()) text else empty
-
-            override fun getOverlaySettings(presentationTimeUs: Long): OverlaySettings = settings
-        }
+        return TextOverlay.createStaticTextOverlay(text, settings)
     }
 }

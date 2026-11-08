@@ -20,6 +20,7 @@ data class VideoClip(
     val muted: Boolean = false,
     val hasAudio: Boolean = true,
     val preciseRange: PreciseClipRange? = null,
+    val crop: CropRegion? = null,
 ) {
     init {
         require(sourceDurationMs > 0L) { "영상 길이는 0보다 커야 합니다." }
@@ -99,6 +100,12 @@ data class EditTimeline(val clips: List<VideoClip> = emptyList()) {
 
     fun toggleMute(id: Long): EditTimeline =
         copy(clips = clips.map { if (it.id == id) it.copy(muted = !it.muted) else it })
+
+    fun updateCrop(id: Long, crop: CropRegion?): EditTimeline {
+        require(clips.any { it.id == id }) { "클립을 찾지 못했습니다." }
+        val corrected = crop?.takeUnless { it.isWholeFrame }
+        return copy(clips = clips.map { if (it.id == id) it.copy(crop = corrected) else it })
+    }
 
     fun startOf(index: Int): Long {
         require(index >= 0) { "클립 위치는 0 이상이어야 합니다." }

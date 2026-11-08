@@ -184,7 +184,7 @@ fun TextEditorScreen(
                         modifier = Modifier.fillMaxSize(),
                     )
                     if (current != null && current.visibleAt(positionMs)) {
-                        BoxWithConstraints(Modifier.fillMaxSize()
+                        Box(Modifier.fillMaxSize()
                             .pointerInput(selectedId) {
                                 detectDragGestures { change, drag ->
                                     change.consume()

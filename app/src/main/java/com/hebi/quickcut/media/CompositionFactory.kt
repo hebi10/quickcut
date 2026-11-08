@@ -7,6 +7,10 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.transformer.Composition
 import androidx.media3.transformer.EditedMediaItem
 import androidx.media3.transformer.EditedMediaItemSequence
+import androidx.media3.transformer.Effects
+import androidx.media3.effect.Presentation
+import androidx.media3.effect.FrameDropEffect
+import androidx.media3.common.Effect
 import com.hebi.quickcut.editor.EditTimeline
 import com.hebi.quickcut.editor.VideoClip
 
@@ -28,6 +32,21 @@ object CompositionFactory {
             .setDurationUs(clip.sourceDurationMs * 1_000L)
             .setRemoveAudio(clip.muted || !clip.hasAudio)
             .build()
+
+    fun withExportQuality(timeline: EditTimeline, profile: ResolvedExportQuality): Composition {
+        require(!timeline.isEmpty)
+        val effects = mutableListOf<Effect>(Presentation.createForShortSide(profile.shortSide))
+        profile.targetFps?.let { effects.add(FrameDropEffect.createDefaultFrameDropEffect(it.toFloat())) }
+        val items = timeline.clips.map { clip ->
+            editedClip(clip).buildUpon()
+                .setEffects(Effects(emptyList(), effects))
+                .build()
+        }
+        val withAudio = timeline.clips.any { !it.muted && it.hasAudio }
+        val sequence = if (withAudio) EditedMediaItemSequence.withAudioAndVideoFrom(items)
+            else EditedMediaItemSequence.withVideoFrom(items)
+        return Composition.Builder(sequence).setTransmuxVideo(false).build()
+    }
 
     fun from(timeline: EditTimeline): Composition {
         require(!timeline.isEmpty) { "편집할 영상이 없습니다." }

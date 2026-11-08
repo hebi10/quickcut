@@ -32,6 +32,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.CallSplit
 import androidx.compose.material.icons.outlined.ContentCut
+import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.PlayArrow
@@ -118,6 +119,7 @@ private val actions = listOf(
     ActionItem("delete", "삭제", Icons.Outlined.DeleteOutline),
     ActionItem("move", "순서", Icons.Outlined.Reorder),
     ActionItem("mute", "음소거", Icons.Outlined.VolumeOff),
+    ActionItem("text", "텍스트", Icons.Outlined.TextFields),
 )
 
 @OptIn(UnstableApi::class, ExperimentalApi::class)
@@ -133,6 +135,7 @@ fun EditorScreen(
     var showTrim by rememberSaveable { mutableStateOf(false) }
     var showMove by rememberSaveable { mutableStateOf(false) }
     var showDelete by rememberSaveable { mutableStateOf(false) }
+    var showText by rememberSaveable { mutableStateOf(false) }
     var isPlaying by remember { mutableStateOf(false) }
     val selectedClip = model.selectedClip
     // Keep raw drafts above adaptive layout branches. Showing the keyboard can replace the
@@ -275,10 +278,23 @@ fun EditorScreen(
             "delete" -> showDelete = true
             "move" -> showMove = true
             "mute" -> model.toggleMute()
+            "text" -> { preview.pause(); showText = true }
         }
     }
     val onPlay: () -> Unit = {
         if (previewFailure != null) retryPreview() else preview.togglePlayback()
+    }
+
+    if (showText && selectedClip != null) {
+        TextEditorScreen(
+            clip = selectedClip,
+            onApply = { layers ->
+                model.applyTextLayers(selectedClip.id, layers)
+                showText = false
+            },
+            onCancel = { showText = false },
+        )
+        return
     }
 
     Column(modifier = Modifier.fillMaxSize().background(CutColors.background)) {
@@ -746,7 +762,7 @@ private fun ToolButtons(
                 }
             }
             BoxWithConstraints(Modifier.fillMaxWidth()) {
-                val fitAllTools = maxWidth >= 320.dp && LocalDensity.current.fontScale < 1.5f
+                val fitAllTools = maxWidth >= 440.dp && LocalDensity.current.fontScale < 1.5f
                 if (fitAllTools) {
                     Row(
                         modifier = Modifier.fillMaxWidth().background(CutColors.surface)

@@ -114,6 +114,11 @@ class VideoExporter(private val context: Context) {
         }
         val expectedDurationMs = timeline.totalDurationMs
         val expectAudio = timeline.clips.any { !it.muted && it.hasAudio }
+        val hasText = timeline.clips.any { it.textLayers.isNotEmpty() }
+        if (hasText && exportMode == ExportMode.FAST_ONLY) {
+            throw ReencodeRequiredException(
+                "텍스트 오버레이를 저장하려면 영상 재인코딩 승인이 필요합니다.")
+        }
         val originalDate = if (saveDateMode == SaveDateMode.ORIGINAL) {
             withContext(Dispatchers.IO) {
                 resolvedOriginalDate ?: OriginalMediaDates.resolve(context, Uri.parse(timeline.clips.first().uri))
@@ -127,7 +132,7 @@ class VideoExporter(private val context: Context) {
         // Fast path: a single unmodified MP4 clip with a safe sync-sample boundary.
         // Original dates change MP4 headers, not compressed pictures.
         onStage(ExportStage.ANALYZING)
-        if (timeline.clips.size == 1) {
+        if (!hasText && timeline.clips.size == 1) {
             val clip = timeline.clips.first()
             val inspection = withContext(Dispatchers.IO) {
                 FastMp4Trimmer.inspect(context, clip)
@@ -183,7 +188,7 @@ class VideoExporter(private val context: Context) {
                     return output
                 }
             }
-        } else {
+        } else if (timeline.clips.size > 1) {
             diagnostics = diagnostics.copy(copyReason = FastExportReason.MULTIPLE_CLIPS)
             showDiagnostics()
         }
@@ -197,8 +202,8 @@ class VideoExporter(private val context: Context) {
         val temporary = File(context.cacheDir, "quickcut_" + UUID.randomUUID().toString() + ".mp4")
         try {
             var nativeReason: FastExportReason? = null
-            onStage(ExportStage.NATIVE_PROCESSING)
-            val nativeResult = try {
+            if (!hasText) onStage(ExportStage.NATIVE_PROCESSING)
+            val nativeResult = if (hasText) null else try {
                     NativeSmartCutTrimmer.tryExport(context, timeline, temporary, onProgress,
                         onUnavailable = { nativeReason = it },
                         copyVideoOnly = exportMode == ExportMode.FAST_ONLY)
@@ -218,8 +223,10 @@ class VideoExporter(private val context: Context) {
                     null
                 }
             val media3Result = if (nativeResult == null) {
-                diagnostics = diagnostics.copy(smartCutReason = nativeReason ?: FastExportReason.UNKNOWN)
-                showDiagnostics()
+                if (!hasText) {
+                    diagnostics = diagnostics.copy(smartCutReason = nativeReason ?: FastExportReason.UNKNOWN)
+                    showDiagnostics()
+                }
                 if (exportMode == ExportMode.FAST_ONLY) {
                     throw ReencodeRequiredException(
                         "고속 저장을 완료하지 못했습니다. 선택한 구간을 유지하며 정확한 위치로 자동 저장을 선택할 수 있습니다.")
@@ -229,9 +236,9 @@ class VideoExporter(private val context: Context) {
                         throw IOException("이전 저장 시도의 임시 파일을 정리할 수 없습니다.")
                     }
                 }
-                val optimizeTrim = timeline.clips.singleOrNull()?.let { clip ->
+                val optimizeTrim = if (!hasText) timeline.clips.singleOrNull()?.let { clip ->
                     withContext(Dispatchers.IO) { ExactTrimOptimization.canOptimize(context, clip) }
-                } ?: false
+                } ?: false else false
                 onStage(ExportStage.MEDIA3_PROCESSING)
                 withContext(Dispatchers.Main.immediate) {
                     transform(timeline, temporary, onProgress, outputTimestampMs, optimizeTrim, onStage)

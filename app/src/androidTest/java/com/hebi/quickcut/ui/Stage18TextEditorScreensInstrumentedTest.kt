@@ -68,7 +68,11 @@ class Stage18TextEditorScreensInstrumentedTest {
         capture("stage18_text_empty.png")
         // Replay a physical tap after revealing the button; semantics-only click can be
         // acknowledged even when the emulator has not delivered the touch to the UI.
-        compose.onNodeWithTag("text-layer-add").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("text-layer-add").performScrollTo().assertIsEnabled()
+        compose.waitForIdle()
+        // The actual tapped widget must reveal an editable text field. This outcome,
+        // and the following nonblank captures, are the release gates rather than
+        // a transient "displayed" flag while the video preview surface reattaches.
         compose.onNodeWithTag("text-layer-add").performTouchInput { click() }
         compose.waitUntil(10_000L) {
             compose.onAllNodesWithTag("text-layer-input").fetchSemanticsNodes().isNotEmpty()

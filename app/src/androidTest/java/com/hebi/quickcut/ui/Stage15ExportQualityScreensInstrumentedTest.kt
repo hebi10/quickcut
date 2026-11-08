@@ -11,7 +11,12 @@ import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.FontScale
 import androidx.compose.ui.test.ForcedSize
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertContentDescriptionEquals
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.DpSize
@@ -22,6 +27,8 @@ import com.hebi.quickcut.editor.EditTimeline
 import com.hebi.quickcut.editor.OriginalAction
 import com.hebi.quickcut.editor.VideoClip
 import com.hebi.quickcut.media.ExportQualitySettings
+import com.hebi.quickcut.media.ExportResolution
+import com.hebi.quickcut.media.ExportQualityLevel
 import com.hebi.quickcut.media.MediaReader
 import com.hebi.quickcut.media.SaveDateMode
 import java.io.File
@@ -76,11 +83,22 @@ class Stage15ExportQualityScreensInstrumentedTest {
         capture("stage15_export_auto.png")
         compose.onNodeWithTag("export-quality-bitrate").performScrollTo().performClick()
         compose.onNodeWithTag("cut-choice-option-보통").performClick()
-        compose.waitForIdle()
+        compose.waitUntil(15_000) {
+            selected.quality == ExportQualityLevel.BALANCED &&
+                (compose.onAllNodesWithTag("export-quality-estimate").fetchSemanticsNodes().isNotEmpty() ||
+                    compose.onAllNodesWithTag("export-quality-unavailable").fetchSemanticsNodes().isNotEmpty())
+        }
+        compose.onNodeWithTag("export-quality-bitrate").assertContentDescriptionEquals("압축 품질: 보통")
         capture("stage15_export_quality.png")
         compose.onNodeWithTag("export-quality-resolution").performScrollTo().performClick()
         compose.onNodeWithTag("cut-choice-option-4K").performClick()
-        compose.waitForIdle()
+        compose.waitUntil(15_000) {
+            selected.resolution == ExportResolution.ULTRA_HD_2160 &&
+                compose.onAllNodesWithTag("export-quality-unavailable").fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithTag("export-quality-resolution").assertContentDescriptionEquals("해상도: 4K")
+        compose.onNodeWithTag("export-quality-unavailable").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("저장 시작").assertIsNotEnabled()
         capture("stage15_export_unsupported.png")
     }
 

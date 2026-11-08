@@ -17,6 +17,7 @@ import com.hebi.quickcut.media.MediaReader
 import com.hebi.quickcut.media.VideoExporter
 import com.hebi.quickcut.media.SaveDateMode
 import com.hebi.quickcut.media.ExportMode
+import com.hebi.quickcut.media.ExportQualitySettings
 import com.hebi.quickcut.media.ExportReport
 import com.hebi.quickcut.media.MediaOperationDiagnostics
 import com.hebi.quickcut.media.ExportStage
@@ -676,6 +677,45 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         selectedId?.let { moveClip(it, direction) }
     }
 
+    fun applyCrop(id: Long, crop: CropRegion?) {
+        if (isRecoveringExport || hasUnresolvedExport || ExportWorkMonitor.isRunning) return
+        if (timeline.clipAt(id) == null) return
+        val changed = timeline.updateCrop(id, crop)
+        if (changed == timeline) return
+        recordChange()
+        timeline = changed
+        needsReencodeConsent = false
+        saveSessionSoon()
+    }
+
+    fun applyAudioAdjustment(id: Long, adjustment: AudioAdjustment, muted: Boolean? = null) {
+        if (isRecoveringExport || hasUnresolvedExport || ExportWorkMonitor.isRunning) return
+        if (timeline.clipAt(id)?.hasAudio != true) return
+        val edited = runCatching { timeline.updateAudio(id, adjustment) }.getOrNull() ?: return
+        val updated = if (muted != null && edited.clipAt(id)?.muted != muted)
+            edited.toggleMute(id) else edited
+        if (updated == timeline) return
+        recordChange()
+        timeline = updated
+        needsReencodeConsent = false
+        saveSessionSoon()
+    }
+
+    fun applyTextLayers(id: Long, layers: List<TextLayer>) {
+        if (isRecoveringExport || hasUnresolvedExport || ExportWorkMonitor.isRunning) return
+        if (timeline.clipAt(id) == null) return
+        val edited = try { timeline.updateTextLayers(id, layers) }
+            catch (error: IllegalArgumentException) {
+                reportError(error.localizedMessage ?: "텍스트 설정을 확인해 주세요.")
+                return
+            }
+        if (edited == timeline) return
+        recordChange()
+        timeline = edited
+        needsReencodeConsent = false
+        saveSessionSoon()
+    }
+
     fun toggleMute() {
         if (isRecoveringExport || hasUnresolvedExport) return
         val id = selectedId ?: return
@@ -689,6 +729,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         selectedOriginalAction: OriginalAction = settings.loadOriginalAction(),
         selectedDateMode: SaveDateMode = SaveDateMode.CURRENT,
         exportMode: ExportMode = ExportMode.ALLOW_REENCODE,
+        outputQuality: ExportQualitySettings = ExportQualitySettings(),
     ) {
         if (!canStartExport) {
             reportError(if (isRecoveringExport || hasUnresolvedExport) "이전 저장 파일 확인을 먼저 완료해 주세요."
@@ -772,6 +813,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                     saveDateMode = selectedDateMode,
                     resolvedOriginalDate = originalDate,
                     exportMode = exportMode,
+                    outputQuality = outputQuality,
                     onDiagnostics = { exportDiagnostics = it },
                     onStage = { stage ->
                         if (stage != exportStage) {

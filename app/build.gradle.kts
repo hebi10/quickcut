@@ -22,8 +22,8 @@ android {
         minSdk = 29
         targetSdk = 36
         // The override is only for the emulator's older-version installation fixture.
-        versionCode = providers.gradleProperty("quickcutTestVersionCode").orNull?.toInt() ?: 27
-        versionName = "0.4.20"
+        versionCode = providers.gradleProperty("quickcutTestVersionCode").orNull?.toInt() ?: 28
+        versionName = "0.4.21"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
     }
@@ -106,6 +106,7 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:$media3Version")
     implementation("androidx.media3:media3-ui:$media3Version")
     implementation("androidx.media3:media3-transformer:$media3Version")
+    implementation("androidx.media3:media3-effect:$media3Version")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")

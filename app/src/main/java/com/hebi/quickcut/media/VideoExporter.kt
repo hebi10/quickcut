@@ -14,6 +14,7 @@ import androidx.annotation.OptIn
 import androidx.media3.common.util.ExperimentalApi
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.container.Mp4TimestampData
+import androidx.media3.common.MimeTypes
 import androidx.media3.transformer.Composition
 import androidx.media3.transformer.DefaultEncoderFactory
 import androidx.media3.transformer.ExportException
@@ -21,6 +22,7 @@ import androidx.media3.transformer.ExportResult
 import androidx.media3.transformer.InAppMp4Muxer
 import androidx.media3.transformer.ProgressHolder
 import androidx.media3.transformer.Transformer
+import androidx.media3.transformer.VideoEncoderSettings
 import com.hebi.quickcut.editor.EditTimeline
 import java.io.File
 import java.io.IOException
@@ -42,6 +44,7 @@ class VideoExporter(private val context: Context) {
         saveDateMode: SaveDateMode = SaveDateMode.CURRENT,
         outputBaseName: String? = null,
         exportMode: ExportMode = ExportMode.ALLOW_REENCODE,
+        outputQuality: ExportQualitySettings = ExportQualitySettings(),
         onOutputCreated: (Uri) -> Unit = {},
         onCommitted: (Uri) -> Unit = {},
         resolvedOriginalDate: OriginalTimestamp? = null,
@@ -72,7 +75,8 @@ class VideoExporter(private val context: Context) {
             catch (_: Exception) { /* Optional diagnostics must not prevent an export. */ }
             val output = exportInternal(timeline, onProgress,
                 onFinalizing = { stage(ExportStage.PUBLISHING); onFinalizing() },
-                saveDateMode, outputBaseName, exportMode, onOutputCreated, onCommitted, resolvedOriginalDate,
+                saveDateMode, outputBaseName, exportMode, outputQuality,
+                onOutputCreated, onCommitted, resolvedOriginalDate,
                 onReport = { diagnostic.report(it); onReport(it) },
                 onDiagnostics = { diagnostic.reasons(it); onDiagnostics(it) }, onStage = stage)
             stage(ExportStage.COMPLETE)
@@ -94,6 +98,7 @@ class VideoExporter(private val context: Context) {
         saveDateMode: SaveDateMode,
         outputBaseName: String?,
         exportMode: ExportMode,
+        outputQuality: ExportQualitySettings,
         onOutputCreated: (Uri) -> Unit,
         onCommitted: (Uri) -> Unit,
         resolvedOriginalDate: OriginalTimestamp?,
@@ -114,6 +119,19 @@ class VideoExporter(private val context: Context) {
         }
         val expectedDurationMs = timeline.totalDurationMs
         val expectAudio = timeline.clips.any { !it.muted && it.hasAudio }
+        val outputPlan = if (outputQuality.isAutomatic) null else {
+            val assessment = ExportQualityInspector.inspect(context, timeline, outputQuality)
+            assessment.plan ?: throw IOException(assessment.error
+                ?: "선택한 출력 품질을 적용할 수 없습니다.")
+        }
+        val hasEffects = timeline.clips.any {
+            it.crop != null || it.textLayers.isNotEmpty() ||
+                (it.hasAudio && !it.muted && !it.audio.isDefault)
+        }
+        if ((outputPlan != null || hasEffects) && exportMode == ExportMode.FAST_ONLY) {
+            throw ReencodeRequiredException(
+                "화면 비율·크롭 또는 출력 품질을 변경하려면 재인코딩 동의가 필요합니다.")
+        }
         val originalDate = if (saveDateMode == SaveDateMode.ORIGINAL) {
             withContext(Dispatchers.IO) {
                 resolvedOriginalDate ?: OriginalMediaDates.resolve(context, Uri.parse(timeline.clips.first().uri))
@@ -127,7 +145,7 @@ class VideoExporter(private val context: Context) {
         // Fast path: a single unmodified MP4 clip with a safe sync-sample boundary.
         // Original dates change MP4 headers, not compressed pictures.
         onStage(ExportStage.ANALYZING)
-        if (timeline.clips.size == 1) {
+        if (outputPlan == null && !hasEffects && timeline.clips.size == 1) {
             val clip = timeline.clips.first()
             val inspection = withContext(Dispatchers.IO) {
                 FastMp4Trimmer.inspect(context, clip)
@@ -183,22 +201,23 @@ class VideoExporter(private val context: Context) {
                     return output
                 }
             }
-        } else {
+        } else if (timeline.clips.size > 1) {
             diagnostics = diagnostics.copy(copyReason = FastExportReason.MULTIPLE_CLIPS)
             showDiagnostics()
         }
 
         withContext(Dispatchers.IO) {
             val estimate = ExportStorage.estimateOutputBytes(context, timeline, directWrite = false)
-            ExportStorage.requireSpace(context, estimate, directWrite = false)
+            val customEstimate = outputPlan?.estimatedBytes?.let { (it * 3L / 2L) } ?: 0L
+            ExportStorage.requireSpace(context, maxOf(estimate, customEstimate), directWrite = false)
         }
         // Merely choose a unique path here. Creating a temp file in a cancellable
         // withContext can lose the cleanup handle while dispatching back to Main.
         val temporary = File(context.cacheDir, "quickcut_" + UUID.randomUUID().toString() + ".mp4")
         try {
             var nativeReason: FastExportReason? = null
-            onStage(ExportStage.NATIVE_PROCESSING)
-            val nativeResult = try {
+            if (outputPlan == null && !hasEffects) onStage(ExportStage.NATIVE_PROCESSING)
+            val nativeResult = if (outputPlan != null || hasEffects) null else try {
                     NativeSmartCutTrimmer.tryExport(context, timeline, temporary, onProgress,
                         onUnavailable = { nativeReason = it },
                         copyVideoOnly = exportMode == ExportMode.FAST_ONLY)
@@ -218,8 +237,10 @@ class VideoExporter(private val context: Context) {
                     null
                 }
             val media3Result = if (nativeResult == null) {
-                diagnostics = diagnostics.copy(smartCutReason = nativeReason ?: FastExportReason.UNKNOWN)
-                showDiagnostics()
+                if (outputPlan == null && !hasEffects) {
+                    diagnostics = diagnostics.copy(smartCutReason = nativeReason ?: FastExportReason.UNKNOWN)
+                    showDiagnostics()
+                }
                 if (exportMode == ExportMode.FAST_ONLY) {
                     throw ReencodeRequiredException(
                         "고속 저장을 완료하지 못했습니다. 선택한 구간을 유지하며 정확한 위치로 자동 저장을 선택할 수 있습니다.")
@@ -229,12 +250,13 @@ class VideoExporter(private val context: Context) {
                         throw IOException("이전 저장 시도의 임시 파일을 정리할 수 없습니다.")
                     }
                 }
-                val optimizeTrim = timeline.clips.singleOrNull()?.let { clip ->
+                val optimizeTrim = if (outputPlan == null && !hasEffects) timeline.clips.singleOrNull()?.let { clip ->
                     withContext(Dispatchers.IO) { ExactTrimOptimization.canOptimize(context, clip) }
-                } ?: false
+                } ?: false else false
                 onStage(ExportStage.MEDIA3_PROCESSING)
                 withContext(Dispatchers.Main.immediate) {
-                    transform(timeline, temporary, onProgress, outputTimestampMs, optimizeTrim, onStage)
+                    transform(timeline, temporary, onProgress, outputTimestampMs,
+                        optimizeTrim && outputPlan == null, onStage, outputPlan)
                 }
             } else {
                 Log.i("QuickCutExport", "method=native_smart_cut copiedVideoPackets=" +
@@ -244,6 +266,7 @@ class VideoExporter(private val context: Context) {
             onStage(ExportStage.VALIDATING)
             withContext(Dispatchers.IO) {
                 MediaReader.validateExport(temporary, expectedDurationMs, expectAudio, originalDate?.epochMs)
+                outputPlan?.let { ExportQualityInspector.verifyEncodedFile(temporary, it) }
             }
             onStage(ExportStage.SAVING)
             val output = GalleryWriter(context).save(
@@ -330,6 +353,7 @@ class VideoExporter(private val context: Context) {
         outputTimestampMs: Long,
         optimizeTrim: Boolean,
         onStage: (ExportStage) -> Unit,
+        outputPlan: ResolvedExportQuality?,
     ): ExportResult = recoverMedia3ExportFile(
         file,
         newRetryFile = { File(context.cacheDir, "quickcut_retry_" + UUID.randomUUID() + ".mp4") },
@@ -342,7 +366,8 @@ class VideoExporter(private val context: Context) {
         onStage(ExportStage.MEDIA3_PROCESSING)
         transformAttempt(timeline, attemptFile, onProgress, outputTimestampMs,
             optimizeTrim = optimizeTrim && retry != ExportRetryMode.SOFTWARE_VIDEO,
-            softwareVideo = retry == ExportRetryMode.SOFTWARE_VIDEO, onStage = onStage)
+            softwareVideo = retry == ExportRetryMode.SOFTWARE_VIDEO, onStage = onStage,
+            outputPlan = outputPlan)
     }
 
     private fun codecRetryFacts(error: Exception): ExportCodecRetryFacts? {
@@ -376,6 +401,7 @@ class VideoExporter(private val context: Context) {
         optimizeTrim: Boolean,
         softwareVideo: Boolean,
         onStage: (ExportStage) -> Unit,
+        outputPlan: ResolvedExportQuality?,
     ): ExportResult {
         val main = Handler(Looper.getMainLooper())
         var transformer: Transformer? = null
@@ -411,6 +437,7 @@ class VideoExporter(private val context: Context) {
                 poller = progressPoller
                 val activeTransformer = Transformer.Builder(context)
                     .apply {
+                        if (outputPlan != null) setVideoMimeType(MimeTypes.VIDEO_H264)
                         val timestampSeconds = Mp4TimestampData.unixTimeToMp4TimeSeconds(
                             outputTimestampMs
                         )
@@ -425,8 +452,16 @@ class VideoExporter(private val context: Context) {
                     }
                     .setVideoFrameProcessorFactory(GuardedVideoFrameProcessorFactory(frameGuard))
                     .setAssetLoaderFactory(exportAssetLoaderFactory(context, softwareVideo))
-                    .setEncoderFactory(TrackingEncoderFactory(DefaultEncoderFactory.Builder(context).build(), onStage))
-                    .experimentalSetTrimOptimizationEnabled(optimizeTrim)
+                    .setEncoderFactory(TrackingEncoderFactory(
+                        DefaultEncoderFactory.Builder(context).apply {
+                            if (outputPlan != null) {
+                                setEnableFormatFallback(false)
+                                setRequestedVideoEncoderSettings(
+                                    VideoEncoderSettings.Builder().setBitrate(outputPlan.bitrate).build()
+                                )
+                            }
+                        }.build(), onStage))
+                    .experimentalSetTrimOptimizationEnabled(optimizeTrim && outputPlan == null)
                     .addListener(object : Transformer.Listener {
                         override fun onCompleted(composition: Composition, exportResult: ExportResult) {
                             main.removeCallbacks(progressPoller)
@@ -438,7 +473,7 @@ class VideoExporter(private val context: Context) {
                             )
                             if (continuation.isActive) {
                                 try {
-                                    frameGuard.verify(exportResult.videoFrameCount,
+                                    if (outputPlan?.targetFps == null) frameGuard.verify(exportResult.videoFrameCount,
                                         fullyTranscoded = exportResult.videoConversionProcess ==
                                             ExportResult.CONVERSION_PROCESS_TRANSCODED)
                                     continuation.resume(exportResult)
@@ -478,7 +513,9 @@ class VideoExporter(private val context: Context) {
                 // On this main-thread path, do not start a transformer that was just cancelled.
                 if (!continuation.isActive) return@suspendCancellableCoroutine
                 try {
-                    if (timeline.clips.size == 1) {
+                    if (outputPlan != null) {
+                        activeTransformer.start(CompositionFactory.withExportQuality(timeline, outputPlan), file.absolutePath)
+                    } else if (timeline.clips.size == 1) {
                         activeTransformer.start(CompositionFactory.editedClip(timeline.clips.first()), file.absolutePath)
                     } else {
                         activeTransformer.start(CompositionFactory.from(timeline), file.absolutePath)

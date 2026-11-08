@@ -35,8 +35,25 @@ if name == "gradle":
     if phase == "full" and (results / "TEST-preflight.xml").exists():
         (root / "stale-preflight-observed").write_text("stale")
     suite = Element("testsuite", tests=str(count), failures=str(int(failed)), errors="0", skipped="0")
+    required = (
+        "com.hebi.quickcut.segments.Stage14MultiSegmentExportInstrumentedTest",
+        "com.hebi.quickcut.ui.Stage14ExtractionScreensInstrumentedTest",
+        "com.hebi.quickcut.media.Stage15OutputQualityInstrumentedTest",
+        "com.hebi.quickcut.ui.Stage15ExportQualityScreensInstrumentedTest",
+        "com.hebi.quickcut.media.Stage16CropExportInstrumentedTest",
+        "com.hebi.quickcut.ui.Stage16CropScreensInstrumentedTest",
+        "com.hebi.quickcut.media.Stage17AudioExportInstrumentedTest",
+        "com.hebi.quickcut.ui.Stage17AudioScreensInstrumentedTest",
+        "com.hebi.quickcut.media.Stage18TextOverlayInstrumentedTest",
+        "com.hebi.quickcut.ui.Stage18TextEditorScreensInstrumentedTest",
+        "com.hebi.quickcut.media.Stage19CombinedExportInstrumentedTest",
+        "com.hebi.quickcut.media.Stage20RecoveryInstrumentedTest",
+    )
     for i in range(count):
-        case = SubElement(suite, "testcase", classname=phase + ".Suite", name="case" + str(i))
+        classname = required[i] if phase == "full" and i < len(required) else phase + ".Suite"
+        if classname.endswith("Stage20RecoveryInstrumentedTest") and os.environ.get("STAGE20_MISSING_SUITE") == "1":
+            classname = phase + ".Suite"
+        case = SubElement(suite, "testcase", classname=classname, name="case" + str(i))
         if failed and i == 0: SubElement(case, "failure").text = phase + " original failure"
     ElementTree(suite).write(results / ("TEST-" + phase + ".xml"))
     reports = root / "app/build/reports/androidTests/connected"
@@ -49,6 +66,24 @@ if name == "adb":
             sys.exit(43)
         if os.environ.get("STAGE7_CAPTURE_STATUS") == "1":
             sys.exit(42)
+        if any(("stage14_" in a or "stage15_" in a or "stage16_" in a or "stage17_" in a or "stage18_" in a) for a in args):
+            if any(os.environ.get("STAGE"+str(i)+"_CAPTURE_STATUS") == "1" for i in (14, 15, 16, 17, 18)):
+                sys.stdout.buffer.write(b"cat: files/design-review/stage15_export_auto.png: No such file")
+                sys.exit(0)
+            import struct, zlib
+            def png_chunk(kind, data):
+                return (len(data).to_bytes(4, "big") + kind + data +
+                    (zlib.crc32(kind + data) & 0xffffffff).to_bytes(4, "big"))
+            width, height = 360, 640
+            header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+            pixels = (b"\x00" + b"\x00\x00\x00" * width) * height
+            sys.stdout.buffer.write(
+                bytes.fromhex("89504e470d0a1a0a") +
+                png_chunk(b"IHDR", header) +
+                png_chunk(b"IDAT", zlib.compress(pixels)) +
+                png_chunk(b"IEND", b"")
+            )
+            sys.exit(0)
         sys.stdout.buffer.write(b"stub-png-evidence")
         sys.exit(0)
     if args[:3] == ["shell", "pm", "path"]:
@@ -81,6 +116,9 @@ class EmulatorFlowTest(unittest.TestCase):
         env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}", FLOW_ROOT=str(root),
                    REAL_PYTHON=sys.executable, PREFLIGHT_STATUS=str(preflight), FULL_STATUS=str(full),
                    **{key: str(value) for key, value in settings.items()})
+        # The CI unit-flow stub has no emulator matrix, but release evidence requires a device API.
+        # Keep explicit API 29 scenarios unchanged and preserve the real runner's API when supplied.
+        env.setdefault("QUICKCUT_EMULATOR_API", "35")
         result = subprocess.run(["bash", str(SCRIPT)], cwd=root, env=env,
                                 capture_output=True, text=True, timeout=10)
         events = [json.loads(line) for line in (root / "events.jsonl").read_text().splitlines()]
@@ -97,6 +135,7 @@ class EmulatorFlowTest(unittest.TestCase):
         self.assertEqual((root / "quickcut-native-preflight-results/reports/index.html").read_text(), "preflight report")
         self.assertIn("full.Suite", (root / "app/build/outputs/androidTest-results/connected/TEST-full.xml").read_text())
         self.assertFalse((root / "stale-preflight-observed").exists())
+        self.assertFalse((root / "quickcut-stage20-evidence/verified-screens-and-tests.json").exists())
 
     def test_preflight_timeout_still_runs_full_and_keeps_timeout_status(self):
         result, _, _, phases = self.run_flow(preflight=124)
@@ -152,6 +191,43 @@ class EmulatorFlowTest(unittest.TestCase):
         self.assertEqual(timed, [["--kill-after=30s", "10m"], ["--kill-after=30s", "30m"]])
         self.assertIn("152 distinct tests", result.stdout)
 
+    def test_stage16_non_png_error_text_does_not_pass_image_integrity_gate(self):
+        result, _, _, phases = self.run_flow(STAGE16_CAPTURE_STATUS=1)
+        self.assertEqual(phases, ["preflight", "full"])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Invalid Stage16 PNG", result.stdout + result.stderr)
+
+    def test_stage15_non_png_error_text_does_not_pass_image_integrity_gate(self):
+        result, _, _, phases = self.run_flow(STAGE15_CAPTURE_STATUS=1)
+        self.assertEqual(phases, ["preflight", "full"])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Not a PNG screenshot", result.stdout + result.stderr)
+
+    def test_stage17_non_png_evidence_is_rejected_without_weakening_suite(self):
+        result, _, _, phases = self.run_flow(STAGE17_CAPTURE_STATUS=1)
+        self.assertEqual(phases, ["preflight", "full"])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Invalid Stage 17 PNG", result.stdout + result.stderr)
+
+    def test_stage18_wrong_png_evidence_never_satisfies_image_integrity_gate(self):
+        result, _, _, phases = self.run_flow(STAGE18_CAPTURE_STATUS=1)
+        self.assertEqual(phases, ["preflight", "full"])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Invalid Stage 18 PNG", result.stdout + result.stderr)
+
+    def test_stage20_missing_mandatory_suite_does_not_pass(self):
+        result, _, _, phases = self.run_flow(STAGE20_MISSING_SUITE=1)
+        self.assertEqual(phases, ["preflight", "full"])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Missing required stage 14-20 Android test classes",
+            result.stdout + result.stderr)
+
+    def test_stage20_stage14_bad_png_is_not_accepted(self):
+        result, _, _, phases = self.run_flow(STAGE14_CAPTURE_STATUS=1)
+        self.assertEqual(phases, ["preflight", "full"])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Missing/corrupt PNG evidence", result.stdout + result.stderr)
+
     def test_stage13_capture_failure_remains_a_required_gate(self):
         result, _, _, phases = self.run_flow(STAGE13_CAPTURE_STATUS=1)
         self.assertEqual(phases, ["preflight", "full"])
@@ -166,6 +242,9 @@ class EmulatorFlowTest(unittest.TestCase):
         self.assertTrue((root / "quickcut-native-preflight-results/results/TEST-preflight.xml").is_file())
         self.assertEqual(sum(e[0] == "python3" and any("verify-android-main10.py" in a for a in e) for e in events), 2)
         self.assertIn("152 distinct tests", result.stdout)
+        proof = root / "quickcut-stage20-evidence/verified-screens-and-tests.json"
+        self.assertTrue(proof.is_file())
+        self.assertEqual(json.loads(proof.read_text())["androidApi"], "35")
         for image in ("stage7_home.png", "stage7_projects_empty.png", "stage7_onboarding.png",
                       "stage13_home_populated.png", "stage13_projects_populated.png",
                       "stage13_tools.png", "stage13_settings.png", "stage13_gallery_selected.png",

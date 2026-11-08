@@ -21,7 +21,7 @@ run_checked() {
 }
 
 # Preserve focused evidence before the mandatory unfiltered run can replace it.
-rm -rf "$PREFLIGHT" "$RESULTS" "$REPORTS" quickcut-main10-preflight
+rm -rf "$PREFLIGHT" "$RESULTS" "$REPORTS" quickcut-main10-preflight quickcut-stage20-evidence
 mkdir -p "$PREFLIGHT/results" "$PREFLIGHT/reports"
 run_checked "Clear preflight Main10 evidence" timeout --kill-after=2s 10s adb shell rm -rf /data/local/tmp/quickcut-main10
 run_checked "Native preflight" timeout --kill-after=30s 10m gradle --no-daemon \
@@ -59,6 +59,17 @@ run_checked "Full instrumentation suite" timeout --kill-after=30s "$full_suite_b
   -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true :app:connectedDebugAndroidTest
 run_checked "Pull full-suite Main10 evidence" timeout --kill-after=2s 10s adb pull /data/local/tmp/quickcut-main10 quickcut-main10-full
 run_checked "Verify full-suite Main10 evidence" python3 "$SCRIPT_DIR/verify-android-main10.py" quickcut-main10-full
+# Only fixture-generated MP4s are archived; never capture user-selected media.
+mkdir -p quickcut-stage20-media
+for name in stage17-source.mp4 stage17-output.mp4 stage17-audio-track.txt; do
+  if timeout --kill-after=2s 12s adb exec-out run-as com.hebi.quickcut cat "files/stage20-audio-evidence/$name" > "quickcut-stage20-media/$name" \
+      && [[ -s "quickcut-stage20-media/$name" ]]; then
+    echo "Synthetic MP4 audio QA evidence captured: $name"
+  else
+    rm -f "quickcut-stage20-media/$name"
+    echo "::warning::Synthetic audio evidence unavailable: $name"
+  fi
+done
 run_checked "Verify full-suite XML" python3 - <<'PYCODE'
 from pathlib import Path
 import xml.etree.ElementTree as ET
@@ -111,6 +122,144 @@ for file in stage13_home_populated.png stage13_projects_populated.png stage13_to
     if [[ "$first_failure" -eq 0 ]]; then first_failure=1; fi
   fi
 done
+# Stage 15: real Android save-settings screens, including unsupported capability feedback.
+for file in stage15_export_auto.png stage15_export_quality.png \
+    stage15_export_unsupported.png; do
+  if timeout --kill-after=2s 20s adb exec-out run-as com.hebi.quickcut cat "files/design-review/$file" > "quickcut-design-review/$file" && [[ -s "quickcut-design-review/$file" ]]; then
+    echo "Stage 15 screenshot preserved: $file"
+  else
+    echo "::error::Stage 15 screenshot missing or empty: $file"
+    if [[ "$first_failure" -eq 0 ]]; then first_failure=1; fi
+  fi
+done
+# A failed adb cat may write an error string and still produce a non-empty file.
+# Require PNG signature, IHDR integrity and plausible device dimensions.
+run_checked "Verify Stage 15 screenshots are actual PNG images" python3 - <<'PYVERIFY'
+from pathlib import Path
+import struct
+import zlib
+
+for name in ("stage15_export_auto.png", "stage15_export_quality.png", "stage15_export_unsupported.png"):
+    path = Path("quickcut-design-review") / name
+    data = path.read_bytes() if path.exists() else b""
+    if len(data) < 33 or data[:8] != bytes.fromhex("89504e470d0a1a0a"):
+        raise SystemExit(f"Not a PNG screenshot: {path}")
+    if struct.unpack(">I", data[8:12])[0] != 13 or data[12:16] != b"IHDR":
+        raise SystemExit(f"Missing PNG IHDR: {path}")
+    width, height = struct.unpack(">II", data[16:24])
+    if not (200 <= width <= 10000 and 200 <= height <= 10000):
+        raise SystemExit(f"Invalid screenshot dimensions: {path} ({width}x{height})")
+    recorded = struct.unpack(">I", data[29:33])[0]
+    if recorded != zlib.crc32(data[12:29]) & 0xffffffff:
+        raise SystemExit(f"Corrupted PNG IHDR checksum: {path}")
+    print(f"Verified Stage 15 PNG: {name} ({width}x{height})")
+PYVERIFY
+# Stage 16 real crop UI renders must exist on every tested API.
+for file in stage16_crop_vertical.png stage16_crop_square.png \
+    stage16_crop_free.png stage16_crop_largefont.png; do
+  if timeout --kill-after=2s 20s adb exec-out run-as com.hebi.quickcut cat "files/design-review/$file" > "quickcut-design-review/$file" && [[ -s "quickcut-design-review/$file" ]]; then
+    echo "Stage 16 screenshot preserved: $file"
+  else
+    echo "::error::Stage 16 screenshot missing or empty: $file"
+    if [[ "$first_failure" -eq 0 ]]; then first_failure=1; fi
+  fi
+done
+run_checked "Verify Stage 16 screenshots are actual PNG images" python3 - <<'PYCROP'
+from pathlib import Path
+import struct
+import zlib
+for name in ("stage16_crop_vertical.png", "stage16_crop_square.png",
+             "stage16_crop_free.png", "stage16_crop_largefont.png"):
+    p = Path("quickcut-design-review") / name
+    data = p.read_bytes() if p.exists() else b""
+    if len(data) < 33 or data[:8] != bytes.fromhex("89504e470d0a1a0a"):
+        raise SystemExit(f"Invalid Stage16 PNG: {p}")
+    if data[12:16] != b"IHDR" or int.from_bytes(data[8:12], "big") != 13:
+        raise SystemExit(f"Missing Stage16 IHDR: {p}")
+    width, height = struct.unpack(">II", data[16:24])
+    if width < 200 or height < 200:
+        raise SystemExit(f"Bad Stage16 capture geometry: {p}")
+    if zlib.crc32(data[12:29]) & 0xffffffff != int.from_bytes(data[29:33], "big"):
+        raise SystemExit(f"Corrupt Stage16 capture header: {p}")
+PYCROP
+# Stage 14: phone, three-segment and large-font tablet screenshots from the real Android UI.
+for file in stage14_extraction_one.png stage14_extraction_three.png \
+    stage14_extraction_tablet_largefont.png; do
+  if timeout --kill-after=2s 20s adb exec-out run-as com.hebi.quickcut cat "files/design-review/$file" > "quickcut-design-review/$file" && [[ -s "quickcut-design-review/$file" ]]; then
+    echo "Stage 14 screenshot preserved: $file"
+  else
+    echo "::error::Stage 14 screenshot missing or empty: $file"
+    if [[ "$first_failure" -eq 0 ]]; then first_failure=1; fi
+  fi
+done
+# Stage 17 audio controls must be real Android PNG captures, not generated mockups.
+for file in stage17_audio_default.png stage17_audio_fades.png \
+    stage17_audio_muted.png stage17_audio_largefont.png; do
+  if timeout --kill-after=2s 20s adb exec-out run-as com.hebi.quickcut cat "files/design-review/$file" > "quickcut-design-review/$file" && [[ -s "quickcut-design-review/$file" ]]; then
+    echo "Stage 17 screenshot captured: $file"
+  else
+    echo "::error::Stage 17 screenshot missing or empty: $file"
+    if [[ "$first_failure" -eq 0 ]]; then first_failure=1; fi
+  fi
+done
+run_checked "Verify Stage 17 screenshots are actual Android PNG images" python3 - <<'PYPNG'
+from pathlib import Path
+import struct
+import zlib
+names = ("stage17_audio_default.png", "stage17_audio_fades.png",
+         "stage17_audio_muted.png", "stage17_audio_largefont.png")
+for name in names:
+    p = Path("quickcut-design-review") / name
+    data = p.read_bytes() if p.exists() else b""
+    if len(data) < 50 or data[:8] != bytes.fromhex("89504e470d0a1a0a"):
+        raise SystemExit(f"Invalid Stage 17 PNG: {p}")
+    if int.from_bytes(data[8:12], "big") != 13 or data[12:16] != b"IHDR":
+        raise SystemExit(f"Missing Stage 17 PNG IHDR: {p}")
+    w, h = struct.unpack(">II", data[16:24])
+    if w < 200 or h < 200:
+        raise SystemExit(f"Invalid Stage 17 screenshot dimensions: {p} ({w}x{h})")
+    if zlib.crc32(data[12:29]) & 0xffffffff != int.from_bytes(data[29:33], "big"):
+        raise SystemExit(f"Corrupt Stage 17 PNG header: {p}")
+    print(f"Stage 17 verified: {name} ({w}x{h})")
+PYPNG
+# Stage 18: text layer UI must be verified using screenshots from the real Android app.
+for file in stage18_text_empty.png stage18_text_selected.png \
+    stage18_text_styled.png stage18_text_largefont.png; do
+  if timeout --kill-after=2s 20s adb exec-out run-as com.hebi.quickcut cat "files/design-review/$file" > "quickcut-design-review/$file" && [[ -s "quickcut-design-review/$file" ]]; then
+    echo "Stage 18 screenshot preserved: $file"
+  else
+    echo "::error::Stage 18 screenshot missing: $file"
+    if [[ "$first_failure" -eq 0 ]]; then first_failure=1; fi
+  fi
+done
+run_checked "Verify Stage 18 screenshots are PNG images" python3 - <<'PYSTAGE18'
+from pathlib import Path
+from struct import unpack
+import zlib
+for name in ("stage18_text_empty.png", "stage18_text_selected.png",
+             "stage18_text_styled.png", "stage18_text_largefont.png"):
+    p = Path("quickcut-design-review") / name
+    data = p.read_bytes() if p.exists() else b""
+    if len(data) < 50 or data[:8] != bytes.fromhex("89504e470d0a1a0a"):
+        raise SystemExit(f"Invalid Stage 18 PNG: {p}")
+    if unpack(">I", data[8:12])[0] != 13 or data[12:16] != b"IHDR":
+        raise SystemExit(f"Invalid Stage 18 PNG IHDR: {p}")
+    w, h = unpack(">II", data[16:24])
+    if w < 200 or h < 200:
+        raise SystemExit(f"Bad Stage 18 screenshot size: {p} ({w}x{h})")
+    if unpack(">I", data[29:33])[0] != zlib.crc32(data[12:29]) & 0xffffffff:
+        raise SystemExit(f"Corrupt Stage 18 PNG: {p}")
+    print(f"Verified Stage 18 PNG: {name} {w}x{h}")
+PYSTAGE18
+if [[ "$first_failure" -eq 0 ]]; then
+  run_checked "Stage 20 mandatory test and PNG evidence" python3 "$SCRIPT_DIR/stage20-evidence-verify.py" \
+    --xml "$RESULTS" --screenshots quickcut-design-review \
+    --manifest quickcut-stage20-evidence/verified-screens-and-tests.json
+else
+  # Still evaluate all evidence for diagnostics; never issue an approved manifest after an earlier failure.
+  run_checked "Stage 20 mandatory test and PNG evidence" python3 "$SCRIPT_DIR/stage20-evidence-verify.py" \
+    --xml "$RESULTS" --screenshots quickcut-design-review
+fi
 if [[ "$first_failure" -ne 0 ]]; then
   echo "::error::Instrumentation failed; preserving the first failure (exit $first_failure)."
   exit "$first_failure"

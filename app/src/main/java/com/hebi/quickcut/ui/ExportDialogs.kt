@@ -23,8 +23,10 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
+import com.hebi.quickcut.editor.EditTimeline
 import com.hebi.quickcut.editor.OriginalAction
 import com.hebi.quickcut.media.ExportAssessment
+import com.hebi.quickcut.media.ExportQualitySettings
 import com.hebi.quickcut.media.ExportMethod
 import com.hebi.quickcut.media.ExportReport
 import com.hebi.quickcut.media.SaveDateMode
@@ -38,7 +40,11 @@ internal fun SaveOptionsDialog(
     canSave: Boolean,
     onSave: () -> Unit,
     onDismiss: () -> Unit,
+    timeline: EditTimeline = EditTimeline(),
+    outputQuality: ExportQualitySettings = ExportQualitySettings(),
+    onOutputQualityChange: (ExportQualitySettings) -> Unit = {},
 ) {
+    val qualityEvaluation = rememberExportQualityEvaluation(timeline, outputQuality)
     AlertDialog(
         modifier = Modifier.fillMaxWidth().padding(horizontal = CutSpacing.lg).widthIn(max = 480.dp),
         properties = DialogProperties(usePlatformDefaultWidth = false),
@@ -51,10 +57,21 @@ internal fun SaveOptionsDialog(
             ) {
                 Text("저장 정보", color = CutColors.secondaryAccent,
                     style = MaterialTheme.typography.titleMedium)
-                Text("원본 영상의 해상도와 프레임 속도를 유지하며, " +
-                    "가능한 경우 고속 저장을 사용합니다. 실제 처리 방식은 저장 전 분석합니다.",
+                Text((if (outputQuality.isAutomatic)
+                    "원본 영상의 해상도와 프레임 속도를 유지하며, 가능한 경우 고속 저장을 사용합니다."
+                else
+                    "선택한 출력 설정으로 변환합니다. 재인코딩을 승인한 뒤 저장할 수 있습니다.") +
+                    " 실제 처리 방식은 저장 전 분석합니다.",
                     color = CutColors.secondaryText,
                     style = MaterialTheme.typography.bodySmall)
+                if (!timeline.isEmpty) {
+                    ExportQualitySection(
+                        timeline = timeline,
+                        settings = outputQuality,
+                        evaluation = qualityEvaluation,
+                        onChange = onOutputQualityChange,
+                    )
+                }
                 Text("저장 위치", color = CutColors.primaryText,
                     style = MaterialTheme.typography.titleSmall)
                 Text("기기 갤러리에 저장",
@@ -113,7 +130,8 @@ internal fun SaveOptionsDialog(
             }
         },
         confirmButton = {
-            Button(onClick = onSave, enabled = canSave, shape = CutShape,
+            Button(onClick = onSave, enabled = canSave &&
+                (outputQuality.isAutomatic || qualityEvaluation?.plan != null), shape = CutShape,
                 modifier = Modifier.heightIn(min = 52.dp)) { Text("저장 시작") }
         },
         dismissButton = {

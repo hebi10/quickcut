@@ -17,13 +17,15 @@ HOME = 'com.google.android.apps.nexuslauncher/.NexusLauncherActivity'
 
 
 class Device:
-    def __init__(self, components, *, text='빠른 자르기', package='com.hebi.quickcut', events='', failure=None, malformed_ui=False):
+    def __init__(self, components, *, text='빠른 자르기', package='com.hebi.quickcut', events='', failure=None, malformed_ui=False, launcher_anr=False):
         self.components = components
         self.text = text
         self.package = package
         self.events = events
         self.failure = failure
         self.malformed_ui = malformed_ui
+        self.launcher_anr = launcher_anr
+        self.acknowledged = False
         self.calls = []
         self.probes = 0
 
@@ -44,7 +46,16 @@ class Device:
         elif args[:3] == ['shell','uiautomator','dump']:
             output = 'UI hierarchy dumped'
         elif args[:2] == ['shell','cat']:
-            output = '<invalid' if self.malformed_ui else f'<hierarchy><node package="{self.package}" text="{self.text}"/></hierarchy>'
+            if self.launcher_anr and not self.acknowledged:
+                output = ('<hierarchy><node package="android" resource-id="android:id/alertTitle" '
+                          'text="Pixel Launcher isn&#39;t responding"/>'
+                          '<node package="android" resource-id="android:id/aerr_wait" '
+                          'text="Wait" enabled="true" bounds="[70,1296][1010,1422]"/></hierarchy>')
+            else:
+                output = '<invalid' if self.malformed_ui else f'<hierarchy><node package="{self.package}" text="{self.text}"/></hierarchy>'
+        elif args[:3] == ['shell','input','tap']:
+            if not self.launcher_anr or self.acknowledged: raise AssertionError('Unexpected launcher tap')
+            self.acknowledged = True
         else:
             raise AssertionError('Unexpected adb command: ' + repr(args))
         return subprocess.CompletedProcess(command, 0, output, '')
@@ -79,6 +90,26 @@ class StartupTest(unittest.TestCase):
         for title in ('빠르고 간편한 영상 편집', '영상 편집을 시작하세요'):
             with self.subTest(title=title):
                 self.check(Device([APP], text=title))
+
+    def test_pixel_launcher_anr_overlay_acknowledged_once_and_app_ui_reverified(self):
+        events='I/am_anr(42): [0,1166,com.google.android.apps.nexuslauncher,1,Input dispatching timed out]'
+        device = Device([APP], launcher_anr=True, events=events)
+        self.check(device)
+        self.assertTrue(device.acknowledged)
+        self.assertEqual(len([c for c in device.calls if c[:3] == ['shell','input','tap']]), 1)
+        self.assertEqual(len(device.launches()), 1)
+        self.assertGreaterEqual(device.probes, 2)
+
+    def test_launcher_anr_recovery_never_hides_quickcut_app_anr(self):
+        device = Device([APP], launcher_anr=True,
+                        events='I/am_anr(42): [0,123,com.hebi.quickcut,12345,reason]')
+        with self.assertRaises(s.StartupError): self.check(device)
+        self.assertFalse(device.acknowledged)
+
+    def test_unknown_system_dialog_remains_a_hard_failure(self):
+        device = Device([APP], text='Close app', package='android')
+        with self.assertRaises(s.StartupError): self.check(device)
+        self.assertFalse(device.acknowledged)
 
     def test_home_never_yields_foreground_fails_after_at_most_one_relaunch(self):
         device=Device([HOME])

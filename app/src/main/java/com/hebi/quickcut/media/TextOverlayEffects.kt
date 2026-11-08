@@ -22,8 +22,9 @@ import com.hebi.quickcut.editor.TextLayerAlignment
 @OptIn(UnstableApi::class)
 object TextOverlayEffects {
     fun videoEffects(layers: List<TextLayer>): List<Effect> {
-        if (layers.isEmpty()) return emptyList()
-        return listOf(OverlayEffect(layers.map(::effect)))
+        val active = layers.filter { it.text.isNotBlank() }
+        if (active.isEmpty()) return emptyList()
+        return listOf(OverlayEffect(active.map(::effect)))
     }
 
     fun visibleText(layer: TextLayer, presentationTimeUs: Long): String =

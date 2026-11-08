@@ -13,7 +13,6 @@ import androidx.lifecycle.viewModelScope
 import com.hebi.quickcut.editor.MediaStoreSingleExportAccess
 import com.hebi.quickcut.editor.SingleExportOutputState
 import com.hebi.quickcut.editor.SingleExportSnapshot
-import com.hebi.quickcut.editor.TrimInput
 import com.hebi.quickcut.export.ExportWorkMonitor
 import com.hebi.quickcut.media.ExportMode
 import com.hebi.quickcut.media.ExportPlanner
@@ -21,7 +20,6 @@ import com.hebi.quickcut.media.ExportStage
 import com.hebi.quickcut.media.MediaReader
 import com.hebi.quickcut.media.SaveDateMode
 import com.hebi.quickcut.media.VideoExporter
-import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -30,9 +28,11 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-class ExtractionViewModel(application: Application) : AndroidViewModel(application) {
+class ExtractionViewModel(
+    application: Application,
+    private val store: ExtractionSessionStore = ExtractionSessionStore(application),
+) : AndroidViewModel(application) {
     private val app = application
-    private val store = ExtractionSessionStore(application)
     private var job: Job? = null
     private var reviewedFast: Map<Long, Boolean>? = null
     private var reviewedRanges: List<ExtractionItem>? = null

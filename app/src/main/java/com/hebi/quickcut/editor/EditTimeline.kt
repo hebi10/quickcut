@@ -20,6 +20,7 @@ data class VideoClip(
     val muted: Boolean = false,
     val hasAudio: Boolean = true,
     val preciseRange: PreciseClipRange? = null,
+    val audio: AudioAdjustment = AudioAdjustment.DEFAULT,
 ) {
     init {
         require(sourceDurationMs > 0L) { "영상 길이는 0보다 커야 합니다." }
@@ -64,7 +65,8 @@ data class EditTimeline(val clips: List<VideoClip> = emptyList()) {
         val clip = clips.first { it.id == id }
         require(startMs >= 0 && endMs <= clip.sourceDurationMs && endMs - startMs >= MIN_CLIP_MS)
         return copy(clips = clips.map {
-            if (it.id == id) it.copy(startMs = startMs, endMs = endMs, preciseRange = null) else it
+            if (it.id == id) it.copy(startMs = startMs, endMs = endMs, preciseRange = null,
+                audio = it.audio.bounded(endMs - startMs)) else it
         })
     }
 
@@ -78,8 +80,12 @@ data class EditTimeline(val clips: List<VideoClip> = emptyList()) {
             "분할 위치가 클립 경계에 너무 가깝습니다."
         }
         val splitUs = clip.startUs + offsetUs
-        val left = clip.withRangeUs(clip.startUs, splitUs)
-        val right = clip.withRangeUs(splitUs, clip.endUs).copy(id = newId)
+        val left = clip.withRangeUs(clip.startUs, splitUs).let {
+            it.copy(audio = it.audio.bounded(it.durationMs))
+        }
+        val right = clip.withRangeUs(splitUs, clip.endUs).copy(id = newId).let {
+            it.copy(audio = it.audio.bounded(it.durationMs))
+        }
         return copy(clips = clips.toMutableList().apply {
             removeAt(index)
             add(index, left)
@@ -99,6 +105,16 @@ data class EditTimeline(val clips: List<VideoClip> = emptyList()) {
 
     fun toggleMute(id: Long): EditTimeline =
         copy(clips = clips.map { if (it.id == id) it.copy(muted = !it.muted) else it })
+
+    fun updateAudio(id: Long, adjustment: AudioAdjustment): EditTimeline {
+        require(clips.any { it.id == id }) { "클립을 찾지 못했습니다." }
+        return copy(clips = clips.map { clip ->
+            if (clip.id == id) {
+                require(clip.hasAudio) { "오디오가 없는 클립에는 음량 조절을 적용할 수 없습니다." }
+                clip.copy(audio = adjustment.bounded(clip.durationMs))
+            } else clip
+        })
+    }
 
     fun startOf(index: Int): Long {
         require(index >= 0) { "클립 위치는 0 이상이어야 합니다." }

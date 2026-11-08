@@ -82,6 +82,7 @@ internal fun StudioStartScreen(
     onQuick: () -> Unit,
     onSelect: () -> Unit,
     onBatch: () -> Unit,
+    onExtraction: () -> Unit = {},
     canRestore: Boolean,
     onRestore: () -> Unit,
     quickSettings: QuickTrimSettings,
@@ -195,7 +196,7 @@ internal fun StudioStartScreen(
                             modifier = Modifier.fillMaxWidth()
                                 .heightIn(min = CutSizes.primaryButton),
                             shape = CutShape) { Text("영상 갤러리") }
-                        StudioModes(onQuick, onBatch, onSelect)
+                        StudioModes(onQuick, onBatch, onSelect, onExtraction)
                     }
                     3 -> {
                         Text("설정", color = CutColors.primaryText,
@@ -297,7 +298,7 @@ private fun StudioWelcome(showArt: Boolean, onStart: () -> Unit, modifier: Modif
 
 @Composable
 private fun StudioModes(onQuick: () -> Unit, onBatch: () -> Unit,
-    onSelect: () -> Unit, modifier: Modifier = Modifier) {
+    onSelect: () -> Unit, onExtraction: () -> Unit, modifier: Modifier = Modifier) {
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text("어떤 영상을 편집할까요?", style = MaterialTheme.typography.titleMedium,
             color = CutColors.primaryText)
@@ -307,6 +308,8 @@ private fun StudioModes(onQuick: () -> Unit, onBatch: () -> Unit,
             Icons.Outlined.VideoLibrary, onClick = onBatch)
         StudioModeCard("상세 편집", "자르기·분할·순서 변경을 자유롭게",
             Icons.Outlined.Movie, onClick = onSelect)
+        StudioModeCard("여러 구간 추출", "영상 1개 · 여러 장면을 각각 MP4로 저장",
+            Icons.Outlined.ContentCut, onClick = onExtraction)
     }
 }
 

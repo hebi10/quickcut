@@ -13,9 +13,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -298,6 +300,7 @@ private fun ExtractionRangeEditor(model: ExtractionViewModel, selected: Extracti
             Text("타임라인에서 범위를 조정하거나 시작·종료 시간을 직접 입력하세요.",
                 color = CutColors.secondaryText,
                 style = MaterialTheme.typography.bodySmall)
+            SegmentOverview(session, range.id)
             RangeSlider(
                 value = selectedSlider,
                 onValueChange = { selectedSlider = it },
@@ -425,5 +428,32 @@ private fun ExtractionRows(model: ExtractionViewModel) {
         Text("완료된 구간은 다시 저장하지 않습니다. 원본 영상은 삭제하지 않습니다.",
             color = CutColors.secondaryText, style = MaterialTheme.typography.bodySmall)
         HorizontalDivider(color = CutColors.border)
+    }
+}
+
+@Composable
+private fun SegmentOverview(session: ExtractionSession, selectedId: Long) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("구간 타임라인", color = CutColors.secondaryText,
+            style = MaterialTheme.typography.bodySmall)
+        BoxWithConstraints(
+            Modifier.fillMaxWidth().heightIn(min = 26.dp).background(CutColors.border, CutShape)
+        ) {
+            val duration = session.durationMs.toFloat().coerceAtLeast(1f)
+            session.items.forEach { item ->
+                val left = item.range.startMs / duration
+                val widthFraction = item.range.durationMs / duration
+                Box(
+                    Modifier.offset(x = maxWidth * left)
+                        .width(maxWidth * widthFraction)
+                        .fillMaxHeight()
+                        .background(if (item.range.id == selectedId) CutColors.accent
+                            else CutColors.secondaryAccent.copy(alpha = 0.48f))
+                )
+            }
+        }
+        Text("보라색: 현재 선택 구간 · 다른 구간과 겹쳐도 별도 파일로 저장",
+            color = CutColors.secondaryText,
+            style = MaterialTheme.typography.bodySmall)
     }
 }

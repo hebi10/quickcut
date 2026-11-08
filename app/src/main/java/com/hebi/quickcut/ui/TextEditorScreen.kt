@@ -62,6 +62,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.util.ExperimentalApi
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.common.Player
 import androidx.media3.transformer.CompositionPlayer
 import androidx.media3.ui.PlayerView
 import com.hebi.quickcut.editor.EditTimeline
@@ -101,6 +102,13 @@ fun TextEditorScreen(
     val valid = layers.all { TextLayerPolicy.isValid(it, clip.durationMs) }
     val previewLayers = layers.filter { TextLayerPolicy.isValid(it, clip.durationMs) }
 
+    fun seekWhenReady(targetMs: Long) {
+        if (player.playbackState == Player.STATE_READY) {
+            runCatching { player.seekTo(targetMs) }
+                .onFailure { previewFailure = "영상 미리보기 위치를 변경하지 못했습니다." }
+        }
+    }
+
     val aspect by produceState(16f / 9f, clip.uri) {
         value = withContext(Dispatchers.IO) {
             runCatching {
@@ -121,7 +129,7 @@ fun TextEditorScreen(
 
     LaunchedEffect(clip.id, clip.uri, clip.startMs, clip.endMs, previewLayers) {
         delay(180)
-        val at = player.currentPosition.coerceIn(0L, clip.durationMs)
+        val at = positionMs.coerceIn(0L, clip.durationMs)
         player.pause()
         try {
             player.setComposition(
@@ -211,7 +219,13 @@ fun TextEditorScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
                     onClick = {
-                        if (player.isPlaying) player.pause() else player.play()
+                        if (player.playbackState == Player.STATE_READY) {
+                            runCatching {
+                                if (player.isPlaying) player.pause() else player.play()
+                            }.onFailure { previewFailure = "영상 미리보기를 재생하지 못했습니다." }
+                        } else {
+                            previewFailure = "영상 미리보기가 준비된 후 다시 시도해 주세요."
+                        }
                     },
                     modifier = Modifier.heightIn(min = 48.dp).testTag("text-preview-play"),
                 ) { Text(if (player.isPlaying) "정지" else "재생") }
@@ -223,7 +237,7 @@ fun TextEditorScreen(
                 value = positionMs.toFloat(),
                 onValueChange = {
                     positionMs = it.roundToLong().coerceIn(0L, clip.durationMs)
-                    player.seekTo(positionMs)
+                    seekWhenReady(positionMs)
                 },
                 valueRange = 0f..clip.durationMs.coerceAtLeast(100L).toFloat(),
                 modifier = Modifier.fillMaxWidth().testTag("text-preview-seek"),
@@ -243,7 +257,7 @@ fun TextEditorScreen(
                         onClick = {
                             selectedId = item.id
                             positionMs = item.startMs
-                            player.seekTo(item.startMs)
+                            seekWhenReady(item.startMs)
                         },
                         border = BorderStroke(1.dp,
                             if (selectedId == item.id) CutColors.accent else CutColors.border),
@@ -261,7 +275,7 @@ fun TextEditorScreen(
                         layers = layers + layer
                         selectedId = layer.id
                         positionMs = layer.startMs
-                        player.seekTo(layer.startMs)
+                        seekWhenReady(layer.startMs)
                     },
                     modifier = Modifier.heightIn(min = 48.dp).testTag("text-layer-add"),
                     shape = CutShape,

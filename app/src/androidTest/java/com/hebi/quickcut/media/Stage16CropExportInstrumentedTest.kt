@@ -67,6 +67,42 @@ class Stage16CropExportInstrumentedTest {
         }
     }
 
+    @Test fun portraitRotationMetadataDoesNotBreakSquareCrop(): Unit = runBlocking {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val source = File(context.cacheDir, "stage16_rotated_fixture.mp4")
+        instrumentation.context.assets.open("quickcut_rotated.mp4").use { input ->
+            source.outputStream().use { output -> input.copyTo(output) }
+        }
+        var result: Uri? = null
+        try {
+            val uri = Uri.fromFile(source)
+            val metadata = MediaReader.metadata(context, uri)
+            // The 320x240 coded source is displayed as 240x320 by the MP4 rotation.
+            val crop = CropGeometry.centerForRatio(240, 320, CropRatio.SQUARE)
+            val timeline = EditTimeline(listOf(VideoClip(
+                1, uri.toString(), metadata.durationMs,
+                0, minOf(metadata.durationMs, 2_000), hasAudio = metadata.hasAudio, crop = crop,
+            )))
+            result = VideoExporter(context).export(timeline, {}, {}, exportMode = ExportMode.ALLOW_REENCODE)
+            val video = requireNotNull(result)
+            MediaReader.validateExport(context, video, timeline.totalDurationMs, metadata.hasAudio)
+            val retriever = MediaMetadataRetriever()
+            try {
+                retriever.setDataSource(context, video)
+                val w = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)!!.toInt()
+                val h = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)!!.toInt()
+                assertTrue("Rotated crop output must display square: ${w}x${h}",
+                    kotlin.math.abs(w - h) <= 4)
+            } finally {
+                retriever.release()
+            }
+        } finally {
+            result?.let { context.contentResolver.delete(it, null, null) }
+            source.delete()
+        }
+    }
+
     @Test fun cropPersistsAcrossEditSessionAndNamedProjectStorage() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val store = com.hebi.quickcut.editor.EditorSessionStore(context, "quickcut_stage16_test_only")

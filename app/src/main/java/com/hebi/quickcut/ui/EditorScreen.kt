@@ -287,8 +287,8 @@ fun EditorScreen(
     if (showAudio && selectedClip != null) {
         AudioEditorScreen(
             clip = selectedClip,
-            onApply = { adjusted ->
-                model.applyAudioAdjustment(selectedClip.id, adjusted)
+            onApply = { adjusted, muted ->
+                model.applyAudioAdjustment(selectedClip.id, adjusted, muted)
                 showAudio = false
             },
             onCancel = { showAudio = false },

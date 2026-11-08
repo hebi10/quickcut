@@ -34,6 +34,12 @@ class EditorSessionStore(context: Context, preferencesName: String = "quickcut_e
                     endMs = clip.getLong("end"),
                     muted = clip.optBoolean("muted", false),
                     hasAudio = clip.optBoolean("hasAudio", true),
+                    crop = clip.optJSONObject("crop")?.let {
+                        CropRegion(
+                            it.getDouble("left").toFloat(), it.getDouble("top").toFloat(),
+                            it.getDouble("right").toFloat(), it.getDouble("bottom").toFloat(),
+                        )
+                    },
                     preciseRange = if (clip.isNull("preciseStartUs") && clip.isNull("preciseEndUs")) null
                         else PreciseClipRange(clip.getLong("preciseStartUs"), clip.getLong("preciseEndUs")),
                 )
@@ -66,10 +72,16 @@ class EditorSessionStore(context: Context, preferencesName: String = "quickcut_e
                 put("hasAudio", it.hasAudio)
                 put("preciseStartUs", it.preciseRange?.startUs ?: JSONObject.NULL)
                 put("preciseEndUs", it.preciseRange?.endUs ?: JSONObject.NULL)
+                put("crop", it.crop?.let { region -> JSONObject().apply {
+                    put("left", region.left.toDouble())
+                    put("top", region.top.toDouble())
+                    put("right", region.right.toDouble())
+                    put("bottom", region.bottom.toDouble())
+                } } ?: JSONObject.NULL)
             })
         }
         val data = JSONObject().apply {
-            put("schemaVersion", 2)
+            put("schemaVersion", 3)
             put("clips", array)
             put("selectedId", snapshot.selectedId ?: JSONObject.NULL)
             put("positionMs", snapshot.playPositionMs)

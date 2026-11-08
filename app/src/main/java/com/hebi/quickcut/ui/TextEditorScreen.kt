@@ -79,7 +79,7 @@ import kotlinx.coroutines.withContext
 import kotlin.math.roundToLong
 
 @OptIn(UnstableApi::class, ExperimentalApi::class)
-@androidx.compose.material3.ExperimentalMaterial3Api
+@kotlin.OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun TextEditorScreen(
     clip: VideoClip,

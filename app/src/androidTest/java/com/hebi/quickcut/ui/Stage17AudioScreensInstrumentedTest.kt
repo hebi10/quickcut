@@ -55,7 +55,7 @@ class Stage17AudioScreensInstrumentedTest {
         compose.setContent {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(360.dp, 640.dp))) {
                 QuickCutTheme {
-                    AudioEditorScreen(clip = clip, onApply = {}, onCancel = {})
+                    AudioEditorScreen(clip = clip, onApply = { _, _ -> }, onCancel = {})
                 }
             }
         }
@@ -92,7 +92,7 @@ class Stage17AudioScreensInstrumentedTest {
                     QuickCutTheme {
                         AudioEditorScreen(
                             VideoClip(1, uri, 8_000, hasAudio = true),
-                            onApply = {}, onCancel = {},
+                            onApply = { _, _ -> }, onCancel = {},
                         )
                     }
                 }

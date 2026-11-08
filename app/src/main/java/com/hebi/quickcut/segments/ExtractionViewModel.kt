@@ -18,6 +18,7 @@ import com.hebi.quickcut.media.ExportMode
 import com.hebi.quickcut.media.ExportPlanner
 import com.hebi.quickcut.media.ExportStage
 import com.hebi.quickcut.media.MediaReader
+import com.hebi.quickcut.media.ReencodeRequiredException
 import com.hebi.quickcut.media.SaveDateMode
 import com.hebi.quickcut.media.VideoExporter
 import kotlinx.coroutines.CancellationException
@@ -150,7 +151,7 @@ class ExtractionViewModel(
             persist(current.copy(items = current.items.map { item ->
                 if (item.range.id == id) item.copy(
                     range = nextRanges.first { it.id == id },
-                    status = ExtractionStatus.WAITING, message = null
+                    status = ExtractionStatus.WAITING, message = null, reencodeNeeded = false
                 ) else item
             }))
             invalidateReview()
@@ -194,7 +195,7 @@ class ExtractionViewModel(
                         snapshot.sourceUri, snapshot.durationMs, snapshot.hasAudio, item.range
                     )
                     val plan = ExportPlanner.analyze(app, timeline, SaveDateMode.CURRENT)
-                    result[item.range.id] = plan.fastAvailable
+                    result[item.range.id] = plan.fastAvailable && !item.reencodeNeeded
                 }
                 if (session != snapshot) {
                     notice = "구간이 변경되었습니다. 다시 저장 방식을 확인해 주세요."
@@ -312,7 +313,10 @@ class ExtractionViewModel(
                         runCatching {
                             replaceItem(id) { it.copy(
                                 status = if (hasOutput) ExtractionStatus.BLOCKED else ExtractionStatus.FAILED,
+                                reencodeNeeded = it.reencodeNeeded || error is ReencodeRequiredException,
                                 message = if (hasOutput) "저장 상태가 불확실합니다. 복구 확인이 필요합니다."
+                                    else if (error is ReencodeRequiredException)
+                                        "고속 처리 실패 · 재인코딩 승인 후 재시도할 수 있습니다."
                                     else (error.localizedMessage ?: "저장 실패"),
                             ) }
                         }.onFailure { notice = "저장 결과 기록에 실패했습니다. 추가 저장을 중단합니다." }

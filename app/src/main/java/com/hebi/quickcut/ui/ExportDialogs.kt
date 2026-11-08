@@ -66,6 +66,7 @@ internal fun SaveOptionsDialog(
                     style = MaterialTheme.typography.bodySmall)
                 if (!timeline.isEmpty) {
                     ExportQualitySection(
+                        timeline = timeline,
                         settings = outputQuality,
                         evaluation = qualityEvaluation,
                         onChange = onOutputQualityChange,

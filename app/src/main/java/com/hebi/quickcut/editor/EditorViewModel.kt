@@ -677,6 +677,17 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         selectedId?.let { moveClip(it, direction) }
     }
 
+    fun applyCrop(id: Long, crop: CropRegion?) {
+        if (isRecoveringExport || hasUnresolvedExport || ExportWorkMonitor.isRunning) return
+        if (timeline.clipAt(id) == null) return
+        val changed = timeline.updateCrop(id, crop)
+        if (changed == timeline) return
+        recordChange()
+        timeline = changed
+        needsReencodeConsent = false
+        saveSessionSoon()
+    }
+
     fun toggleMute() {
         if (isRecoveringExport || hasUnresolvedExport) return
         val id = selectedId ?: return

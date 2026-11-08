@@ -21,7 +21,7 @@ run_checked() {
 }
 
 # Preserve focused evidence before the mandatory unfiltered run can replace it.
-rm -rf "$PREFLIGHT" "$RESULTS" "$REPORTS" quickcut-main10-preflight
+rm -rf "$PREFLIGHT" "$RESULTS" "$REPORTS" quickcut-main10-preflight quickcut-stage20-evidence
 mkdir -p "$PREFLIGHT/results" "$PREFLIGHT/reports"
 run_checked "Clear preflight Main10 evidence" timeout --kill-after=2s 10s adb shell rm -rf /data/local/tmp/quickcut-main10
 run_checked "Native preflight" timeout --kill-after=30s 10m gradle --no-daemon \
@@ -240,9 +240,15 @@ for name in ("stage18_text_empty.png", "stage18_text_selected.png",
         raise SystemExit(f"Corrupt Stage 18 PNG: {p}")
     print(f"Verified Stage 18 PNG: {name} {w}x{h}")
 PYSTAGE18
-run_checked "Stage 20 mandatory test and PNG evidence" python3 "$SCRIPT_DIR/stage20-evidence-verify.py" \
-  --xml "$RESULTS" --screenshots quickcut-design-review \
-  --manifest quickcut-stage20-evidence/verified-screens-and-tests.json
+if [[ "$first_failure" -eq 0 ]]; then
+  run_checked "Stage 20 mandatory test and PNG evidence" python3 "$SCRIPT_DIR/stage20-evidence-verify.py" \
+    --xml "$RESULTS" --screenshots quickcut-design-review \
+    --manifest quickcut-stage20-evidence/verified-screens-and-tests.json
+else
+  # Still evaluate all evidence for diagnostics; never issue an approved manifest after an earlier failure.
+  run_checked "Stage 20 mandatory test and PNG evidence" python3 "$SCRIPT_DIR/stage20-evidence-verify.py" \
+    --xml "$RESULTS" --screenshots quickcut-design-review
+fi
 if [[ "$first_failure" -ne 0 ]]; then
   echo "::error::Instrumentation failed; preserving the first failure (exit $first_failure)."
   exit "$first_failure"

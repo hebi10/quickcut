@@ -12,6 +12,8 @@ import androidx.compose.ui.test.FontScale
 import androidx.compose.ui.test.ForcedSize
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -72,10 +74,14 @@ class Stage17AudioScreensInstrumentedTest {
             clip = clip.copy(id = 3L, muted = true)
         }
         compose.onNodeWithText(
-            "현재 클립이 음소거 상태입니다. 소리를 들으려면 편집 화면에서 음소거를 해제하세요."
+            "현재 클립이 음소거 상태입니다. 스위치를 끄면 소리 조절을 다시 사용할 수 있습니다."
         ).performScrollTo().assertIsDisplayed()
-        compose.onNodeWithTag("audio-apply").assertIsNotEnabled()
+        compose.onNodeWithTag("audio-volume").assertIsNotEnabled()
+        compose.onNodeWithTag("audio-mute-toggle").assertIsEnabled()
         capture("stage17_audio_muted.png")
+        compose.onNodeWithTag("audio-mute-toggle").performClick()
+        compose.onNodeWithTag("audio-volume").assertIsEnabled()
+        compose.onNodeWithTag("audio-apply").assertIsEnabled()
     }
 
     @Test fun tabletLargeFontCanStillReachPinnedApplyButton() {

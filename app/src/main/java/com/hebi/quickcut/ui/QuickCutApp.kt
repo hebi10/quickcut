@@ -983,6 +983,7 @@ private fun CompletedScreen(
             modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth(),
             color = CutColors.secondaryText,
             style = MaterialTheme.typography.bodySmall)
+        if (videoUri != null) CompletedExportFacts(videoUri)
         ExportDiagnosticButton()
         if (savedDateMode == SaveDateMode.ORIGINAL) {
             Text("원본 날짜 기준으로 저장했습니다.", color = CutColors.secondaryText,

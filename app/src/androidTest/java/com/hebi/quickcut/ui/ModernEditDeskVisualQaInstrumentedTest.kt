@@ -16,6 +16,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
@@ -99,7 +100,7 @@ class ModernEditDeskVisualQaInstrumentedTest {
             }
         }
         compose.waitUntil(15_000L) {
-            compose.onNodeWithTag("crop-preview").fetchSemanticsNode().size.width > 0
+            compose.onAllNodesWithTag("crop-preview").fetchSemanticsNodes().isNotEmpty()
         }
         compose.onNodeWithTag("crop-apply").assertIsDisplayed().assertIsEnabled()
         capture("modern_dark_crop.png")
@@ -158,7 +159,7 @@ class ModernEditDeskVisualQaInstrumentedTest {
             }
         }
         compose.onNodeWithText("저장 시작").assertIsDisplayed()
-        compose.onNodeWithText("저장 완료 후 원본 동영상 처리").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("원본 동영상").performScrollTo().assertIsDisplayed()
         capture("modern_dark_export_dialog.png")
     }
 

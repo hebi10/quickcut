@@ -143,6 +143,35 @@ for file in stage13_home_populated.png stage13_projects_populated.png stage13_to
     if [[ "$first_failure" -eq 0 ]]; then first_failure=1; fi
   fi
 done
+# Modern Edit Desk 7-A: require real dark-screen capture on 320dp/160% as well
+# as each media editor and save dialog; missing/invalid PNG cannot pass release QA.
+for file in modern_dark_home_320_font160.png modern_dark_projects_320_font160.png \
+    modern_dark_tools_320_font160.png modern_dark_settings_320_font160.png \
+    modern_dark_crop.png modern_dark_audio.png modern_dark_text.png \
+    modern_dark_export_dialog.png; do
+  if timeout --kill-after=2s 20s adb exec-out run-as com.hebi.quickcut cat "files/design-review/$file" > "quickcut-design-review/$file" && [[ -s "quickcut-design-review/$file" ]]; then
+    echo "Modern dark QA screenshot captured: $file"
+  else
+    echo "::error::Modern dark QA screenshot missing or empty: $file"
+    if [[ "$first_failure" -eq 0 ]]; then first_failure=1; fi
+  fi
+done
+run_checked "Verify dark-mode UI screenshots" python3 - "$SCRIPT_DIR/stage20-evidence-verify.py" <<'PYMODERN'
+import importlib.util
+from pathlib import Path
+import sys
+spec = importlib.util.spec_from_file_location("quickcut_png_integrity", sys.argv[1])
+validator = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(validator)
+for name in (
+    "modern_dark_home_320_font160.png", "modern_dark_projects_320_font160.png",
+    "modern_dark_tools_320_font160.png", "modern_dark_settings_320_font160.png",
+    "modern_dark_crop.png", "modern_dark_audio.png", "modern_dark_text.png",
+    "modern_dark_export_dialog.png",
+):
+    dimensions = validator.verify_png(Path("quickcut-design-review") / name)
+    print("Verified Modern Edit Desk screenshot: " + name + " " + str(dimensions))
+PYMODERN
 # Stage 15: real Android save-settings screens, including unsupported capability feedback.
 for file in stage15_export_auto.png stage15_export_quality.png \
     stage15_export_unsupported.png; do

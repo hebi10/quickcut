@@ -49,6 +49,7 @@ if name == "gradle":
         "com.hebi.quickcut.media.Stage19CombinedExportInstrumentedTest",
         "com.hebi.quickcut.media.Stage20RecoveryInstrumentedTest",
         "com.hebi.quickcut.ui.ThemeModeInstrumentedTest",
+        "com.hebi.quickcut.ui.ModernEditDeskVisualQaInstrumentedTest",
     )
     for i in range(count):
         classname = required[i] if phase == "full" and i < len(required) else phase + ".Suite"
@@ -67,7 +68,7 @@ if name == "adb":
             sys.exit(43)
         if os.environ.get("STAGE7_CAPTURE_STATUS") == "1":
             sys.exit(42)
-        if any(("stage14_" in a or "stage15_" in a or "stage16_" in a or "stage17_" in a or "stage18_" in a or "theme_" in a) for a in args):
+        if any(("stage14_" in a or "stage15_" in a or "stage16_" in a or "stage17_" in a or "stage18_" in a or "theme_" in a or "modern_dark_" in a) for a in args):
             if (any(os.environ.get("STAGE"+str(i)+"_CAPTURE_STATUS") == "1" for i in (14, 15, 16, 17, 18)) or
                     (os.environ.get("STAGE1A_CAPTURE_STATUS") == "1" and any("theme_" in a for a in args))):
                 sys.stdout.buffer.write(b"cat: files/design-review/stage15_export_auto.png: No such file")
@@ -252,7 +253,11 @@ class EmulatorFlowTest(unittest.TestCase):
         proof = root / "quickcut-stage20-evidence/verified-screens-and-tests.json"
         self.assertTrue(proof.is_file())
         self.assertEqual(json.loads(proof.read_text())["androidApi"], "35")
-        for image in ("theme_light_home.png", "theme_dark_home.png",
+        for image in ("modern_dark_home_320_font160.png", "modern_dark_projects_320_font160.png",
+                      "modern_dark_tools_320_font160.png", "modern_dark_settings_320_font160.png",
+                      "modern_dark_crop.png", "modern_dark_audio.png", "modern_dark_text.png",
+                      "modern_dark_export_dialog.png",
+                      "theme_light_home.png", "theme_dark_home.png",
                       "stage7_home.png", "stage7_projects_empty.png", "stage7_onboarding.png",
                       "stage13_home_populated.png", "stage13_projects_populated.png",
                       "stage13_tools.png", "stage13_settings.png", "stage13_gallery_selected.png",

@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -437,7 +438,7 @@ private fun SegmentOverview(session: ExtractionSession, selectedId: Long) {
         Text("구간 타임라인", color = CutColors.secondaryText,
             style = MaterialTheme.typography.bodySmall)
         BoxWithConstraints(
-            Modifier.fillMaxWidth().heightIn(min = 26.dp).background(CutColors.border, CutShape)
+            Modifier.fillMaxWidth().height(26.dp).background(CutColors.border, CutShape)
         ) {
             val duration = session.durationMs.toFloat().coerceAtLeast(1f)
             session.items.forEach { item ->

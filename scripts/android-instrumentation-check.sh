@@ -143,6 +143,34 @@ for name in ("stage15_export_auto.png", "stage15_export_quality.png", "stage15_e
         raise SystemExit(f"Corrupted PNG IHDR checksum: {path}")
     print(f"Verified Stage 15 PNG: {name} ({width}x{height})")
 PYVERIFY
+# Stage 16 real crop UI renders must exist on every tested API.
+for file in stage16_crop_vertical.png stage16_crop_square.png \
+    stage16_crop_free.png stage16_crop_largefont.png; do
+  if timeout --kill-after=2s 20s adb exec-out run-as com.hebi.quickcut cat "files/design-review/$file" > "quickcut-design-review/$file" && [[ -s "quickcut-design-review/$file" ]]; then
+    echo "Stage 16 screenshot preserved: $file"
+  else
+    echo "::error::Stage 16 screenshot missing or empty: $file"
+    if [[ "$first_failure" -eq 0 ]]; then first_failure=1; fi
+  fi
+done
+run_checked "Verify Stage 16 screenshots are actual PNG images" python3 - <<'PYCROP'
+from pathlib import Path
+import struct
+import zlib
+for name in ("stage16_crop_vertical.png", "stage16_crop_square.png",
+             "stage16_crop_free.png", "stage16_crop_largefont.png"):
+    p = Path("quickcut-design-review") / name
+    data = p.read_bytes() if p.exists() else b""
+    if len(data) < 33 or data[:8] != bytes.fromhex("89504e470d0a1a0a"):
+        raise SystemExit(f"Invalid Stage16 PNG: {p}")
+    if data[12:16] != b"IHDR" or int.from_bytes(data[8:12], "big") != 13:
+        raise SystemExit(f"Missing Stage16 IHDR: {p}")
+    width, height = struct.unpack(">II", data[16:24])
+    if width < 200 or height < 200:
+        raise SystemExit(f"Bad Stage16 capture geometry: {p}")
+    if zlib.crc32(data[12:29]) & 0xffffffff != int.from_bytes(data[29:33], "big"):
+        raise SystemExit(f"Corrupt Stage16 capture header: {p}")
+PYCROP
 if [[ "$first_failure" -ne 0 ]]; then
   echo "::error::Instrumentation failed; preserving the first failure (exit $first_failure)."
   exit "$first_failure"

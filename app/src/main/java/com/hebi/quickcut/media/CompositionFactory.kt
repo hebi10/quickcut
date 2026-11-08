@@ -10,6 +10,8 @@ import androidx.media3.transformer.EditedMediaItemSequence
 import androidx.media3.transformer.Effects
 import androidx.media3.effect.Presentation
 import androidx.media3.effect.FrameDropEffect
+import androidx.media3.effect.Crop
+import com.hebi.quickcut.editor.CropGeometry
 import androidx.media3.common.Effect
 import com.hebi.quickcut.editor.EditTimeline
 import com.hebi.quickcut.editor.VideoClip
@@ -27,17 +29,29 @@ object CompositionFactory {
             )
             .build()
 
+    fun cropEffect(clip: VideoClip): Effect? = clip.crop?.let { region ->
+        val c = CropGeometry.ndc(region)
+        Crop(c[0], c[1], c[2], c[3])
+    }
+
     fun editedClip(clip: VideoClip): EditedMediaItem =
         EditedMediaItem.Builder(mediaItem(clip))
             .setDurationUs(clip.sourceDurationMs * 1_000L)
             .setRemoveAudio(clip.muted || !clip.hasAudio)
+            .apply {
+                cropEffect(clip)?.let { setEffects(Effects(emptyList(), listOf(it))) }
+            }
             .build()
 
     fun withExportQuality(timeline: EditTimeline, profile: ResolvedExportQuality): Composition {
         require(!timeline.isEmpty)
-        val effects = mutableListOf<Effect>(Presentation.createForShortSide(profile.shortSide))
-        profile.targetFps?.let { effects.add(FrameDropEffect.createDefaultFrameDropEffect(it.toFloat())) }
         val items = timeline.clips.map { clip ->
+            val effects = mutableListOf<Effect>()
+            cropEffect(clip)?.let(effects::add)
+            effects.add(Presentation.createForShortSide(profile.shortSide))
+            profile.targetFps?.let {
+                effects.add(FrameDropEffect.createDefaultFrameDropEffect(it.toFloat()))
+            }
             editedClip(clip).buildUpon()
                 .setEffects(Effects(emptyList(), effects))
                 .build()

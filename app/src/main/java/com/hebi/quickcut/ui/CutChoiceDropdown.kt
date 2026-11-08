@@ -75,7 +75,7 @@ internal fun <T> CutChoiceDropdown(
                     Text(currentLabel, style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Medium)
                 }
-                Icon(Icons.Outlined.ArrowDropDown, contentDescription = null,
+                Icon(CutIcons.DropDown, contentDescription = null,
                     modifier = Modifier.size(CutSizes.icon))
             }
         }
@@ -88,7 +88,7 @@ internal fun <T> CutChoiceDropdown(
                 DropdownMenuItem(
                     text = { Text(option.label) },
                     trailingIcon = if (option.value == selected) {
-                        { Icon(Icons.Outlined.Check, contentDescription = null, tint = palette.accent) }
+                        { Icon(CutIcons.Check, contentDescription = null, tint = palette.accent) }
                     } else null,
                     enabled = option.enabled,
                     modifier = Modifier.heightIn(min = CutSizes.touchTarget)

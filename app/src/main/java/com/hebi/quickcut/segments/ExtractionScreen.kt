@@ -1,5 +1,6 @@
 package com.hebi.quickcut.segments
 
+import com.hebi.quickcut.ui.CutIcons
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
@@ -125,7 +126,7 @@ fun ExtractionScreen(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             IconButton(onClick = onBack, enabled = !model.busy) {
-                Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "뒤로가기")
+                Icon(CutIcons.Back, contentDescription = "뒤로가기")
             }
             Column(Modifier.weight(1f)) {
                 Text("여러 구간 추출", style = MaterialTheme.typography.titleLarge,
@@ -420,7 +421,7 @@ private fun ExtractionRows(model: ExtractionViewModel) {
                         session.items.size > 1) {
                         IconButton(onClick = { model.removeSegment(item.range.id) },
                             enabled = !model.busy) {
-                            Icon(Icons.Outlined.DeleteOutline, contentDescription = "구간 ${index + 1} 제거",
+                            Icon(CutIcons.Delete, contentDescription = "구간 ${index + 1} 제거",
                                 tint = palette.secondaryText)
                         }
                     }
@@ -437,7 +438,7 @@ private fun ExtractionRows(model: ExtractionViewModel) {
                 session.items.size < ExtractionPlanner.MAX_SEGMENTS,
             modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
         ) {
-            Icon(Icons.Outlined.Add, contentDescription = null)
+            Icon(CutIcons.Add, contentDescription = null)
             Spacer(Modifier.width(8.dp))
             Text("구간 추가")
         }
@@ -496,7 +497,7 @@ private fun ExtractionThumbnail(sourceUri: String, startMs: Long) {
             Modifier.size(width = 74.dp, height = 44.dp).background(palette.border),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(Icons.Outlined.PlayArrow, contentDescription = null,
+            Icon(CutIcons.Play, contentDescription = null,
                 tint = palette.secondaryAccent)
         }
     }

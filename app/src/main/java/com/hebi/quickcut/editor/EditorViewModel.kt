@@ -17,6 +17,7 @@ import com.hebi.quickcut.media.MediaReader
 import com.hebi.quickcut.media.VideoExporter
 import com.hebi.quickcut.media.SaveDateMode
 import com.hebi.quickcut.media.ExportMode
+import com.hebi.quickcut.media.ExportQualitySettings
 import com.hebi.quickcut.media.ExportReport
 import com.hebi.quickcut.media.MediaOperationDiagnostics
 import com.hebi.quickcut.media.ExportStage
@@ -689,6 +690,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         selectedOriginalAction: OriginalAction = settings.loadOriginalAction(),
         selectedDateMode: SaveDateMode = SaveDateMode.CURRENT,
         exportMode: ExportMode = ExportMode.ALLOW_REENCODE,
+        outputQuality: ExportQualitySettings = ExportQualitySettings(),
     ) {
         if (!canStartExport) {
             reportError(if (isRecoveringExport || hasUnresolvedExport) "이전 저장 파일 확인을 먼저 완료해 주세요."
@@ -772,6 +774,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                     saveDateMode = selectedDateMode,
                     resolvedOriginalDate = originalDate,
                     exportMode = exportMode,
+                    outputQuality = outputQuality,
                     onDiagnostics = { exportDiagnostics = it },
                     onStage = { stage ->
                         if (stage != exportStage) {

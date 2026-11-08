@@ -212,7 +212,7 @@ class VideoExporter(private val context: Context) {
         val temporary = File(context.cacheDir, "quickcut_" + UUID.randomUUID().toString() + ".mp4")
         try {
             var nativeReason: FastExportReason? = null
-            onStage(ExportStage.NATIVE_PROCESSING)
+            if (outputPlan == null) onStage(ExportStage.NATIVE_PROCESSING)
             val nativeResult = if (outputPlan != null) null else try {
                     NativeSmartCutTrimmer.tryExport(context, timeline, temporary, onProgress,
                         onUnavailable = { nativeReason = it },
@@ -233,8 +233,10 @@ class VideoExporter(private val context: Context) {
                     null
                 }
             val media3Result = if (nativeResult == null) {
-                diagnostics = diagnostics.copy(smartCutReason = nativeReason ?: FastExportReason.UNKNOWN)
-                showDiagnostics()
+                if (outputPlan == null) {
+                    diagnostics = diagnostics.copy(smartCutReason = nativeReason ?: FastExportReason.UNKNOWN)
+                    showDiagnostics()
+                }
                 if (exportMode == ExportMode.FAST_ONLY) {
                     throw ReencodeRequiredException(
                         "고속 저장을 완료하지 못했습니다. 선택한 구간을 유지하며 정확한 위치로 자동 저장을 선택할 수 있습니다.")
@@ -244,9 +246,9 @@ class VideoExporter(private val context: Context) {
                         throw IOException("이전 저장 시도의 임시 파일을 정리할 수 없습니다.")
                     }
                 }
-                val optimizeTrim = timeline.clips.singleOrNull()?.let { clip ->
+                val optimizeTrim = if (outputPlan == null) timeline.clips.singleOrNull()?.let { clip ->
                     withContext(Dispatchers.IO) { ExactTrimOptimization.canOptimize(context, clip) }
-                } ?: false
+                } ?: false else false
                 onStage(ExportStage.MEDIA3_PROCESSING)
                 withContext(Dispatchers.Main.immediate) {
                     transform(timeline, temporary, onProgress, outputTimestampMs,

@@ -28,10 +28,10 @@ internal fun CompletedExportFacts(uri: String) {
     }
     val details = data ?: return
     val fps = details.frameRate?.let {
-        " · " + String.format(Locale.getDefault(), "%.1f FPS", it)
+        " · " + String.format(Locale.US, "%.1f FPS", it)
     }.orEmpty()
     val size = details.fileBytes?.let {
-        " · " + String.format(Locale.getDefault(), "%.1f MB", it / 1_048_576.0)
+        " · " + String.format(Locale.US, "%.1f MB", it / 1_048_576.0)
     }.orEmpty()
     Text(
         "실제 출력: ${details.width}×${details.height}$fps$size",

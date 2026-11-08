@@ -119,11 +119,12 @@ for file in theme_light_home.png theme_dark_home.png; do
     if [[ "$first_failure" -eq 0 ]]; then first_failure=1; fi
   fi
 done
-run_checked "Verify light/dark theme screenshots" python3 - <<'PYTHEME'
+run_checked "Verify light/dark theme screenshots" python3 - "$SCRIPT_DIR/stage20-evidence-verify.py" <<'PYTHEME'
 from pathlib import Path
 import importlib.util
+import sys
 
-spec = importlib.util.spec_from_file_location("stage20_images", "scripts/stage20-evidence-verify.py")
+spec = importlib.util.spec_from_file_location("stage20_images", sys.argv[1])
 validator = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(validator)
 for name in ("theme_light_home.png", "theme_dark_home.png"):

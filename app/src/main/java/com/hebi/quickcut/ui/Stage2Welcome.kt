@@ -41,12 +41,9 @@ import com.hebi.quickcut.R
 
 private data class WelcomePage(val title: String, val detail: String)
 
-private val filmstripLavender = ColorFilter.colorMatrix(ColorMatrix(floatArrayOf(
-    0.58f, 0.24f, 0.16f, 0f, 0f,
-    0.15f, 0.37f, 0.12f, 0f, 0f,
-    0.45f, 0.55f, 0.34f, 0f, 6f,
-    0f, 0f, 0f, 1f, 0f,
-)))
+private val filmstripNeutral = ColorFilter.colorMatrix(
+    ColorMatrix().apply { setToSaturation(0f) },
+)
 
 private val welcomePages = listOf(
     WelcomePage("빠르고 간편한\\n영상 편집", "복잡한 과정 없이\\n원하는 구간만 자르고 간단하게 편집해 보세요."),
@@ -79,7 +76,7 @@ internal fun QuickCutWelcome(onFinish: () -> Unit) {
                     Image(
                         painter = painterResource(R.drawable.quickcut_studio),
                         contentDescription = null,
-                        colorFilter = filmstripLavender,
+                        colorFilter = filmstripNeutral,
                         contentScale = ContentScale.Fit,
                         modifier = Modifier.fillMaxWidth(0.88f)
                             .height(if (compactArtwork) 122.dp else 166.dp),

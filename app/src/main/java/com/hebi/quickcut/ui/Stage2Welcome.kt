@@ -122,7 +122,7 @@ internal fun QuickCutWelcome(onFinish: () -> Unit) {
                 shape = CutShape,
             ) {
                 Text(if (index == welcomePages.lastIndex) "시작하기" else "다음",
-                    color = Color.White)
+                    color = palette.onAccent)
             }
         }
     }

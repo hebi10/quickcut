@@ -33,6 +33,7 @@ import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.CallSplit
 import androidx.compose.material.icons.outlined.ContentCut
 import androidx.compose.material.icons.outlined.Crop
+import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.PlayArrow
@@ -120,6 +121,8 @@ private val actions = listOf(
     ActionItem("move", "순서", Icons.Outlined.Reorder),
     ActionItem("mute", "음소거", Icons.Outlined.VolumeOff),
     ActionItem("crop", "비율·크롭", Icons.Outlined.Crop),
+    ActionItem("audio", "오디오", Icons.Outlined.VolumeUp),
+    ActionItem("text", "텍스트", Icons.Outlined.TextFields),
 )
 
 @OptIn(UnstableApi::class, ExperimentalApi::class)
@@ -136,6 +139,8 @@ fun EditorScreen(
     var showMove by rememberSaveable { mutableStateOf(false) }
     var showDelete by rememberSaveable { mutableStateOf(false) }
     var showCrop by rememberSaveable { mutableStateOf(false) }
+    var showAudio by rememberSaveable { mutableStateOf(false) }
+    var showText by rememberSaveable { mutableStateOf(false) }
     var isPlaying by remember { mutableStateOf(false) }
     val selectedClip = model.selectedClip
     // Keep raw drafts above adaptive layout branches. Showing the keyboard can replace the
@@ -279,10 +284,35 @@ fun EditorScreen(
             "move" -> showMove = true
             "mute" -> model.toggleMute()
             "crop" -> { preview.pause(); showCrop = true }
+            "audio" -> { preview.pause(); showAudio = true }
+            "text" -> { preview.pause(); showText = true }
         }
     }
     val onPlay: () -> Unit = {
         if (previewFailure != null) retryPreview() else preview.togglePlayback()
+    }
+
+    if (showAudio && selectedClip != null) {
+        AudioEditorScreen(
+            clip = selectedClip,
+            onApply = { audio, muted ->
+                model.applyAudioAdjustment(selectedClip.id, audio, muted)
+                showAudio = false
+            },
+            onCancel = { showAudio = false },
+        )
+        return
+    }
+    if (showText && selectedClip != null) {
+        TextEditorScreen(
+            clip = selectedClip,
+            onApply = { layers ->
+                model.applyTextLayers(selectedClip.id, layers)
+                showText = false
+            },
+            onCancel = { showText = false },
+        )
+        return
     }
 
     if (showCrop && selectedClip != null) {
@@ -718,7 +748,8 @@ private fun ToolButtons(
             }
             actions.forEach { item ->
                 val active = item.key == "trim" && showTrim
-                val enabled = selected != null && (item.key != "split" || model.canSplitSelected)
+                val enabled = selected != null && (item.key != "split" || model.canSplitSelected) &&
+                    (item.key != "audio" || selected.hasAudio)
                 Row(
                     modifier = Modifier.fillMaxWidth().heightIn(min = 54.dp)
                         .background(if (active) CutColors.accentMuted else CutColors.panel, CutShape)
@@ -762,7 +793,7 @@ private fun ToolButtons(
                 }
             }
             BoxWithConstraints(Modifier.fillMaxWidth()) {
-                val fitAllTools = maxWidth >= 440.dp && LocalDensity.current.fontScale < 1.5f
+                val fitAllTools = maxWidth >= 720.dp && LocalDensity.current.fontScale < 1.5f
                 if (fitAllTools) {
                     Row(
                         modifier = Modifier.fillMaxWidth().background(CutColors.surface)
@@ -803,7 +834,8 @@ private fun ToolTile(
     modifier: Modifier,
 ) {
     val active = item.key == "trim" && showTrim
-    val enabled = selected != null && (item.key != "split" || model.canSplitSelected)
+    val enabled = selected != null && (item.key != "split" || model.canSplitSelected) &&
+                    (item.key != "audio" || selected.hasAudio)
     Column(
         modifier = modifier.heightIn(min = 74.dp)
             .background(if (active) CutColors.accentMuted else CutColors.surface, CutShape)

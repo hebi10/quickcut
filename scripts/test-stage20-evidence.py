@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import importlib.util
+import json
+import sys
+from unittest.mock import patch
 from pathlib import Path
 import struct
 import tempfile
@@ -54,6 +57,30 @@ class Stage20EvidenceTest(unittest.TestCase):
         self.assertEqual(gate.validate_instrumentation(self.reports), len(gate.REQUIRED_TEST_CLASSES))
         self.assertEqual(gate.validate_screenshots(self.images),
                          sum(map(len, gate.SCREENSHOTS.values())))
+
+    def test_manifest_is_created_only_after_complete_evidence(self) -> None:
+        manifest = self.reports.parent / "release" / "proof.json"
+        with patch.object(sys, "argv", [
+            "stage20-evidence-verify.py", "--xml", str(self.reports),
+            "--screenshots", str(self.images), "--manifest", str(manifest),
+        ]):
+            self.assertEqual(gate.main(), 0)
+        verified = json.loads(manifest.read_text(encoding="utf-8"))
+        self.assertEqual(verified["schemaVersion"], 1)
+        self.assertEqual(len(verified["screenshots"]), 18)
+        self.assertEqual(len(verified["androidTestClasses"]), 12)
+        self.assertEqual(len(verified["screenshots"][0]["sha256"]), 64)
+
+    def test_failed_evidence_does_not_leave_a_success_manifest(self) -> None:
+        manifest = self.reports.parent / "release" / "proof.json"
+        (self.images / gate.SCREENSHOTS[14][0]).unlink()
+        with patch.object(sys, "argv", [
+            "stage20-evidence-verify.py", "--xml", str(self.reports),
+            "--screenshots", str(self.images), "--manifest", str(manifest),
+        ]):
+            with self.assertRaisesRegex(ValueError, "Missing/corrupt PNG"):
+                gate.main()
+        self.assertFalse(manifest.exists())
 
     def test_legacy_suite_count_does_not_replace_required_class_identity(self) -> None:
         self.write_xml(remove=gate.REQUIRED_TEST_CLASSES[-1])

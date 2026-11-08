@@ -111,6 +111,16 @@ for file in stage13_home_populated.png stage13_projects_populated.png stage13_to
     if [[ "$first_failure" -eq 0 ]]; then first_failure=1; fi
   fi
 done
+# Stage 14: phone, three-segment and large-font tablet screenshots from the real Android UI.
+for file in stage14_extraction_one.png stage14_extraction_three.png \
+    stage14_extraction_tablet_largefont.png; do
+  if timeout --kill-after=2s 20s adb exec-out run-as com.hebi.quickcut cat "files/design-review/$file" > "quickcut-design-review/$file" && [[ -s "quickcut-design-review/$file" ]]; then
+    echo "Stage 14 screenshot preserved: $file"
+  else
+    echo "::error::Stage 14 screenshot missing or empty: $file"
+    if [[ "$first_failure" -eq 0 ]]; then first_failure=1; fi
+  fi
+done
 if [[ "$first_failure" -ne 0 ]]; then
   echo "::error::Instrumentation failed; preserving the first failure (exit $first_failure)."
   exit "$first_failure"

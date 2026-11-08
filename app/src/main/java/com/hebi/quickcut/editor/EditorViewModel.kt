@@ -676,6 +676,17 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         selectedId?.let { moveClip(it, direction) }
     }
 
+    fun applyAudioAdjustment(id: Long, adjustment: AudioAdjustment) {
+        if (isRecoveringExport || hasUnresolvedExport || ExportWorkMonitor.isRunning) return
+        if (timeline.clipAt(id)?.hasAudio != true) return
+        val edited = runCatching { timeline.updateAudio(id, adjustment) }.getOrNull() ?: return
+        if (edited == timeline) return
+        recordChange()
+        timeline = edited
+        needsReencodeConsent = false
+        saveSessionSoon()
+    }
+
     fun toggleMute() {
         if (isRecoveringExport || hasUnresolvedExport) return
         val id = selectedId ?: return

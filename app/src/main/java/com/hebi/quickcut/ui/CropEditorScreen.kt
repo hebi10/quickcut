@@ -33,6 +33,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -58,7 +59,6 @@ import com.hebi.quickcut.editor.VideoClip
 import com.hebi.quickcut.media.MediaReader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlin.math.min
 
 internal data class CropPreviewSource(
     val width: Int,
@@ -93,7 +93,7 @@ fun CropEditorScreen(
                 require(width > 0 && height > 0)
                 CropPreviewSource(width, height,
                     MediaReader.thumbnail(context.applicationContext, Uri.parse(clip.uri), clip.startMs))
-            }.getOrNull()
+            }.getOrElse { CropPreviewSource(0, 0, null) }
         }
     }
     val regionSaver = listSaver<CropRegion, Float>(
@@ -103,6 +103,7 @@ fun CropEditorScreen(
     var region by rememberSaveable(clip.id, stateSaver = regionSaver) {
         mutableStateOf(clip.crop ?: CropRegion.FULL)
     }
+    val latestRegion by rememberUpdatedState(region)
     var preset by rememberSaveable(clip.id) {
         mutableStateOf(if (clip.crop == null) CropRatio.ORIGINAL else CropRatio.FREE)
     }
@@ -125,12 +126,16 @@ fun CropEditorScreen(
                 CircularProgressIndicator()
             }
             Text("원본 프레임 정보를 확인하고 있습니다.", color = CutColors.secondaryText)
+        } else if (source?.width == 0 || source?.height == 0) {
+            Text("영상 프레임 정보를 읽지 못했습니다. 원본 파일을 확인해 주세요.",
+                color = CutColors.error)
+            OutlinedButton(onClick = onCancel) { Text("편집 화면으로") }
         } else {
             val active = requireNotNull(source)
             BoxWithConstraints(Modifier.fillMaxWidth().height(320.dp),
                 contentAlignment = Alignment.Center) {
                 val aspect = active.width.toFloat() / active.height
-                val frameHeight = min(320.dp, maxWidth / aspect)
+                val frameHeight = minOf(320.dp, maxWidth / aspect)
                 val frameWidth = frameHeight * aspect
                 Box(
                     Modifier.size(frameWidth, frameHeight)
@@ -138,7 +143,7 @@ fun CropEditorScreen(
                         .testTag("crop-preview")
                         .pointerInput(frameWidth, frameHeight) {
                             detectTransformGestures { _, pan, zoom, _ ->
-                                val updated = region.zoom(zoom)
+                                val updated = latestRegion.zoom(zoom)
                                 region = updated.move(
                                     pan.x / size.width.coerceAtLeast(1).toFloat(),
                                     pan.y / size.height.coerceAtLeast(1).toFloat(),

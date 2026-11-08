@@ -101,11 +101,15 @@ class ExtractionViewModel(
                 }
                 val data = withContext(Dispatchers.IO) {
                     val metadata = MediaReader.metadata(context.applicationContext, uri)
-                    val name = context.contentResolver.query(
-                        uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null,
-                    )?.use { cursor ->
-                        if (cursor.moveToFirst()) cursor.getString(0) else null
-                    }?.takeIf { it.isNotBlank() } ?: "선택한 영상.mp4"
+                    val name = runCatching {
+                        context.contentResolver.query(
+                            uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null,
+                        )?.use { cursor ->
+                            if (cursor.moveToFirst()) cursor.getString(0) else null
+                        }
+                    }.getOrNull()?.takeIf { it.isNotBlank() }
+                        ?: uri.lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
+                        ?: "선택한 영상.mp4"
                     name to metadata
                 }
                 val newSession = ExtractionSession(

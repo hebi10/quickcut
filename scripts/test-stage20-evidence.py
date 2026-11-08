@@ -1,0 +1,97 @@
+#!/usr/bin/env python3
+"""Self-tests for Stage 20 release evidence enforcement (stdlib only)."""
+from __future__ import annotations
+
+import importlib.util
+from pathlib import Path
+import struct
+import tempfile
+import unittest
+from xml.etree.ElementTree import Element, ElementTree, SubElement
+import zlib
+
+HERE = Path(__file__).resolve().parent
+spec = importlib.util.spec_from_file_location("stage20_release_evidence", HERE / "stage20-evidence-verify.py")
+assert spec and spec.loader
+gate = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(gate)
+
+
+def make_png() -> bytes:
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+
+    width, height = 360, 640
+    header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    pixels = (b"\x00" + bytes(width * 3)) * height
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) +
+            chunk(b"IDAT", zlib.compress(pixels)) + chunk(b"IEND", b""))
+
+
+class Stage20EvidenceTest(unittest.TestCase):
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        self.images = root / "screenshots"
+        self.reports = root / "results"
+        self.images.mkdir()
+        self.reports.mkdir()
+        png = make_png()
+        for names in gate.SCREENSHOTS.values():
+            for name in names:
+                (self.images / name).write_bytes(png)
+        self.write_xml()
+
+    def write_xml(self, remove: str | None = None) -> None:
+        suite = Element("testsuite", tests=str(len(gate.REQUIRED_TEST_CLASSES)))
+        for i, classname in enumerate(gate.REQUIRED_TEST_CLASSES):
+            if classname != remove:
+                SubElement(suite, "testcase", classname=classname, name=f"test{i}")
+        ElementTree(suite).write(self.reports / "TEST-stage20.xml", encoding="utf-8")
+
+    def test_complete_evidence_passes(self) -> None:
+        self.assertEqual(gate.validate_instrumentation(self.reports), len(gate.REQUIRED_TEST_CLASSES))
+        self.assertEqual(gate.validate_screenshots(self.images),
+                         sum(map(len, gate.SCREENSHOTS.values())))
+
+    def test_legacy_suite_count_does_not_replace_required_class_identity(self) -> None:
+        self.write_xml(remove=gate.REQUIRED_TEST_CLASSES[-1])
+        with self.assertRaisesRegex(ValueError, "Stage20RecoveryInstrumentedTest"):
+            gate.validate_instrumentation(self.reports)
+
+    def test_missing_png_fails(self) -> None:
+        (self.images / gate.SCREENSHOTS[14][0]).unlink()
+        with self.assertRaisesRegex(ValueError, "Missing/corrupt PNG"):
+            gate.validate_screenshots(self.images)
+
+    def test_adb_error_text_cannot_count_as_screenshot(self) -> None:
+        (self.images / gate.SCREENSHOTS[17][0]).write_bytes(b"adb: device offline")
+        with self.assertRaisesRegex(ValueError, "Missing/corrupt PNG"):
+            gate.validate_screenshots(self.images)
+
+    def test_corrupt_idat_crc_fails_even_if_ihdr_is_valid(self) -> None:
+        path = self.images / gate.SCREENSHOTS[18][0]
+        image = bytearray(path.read_bytes())
+        image[-14] ^= 1
+        path.write_bytes(image)
+        with self.assertRaisesRegex(ValueError, "CRC|trailer"):
+            gate.validate_screenshots(self.images)
+
+    def test_missing_xml_results_cannot_pass(self) -> None:
+        (self.reports / "TEST-stage20.xml").unlink()
+        with self.assertRaisesRegex(ValueError, "No Android full-suite XML"):
+            gate.validate_instrumentation(self.reports)
+
+    def test_failed_suite_fails_even_if_every_class_is_present(self) -> None:
+        self.write_xml()
+        xml_path = self.reports / "TEST-stage20.xml"
+        tree = __import__("xml.etree.ElementTree", fromlist=["parse"]).parse(xml_path)
+        tree.getroot().set("failures", "1")
+        tree.write(xml_path)
+        with self.assertRaisesRegex(ValueError, "failures"):
+            gate.validate_instrumentation(self.reports)
+
+
+if __name__ == "__main__":
+    unittest.main()

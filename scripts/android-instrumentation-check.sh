@@ -111,6 +111,36 @@ for file in stage13_home_populated.png stage13_projects_populated.png stage13_to
     if [[ "$first_failure" -eq 0 ]]; then first_failure=1; fi
   fi
 done
+# Stage 17 audio controls must be real Android PNG captures, not generated mockups.
+for file in stage17_audio_default.png stage17_audio_fades.png \
+    stage17_audio_muted.png stage17_audio_largefont.png; do
+  if timeout --kill-after=2s 20s adb exec-out run-as com.hebi.quickcut cat "files/design-review/$file" > "quickcut-design-review/$file" && [[ -s "quickcut-design-review/$file" ]]; then
+    echo "Stage 17 screenshot captured: $file"
+  else
+    echo "::error::Stage 17 screenshot missing or empty: $file"
+    if [[ "$first_failure" -eq 0 ]]; then first_failure=1; fi
+  fi
+done
+run_checked "Verify Stage 17 screenshots are actual Android PNG images" python3 - <<'PYPNG'
+from pathlib import Path
+import struct
+import zlib
+names = ("stage17_audio_default.png", "stage17_audio_fades.png",
+         "stage17_audio_muted.png", "stage17_audio_largefont.png")
+for name in names:
+    p = Path("quickcut-design-review") / name
+    data = p.read_bytes() if p.exists() else b""
+    if len(data) < 50 or data[:8] != bytes.fromhex("89504e470d0a1a0a"):
+        raise SystemExit(f"Invalid Stage 17 PNG: {p}")
+    if int.from_bytes(data[8:12], "big") != 13 or data[12:16] != b"IHDR":
+        raise SystemExit(f"Missing Stage 17 PNG IHDR: {p}")
+    w, h = struct.unpack(">II", data[16:24])
+    if w < 200 or h < 200:
+        raise SystemExit(f"Invalid Stage 17 screenshot dimensions: {p} ({w}x{h})")
+    if zlib.crc32(data[12:29]) & 0xffffffff != int.from_bytes(data[29:33], "big"):
+        raise SystemExit(f"Corrupt Stage 17 PNG header: {p}")
+    print(f"Stage 17 verified: {name} ({w}x{h})")
+PYPNG
 if [[ "$first_failure" -ne 0 ]]; then
   echo "::error::Instrumentation failed; preserving the first failure (exit $first_failure)."
   exit "$first_failure"

@@ -24,6 +24,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -62,7 +63,7 @@ import kotlin.math.roundToLong
 @Composable
 fun AudioEditorScreen(
     clip: VideoClip,
-    onApply: (AudioAdjustment) -> Unit,
+    onApply: (AudioAdjustment, Boolean) -> Unit,
     onCancel: () -> Unit,
 ) {
     BackHandler(onBack = onCancel)
@@ -70,18 +71,20 @@ fun AudioEditorScreen(
     var volume by rememberSaveable(clip.id) { mutableStateOf(clip.audio.volumePercent) }
     var fadeIn by rememberSaveable(clip.id) { mutableStateOf(clip.audio.fadeInMs) }
     var fadeOut by rememberSaveable(clip.id) { mutableStateOf(clip.audio.fadeOutMs) }
+    var muted by rememberSaveable(clip.id) { mutableStateOf(clip.muted) }
     val draft = AudioAdjustment(volume, fadeIn, fadeOut).bounded(clip.durationMs)
     var previewAdjustment by remember(clip.id) { mutableStateOf(draft) }
+    var previewMuted by remember(clip.id) { mutableStateOf(muted) }
     var previewFailure by remember(clip.id) { mutableStateOf<String?>(null) }
     val player = remember(context) { CompositionPlayer.Builder(context.applicationContext).build() }
     DisposableEffect(player) { onDispose { player.release() } }
-    LaunchedEffect(clip.id, clip.uri, clip.startMs, clip.endMs, previewAdjustment) {
+    LaunchedEffect(clip.id, clip.uri, clip.startMs, clip.endMs, previewAdjustment, previewMuted) {
         if (!clip.hasAudio) return@LaunchedEffect
         val previousPosition = player.currentPosition.coerceIn(0L, clip.durationMs)
         player.pause()
         try {
             player.setComposition(
-                CompositionFactory.from(EditTimeline(listOf(clip.copy(audio = previewAdjustment)))),
+                CompositionFactory.from(EditTimeline(listOf(clip.copy(audio = previewAdjustment, muted = previewMuted)))),
                 previousPosition,
             )
             player.prepare()
@@ -90,9 +93,10 @@ fun AudioEditorScreen(
             previewFailure = error.localizedMessage ?: "미리보기 설정을 적용하지 못했습니다."
         }
     }
-    LaunchedEffect(draft) {
+    LaunchedEffect(draft, muted) {
         delay(250)
         previewAdjustment = draft
+        previewMuted = muted
     }
     val waveformResult by produceState<WaveformResult>(
         WaveformResult(loading = true),
@@ -106,7 +110,7 @@ fun AudioEditorScreen(
             ) else null,
         )
     }
-    val editable = clip.hasAudio && !clip.muted
+    val editable = clip.hasAudio && !muted
     val limitMs = minOf(clip.durationMs, 5_000L)
     val maxSeconds = (limitMs / 1_000f).coerceAtLeast(0.1f)
 
@@ -118,7 +122,7 @@ fun AudioEditorScreen(
                 Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "편집 화면으로")
             }
             Column(Modifier.weight(1f)) {
-                Text("오디오 볼륨·페이드", color = CutColors.primaryText,
+                Text("오디오 편집", color = CutColors.primaryText,
                     style = MaterialTheme.typography.titleLarge)
                 Text("현재 클립 · ${formatTime(clip.durationMs)}",
                     color = CutColors.secondaryText, style = MaterialTheme.typography.bodySmall)
@@ -176,8 +180,8 @@ fun AudioEditorScreen(
                 }
             }
 
-            if (clip.muted) {
-                Text("현재 클립이 음소거 상태입니다. 소리를 들으려면 편집 화면에서 음소거를 해제하세요.",
+            if (muted) {
+                Text("현재 클립이 음소거 상태입니다. 스위치를 끄면 소리 조절을 다시 사용할 수 있습니다.",
                     color = CutColors.secondaryText, style = MaterialTheme.typography.bodySmall)
             }
             Text("원본 음량 · ${volume}%", color = CutColors.primaryText,
@@ -193,6 +197,16 @@ fun AudioEditorScreen(
                     style = MaterialTheme.typography.labelSmall)
                 Text("100%", color = CutColors.secondaryText,
                     style = MaterialTheme.typography.labelSmall)
+            }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("음소거", color = CutColors.primaryText,
+                    style = MaterialTheme.typography.titleSmall)
+                Switch(
+                    checked = muted, onCheckedChange = { muted = it },
+                    enabled = clip.hasAudio,
+                    modifier = Modifier.testTag("audio-mute-toggle"),
+                )
             }
             Text("페이드 인 · ${formatTime(fadeIn)}", color = CutColors.primaryText,
                 style = MaterialTheme.typography.titleSmall)
@@ -224,9 +238,15 @@ fun AudioEditorScreen(
         Row(Modifier.fillMaxWidth().background(CutColors.surface).padding(12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            OutlinedButton(onClick = onCancel, modifier = Modifier.weight(1f).heightIn(min = 52.dp),
-                shape = CutShape) { Text("취소") }
-            Button(onClick = { onApply(draft) }, enabled = editable,
+            OutlinedButton(
+                onClick = {
+                    runCatching { if (player.isPlaying) player.pause() else player.play() }
+                        .onFailure { previewFailure = "소리 미리보기를 시작하지 못했습니다." }
+                }, enabled = clip.hasAudio && previewFailure == null,
+                modifier = Modifier.weight(1f).heightIn(min = 52.dp).testTag("audio-play-preview"),
+                shape = CutShape,
+            ) { Text("미리보기") }
+            Button(onClick = { onApply(draft, muted) }, enabled = clip.hasAudio,
                 modifier = Modifier.weight(1f).heightIn(min = 52.dp).testTag("audio-apply"),
                 shape = CutShape) { Text("오디오 적용") }
         }

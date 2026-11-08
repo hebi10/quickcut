@@ -31,10 +31,12 @@ data class CropRegion(
     /** scale > 1 means zooming further into the source frame. */
     fun zoom(scale: Float): CropRegion {
         if (!scale.isFinite() || scale <= 0f) return this
-        val factor = (1f / scale).coerceIn(0.05f, 20f)
-        val limited = min(factor, min(1f / width, 1f / height))
-        val newW = (width * limited).coerceAtLeast(MIN_FRACTION).coerceAtMost(1f)
-        val newH = (height * limited).coerceAtLeast(MIN_FRACTION).coerceAtMost(1f)
+        val factor = 1f / scale
+        val minimumFactor = maxOf(MIN_FRACTION / width, MIN_FRACTION / height)
+        val maximumFactor = min(1f / width, 1f / height)
+        val limited = factor.coerceIn(minimumFactor, maximumFactor)
+        val newW = width * limited
+        val newH = height * limited
         val cx = (left + right) / 2f
         val cy = (top + bottom) / 2f
         val x = (cx - newW / 2f).coerceIn(0f, 1f - newW)

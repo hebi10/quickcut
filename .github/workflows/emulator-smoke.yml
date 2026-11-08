@@ -223,6 +223,7 @@ jobs:
       - name: Launch QuickCut on API ${{ matrix.api }} emulator
         env:
           QUICKCUT_EMULATOR_API: ${{ matrix.api }}
+          QUICKCUT_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: ${{ matrix.api }}

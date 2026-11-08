@@ -9,6 +9,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import struct
 import sys
@@ -151,6 +152,15 @@ def main() -> int:
     tests = validate_instrumentation(args.xml)
     images = validate_screenshots(args.screenshots)
     if args.manifest is not None:
+        # pull_request runs test the synthetic merge ref; retain both identities.
+        source_sha = os.environ.get("QUICKCUT_SOURCE_SHA") or os.environ.get("GITHUB_SHA", "unknown")
+        tested_sha = os.environ.get("GITHUB_SHA", "unknown")
+        android_api = os.environ.get("QUICKCUT_EMULATOR_API", "unknown")
+        if os.environ.get("GITHUB_ACTIONS") == "true":
+            if not all(re.fullmatch(r"[0-9a-f]{40}", sha) for sha in (source_sha, tested_sha)):
+                raise ValueError("Missing/invalid GitHub PR source or tested checkout SHA")
+            if android_api not in {"29", "35", "36"}:
+                raise ValueError("Missing/invalid Android API in release evidence")
         snapshots = []
         for stage, filenames in SCREENSHOTS.items():
             for name in filenames:
@@ -165,8 +175,10 @@ def main() -> int:
                     "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
                 })
         manifest = {
-            "schemaVersion": 1,
-            "gitSha": os.environ.get("GITHUB_SHA", "unknown"),
+            "schemaVersion": 2,
+            "gitSha": source_sha,
+            "testedGitSha": tested_sha,
+            "androidApi": android_api,
             "androidTestClasses": list(REQUIRED_TEST_CLASSES),
             "verifiedAndroidTestClassCount": tests,
             "screenshots": snapshots,

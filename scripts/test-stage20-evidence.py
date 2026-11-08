@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import sys
 from unittest.mock import patch
 from pathlib import Path
@@ -66,10 +67,46 @@ class Stage20EvidenceTest(unittest.TestCase):
         ]):
             self.assertEqual(gate.main(), 0)
         verified = json.loads(manifest.read_text(encoding="utf-8"))
-        self.assertEqual(verified["schemaVersion"], 1)
+        self.assertEqual(verified["schemaVersion"], 2)
         self.assertEqual(len(verified["screenshots"]), 18)
         self.assertEqual(len(verified["androidTestClasses"]), 12)
         self.assertEqual(len(verified["screenshots"][0]["sha256"]), 64)
+
+    def test_ci_manifest_distinguishes_pr_head_from_tested_merge(self) -> None:
+        manifest = self.reports.parent / "release" / "proof.json"
+        source = "a" * 40
+        tested = "b" * 40
+        with patch.dict(os.environ, {
+            "GITHUB_ACTIONS": "true",
+            "QUICKCUT_SOURCE_SHA": source,
+            "GITHUB_SHA": tested,
+            "QUICKCUT_EMULATOR_API": "35",
+        }):
+            with patch.object(sys, "argv", [
+                "stage20-evidence-verify.py", "--xml", str(self.reports),
+                "--screenshots", str(self.images), "--manifest", str(manifest),
+            ]):
+                self.assertEqual(gate.main(), 0)
+        verified = json.loads(manifest.read_text(encoding="utf-8"))
+        self.assertEqual(verified["gitSha"], source)
+        self.assertEqual(verified["testedGitSha"], tested)
+        self.assertEqual(verified["androidApi"], "35")
+
+    def test_ci_refuses_unverifiable_commit_identity(self) -> None:
+        manifest = self.reports.parent / "release" / "proof.json"
+        with patch.dict(os.environ, {
+            "GITHUB_ACTIONS": "true",
+            "QUICKCUT_SOURCE_SHA": "unknown",
+            "GITHUB_SHA": "a" * 40,
+            "QUICKCUT_EMULATOR_API": "36",
+        }):
+            with patch.object(sys, "argv", [
+                "stage20-evidence-verify.py", "--xml", str(self.reports),
+                "--screenshots", str(self.images), "--manifest", str(manifest),
+            ]):
+                with self.assertRaisesRegex(ValueError, "source or tested checkout SHA"):
+                    gate.main()
+        self.assertFalse(manifest.exists())
 
     def test_failed_evidence_does_not_leave_a_success_manifest(self) -> None:
         manifest = self.reports.parent / "release" / "proof.json"

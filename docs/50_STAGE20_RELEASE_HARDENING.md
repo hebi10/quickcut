@@ -6,7 +6,7 @@
 14~19단계가 통합된 상태에서, Android 테스트가 **일부 실행되지 않았거나 캡처가 가짜인 경우**에도 CI가 통과하는 것을 차단하고, 사용자의 기존 프로젝트·원본 영상·중단 저장 기록을 보호한다.
 
 ## 실제 구현
-- `scripts/stage20-evidence-verify.py`: API별 실기기 계측 결과 XML에서 필수 Android 테스트 클래스 12종(14~20단계) 존재·성공 확인.
+- `scripts/stage20-evidence-verify.py`: API별 실기기 계측 결과 XML에서 필수 Android 테스트 클래스 12종(14~20단계) 존재·성공 확인. PR 소스 HEAD SHA와 계측에 사용한 병합 체크아웃 SHA를 별도 기록하고 API 레벨을 매니페스트에 포함한다. CI에서 SHA/API 출처가 불분명하면 릴리스 증거 생성을 거부한다.
 - 14~18단계의 실제 화면 캡처 18종을 모두 확인. PNG signature뿐 아니라 IHDR/IDAT/IEND·모든 청크 CRC·사이즈까지 검사.
 - `scripts/android-instrumentation-check.sh`: 기존 전체 계측 및 PNG 수집 이후 Stage20 검증을 필수로 실행하고 최초 실패 코드를 보존.
 - `scripts/test-emulator-flow.py`: 모의 CI에서 올바른 테스트 클래스 목록 및 실제 PNG 데이터를 만들도록 변경. 클래스 하나라도 누락되거나 adb 오류 문자를 이미지로 반환하면 CI 실패.

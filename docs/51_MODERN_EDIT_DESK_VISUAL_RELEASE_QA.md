@@ -67,6 +67,6 @@
 2. 실제 화면 캡처 320dp·일반 휴대폰·160% 글꼴·라이트/다크, 새 QA PNG 8장 무결성 및 버튼 클릭 확인.
 3. 통합된 **main** 자체에서 다시 Android full suite/실제 MP4 H264+AAC/원본 보호/프로젝트 복구/계측 XML·PNG를 검증.
 4. 512 Play 앱 아이콘과 1024×500 신규 기능 그래픽, 설명 이미지 모두 실제 새 브랜드와 일치 확인 후 최종 등록.
-5. 신규 Play 테스트 트랙 게시 여부는 별도 명시 요청 및 CI/Play Console 상태 확인. UI QA 작업만으로 게시 완료를 주장하지 않음.
+5. 현재 `play-closed-test.yml`은 **main의 Android build·emulator smoke가 동일 HEAD에서 모두 성공하면 Google Play internal 테스트 트랙 게시를 자동 시도**함. 별도 `closed` 트랙은 명시적 수동 선택이 필요. 따라서 병합 전 스토어 이미지·버전·서명 정책을 검수하고, 실제 게시 여부는 Actions 로그 및 Play Console 응답으로 확인해야 함. UI QA만으로 게시 완료를 주장하지 않음.
 
 현재 출시 판정: **NO-GO (PR Draft 및 최신 Android/실캡처 검증 미완료)**.

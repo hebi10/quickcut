@@ -61,14 +61,17 @@ class ExtractionViewModel(
         private set
     var notice by mutableStateOf<String?>(null)
         private set
+    private var journalUnreadable by mutableStateOf(false)
 
     val busy: Boolean get() = importing || recovering || inspecting || exporting
     val selected: ExtractionItem? get() = session?.items?.firstOrNull { it.range.id == selectedId }
-    val blocked: Boolean get() = session?.items?.any { it.status == ExtractionStatus.BLOCKED } == true
+    val blocked: Boolean get() = journalUnreadable ||
+        (session?.items?.any { it.status == ExtractionStatus.BLOCKED } == true)
 
     init {
         val restored = runCatching { store.load() }
         if (restored.isFailure) {
+            journalUnreadable = true
             notice = "이전 구간 기록을 읽지 못했습니다. 안전 확인 전에는 저장을 시작할 수 없습니다."
         } else {
             session = restored.getOrNull()

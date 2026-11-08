@@ -150,8 +150,8 @@ internal fun OriginalActionEnableDialog(
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val permanent =
-    val palette = LocalCutPalette.current action == OriginalAction.DELETE
+    val palette = LocalCutPalette.current
+    val permanent = action == OriginalAction.DELETE
     AlertDialog(
         modifier = Modifier.fillMaxWidth().padding(horizontal = CutSpacing.lg).widthIn(max = 480.dp),
         properties = DialogProperties(usePlatformDefaultWidth = false),
@@ -197,9 +197,9 @@ internal fun ExportModeDialog(
     onSuggestedCut: (() -> Unit)?,
     onDismiss: () -> Unit,
 ) {
+    val palette = LocalCutPalette.current
     AlertDialog(
-        
-    val palette = LocalCutPalette.currentmodifier = Modifier.fillMaxWidth().padding(horizontal = CutSpacing.lg).widthIn(max = 480.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = CutSpacing.lg).widthIn(max = 480.dp),
         properties = DialogProperties(usePlatformDefaultWidth = false),
         onDismissRequest = onDismiss,
         title = { QuickCutDialogHeading("저장 방식 선택") },
@@ -285,9 +285,9 @@ internal fun exportReportText(report: ExportReport?): String {
 
 @Composable
 internal fun ExportInspectionDialog(progress: Int? = null, onCancel: () -> Unit) {
+    val palette = LocalCutPalette.current
     AlertDialog(
-        modifier
-    val palette = LocalCutPalette.current = Modifier.fillMaxWidth().padding(horizontal = CutSpacing.lg).widthIn(max = 480.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = CutSpacing.lg).widthIn(max = 480.dp),
         properties = DialogProperties(usePlatformDefaultWidth = false),
         onDismissRequest = onCancel,
         title = { QuickCutDialogHeading("저장 방식 분석 중") },
@@ -316,9 +316,9 @@ internal fun ExportInspectionDialog(progress: Int? = null, onCancel: () -> Unit)
 
 @Composable
 internal fun ExportCancelDialog(canCancel: Boolean, onCancel: () -> Unit, onDismiss: () -> Unit) {
+    val palette = LocalCutPalette.current
     AlertDialog(
-        modifier =
-    val palette = LocalCutPalette.current Modifier.fillMaxWidth().padding(horizontal = CutSpacing.lg).widthIn(max = 480.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = CutSpacing.lg).widthIn(max = 480.dp),
         properties = DialogProperties(usePlatformDefaultWidth = false),
         onDismissRequest = onDismiss,
         title = { QuickCutDialogHeading("영상 저장을 취소할까요?") },

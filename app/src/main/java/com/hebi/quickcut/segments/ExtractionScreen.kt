@@ -267,8 +267,8 @@ fun ExtractionScreen(
 @androidx.annotation.OptIn(markerClass = [UnstableApi::class])
 @Composable
 private fun ExtractionPlayer(player: ExoPlayer) {
-    Surface(shape = CutShape, col
-    val palette = LocalCutPalette.currentor = Color.Black,
+    val palette = LocalCutPalette.current
+    Surface(shape = CutShape, color = Color.Black,
         border = BorderStroke(1.dp, palette.border)) {
         AndroidView(
             factory = { context -> PlayerView(context).apply {
@@ -284,8 +284,8 @@ private fun ExtractionPlayer(player: ExoPlayer) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ExtractionRangeEditor(model: ExtractionViewModel, selected: ExtractionItem?) {
-    val session = model.session ?: 
-    val palette = LocalCutPalette.currentreturn
+    val palette = LocalCutPalette.current
+    val session = model.session ?: return
     if (selected == null) return
     val range = selected.range
     val canEdit = !model.busy && !model.blocked &&
@@ -357,9 +357,9 @@ private fun ExtractionRangeEditor(model: ExtractionViewModel, selected: Extracti
 
 @Composable
 private fun ExtractionRows(model: ExtractionViewModel) {
+    val palette = LocalCutPalette.current
     val context = LocalContext.current
-    va
-    val palette = LocalCutPalette.currentl session = model.session ?: return
+    val session = model.session ?: return
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween) {
@@ -449,9 +449,9 @@ private fun ExtractionRows(model: ExtractionViewModel) {
 
 @Composable
 private fun SegmentOverview(session: ExtractionSession, selectedId: Long) {
+    val palette = LocalCutPalette.current
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        
-    val palette = LocalCutPalette.currentText("구간 타임라인", color = palette.secondaryText,
+        Text("구간 타임라인", color = palette.secondaryText,
             style = MaterialTheme.typography.bodySmall)
         BoxWithConstraints(
             Modifier.fillMaxWidth().height(26.dp).background(palette.border, CutShape)
@@ -477,9 +477,9 @@ private fun SegmentOverview(session: ExtractionSession, selectedId: Long) {
 
 @Composable
 private fun ExtractionThumbnail(sourceUri: String, startMs: Long) {
+    val palette = LocalCutPalette.current
     val context = LocalContext.current
-    val image by produceState<android.grap
-    val palette = LocalCutPalette.currenthics.Bitmap?>(null, sourceUri, startMs) {
+    val image by produceState<android.graphics.Bitmap?>(null, sourceUri, startMs) {
         value = withContext(Dispatchers.IO) {
             MediaReader.thumbnail(context.applicationContext, Uri.parse(sourceUri), startMs)
         }

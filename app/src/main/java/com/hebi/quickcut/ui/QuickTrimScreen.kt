@@ -360,8 +360,8 @@ fun QuickTrimScreen(
 
 @Composable
 private fun DetailedEditButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Out
-    val palette = LocalCutPalette.currentlinedButton(onClick = onClick, modifier = modifier.heightIn(min = 48.dp),
+    val palette = LocalCutPalette.current
+    OutlinedButton(onClick = onClick, modifier = modifier.heightIn(min = 48.dp),
         shape = CutShape, border = BorderStroke(1.dp, palette.border),
         colors = ButtonDefaults.outlinedButtonColors(contentColor = palette.secondaryText)) {
         Icon(Icons.Outlined.Settings, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -383,8 +383,8 @@ private fun QuickPreview(
     output: PreviewOutputState<PlayerView>,
     outputChanged: () -> Unit,
 ) {
-    Column(
-    val palette = LocalCutPalette.currentmodifier.padding(horizontal = 12.dp)) {
+    val palette = LocalCutPalette.current
+    Column(modifier.padding(horizontal = 12.dp)) {
         Box(Modifier.weight(1f).fillMaxWidth().clip(CutShape).background(Color.Black)
             .border(1.dp, palette.border, CutShape), contentAlignment = Alignment.Center) {
             key(player) {
@@ -457,8 +457,8 @@ private fun QuickTrimControls(
     onSaveOptions: () -> Unit,
     modifier: Modifier,
 ) {
-    Column(mo
-    val palette = LocalCutPalette.currentdifier.background(palette.background)) {
+    val palette = LocalCutPalette.current
+    Column(modifier.background(palette.background)) {
         Column(
             modifier = Modifier.fillMaxWidth().weight(1f)
                 .verticalScroll(rememberScrollState())
@@ -659,8 +659,8 @@ private fun TrimSecondsRow(
     onValueChange: (String) -> Unit,
     onStep: (Long) -> Unit,
 ) {
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedB
-    val palette = LocalCutPalette.currenty(4.dp)) {
+    val palette = LocalCutPalette.current
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(label, color = palette.primaryText, fontSize = 14.sp,
             modifier = Modifier.fillMaxWidth())
         Row(

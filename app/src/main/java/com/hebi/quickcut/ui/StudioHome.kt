@@ -98,8 +98,8 @@ internal fun StudioStartScreen(
     themeMode: QuickCutThemeMode = QuickCutThemeMode.SYSTEM,
     onThemeModeChange: (QuickCutThemeMode) -> Unit = {},
 ) {
-   
-    val palette = LocalCutPalette.current var selectedTab by rememberSaveable { mutableIntStateOf(0) }
+    val palette = LocalCutPalette.current
+    var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     Column(Modifier.fillMaxSize().background(palette.background)) {
         Box(Modifier.weight(1f)) {
             Column(
@@ -253,8 +253,8 @@ internal fun StudioStartScreen(
 @Composable
 private fun StudioWelcome(showArt: Boolean, onStart: () -> Unit, modifier: Modifier = Modifier,
     compactHeadline: Boolean = false) {
-    Column(modifier.fillMaxWidt
-    val palette = LocalCutPalette.currenth()
+    val palette = LocalCutPalette.current
+    Column(modifier.fillMaxWidth()
         .background(
             Brush.horizontalGradient(
                 listOf(palette.brandDeep.copy(alpha = 0.86f), palette.panel, palette.surface),
@@ -305,8 +305,8 @@ private fun StudioWelcome(showArt: Boolean, onStart: () -> Unit, modifier: Modif
 @Composable
 private fun StudioModes(onQuick: () -> Unit, onBatch: () -> Unit,
     onSelect: () -> Unit, onExtraction: () -> Unit, modifier: Modifier = Modifier) {
-    Column(modifier.fillMaxWidth(), verticalArr
-    val palette = LocalCutPalette.currentangement = Arrangement.spacedBy(10.dp)) {
+    val palette = LocalCutPalette.current
+    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text("어떤 영상을 편집할까요?", style = MaterialTheme.typography.titleMedium,
             color = palette.primaryText)
         StudioModeCard("빠른 자르기", "영상 1개 · 필요한 구간만 빠르게 남기기",
@@ -323,8 +323,8 @@ private fun StudioModes(onQuick: () -> Unit, onBatch: () -> Unit,
 @Composable
 private fun StudioModeCard(title: String, subtitle: String, icon: ImageVector,
     primary: Boolean = false, onClick: () -> Unit) {
-    val foreground = if (primary) palette.onAccen
-    val palette = LocalCutPalette.currentt else palette.primaryText
+    val palette = LocalCutPalette.current
+    val foreground = if (primary) palette.onAccent else palette.primaryText
     Surface(onClick = onClick, shape = CutShape,
         color = if (primary) palette.accent else palette.surface,
         contentColor = foreground,
@@ -355,8 +355,8 @@ private fun StudioSettings(
     onThemeModeChange: (QuickCutThemeMode) -> Unit,
     onPreferences: () -> Unit,
 ) {
-    Column(Modifier.fillMaxWidth().background(palette.surface, Cu
-    val palette = LocalCutPalette.currenttPanelShape)
+    val palette = LocalCutPalette.current
+    Column(Modifier.fillMaxWidth().background(palette.surface, CutPanelShape)
         .border(1.dp, palette.border, CutPanelShape).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text("화면 테마", color = palette.primaryText,

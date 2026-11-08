@@ -758,8 +758,8 @@ private fun LastSettingsDialog(
     onDateChange: (SaveDateMode) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val i
-    val palette = LocalCutPalette.currentnitial = remember(settings) { settings.loadQuick() }
+    val palette = LocalCutPalette.current
+    val initial = remember(settings) { settings.loadQuick() }
     var headText by remember(initial) {
         mutableStateOf((initial.leadingMs / 1_000.0).toString().removeSuffix(".0"))
     }
@@ -852,8 +852,8 @@ internal fun RestoreRecoveryDialog(
     onReconnect: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    AlertDi
-    val palette = LocalCutPalette.currentalog(
+    val palette = LocalCutPalette.current
+    AlertDialog(
         onDismissRequest = onDismiss,
         title = { QuickCutDialogHeading("이전 편집 복원") },
         text = {
@@ -906,9 +906,9 @@ internal fun CenterStatus(
     progress: Int?,
     onCancel: (() -> Unit)? = null,
 ) {
+    val palette = LocalCutPalette.current
     Column(
-     
-    val palette = LocalCutPalette.current   modifier = Modifier.fillMaxSize()
+        modifier = Modifier.fillMaxSize()
             .verticalScroll(rememberScrollState())
             .padding(horizontal = CutSpacing.xl, vertical = CutSpacing.xxl),
         verticalArrangement = Arrangement.Center,
@@ -988,9 +988,9 @@ private fun CompletedScreen(
     originalCount: Int,
     onRetryOriginalAction: () -> Unit,
 ) {
+    val palette = LocalCutPalette.current
     Column(
-        modifier = Modifi
-    val palette = LocalCutPalette.currenter.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {

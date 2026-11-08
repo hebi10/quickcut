@@ -35,8 +35,8 @@ internal fun PrivacyPolicyButton() {
 
 @Composable
 private fun PrivacyPolicyDialog(onDismiss: () -> Unit) {
- 
-    val palette = LocalCutPalette.current   val context = LocalContext.current
+    val palette = LocalCutPalette.current
+    val context = LocalContext.current
     val paragraphs = remember(context) {
         context.resources.openRawResource(R.raw.privacy_policy).bufferedReader().use {
             it.readText().split("\n\n")

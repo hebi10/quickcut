@@ -332,8 +332,8 @@ internal fun BatchReviewDialog(
     onAutomatic: () -> Unit,
     onRecommended: () -> Unit,
 ) {
-    var
-    val palette = LocalCutPalette.current choices by remember(overview) {
+    val palette = LocalCutPalette.current
+    var choices by remember(overview) {
         mutableStateOf(BatchExportChoicePolicy.defaults(overview.reviewedFiles))
     }
     val exactCount = choices.values.count { it == BatchExportChoice.EXACT }
@@ -454,8 +454,8 @@ private fun BatchReviewFile(
     choice: BatchExportChoice,
     onChoice: (BatchExportChoice) -> Unit,
 ) {
-    Column(Modifier.f
-    val palette = LocalCutPalette.currentillMaxWidth()
+    val palette = LocalCutPalette.current
+    Column(Modifier.fillMaxWidth()
         .background(palette.surface, CutPanelShape)
         .border(1.dp, palette.border, CutPanelShape).padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -498,8 +498,8 @@ private fun BatchReviewFile(
 
 @Composable
 private fun BatchHeader(onBack: () -> Unit) {
-    Row(Modifier.fillMaxWidth().heigh
-    val palette = LocalCutPalette.currenttIn(min = 64.dp).padding(vertical = 8.dp),
+    val palette = LocalCutPalette.current
+    Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
@@ -517,8 +517,8 @@ private fun BatchHeader(onBack: () -> Unit) {
 
 @Composable
 private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
-    val disabled = model.isRunning || model
-    val palette = LocalCutPalette.current.isRecovering
+    val palette = LocalCutPalette.current
+    val disabled = model.isRunning || model.isRecovering
     var showAdvanced by rememberSaveable { mutableStateOf(false) }
     var pendingOriginalAction by rememberSaveable { mutableStateOf<OriginalAction?>(null) }
     Column(
@@ -665,9 +665,9 @@ private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
 
 @Composable
 private fun PresetEditor(model: BatchViewModel, disabled: Boolean) {
+    val palette = LocalCutPalette.current
     val context = LocalContext.current
-    var showManager by rememberS
-    val palette = LocalCutPalette.currentaveable { mutableStateOf(false) }
+    var showManager by rememberSaveable { mutableStateOf(false) }
     val selected = model.templates.firstOrNull { it.id == model.selectedTemplateId }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("선택 템플릿: " + (selected?.name ?: "직접 설정"), color = palette.primaryText)
@@ -812,9 +812,9 @@ private fun BatchDurationField(
     used: Boolean,
     tag: String,
 ) {
+    val palette = LocalCutPalette.current
     val parts = BatchTimeInput.parts(value)
-    val error = if (used) BatchTimeInput.error(parts) else nu
-    val palette = LocalCutPalette.currentll
+    val error = if (used) BatchTimeInput.error(parts) else null
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(title, color = if (used) palette.primaryText else palette.secondaryText,
             fontWeight = FontWeight.Medium)
@@ -863,10 +863,10 @@ private fun BatchActions(
     inspecting: Boolean,
     onCancel: () -> Unit,
 ) {
+    val palette = LocalCutPalette.current
     Column(
         Modifier.fillMaxWidth().background(palette.surface, CutPanelShape)
-            .border(1.dp
-    val palette = LocalCutPalette.current, palette.border, CutPanelShape).padding(14.dp),
+            .border(1.dp, palette.border, CutPanelShape).padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         if (model.hasUnresolvedRecovery && !model.isRunning) {
@@ -944,11 +944,11 @@ private fun BatchActions(
 
 @Composable
 private fun BatchFileHeader(model: BatchViewModel) {
+    val palette = LocalCutPalette.current
     Row(
         Modifier.fillMaxWidth().padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
-    
-    val palette = LocalCutPalette.current    horizontalArrangement = Arrangement.spacedBy(10.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Icon(Icons.Outlined.FolderOpen, contentDescription = null,
             tint = palette.secondaryAccent, modifier = Modifier.size(22.dp))
@@ -969,10 +969,10 @@ private fun BatchFileRow(
     canRemove: Boolean,
     onRemove: (String) -> Unit,
 ) {
+    val palette = LocalCutPalette.current
     val expected = template?.plan(file.uri, file.durationMs, file.hasAudio)
     val subtitle = when {
-        file.status == BatchF
-    val palette = LocalCutPalette.currentileStatus.SAVED && file.outputExpectedDurationMs != null ->
+        file.status == BatchFileStatus.SAVED && file.outputExpectedDurationMs != null ->
             formatTime(file.durationMs) + " → " + formatTime(file.outputExpectedDurationMs)
         file.durationMs < 100 -> file.reason ?: "읽을 수 없는 영상"
         expected is BatchPlan.Skip -> expected.reason
@@ -1041,11 +1041,11 @@ private fun BatchFileRow(
 
 @Composable
 private fun BatchProgress(model: BatchViewModel) {
+    val palette = LocalCutPalette.current
     Column(
         modifier = Modifier.fillMaxWidth().padding(vertical = 14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) 
-    val palette = LocalCutPalette.current{
+    ) {
         if (model.isRecovering) Text("이전 작업과 완료 파일을 확인 중입니다.", color = palette.secondaryText)
         if (model.isRunning) Text(
             if (model.isFinalizing) "파일 등록 완료 처리 중입니다. 완료 후 다음 작업을 중단할 수 있습니다."

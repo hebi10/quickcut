@@ -604,8 +604,8 @@ private fun EditorHeader(
     canRedo: Boolean,
     canSave: Boolean,
 ) {
-    BoxWithConstraints(
-    val palette = LocalCutPalette.currentModifier.fillMaxWidth()
+    val palette = LocalCutPalette.current
+    BoxWithConstraints(Modifier.fillMaxWidth()
         .background(palette.surface)
         .padding(horizontal = CutSpacing.sm)) {
         val compactHeader = maxWidth < 500.dp ||
@@ -663,8 +663,8 @@ private fun PreviewPanel(
     modifier: Modifier,
     compact: Boolean,
 ) {
-    Column(modifier.background(
-    val palette = LocalCutPalette.currentpalette.background)) {
+    val palette = LocalCutPalette.current
+    Column(modifier.background(palette.background)) {
         Box(
             modifier = Modifier.weight(1f).fillMaxWidth()
                 .clip(CutShape).background(Color.Black)
@@ -711,8 +711,8 @@ internal fun PreviewPlaybackControls(
     onSeek: (Long) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Row(modifier.fillMaxWidth().hei
-    val palette = LocalCutPalette.currentghtIn(min = 48.dp),
+    val palette = LocalCutPalette.current
+    Row(modifier.fillMaxWidth().heightIn(min = 48.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         IconButton(onClick = onPlay, modifier = Modifier.size(48.dp)) {
@@ -742,9 +742,9 @@ private fun ToolButtons(
     vertical: Boolean,
     showTrim: Boolean,
 ) {
+    val palette = LocalCutPalette.current
     if (vertical) {
-        Column(ve
-    val palette = LocalCutPalette.currentrticalArrangement = Arrangement.spacedBy(7.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
             Text("편집 도구", color = palette.primaryText,
                 style = MaterialTheme.typography.titleMedium)
             selected?.let {
@@ -838,9 +838,9 @@ private fun ToolTile(
     showTrim: Boolean,
     modifier: Modifier,
 ) {
+    val palette = LocalCutPalette.current
     val active = item.key == "trim" && showTrim
-    val enabled = s
-    val palette = LocalCutPalette.currentelected != null && (item.key != "split" || model.canSplitSelected) &&
+    val enabled = selected != null && (item.key != "split" || model.canSplitSelected) &&
                     (item.key != "audio" || selected.hasAudio)
     Column(
         modifier = modifier.heightIn(min = 74.dp)
@@ -886,9 +886,9 @@ private fun TrimEditor(
     onValidityChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val palette = LocalCutPalette.current
     fun inputRange(start: String, end: String) {
-        val range = TrimInput.selected
-    val palette = LocalCutPalette.currentRange(start, end, clip.sourceDurationMs)
+        val range = TrimInput.selectedRange(start, end, clip.sourceDurationMs)
         onValidityChange(range != null)
         if (range == null) return
         onBeginTrim()

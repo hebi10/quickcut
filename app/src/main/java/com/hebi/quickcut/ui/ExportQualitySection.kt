@@ -169,13 +169,13 @@ private fun <T> ExportOptionRow(
 ) {
     Row(
         Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         options.forEach { option ->
             val chosen = option.value == selected
             androidx.compose.material3.Surface(
                 onClick = { onSelected(option.value) },
-                modifier = Modifier.heightIn(min = 48.dp).widthIn(min = 78.dp)
+                modifier = Modifier.heightIn(min = 48.dp).widthIn(min = 64.dp)
                     .testTag("$prefix-${option.value}")
                     .semantics { this.selected = chosen },
                 color = if (chosen) CutColors.accentMuted else CutColors.surface,
@@ -186,7 +186,8 @@ private fun <T> ExportOptionRow(
             ) {
                 Box(Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
                     contentAlignment = Alignment.Center) {
-                    Text(option.label, style = MaterialTheme.typography.bodySmall,
+                    Text(if (option.label == "자동 · 원본 기준") "자동" else option.label,
+                        style = MaterialTheme.typography.bodySmall,
                         color = if (chosen) CutColors.primaryText else CutColors.secondaryText)
                 }
             }

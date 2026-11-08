@@ -1,6 +1,14 @@
 package com.hebi.quickcut.ui
 
 import android.net.Uri
+import kotlin.math.roundToInt
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -64,56 +72,123 @@ internal fun ExportQualitySection(
         Text("내보내기 화질", color = CutColors.secondaryAccent,
             style = MaterialTheme.typography.titleMedium)
         Text(
-            "자동은 원본과 기존 고속 저장 방식을 유지합니다. 옵션을 변경하면 영상 재인코딩을 승인해야 합니다.",
+            "자동은 기존 고속 저장 방식을 유지합니다. 옵션을 변경하면 재인코딩 승인을 요청합니다.",
             color = CutColors.secondaryText,
             style = MaterialTheme.typography.bodySmall,
         )
-        CutChoiceDropdown(
-            label = "해상도",
-            selected = settings.resolution,
+        Text("해상도", style = MaterialTheme.typography.titleSmall,
+            color = CutColors.primaryText)
+        ExportOptionRow(
+            prefix = "export-quality-resolution",
             options = ExportResolution.entries.map { CutChoice(it, it.label) },
-            modifier = Modifier.testTag("export-quality-resolution"),
+            selected = settings.resolution,
             onSelected = { onChange(settings.copy(resolution = it)) },
         )
-        CutChoiceDropdown(
-            label = "FPS (초당 프레임)",
-            selected = settings.frameRate,
+        Text("FPS (초당 프레임)", style = MaterialTheme.typography.titleSmall,
+            color = CutColors.primaryText)
+        ExportOptionRow(
+            prefix = "export-quality-fps",
             options = ExportFrameRate.entries.map { CutChoice(it, it.label) },
-            modifier = Modifier.testTag("export-quality-fps"),
+            selected = settings.frameRate,
             onSelected = { onChange(settings.copy(frameRate = it)) },
         )
-        CutChoiceDropdown(
-            label = "압축 품질",
-            selected = settings.quality,
-            options = ExportQualityLevel.entries.map { CutChoice(it, it.label) },
+        Text("압축 품질: ${settings.quality.label}",
+            style = MaterialTheme.typography.titleSmall,
+            color = CutColors.primaryText)
+        androidx.compose.material3.Slider(
+            value = settings.quality.ordinal.toFloat(),
+            onValueChange = { raw ->
+                val index = raw.roundToInt().coerceIn(0, ExportQualityLevel.entries.lastIndex)
+                val next = ExportQualityLevel.entries[index]
+                if (next != settings.quality) onChange(settings.copy(quality = next))
+            },
+            valueRange = 0f..3f,
+            steps = 2,
             modifier = Modifier.testTag("export-quality-bitrate"),
-            onSelected = { onChange(settings.copy(quality = it)) },
         )
-        when {
-            settings.isAutomatic -> Text(
-                "자동: 원본 설정을 최대한 유지하고 기존 빠른 저장 여부를 검사합니다.",
-                style = MaterialTheme.typography.bodySmall, color = CutColors.secondaryText
-            )
-            evaluation == null -> Text(
-                "출력 설정과 기기 인코더 지원 여부를 확인하고 있습니다.",
-                style = MaterialTheme.typography.bodySmall, color = CutColors.secondaryText
-            )
-            evaluation.error != null -> Text(
-                evaluation.error, style = MaterialTheme.typography.bodySmall,
-                color = CutColors.error, modifier = Modifier.testTag("export-quality-unavailable")
-            )
-            evaluation.plan != null -> {
-                Text(
-                    "예상 출력: ${evaluation.plan.detail}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = CutColors.primaryText,
-                    modifier = Modifier.testTag("export-quality-estimate")
-                )
-                Text(
-                    "예상 용량은 비트레이트 기반 근삿값입니다. 실제 크기·저장 속도는 달라질 수 있습니다.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = CutColors.secondaryText
-                )
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            ExportQualityLevel.entries.forEach { option ->
+                androidx.compose.material3.TextButton(
+                    onClick = { onChange(settings.copy(quality = option)) },
+                    modifier = Modifier.testTag("export-quality-quality-${option.name}")
+                        .heightIn(min = 44.dp),
+                ) {
+                    Text(option.label,
+                        color = if (settings.quality == option) CutColors.secondaryAccent
+                            else CutColors.secondaryText,
+                        style = MaterialTheme.typography.labelSmall)
+                }
+            }
+        }
+        androidx.compose.material3.Surface(
+            shape = CutShape, color = CutColors.surface,
+            border = androidx.compose.foundation.BorderStroke(1.dp, CutColors.border),
+        ) {
+            Column(Modifier.fillMaxWidth().padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                when {
+                    settings.isAutomatic -> Text(
+                        "자동 · 원본 품질 및 기존 빠른 저장 유지",
+                        color = CutColors.primaryText,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    evaluation == null -> Text(
+                        "영상 특성과 기기 지원 여부를 확인하고 있습니다.",
+                        color = CutColors.secondaryText,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    evaluation.error != null -> Text(
+                        evaluation.error,
+                        color = CutColors.error,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.testTag("export-quality-unavailable"),
+                    )
+                    evaluation.plan != null -> {
+                        Text(
+                            "예상 출력 · ${evaluation.plan.detail}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = CutColors.primaryText,
+                            modifier = Modifier.testTag("export-quality-estimate"),
+                        )
+                        Text("예상 용량은 추정치이며 실제 결과와 차이가 날 수 있습니다.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = CutColors.secondaryText)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun <T> ExportOptionRow(
+    prefix: String,
+    options: List<CutChoice<T>>,
+    selected: T,
+    onSelected: (T) -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        options.forEach { option ->
+            val chosen = option.value == selected
+            androidx.compose.material3.Surface(
+                onClick = { onSelected(option.value) },
+                modifier = Modifier.heightIn(min = 48.dp).widthIn(min = 78.dp)
+                    .testTag("$prefix-${option.value}")
+                    .semantics { this.selected = chosen },
+                color = if (chosen) CutColors.accentMuted else CutColors.surface,
+                contentColor = if (chosen) CutColors.primaryText else CutColors.secondaryText,
+                border = androidx.compose.foundation.BorderStroke(1.dp,
+                    if (chosen) CutColors.accent else CutColors.border),
+                shape = CutShape,
+            ) {
+                Box(Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                    contentAlignment = Alignment.Center) {
+                    Text(option.label, style = MaterialTheme.typography.bodySmall,
+                        color = if (chosen) CutColors.primaryText else CutColors.secondaryText)
+                }
             }
         }
     }

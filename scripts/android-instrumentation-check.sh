@@ -111,6 +111,35 @@ for file in stage13_home_populated.png stage13_projects_populated.png stage13_to
     if [[ "$first_failure" -eq 0 ]]; then first_failure=1; fi
   fi
 done
+# Stage 18: text layer UI must be verified using screenshots from the real Android app.
+for file in stage18_text_empty.png stage18_text_selected.png \
+    stage18_text_styled.png stage18_text_largefont.png; do
+  if timeout --kill-after=2s 20s adb exec-out run-as com.hebi.quickcut cat "files/design-review/$file" > "quickcut-design-review/$file" && [[ -s "quickcut-design-review/$file" ]]; then
+    echo "Stage 18 screenshot preserved: $file"
+  else
+    echo "::error::Stage 18 screenshot missing: $file"
+    if [[ "$first_failure" -eq 0 ]]; then first_failure=1; fi
+  fi
+done
+run_checked "Verify Stage 18 screenshots are PNG images" python3 - <<'PYSTAGE18'
+from pathlib import Path
+from struct import unpack
+import zlib
+for name in ("stage18_text_empty.png", "stage18_text_selected.png",
+             "stage18_text_styled.png", "stage18_text_largefont.png"):
+    p = Path("quickcut-design-review") / name
+    data = p.read_bytes() if p.exists() else b""
+    if len(data) < 50 or data[:8] != bytes.fromhex("89504e470d0a1a0a"):
+        raise SystemExit(f"Invalid Stage 18 PNG: {p}")
+    if unpack(">I", data[8:12])[0] != 13 or data[12:16] != b"IHDR":
+        raise SystemExit(f"Invalid Stage 18 PNG IHDR: {p}")
+    w, h = unpack(">II", data[16:24])
+    if w < 200 or h < 200:
+        raise SystemExit(f"Bad Stage 18 screenshot size: {p} ({w}x{h})")
+    if unpack(">I", data[29:33])[0] != zlib.crc32(data[12:29]) & 0xffffffff:
+        raise SystemExit(f"Corrupt Stage 18 PNG: {p}")
+    print(f"Verified Stage 18 PNG: {name} {w}x{h}")
+PYSTAGE18
 if [[ "$first_failure" -ne 0 ]]; then
   echo "::error::Instrumentation failed; preserving the first failure (exit $first_failure)."
   exit "$first_failure"

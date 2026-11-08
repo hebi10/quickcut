@@ -241,7 +241,8 @@ for name in ("stage18_text_empty.png", "stage18_text_selected.png",
     print(f"Verified Stage 18 PNG: {name} {w}x{h}")
 PYSTAGE18
 run_checked "Stage 20 mandatory test and PNG evidence" python3 "$SCRIPT_DIR/stage20-evidence-verify.py" \
-  --xml "$RESULTS" --screenshots quickcut-design-review
+  --xml "$RESULTS" --screenshots quickcut-design-review \
+  --manifest quickcut-stage20-evidence/verified-screens-and-tests.json
 if [[ "$first_failure" -ne 0 ]]; then
   echo "::error::Instrumentation failed; preserving the first failure (exit $first_failure)."
   exit "$first_failure"

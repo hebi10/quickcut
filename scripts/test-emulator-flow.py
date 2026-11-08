@@ -59,7 +59,7 @@ if name == "adb":
                     (zlib.crc32(kind + data) & 0xffffffff).to_bytes(4, "big"))
             width, height = 360, 640
             header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
-            pixels = (b"\\x00" + b"\\x00\\x00\\x00" * width) * height
+            pixels = (b"\x00" + b"\x00\x00\x00" * width) * height
             sys.stdout.buffer.write(
                 bytes.fromhex("89504e470d0a1a0a") +
                 png_chunk(b"IHDR", header) +

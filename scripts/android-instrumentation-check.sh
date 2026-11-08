@@ -110,6 +110,26 @@ for file in stage7_home.png stage7_projects_empty.png stage7_onboarding.png; do
     if [[ "$first_failure" -eq 0 ]]; then first_failure=1; fi
   fi
 done
+# Stage 1-A theme evidence is rendered from real Compose UI in both selected modes.
+for file in theme_light_home.png theme_dark_home.png; do
+  if timeout --kill-after=2s 20s adb exec-out run-as com.hebi.quickcut cat "files/design-review/$file" > "quickcut-design-review/$file" && [[ -s "quickcut-design-review/$file" ]]; then
+    echo "Theme 1-A screenshot preserved: $file"
+  else
+    echo "::error::Theme 1-A screenshot missing or empty: $file"
+    if [[ "$first_failure" -eq 0 ]]; then first_failure=1; fi
+  fi
+done
+run_checked "Verify light/dark theme screenshots" python3 - <<'PYTHEME'
+from pathlib import Path
+import importlib.util
+
+spec = importlib.util.spec_from_file_location("stage20_images", "scripts/stage20-evidence-verify.py")
+validator = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(validator)
+for name in ("theme_light_home.png", "theme_dark_home.png"):
+    dimensions = validator.verify_png(Path("quickcut-design-review") / name)
+    print("Verified theme screenshot: " + name + " " + str(dimensions))
+PYTHEME
 # Stage 13 reference states are rendered from decoded local video fixtures, not demo placeholders.
 # Keep them as a separate required screenshot set without weakening the Stage 7 evidence.
 for file in stage13_home_populated.png stage13_projects_populated.png stage13_tools.png \

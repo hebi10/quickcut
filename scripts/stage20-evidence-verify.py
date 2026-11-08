@@ -29,6 +29,7 @@ REQUIRED_TEST_CLASSES = (
     "com.hebi.quickcut.ui.Stage18TextEditorScreensInstrumentedTest",
     "com.hebi.quickcut.media.Stage19CombinedExportInstrumentedTest",
     "com.hebi.quickcut.media.Stage20RecoveryInstrumentedTest",
+    "com.hebi.quickcut.ui.ThemeModeInstrumentedTest",
 )
 
 SCREENSHOTS = {

@@ -32,7 +32,8 @@ data class CropRegion(
     fun zoom(scale: Float): CropRegion {
         if (!scale.isFinite() || scale <= 0f) return this
         val factor = 1f / scale
-        val minimumFactor = maxOf(MIN_FRACTION / width, MIN_FRACTION / height)
+        val minimumFactor = maxOf((MIN_FRACTION + 0.0001f) / width,
+            (MIN_FRACTION + 0.0001f) / height)
         val maximumFactor = min(1f / width, 1f / height)
         val limited = factor.coerceIn(minimumFactor, maximumFactor)
         val newW = width * limited

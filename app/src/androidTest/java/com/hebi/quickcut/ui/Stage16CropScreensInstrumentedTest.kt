@@ -9,7 +9,7 @@ import androidx.compose.ui.test.FontScale
 import androidx.compose.ui.test.ForcedSize
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsSelected
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
@@ -67,11 +67,12 @@ class Stage16CropScreensInstrumentedTest {
     }
 
     @Test fun largeFontTabletCanReachApplyAction() {
+        var applied = false
         compose.setContent {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(860.dp, 640.dp))) {
                 DeviceConfigurationOverride(DeviceConfigurationOverride.FontScale(1.6f)) {
                     QuickCutTheme {
-                        CropEditorScreen(clip(), onApply = {}, onCancel = {})
+                        CropEditorScreen(clip(), onApply = { applied = true }, onCancel = {})
                     }
                 }
             }
@@ -79,6 +80,8 @@ class Stage16CropScreensInstrumentedTest {
         waitPreview()
         compose.onNodeWithTag("crop-apply").assertIsDisplayed()
         capture("stage16_crop_largefont.png")
+        compose.onNodeWithTag("crop-apply").performClick()
+        compose.runOnIdle { check(applied) { "Crop Apply was not reachable at 160% font scale" } }
     }
 
     private fun waitPreview() {

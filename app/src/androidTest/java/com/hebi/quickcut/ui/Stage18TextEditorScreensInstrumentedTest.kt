@@ -59,7 +59,7 @@ class Stage18TextEditorScreensInstrumentedTest {
         // reserved for the separate layout/large-font screenshot scenario below.
         compose.setContent {
             QuickCutTheme {
-                Box(Modifier.fillMaxSize().background(CutColors.background).safeDrawingPadding()) {
+                Box(Modifier.fillMaxSize().background(LocalCutPalette.current.background).safeDrawingPadding()) {
                     TextEditorScreen(clip, onApply = {}, onCancel = {})
                 }
             }
@@ -97,7 +97,7 @@ class Stage18TextEditorScreensInstrumentedTest {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(860.dp, 640.dp))) {
                 DeviceConfigurationOverride(DeviceConfigurationOverride.FontScale(1.6f)) {
                     QuickCutTheme {
-                        Box(Modifier.fillMaxSize().background(CutColors.background).safeDrawingPadding()) {
+                        Box(Modifier.fillMaxSize().background(LocalCutPalette.current.background).safeDrawingPadding()) {
                             TextEditorScreen(clip, onApply = {}, onCancel = {})
                         }
                     }

@@ -71,7 +71,7 @@ class StudioDesignInstrumentedTest {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(width.dp, height.dp))) {
                 DeviceConfigurationOverride(DeviceConfigurationOverride.FontScale(fontScale)) {
                     QuickCutTheme {
-                        Box(Modifier.fillMaxSize().background(CutColors.background)) {
+                        Box(Modifier.fillMaxSize().background(LocalCutPalette.current.background)) {
                             StudioStartScreen(
                                 onQuick = { events += "quick" },
                                 onSelect = { events += "detailed" },

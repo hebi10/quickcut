@@ -185,7 +185,7 @@ class EditorDesignInstrumentedTest {
         var detailed by mutableStateOf(false)
         compose.setContent {
             QuickCutTheme {
-                Box(Modifier.fillMaxSize().background(CutColors.background).safeDrawingPadding()) {
+                Box(Modifier.fillMaxSize().background(LocalCutPalette.current.background).safeDrawingPadding()) {
                     if (detailed) EditorScreen(editor, {}, {})
                     else QuickTrimScreen(editor, settings, {}, {
                         editor.changeQuickMode(false)
@@ -231,7 +231,7 @@ class EditorDesignInstrumentedTest {
                 DeviceConfigurationOverride.ForcedSize(DpSize(320.dp, 800.dp))
             ) {
                 QuickCutTheme {
-                    Box(Modifier.fillMaxSize().background(CutColors.background).safeDrawingPadding()) {
+                    Box(Modifier.fillMaxSize().background(LocalCutPalette.current.background).safeDrawingPadding()) {
                         EditorScreen(editor, {}, {})
                     }
                 }
@@ -252,7 +252,7 @@ class EditorDesignInstrumentedTest {
     private fun showBatch(fontScale: Float) {
         compose.setContent {
             QuickCutTheme {
-                Box(Modifier.fillMaxSize().background(CutColors.background).safeDrawingPadding()) {
+                Box(Modifier.fillMaxSize().background(LocalCutPalette.current.background).safeDrawingPadding()) {
                     DeviceConfigurationOverride(DeviceConfigurationOverride.FontScale(fontScale)) {
                         if (fontScale > 1f) {
                             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(320.dp, 800.dp))) {

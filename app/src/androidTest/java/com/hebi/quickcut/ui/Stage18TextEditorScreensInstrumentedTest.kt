@@ -16,7 +16,7 @@ import androidx.compose.ui.test.ForcedSize
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.performTouchInput
@@ -55,12 +55,12 @@ class Stage18TextEditorScreensInstrumentedTest {
 
     @Test fun textEditEmptyEntrySelectedColorAndTimingCapture() {
         val clip = VideoClip(1, Uri.fromFile(source).toString(), 3_000)
+        // Gesture tests must use the emulator's real visible window. ForcedSize is
+        // reserved for the separate layout/large-font screenshot scenario below.
         compose.setContent {
-            DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(360.dp, 640.dp))) {
-                QuickCutTheme {
-                    Box(Modifier.fillMaxSize().background(CutColors.background).safeDrawingPadding()) {
-                            TextEditorScreen(clip, onApply = {}, onCancel = {})
-                        }
+            QuickCutTheme {
+                Box(Modifier.fillMaxSize().background(CutColors.background).safeDrawingPadding()) {
+                    TextEditorScreen(clip, onApply = {}, onCancel = {})
                 }
             }
         }

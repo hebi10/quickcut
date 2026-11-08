@@ -51,6 +51,62 @@ class Stage15OutputQualityInstrumentedTest {
         }
     }
 
+    @Test fun supportedHdAndFullHdProfilesExportRealOutputResolution() = runBlocking {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val profiles = listOf(
+            "quickcut_quality_hd_720.mp4" to ExportResolution.HD_720,
+            "quickcut_quality_fullhd_1080.mp4" to ExportResolution.FULL_HD_1080,
+        )
+        for ((fixture, resolution) in profiles) {
+            val source = File(context.cacheDir, "quality_test_" + fixture)
+            instrumentation.context.assets.open(fixture).use { input ->
+                source.outputStream().use { output -> input.copyTo(output) }
+            }
+            var output: Uri? = null
+            try {
+                val sourceUri = Uri.fromFile(source)
+                val info = MediaReader.metadata(context, sourceUri)
+                val timeline = EditTimeline(listOf(
+                    VideoClip(1, sourceUri.toString(), info.durationMs, hasAudio = info.hasAudio)
+                ))
+                val settings = ExportQualitySettings(
+                    resolution = resolution, quality = ExportQualityLevel.LOW,
+                )
+                val evaluation = ExportQualityInspector.inspect(context, timeline, settings)
+                if (!evaluation.supported) {
+                    assertTrue("Unsupported hardware must provide reason",
+                        !evaluation.error.isNullOrBlank())
+                    println("Stage15 quality unsupported for ${resolution.name}: ${evaluation.error}")
+                    continue
+                }
+                val plan = requireNotNull(evaluation.plan)
+                output = VideoExporter(context).export(
+                    timeline = timeline, onProgress = {}, onFinalizing = {},
+                    exportMode = ExportMode.ALLOW_REENCODE, outputQuality = settings,
+                )
+                val resultUri = requireNotNull(output)
+                MediaReader.validateExport(context, resultUri, info.durationMs, info.hasAudio)
+                val retriever = android.media.MediaMetadataRetriever()
+                try {
+                    retriever.setDataSource(context, resultUri)
+                    val width = retriever.extractMetadata(
+                        android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)!!.toInt()
+                    val height = retriever.extractMetadata(
+                        android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)!!.toInt()
+                    assertTrue("Unexpected output short side: ${width}x${height}",
+                        kotlin.math.abs(minOf(width, height) - plan.shortSide) <= 16)
+                } finally {
+                    retriever.release()
+                }
+                assertTrue("Source MP4 should be untouched", source.isFile && source.length() > 0L)
+            } finally {
+                output?.let { context.contentResolver.delete(it, null, null) }
+                source.delete()
+            }
+        }
+    }
+
     @Test fun unsupportedUHDIsNotSilentlyConvertedToLowerResolution() = runBlocking {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext

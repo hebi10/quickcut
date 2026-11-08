@@ -69,6 +69,7 @@ import com.hebi.quickcut.editor.TextLayer
 import com.hebi.quickcut.editor.TextLayerAlignment
 import com.hebi.quickcut.editor.TextLayerColor
 import com.hebi.quickcut.editor.TextLayerPolicy
+import com.hebi.quickcut.editor.TrimInput
 import com.hebi.quickcut.editor.VideoClip
 import com.hebi.quickcut.editor.formatTime
 import com.hebi.quickcut.media.CompositionFactory
@@ -267,6 +268,15 @@ fun TextEditorScreen(
                 ) { Text("+ 텍스트 추가") }
             }
             if (current != null) {
+                var startDraft by remember(current.id, current.startMs) {
+                    mutableStateOf(TrimInput.secondsText(current.startMs))
+                }
+                var endDraft by remember(current.id, current.endMs) {
+                    mutableStateOf(TrimInput.secondsText(current.endMs))
+                }
+                val enteredRange = TrimInput.selectedRange(
+                    startDraft, endDraft, clip.durationMs,
+                )
                 HorizontalDivider(color = CutColors.border)
                 Text("텍스트 내용", color = CutColors.primaryText,
                     style = MaterialTheme.typography.titleMedium)
@@ -345,6 +355,35 @@ fun TextEditorScreen(
                     valueRange = 0f..clip.durationMs.toFloat(),
                     modifier = Modifier.testTag("text-layer-timing"),
                 )
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        value = startDraft, onValueChange = { startDraft = it.take(14) },
+                        label = { Text("시작(초)") }, singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier.weight(1f).testTag("text-start-seconds"),
+                    )
+                    OutlinedTextField(
+                        value = endDraft, onValueChange = { endDraft = it.take(14) },
+                        label = { Text("종료(초)") }, singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier.weight(1f).testTag("text-end-seconds"),
+                    )
+                }
+                OutlinedButton(
+                    enabled = enteredRange != null,
+                    onClick = {
+                        enteredRange?.let { selectedRange ->
+                            updateLayer { it.copy(
+                                startMs = selectedRange.startMs,
+                                endMs = selectedRange.endMs,
+                            ) }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                        .testTag("text-time-apply"),
+                    shape = CutShape,
+                ) { Text("표시 시간 적용") }
                 Text("텍스트는 선택한 구간에서만 표시됩니다. 미리보기 위에서 드래그해 위치를 변경할 수 있습니다.",
                     color = CutColors.secondaryText,
                     style = MaterialTheme.typography.bodySmall)

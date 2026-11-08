@@ -24,6 +24,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Icon
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -108,7 +112,8 @@ fun CropEditorScreen(
         mutableStateOf(if (clip.crop == null) CropRatio.ORIGINAL else CropRatio.FREE)
     }
 
-    Column(Modifier.fillMaxSize().background(CutColors.background).verticalScroll(rememberScrollState())
+    Column(Modifier.fillMaxSize().background(CutColors.background)) {
+      Column(Modifier.weight(1f).verticalScroll(rememberScrollState())
         .padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically) {
@@ -118,7 +123,9 @@ fun CropEditorScreen(
                 Text("선택한 클립에만 적용", color = CutColors.secondaryText,
                     style = MaterialTheme.typography.bodySmall)
             }
-            TextButton(onClick = onCancel, modifier = Modifier.heightIn(min = 48.dp)) { Text("취소") }
+            IconButton(onClick = onCancel, modifier = Modifier.size(48.dp)) {
+                Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "편집 화면으로")
+            }
         }
 
         if (source == null) {
@@ -163,6 +170,20 @@ fun CropEditorScreen(
                             drawRect(shade, Offset(0f, bottom), Size(size.width, size.height - bottom))
                             drawRect(CutColors.secondaryAccent, Offset(left, top),
                                 Size(right - left, bottom - top), style = Stroke(width = 3.dp.toPx()))
+                            for (i in 1..2) {
+                                val x = left + (right - left) * i / 3f
+                                val y = top + (bottom - top) * i / 3f
+                                drawLine(CutColors.secondaryAccent.copy(alpha = 0.55f),
+                                    Offset(x, top), Offset(x, bottom), strokeWidth = 1.dp.toPx())
+                                drawLine(CutColors.secondaryAccent.copy(alpha = 0.55f),
+                                    Offset(left, y), Offset(right, y), strokeWidth = 1.dp.toPx())
+                            }
+                            for (corner in listOf(
+                                Offset(left, top), Offset(right, top),
+                                Offset(left, bottom), Offset(right, bottom)
+                            )) {
+                                drawCircle(CutColors.primaryText, radius = 5.dp.toPx(), center = corner)
+                            }
                         }
                 ) {
                     if (active.image != null) {
@@ -240,10 +261,20 @@ fun CropEditorScreen(
             Text("크롭 적용 시 영상 재인코딩이 필요하며, 저장 전에 별도로 확인합니다.",
                 color = CutColors.secondaryText,
                 style = MaterialTheme.typography.bodySmall)
-            Button(onClick = { onApply(region.takeUnless { it.isWholeFrame }) },
-                modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp).testTag("crop-apply"),
-                shape = CutShape,
-            ) { Text("크롭 적용") }
         }
+      }
+      Row(
+          Modifier.fillMaxWidth().background(CutColors.surface).padding(12.dp),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(12.dp),
+      ) {
+          OutlinedButton(onClick = onCancel,
+              modifier = Modifier.weight(1f).heightIn(min = 52.dp),
+              shape = CutShape) { Text("취소") }
+          Button(onClick = { onApply(region.takeUnless { it.isWholeFrame }) },
+              enabled = source?.width?.let { it > 0 } == true,
+              modifier = Modifier.weight(1f).heightIn(min = 52.dp).testTag("crop-apply"),
+              shape = CutShape) { Text("크롭 적용") }
+      }
     }
 }

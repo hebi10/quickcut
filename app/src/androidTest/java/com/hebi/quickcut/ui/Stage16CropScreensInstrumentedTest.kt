@@ -77,7 +77,7 @@ class Stage16CropScreensInstrumentedTest {
             }
         }
         waitPreview()
-        compose.onNodeWithTag("crop-apply").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("crop-apply").assertIsDisplayed()
         capture("stage16_crop_largefont.png")
     }
 

@@ -34,14 +34,35 @@ def app_failed(report):
         for line in report.splitlines())
 
 
+def system_launcher_wait_target(tree):
+    # Only the OS error dialog for the emulator launcher may be acknowledged.
+    # Any QuickCut crash/ANR still fails via guard(), and an arbitrary dialog never passes.
+    nodes = list(tree.iter('node'))
+    titles = [n for n in nodes if n.get('package') == 'android' and
+              n.get('resource-id') == 'android:id/alertTitle' and
+              n.get('text') == "Pixel Launcher isn't responding"]
+    waits = [n for n in nodes if n.get('package') == 'android' and
+             n.get('resource-id') == 'android:id/aerr_wait' and
+             n.get('text') == 'Wait' and n.get('enabled') == 'true']
+    if len(titles) != 1 or len(waits) != 1:
+        return None
+    bounds = re.fullmatch(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', waits[0].get('bounds', ''))
+    if bounds is None:
+        return None
+    left, top, right, bottom = map(int, bounds.groups())
+    if not (0 <= left < right <= 10000 and 0 <= top < bottom <= 10000):
+        return None
+    return (left + right) // 2, (top + bottom) // 2
+
+
 def check_startup(directory):
     directory.mkdir(parents=True, exist_ok=True)
-    deadline = time.monotonic() + 25
+    deadline = time.monotonic() + 45
 
     def adb(args, filename=None):
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            raise StartupError('Startup foreground acquisition exceeded its 25-second bound')
+            raise StartupError('Startup foreground acquisition exceeded its 45-second bound')
         try:
             result = subprocess.run(['adb', *args], capture_output=True, text=True,
                                     timeout=min(10, remaining))
@@ -68,6 +89,7 @@ def check_startup(directory):
     guard()
     launch(1)
     relaunched = False
+    launcher_dialog_acknowledged = False
     for attempt in range(5):
         guard()
         component = resumed_component(adb(['shell', 'dumpsys', 'activity', 'activities'], 'activity.txt'))
@@ -90,6 +112,16 @@ def check_startup(directory):
                     raise StartupError('QuickCut lost foreground during UI verification')
                 print('QuickCut start screen verified')
                 return
+            # Some hosted Google APIs images boot with Pixel Launcher ANR blocking
+            # accessibility, while QuickCut is already resumed behind the dialog.
+            # Acknowledge the one specific OS dialog, then require fresh app UI proof.
+            target = system_launcher_wait_target(tree)
+            if target is not None and not launcher_dialog_acknowledged:
+                guard()
+                adb(['shell', 'input', 'tap', str(target[0]), str(target[1])],
+                    'launcher-dialog-ack.txt')
+                launcher_dialog_acknowledged = True
+                print('Acknowledged a Pixel Launcher system ANR; QuickCut UI is still unverified')
         elif component in HOME_COMPONENTS:
             if not relaunched:
                 guard()

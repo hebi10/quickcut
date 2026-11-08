@@ -49,8 +49,8 @@ if name == "adb":
             sys.exit(43)
         if os.environ.get("STAGE7_CAPTURE_STATUS") == "1":
             sys.exit(42)
-        if any(("stage15_" in a or "stage16_" in a) for a in args):
-            if os.environ.get("STAGE15_CAPTURE_STATUS") == "1" or os.environ.get("STAGE16_CAPTURE_STATUS") == "1":
+        if any(("stage15_" in a or "stage16_" in a or "stage17_" in a or "stage18_" in a) for a in args):
+            if any(os.environ.get("STAGE"+str(i)+"_CAPTURE_STATUS") == "1" for i in (15, 16, 17, 18)):
                 sys.stdout.buffer.write(b"cat: files/design-review/stage15_export_auto.png: No such file")
                 sys.exit(0)
             import struct, zlib
@@ -181,6 +181,18 @@ class EmulatorFlowTest(unittest.TestCase):
         self.assertEqual(phases, ["preflight", "full"])
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Not a PNG screenshot", result.stdout + result.stderr)
+
+    def test_stage17_non_png_evidence_is_rejected_without_weakening_suite(self):
+        result, _, _, phases = self.run_flow(STAGE17_CAPTURE_STATUS=1)
+        self.assertEqual(phases, ["preflight", "full"])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Invalid Stage 17 PNG", result.stdout + result.stderr)
+
+    def test_stage18_wrong_png_evidence_never_satisfies_image_integrity_gate(self):
+        result, _, _, phases = self.run_flow(STAGE18_CAPTURE_STATUS=1)
+        self.assertEqual(phases, ["preflight", "full"])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Invalid Stage 18 PNG", result.stdout + result.stderr)
 
     def test_stage13_capture_failure_remains_a_required_gate(self):
         result, _, _, phases = self.run_flow(STAGE13_CAPTURE_STATUS=1)

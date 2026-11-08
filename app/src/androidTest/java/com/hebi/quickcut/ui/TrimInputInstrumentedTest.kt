@@ -474,8 +474,9 @@ class TrimInputInstrumentedTest {
             }
         }
         composeRule.onNodeWithText("자르기").performClick()
-        composeRule.onAllNodes(hasSetTextAction())[0].performTextReplacement("-")
+        composeRule.onAllNodes(hasSetTextAction())[0].performClick().performTextReplacement("-")
         assertInvalidDetailedDraft()
+        composeRule.onAllNodes(hasSetTextAction())[0].assertIsFocused()
 
         // Test an actual window-height change, independently of the IME-height compensation.
         waitForKeyboard(visible = true)

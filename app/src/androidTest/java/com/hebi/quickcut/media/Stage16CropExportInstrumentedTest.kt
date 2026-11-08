@@ -67,6 +67,52 @@ class Stage16CropExportInstrumentedTest {
         }
     }
 
+    @Test fun cropAnd720pQualityShareTheSameOutputGeometry(): Unit = runBlocking {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val source = File(context.cacheDir, "stage16_crop_quality_hd.mp4")
+        instrumentation.context.assets.open("quickcut_quality_hd_720.mp4").use { input ->
+            source.outputStream().use { output -> input.copyTo(output) }
+        }
+        var output: Uri? = null
+        try {
+            val uri = Uri.fromFile(source)
+            val metadata = MediaReader.metadata(context, uri)
+            val crop = CropGeometry.centerForRatio(1280, 720, CropRatio.SQUARE)
+            val timeline = EditTimeline(listOf(VideoClip(
+                1, uri.toString(), metadata.durationMs,
+                hasAudio = metadata.hasAudio, crop = crop,
+            )))
+            val quality = ExportQualitySettings(
+                resolution = ExportResolution.HD_720, quality = ExportQualityLevel.LOW,
+            )
+            val supported = ExportQualityInspector.inspect(context, timeline, quality)
+            if (!supported.supported) {
+                assertTrue("Unsupported output must supply reason", !supported.error.isNullOrBlank())
+                return@runBlocking
+            }
+            output = VideoExporter(context).export(timeline, {}, {},
+                exportMode = ExportMode.ALLOW_REENCODE, outputQuality = quality)
+            val resultUri = requireNotNull(output)
+            MediaReader.validateExport(context, resultUri, metadata.durationMs, metadata.hasAudio)
+            val reader = MediaMetadataRetriever()
+            try {
+                reader.setDataSource(context, resultUri)
+                val w = reader.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)!!.toInt()
+                val h = reader.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)!!.toInt()
+                assertTrue("Crop + quality did not export square: ${w}x${h}",
+                    kotlin.math.abs(w - h) <= 4)
+                assertTrue("Unexpected crop+quality output resolution: ${w}x${h}",
+                    kotlin.math.abs(minOf(w, h) - 720) <= 16)
+            } finally {
+                reader.release()
+            }
+        } finally {
+            output?.let { context.contentResolver.delete(it, null, null) }
+            source.delete()
+        }
+    }
+
     @Test fun portraitRotationMetadataDoesNotBreakSquareCrop(): Unit = runBlocking {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext

@@ -174,21 +174,21 @@ fun CropEditorScreen(
                             drawRect(shade, Offset(0f, top), Size(left, bottom - top))
                             drawRect(shade, Offset(right, top), Size(size.width - right, bottom - top))
                             drawRect(shade, Offset(0f, bottom), Size(size.width, size.height - bottom))
-                            drawRect(palette.secondaryAccent, Offset(left, top),
+                            drawRect(palette.timelineMarker, Offset(left, top),
                                 Size(right - left, bottom - top), style = Stroke(width = 3.dp.toPx()))
                             for (i in 1..2) {
                                 val x = left + (right - left) * i / 3f
                                 val y = top + (bottom - top) * i / 3f
-                                drawLine(palette.secondaryAccent.copy(alpha = 0.55f),
+                                drawLine(palette.timelineMarker.copy(alpha = 0.90f),
                                     Offset(x, top), Offset(x, bottom), strokeWidth = 1.dp.toPx())
-                                drawLine(palette.secondaryAccent.copy(alpha = 0.55f),
+                                drawLine(palette.timelineMarker.copy(alpha = 0.90f),
                                     Offset(left, y), Offset(right, y), strokeWidth = 1.dp.toPx())
                             }
                             for (corner in listOf(
                                 Offset(left, top), Offset(right, top),
                                 Offset(left, bottom), Offset(right, bottom)
                             )) {
-                                drawCircle(palette.primaryText, radius = 5.dp.toPx(), center = corner)
+                                drawCircle(Color.White, radius = 5.dp.toPx(), center = corner)
                             }
                         }
                 ) {

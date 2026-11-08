@@ -83,7 +83,7 @@ object CutPalettes {
         accentMuted = Color(0xFF33373B),
         secondaryAccent = Color(0xFFD1D5D8),
         brandDeep = Color(0xFF42474D),
-        brandLight = Color(0xFF929AA0),
+        brandLight = Color(0xFF59626B),
         timelineMarker = Color(0xFFE69B77),
         success = Color(0xFF8DDAAD),
         warning = Color(0xFFF3C76C),

@@ -166,12 +166,12 @@ fun TimelineStrip(
                             .coerceIn(0f, 1f)
                         Box(
                             Modifier.offset(x = maxWidth * fraction)
-                                .width(2.dp).fillMaxHeight().background(palette.secondaryAccent),
+                                .width(2.dp).fillMaxHeight().background(palette.timelineMarker),
                         )
                     }
                     Text(
                         formatTime(clip.durationMs),
-                        color = if (selected) palette.accent else palette.primaryText,
+                        color = Color.White,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Medium,
                         modifier = Modifier.align(Alignment.BottomStart)
@@ -181,7 +181,7 @@ fun TimelineStrip(
                     if (clip.muted) {
                         Text(
                             "무음",
-                            color = palette.secondaryAccent,
+                            color = Color.White,
                             fontSize = 11.sp,
                             modifier = Modifier.align(Alignment.TopEnd)
                                 .background(Color.Black.copy(alpha = 0.82f), CutSmallShape)

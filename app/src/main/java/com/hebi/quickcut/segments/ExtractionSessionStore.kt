@@ -14,6 +14,7 @@ data class ExtractionItem(
     val status: ExtractionStatus = ExtractionStatus.WAITING,
     val outputUri: String? = null,
     val message: String? = null,
+    val reencodeNeeded: Boolean = false,
 )
 
 data class ExtractionSession(
@@ -49,6 +50,7 @@ class ExtractionSessionStore(context: Context, fileName: String = "quickcut_extr
                 status = ExtractionStatus.valueOf(item.getString("status")),
                 outputUri = item.optString("output").takeIf { it.isNotBlank() },
                 message = item.optString("message").takeIf { it.isNotBlank() },
+                reencodeNeeded = item.optBoolean("reencodeNeeded", false),
             )
         }
         return ExtractionSession(
@@ -84,6 +86,7 @@ class ExtractionSessionStore(context: Context, fileName: String = "quickcut_extr
                         put("status", item.status.name)
                         put("output", item.outputUri ?: "")
                         put("message", item.message ?: "")
+                        put("reencodeNeeded", item.reencodeNeeded)
                     })
                 }
             })

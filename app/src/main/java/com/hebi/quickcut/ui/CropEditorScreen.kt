@@ -55,6 +55,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -216,7 +218,8 @@ fun CropEditorScreen(
                             }
                         },
                         modifier = Modifier.heightIn(min = 48.dp)
-                            .testTag("crop-preset-${ratio.name}"),
+                            .testTag("crop-preset-${ratio.name}")
+                            .semantics { this.selected = preset == ratio },
                         border = androidx.compose.foundation.BorderStroke(1.dp,
                             if (preset == ratio) CutColors.accent else CutColors.border),
                         shape = CutShape,

@@ -26,6 +26,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.dp
 import com.hebi.quickcut.editor.EditTimeline
 import com.hebi.quickcut.editor.formatTime
 import com.hebi.quickcut.media.ExportFrameRate

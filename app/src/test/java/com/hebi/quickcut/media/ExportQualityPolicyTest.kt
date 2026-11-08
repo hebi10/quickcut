@@ -65,6 +65,25 @@ class ExportQualityPolicyTest {
         assertFalse(result.supported)
     }
 
+    @Test fun mixedPortraitAndLandscapeSourcesCannotSilentlyChangeFrameGeometry() {
+        val input = listOf(SourceVideoSpec(1920, 1080, 30f),
+            SourceVideoSpec(1080, 1920, 30f))
+        val result = ExportQualityPolicy.evaluate(input, 20_000,
+            ExportQualitySettings(quality = ExportQualityLevel.HIGH))
+        assertFalse(result.supported)
+        assertTrue(result.error!!.contains("방향"))
+    }
+
+    @Test fun qualityLevelsRemainDistinctAt240p() {
+        val input = listOf(SourceVideoSpec(320, 240, 30f))
+        val low = ExportQualityPolicy.evaluate(input, 20_000,
+            ExportQualitySettings(quality = ExportQualityLevel.LOW)).plan!!
+        val high = ExportQualityPolicy.evaluate(input, 20_000,
+            ExportQualitySettings(quality = ExportQualityLevel.HIGH)).plan!!
+        assertTrue(high.bitrate > low.bitrate)
+        assertTrue(high.estimatedBytes > low.estimatedBytes)
+    }
+
     @Test fun qualityAndFpsHavePredictableNonzeroEstimates() {
         val low = ExportQualityPolicy.evaluate(listOf(hd), 30_000,
             ExportQualitySettings(resolution = ExportResolution.HD_720,

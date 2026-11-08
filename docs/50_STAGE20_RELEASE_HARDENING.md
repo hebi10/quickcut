@@ -34,6 +34,6 @@
 
 ## 2026-11-08 — 실제 기기 구성 계측 및 Compose 안정화 재검증
 - API35 Android 15 Stage15 저장 옵션 검증 뒤 `ComponentActivity.onActivityPreDestroyed → androidx.compose.runtime.CompositionImpl.dispose → SlotWriter.moveSlotGapTo`에서 앱 프로세스 크래시가 발생해 릴리스 게이트 중단. 시스템 Pixel Launcher ANR과 별개로 처리한다.
-- AndroidX 공식 **stable** BOM `2026.09.00`으로 기존 Compose 구현·테스트 라이브러리만 갱신(새 의존성 없음), Stage15/Stage18 Compose 계측 rule을 v2로 변경해 표준 테스트 스케줄러 사용. 새 Android 계측 실행에서 종료·상태 무결성을 다시 확인한다.
+- Compose BOM `2026.09.00`으로 업그레이드를 시도했으나 AndroidX AAR 메타데이터의 일부 구성 요소가 `compileSdk>=37`을 요구하여 프로젝트의 `compileSdk=36`과 호환되지 않음. 기존 BOM `2026.06.01`을 그대로 유지하고 새 SDK로 무단 변경하지 않음. Stage15/Stage18의 Compose 계측 rule만 v2로 변경해 종료·상태 무결성/터치 동작을 재검증한다.
 - Stage18 실제 터치 기능 검사는 `ForcedSize(360dp×640dp)` 가상 구성 대신 에뮬레이터 실화면에서 수행하여 화면 밖 터치 위치 왜곡을 제거. 별도 860dp·160% 폰트 시안 검증은 그대로 유지한다. 텍스트 입력 생성·정확한 적용 상태 및 오류·빈 화면 캡처 차단 기준 유지.
 - **최신 CI 전수 성공 확인 이전에는 변경 완료로 기록하지 않고 PR #43 Draft 및 Play closed 게시 보류.**

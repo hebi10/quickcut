@@ -7,7 +7,6 @@ import androidx.media3.common.util.UnstableApi
 import com.hebi.quickcut.editor.AudioAdjustment
 import com.hebi.quickcut.editor.AudioEnvelope
 import com.hebi.quickcut.editor.VideoClip
-import kotlin.math.ceil
 
 /** Media3 PCM gain automation; each clip receives a separate processor instance. */
 @OptIn(UnstableApi::class)
@@ -23,11 +22,13 @@ object ClipAudioEffects {
                 if (bounded.volumePercent != 100 || sampleRate <= 0 || samplePosition < 0L) {
                     return C.TIME_UNSET
                 }
-                val firstUnity = ceil(bounded.fadeInMs.toDouble() * sampleRate / 1_000.0).toLong()
-                val lastUnity = ((durationMs - bounded.fadeOutMs).toDouble() * sampleRate / 1_000.0)
+                if (getGainFactorAtSamplePosition(samplePosition, sampleRate) != 1f) {
+                    return C.TIME_UNSET
+                }
+                if (bounded.fadeOutMs == 0L) return C.TIME_END_OF_SOURCE
+                val lastUnityInclusive = ((durationMs - bounded.fadeOutMs).toDouble() * sampleRate / 1_000.0)
                     .toLong()
-                if (samplePosition < firstUnity || samplePosition >= lastUnity) return C.TIME_UNSET
-                return if (bounded.fadeOutMs == 0L) C.TIME_END_OF_SOURCE else lastUnity
+                return maxOf(samplePosition + 1L, lastUnityInclusive + 1L)
             }
         }
     }

@@ -86,6 +86,16 @@ class Stage17AudioExportInstrumentedTest {
         }
     }
 
+    @Test fun unityGainAtCrossingFadeBoundaryNeverReturnsUnsetRange() {
+        val provider = ClipAudioEffects.gainProvider(AudioAdjustment(100, 500L, 500L), 1_000)
+        val lastFadeInSample = 24_000L
+        assertEquals(1f, provider.getGainFactorAtSamplePosition(lastFadeInSample, 48_000), 0.0001f)
+        assertTrue("Unity range must advance at least one frame",
+            provider.isUnityUntil(lastFadeInSample, 48_000) > lastFadeInSample)
+        assertTrue("After the unity sample, fading must resume",
+            provider.getGainFactorAtSamplePosition(lastFadeInSample + 1L, 48_000) < 1f)
+    }
+
     @Test fun gainProviderFollowsSamplePositionAndNeverAmplifies() {
         val settings = AudioAdjustment(40, 500L, 500L)
         val provider = ClipAudioEffects.gainProvider(settings, 2_000)

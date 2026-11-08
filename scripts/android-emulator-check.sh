@@ -74,6 +74,20 @@ ffmpeg -hide_banner -loglevel error -y \
   -metadata creation_time=2021-01-01T00:00:00Z \
   app/src/androidTest/assets/quickcut_fixture.mp4
 
+# Stage 15: independent 720p/1080p sources for actual output-resolution checks.
+ffmpeg -hide_banner -loglevel error -y \
+  -f lavfi -i testsrc2=size=1280x720:rate=15 \
+  -f lavfi -i sine=frequency=440:sample_rate=44100 \
+  -t 1.6 -threads 1 -c:v libx264 -preset ultrafast -pix_fmt yuv420p \
+  -g 30 -c:a aac -b:a 64k -shortest \
+  app/src/androidTest/assets/quickcut_quality_hd_720.mp4
+ffmpeg -hide_banner -loglevel error -y \
+  -f lavfi -i testsrc2=size=1920x1080:rate=10 \
+  -f lavfi -i sine=frequency=440:sample_rate=44100 \
+  -t 1.6 -threads 1 -c:v libx264 -preset ultrafast -pix_fmt yuv420p \
+  -g 20 -c:a aac -b:a 64k -shortest \
+  app/src/androidTest/assets/quickcut_quality_fullhd_1080.mp4
+
 # Deterministic 2-second sync boundaries: reproduce a 4-second head trim.
 ffmpeg -hide_banner -loglevel error -y \
   -f lavfi -i testsrc2=size=320x240:rate=30 \

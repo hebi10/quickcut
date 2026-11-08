@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -13,6 +14,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -47,12 +49,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -64,9 +69,12 @@ import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import com.hebi.quickcut.editor.TrimInput
+import com.hebi.quickcut.media.MediaReader
 import com.hebi.quickcut.editor.formatTime
 import com.hebi.quickcut.ui.CutColors
 import com.hebi.quickcut.ui.CutShape
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -366,8 +374,7 @@ private fun ExtractionRows(model: ExtractionViewModel) {
                 Row(Modifier.fillMaxWidth().padding(12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Icon(Icons.Outlined.PlayArrow, contentDescription = null,
-                        tint = CutColors.secondaryAccent)
+                    ExtractionThumbnail(session.sourceUri, item.range.startMs)
                     Column(Modifier.weight(1f)) {
                         Text("구간 ${index + 1} · ${formatTime(item.range.startMs)}–${formatTime(item.range.endMs)}",
                             color = CutColors.primaryText, fontWeight = FontWeight.SemiBold)
@@ -456,5 +463,31 @@ private fun SegmentOverview(session: ExtractionSession, selectedId: Long) {
         Text("보라색: 현재 선택 구간 · 다른 구간과 겹쳐도 별도 파일로 저장",
             color = CutColors.secondaryText,
             style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+@Composable
+private fun ExtractionThumbnail(sourceUri: String, startMs: Long) {
+    val context = LocalContext.current
+    val image by produceState<android.graphics.Bitmap?>(null, sourceUri, startMs) {
+        value = withContext(Dispatchers.IO) {
+            MediaReader.thumbnail(context.applicationContext, Uri.parse(sourceUri), startMs)
+        }
+    }
+    if (image != null) {
+        Image(
+            bitmap = requireNotNull(image).asImageBitmap(),
+            contentDescription = "구간 시작 장면 미리보기",
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.size(width = 74.dp, height = 44.dp),
+        )
+    } else {
+        Box(
+            Modifier.size(width = 74.dp, height = 44.dp).background(CutColors.border),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(Icons.Outlined.PlayArrow, contentDescription = null,
+                tint = CutColors.secondaryAccent)
+        }
     }
 }

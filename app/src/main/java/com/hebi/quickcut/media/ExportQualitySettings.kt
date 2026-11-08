@@ -78,6 +78,10 @@ object ExportQualityPolicy {
         )
         val first = sources.first()
         val referenceRatio = first.longSide.toDouble() / first.shortSide
+        val firstPortrait = first.height > first.width
+        if (sources.any { (it.height > it.width) != firstPortrait }) {
+            return QualityEvaluation(error = "영상 방향이 다른 클립은 개별 저장해 주세요.")
+        }
         if (sources.any {
                 kotlin.math.abs(it.longSide.toDouble() / it.shortSide - referenceRatio) > 0.02
             }) return QualityEvaluation(error = "화면 비율이 다른 영상은 먼저 개별 저장해 주세요.")
@@ -102,7 +106,7 @@ object ExportQualityPolicy {
             .minOrNull()?.toDouble() ?: 30.0
         val scaledBitrate = 8_000_000.0 * (width.toDouble() * height / (1920 * 1080)) *
             (fpsForBitrate / 30.0) * quality.quality.multiplier
-        val bitrate = scaledBitrate.toLong().coerceIn(1_000_000L, 80_000_000L).toInt()
+        val bitrate = scaledBitrate.toLong().coerceIn(250_000L, 80_000_000L).toInt()
         val audioBits = 160_000L
         val estimatedBytes = ((bitrate.toLong() + audioBits) * durationMs / 8_000L * 1.2)
             .toLong().coerceAtLeast(1_048_576L)

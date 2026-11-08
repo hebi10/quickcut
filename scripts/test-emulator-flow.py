@@ -49,8 +49,8 @@ if name == "adb":
             sys.exit(43)
         if os.environ.get("STAGE7_CAPTURE_STATUS") == "1":
             sys.exit(42)
-        if any("stage15_" in a for a in args):
-            if os.environ.get("STAGE15_CAPTURE_STATUS") == "1":
+        if any(("stage15_" in a or "stage16_" in a) for a in args):
+            if os.environ.get("STAGE15_CAPTURE_STATUS") == "1" or os.environ.get("STAGE16_CAPTURE_STATUS") == "1":
                 sys.stdout.buffer.write(b"cat: files/design-review/stage15_export_auto.png: No such file")
                 sys.exit(0)
             import struct, zlib
@@ -169,6 +169,12 @@ class EmulatorFlowTest(unittest.TestCase):
         timed = [e[1:3] for e in events if e[0] == "timeout" and len(e) > 3 and e[3] == "gradle"]
         self.assertEqual(timed, [["--kill-after=30s", "10m"], ["--kill-after=30s", "30m"]])
         self.assertIn("152 distinct tests", result.stdout)
+
+    def test_stage16_non_png_error_text_does_not_pass_image_integrity_gate(self):
+        result, _, _, phases = self.run_flow(STAGE16_CAPTURE_STATUS=1)
+        self.assertEqual(phases, ["preflight", "full"])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Invalid Stage16 PNG", result.stdout + result.stderr)
 
     def test_stage15_non_png_error_text_does_not_pass_image_integrity_gate(self):
         result, _, _, phases = self.run_flow(STAGE15_CAPTURE_STATUS=1)

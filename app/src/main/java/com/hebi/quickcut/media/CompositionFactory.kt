@@ -7,6 +7,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.transformer.Composition
 import androidx.media3.transformer.EditedMediaItem
 import androidx.media3.transformer.EditedMediaItemSequence
+import androidx.media3.transformer.Effects
 import com.hebi.quickcut.editor.EditTimeline
 import com.hebi.quickcut.editor.VideoClip
 
@@ -27,6 +28,10 @@ object CompositionFactory {
         EditedMediaItem.Builder(mediaItem(clip))
             .setDurationUs(clip.sourceDurationMs * 1_000L)
             .setRemoveAudio(clip.muted || !clip.hasAudio)
+            .apply {
+                val processors = ClipAudioEffects.processors(clip)
+                if (processors.isNotEmpty()) setEffects(Effects(processors, emptyList()))
+            }
             .build()
 
     fun from(timeline: EditTimeline): Composition {

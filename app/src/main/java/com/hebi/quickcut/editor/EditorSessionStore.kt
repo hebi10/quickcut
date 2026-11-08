@@ -34,6 +34,13 @@ class EditorSessionStore(context: Context, preferencesName: String = "quickcut_e
                     endMs = clip.getLong("end"),
                     muted = clip.optBoolean("muted", false),
                     hasAudio = clip.optBoolean("hasAudio", true),
+                    audio = clip.optJSONObject("audio")?.let { item ->
+                        AudioAdjustment(
+                            volumePercent = item.optInt("volumePercent", 100),
+                            fadeInMs = item.optLong("fadeInMs", 0L),
+                            fadeOutMs = item.optLong("fadeOutMs", 0L),
+                        )
+                    } ?: AudioAdjustment.DEFAULT,
                     preciseRange = if (clip.isNull("preciseStartUs") && clip.isNull("preciseEndUs")) null
                         else PreciseClipRange(clip.getLong("preciseStartUs"), clip.getLong("preciseEndUs")),
                 )
@@ -64,12 +71,17 @@ class EditorSessionStore(context: Context, preferencesName: String = "quickcut_e
                 put("end", it.endMs)
                 put("muted", it.muted)
                 put("hasAudio", it.hasAudio)
+                put("audio", JSONObject().apply {
+                    put("volumePercent", it.audio.volumePercent)
+                    put("fadeInMs", it.audio.fadeInMs)
+                    put("fadeOutMs", it.audio.fadeOutMs)
+                })
                 put("preciseStartUs", it.preciseRange?.startUs ?: JSONObject.NULL)
                 put("preciseEndUs", it.preciseRange?.endUs ?: JSONObject.NULL)
             })
         }
         val data = JSONObject().apply {
-            put("schemaVersion", 2)
+            put("schemaVersion", 3)
             put("clips", array)
             put("selectedId", snapshot.selectedId ?: JSONObject.NULL)
             put("positionMs", snapshot.playPositionMs)

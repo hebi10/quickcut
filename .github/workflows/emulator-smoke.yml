@@ -319,6 +319,13 @@ jobs:
             quickcut-fast-review.png
             quickcut-design-review/
           if-no-files-found: ignore
+      - name: Upload Stage 20 verified screen and test manifest
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quickcut-stage20-evidence-api-${{ matrix.api }}
+          path: quickcut-stage20-evidence/verified-screens-and-tests.json
+          if-no-files-found: warn
       - name: Upload instrumentation test results
         if: always()
         uses: actions/upload-artifact@v4

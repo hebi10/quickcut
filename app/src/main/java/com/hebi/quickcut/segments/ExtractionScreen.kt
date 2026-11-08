@@ -141,11 +141,12 @@ fun ExtractionScreen(
                 Column(Modifier.fillMaxWidth().padding(24.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                     horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("추출할 영상이 없습니다.", color = CutColors.primaryText)
+                    Text(if (model.blocked) "이전 구간 저장 기록을 확인할 수 없습니다." else "추출할 영상이 없습니다.",
+                        color = if (model.blocked) CutColors.error else CutColors.primaryText)
                     Text("영상을 하나 선택하면 구간을 추가할 수 있습니다.",
                         color = CutColors.secondaryText,
                         style = MaterialTheme.typography.bodySmall)
-                    Button(onClick = onSelectVideo, enabled = !model.importing) {
+                    Button(onClick = onSelectVideo, enabled = !model.importing && !model.blocked) {
                         Text("영상 선택")
                     }
                 }

@@ -40,6 +40,31 @@ class EditorSessionStore(context: Context, preferencesName: String = "quickcut_e
                             it.getDouble("right").toFloat(), it.getDouble("bottom").toFloat(),
                         )
                     },
+                    audio = clip.optJSONObject("audio")?.let { entry ->
+                        AudioAdjustment(
+                            volumePercent = entry.optInt("volumePercent", 100),
+                            fadeInMs = entry.optLong("fadeInMs", 0L),
+                            fadeOutMs = entry.optLong("fadeOutMs", 0L),
+                        )
+                    } ?: AudioAdjustment.DEFAULT,
+                    textLayers = clip.optJSONArray("textLayers")?.let { arr ->
+                        (0 until arr.length()).map { i ->
+                            val entry = arr.getJSONObject(i)
+                            TextLayer(
+                                id = entry.getLong("id"),
+                                text = entry.getString("text"),
+                                startMs = entry.getLong("startMs"),
+                                endMs = entry.getLong("endMs"),
+                                x = entry.optDouble("x", 0.5).toFloat(),
+                                y = entry.optDouble("y", 0.78).toFloat(),
+                                size = entry.optInt("size", 100),
+                                color = TextLayerColor.valueOf(entry.optString("color", "WHITE")),
+                                alignment = TextLayerAlignment.valueOf(entry.optString("alignment", "CENTER")),
+                                darkBackground = entry.optBoolean("darkBackground", false),
+                            )
+                        }.also { TextLayerPolicy.validate(it,
+                            clip.getLong("end") - clip.getLong("start")) }
+                    } ?: emptyList(),
                     preciseRange = if (clip.isNull("preciseStartUs") && clip.isNull("preciseEndUs")) null
                         else PreciseClipRange(clip.getLong("preciseStartUs"), clip.getLong("preciseEndUs")),
                 )
@@ -78,10 +103,31 @@ class EditorSessionStore(context: Context, preferencesName: String = "quickcut_e
                     put("right", region.right.toDouble())
                     put("bottom", region.bottom.toDouble())
                 } } ?: JSONObject.NULL)
+                put("audio", JSONObject().apply {
+                    put("volumePercent", it.audio.volumePercent)
+                    put("fadeInMs", it.audio.fadeInMs)
+                    put("fadeOutMs", it.audio.fadeOutMs)
+                })
+                put("textLayers", JSONArray().apply {
+                    it.textLayers.forEach { layer ->
+                        put(JSONObject().apply {
+                            put("id", layer.id)
+                            put("text", layer.text)
+                            put("startMs", layer.startMs)
+                            put("endMs", layer.endMs)
+                            put("x", layer.x.toDouble())
+                            put("y", layer.y.toDouble())
+                            put("size", layer.size)
+                            put("color", layer.color.name)
+                            put("alignment", layer.alignment.name)
+                            put("darkBackground", layer.darkBackground)
+                        })
+                    }
+                })
             })
         }
         val data = JSONObject().apply {
-            put("schemaVersion", 3)
+            put("schemaVersion", 5)
             put("clips", array)
             put("selectedId", snapshot.selectedId ?: JSONObject.NULL)
             put("positionMs", snapshot.playPositionMs)

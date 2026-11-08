@@ -21,6 +21,8 @@ data class VideoClip(
     val hasAudio: Boolean = true,
     val preciseRange: PreciseClipRange? = null,
     val crop: CropRegion? = null,
+    val audio: AudioAdjustment = AudioAdjustment.DEFAULT,
+    val textLayers: List<TextLayer> = emptyList(),
 ) {
     init {
         require(sourceDurationMs > 0L) { "영상 길이는 0보다 커야 합니다." }
@@ -43,7 +45,12 @@ data class VideoClip(
         require(startUs >= 0L && endUs > startUs && ceilMilliseconds(endUs) <= sourceDurationMs)
         return copy(startMs = startUs / 1_000L, endMs = ceilMilliseconds(endUs),
             preciseRange = if (startUs % 1_000L == 0L && endUs % 1_000L == 0L) null
-                else PreciseClipRange(startUs, endUs))
+                else PreciseClipRange(startUs, endUs),
+            audio = audio.bounded(ceilMilliseconds(endUs - startUs)),
+            textLayers = TextLayerPolicy.reframe(
+                textLayers, (startUs - this.startUs) / 1_000L,
+                ceilMilliseconds(endUs - startUs),
+            ))
     }
 }
 
@@ -65,7 +72,11 @@ data class EditTimeline(val clips: List<VideoClip> = emptyList()) {
         val clip = clips.first { it.id == id }
         require(startMs >= 0 && endMs <= clip.sourceDurationMs && endMs - startMs >= MIN_CLIP_MS)
         return copy(clips = clips.map {
-            if (it.id == id) it.copy(startMs = startMs, endMs = endMs, preciseRange = null) else it
+            if (it.id == id) it.copy(startMs = startMs, endMs = endMs,
+                preciseRange = null, audio = it.audio.bounded(endMs - startMs),
+                textLayers = TextLayerPolicy.reframe(
+                    it.textLayers, startMs - it.startMs, endMs - startMs,
+                )) else it
         })
     }
 
@@ -100,6 +111,20 @@ data class EditTimeline(val clips: List<VideoClip> = emptyList()) {
 
     fun toggleMute(id: Long): EditTimeline =
         copy(clips = clips.map { if (it.id == id) it.copy(muted = !it.muted) else it })
+
+    fun updateAudio(id: Long, adjustment: AudioAdjustment): EditTimeline {
+        val clip = clips.first { it.id == id }
+        require(clip.hasAudio) { "오디오가 없는 클립은 음량 조절할 수 없습니다." }
+        return copy(clips = clips.map { if (it.id == id)
+            it.copy(audio = adjustment.bounded(it.durationMs)) else it })
+    }
+
+    fun updateTextLayers(id: Long, layers: List<TextLayer>): EditTimeline {
+        val clip = clips.first { it.id == id }
+        TextLayerPolicy.validate(layers, clip.durationMs)
+        return copy(clips = clips.map { if (it.id == id)
+            it.copy(textLayers = layers) else it })
+    }
 
     fun updateCrop(id: Long, crop: CropRegion?): EditTimeline {
         require(clips.any { it.id == id }) { "클립을 찾지 못했습니다." }

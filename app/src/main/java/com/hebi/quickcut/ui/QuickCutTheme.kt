@@ -166,28 +166,28 @@ object CutSpacing {
 object CutSizes {
     val touchTarget = 48.dp
     val appBar = 56.dp
-    val primaryButton = 52.dp
+    val primaryButton = 56.dp
     val icon = 24.dp
 }
 
-val CutShape = RoundedCornerShape(14.dp)
-val CutPanelShape = RoundedCornerShape(20.dp)
-val CutDialogShape = RoundedCornerShape(16.dp)
-val CutSmallShape = RoundedCornerShape(10.dp)
+val CutShape = RoundedCornerShape(8.dp)
+val CutPanelShape = RoundedCornerShape(12.dp)
+val CutDialogShape = RoundedCornerShape(12.dp)
+val CutSmallShape = RoundedCornerShape(6.dp)
 
 private val cutShapes = Shapes(
     extraSmall = CutSmallShape,
     small = CutShape,
     medium = CutShape,
     large = CutPanelShape,
-    extraLarge = RoundedCornerShape(24.dp),
+    extraLarge = RoundedCornerShape(16.dp),
 )
 
 private val cutTypography = Typography(
-    headlineLarge = TextStyle(fontWeight = FontWeight.Bold, fontSize = 30.sp, lineHeight = 38.sp),
-    headlineMedium = TextStyle(fontWeight = FontWeight.Bold, fontSize = 26.sp, lineHeight = 34.sp),
-    headlineSmall = TextStyle(fontWeight = FontWeight.SemiBold, fontSize = 23.sp, lineHeight = 31.sp),
-    titleLarge = TextStyle(fontWeight = FontWeight.SemiBold, fontSize = 21.sp, lineHeight = 29.sp),
+    headlineLarge = TextStyle(fontWeight = FontWeight.Bold, fontSize = 28.sp, lineHeight = 36.sp),
+    headlineMedium = TextStyle(fontWeight = FontWeight.Bold, fontSize = 24.sp, lineHeight = 32.sp),
+    headlineSmall = TextStyle(fontWeight = FontWeight.SemiBold, fontSize = 20.sp, lineHeight = 28.sp),
+    titleLarge = TextStyle(fontWeight = FontWeight.SemiBold, fontSize = 20.sp, lineHeight = 28.sp),
     titleMedium = TextStyle(fontWeight = FontWeight.SemiBold, fontSize = 16.sp, lineHeight = 24.sp),
     titleSmall = TextStyle(fontWeight = FontWeight.SemiBold, fontSize = 14.sp, lineHeight = 21.sp),
     bodyLarge = TextStyle(fontSize = 16.sp, lineHeight = 25.sp),

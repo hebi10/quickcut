@@ -133,11 +133,11 @@ internal fun SaveOptionsDialog(
         confirmButton = {
             Button(onClick = onSave, enabled = canSave &&
                 (outputQuality.isAutomatic || qualityEvaluation?.plan != null), shape = CutShape,
-                modifier = Modifier.heightIn(min = 52.dp)) { Text("저장 시작") }
+                modifier = Modifier.heightIn(min = CutSizes.primaryButton)) { Text("저장 시작") }
         },
         dismissButton = {
             TextButton(onClick = onDismiss, shape = CutShape,
-                modifier = Modifier.heightIn(min = 48.dp)) { Text("취소") }
+                modifier = Modifier.heightIn(min = CutSizes.touchTarget)) { Text("취소") }
         },
         containerColor = palette.panel,
         shape = CutDialogShape,
@@ -180,9 +180,9 @@ internal fun OriginalActionEnableDialog(
             }
         },
         confirmButton = { Button(onClick = onConfirm, shape = CutShape,
-            modifier = Modifier.heightIn(min = 48.dp)) { Text("활성화") } },
+            modifier = Modifier.heightIn(min = CutSizes.touchTarget)) { Text("활성화") } },
         dismissButton = { TextButton(onClick = onDismiss, shape = CutShape,
-            modifier = Modifier.heightIn(min = 48.dp)) { Text("취소") } },
+            modifier = Modifier.heightIn(min = CutSizes.touchTarget)) { Text("취소") } },
         containerColor = palette.panel,
         shape = CutDialogShape,
     )
@@ -239,19 +239,19 @@ internal fun ExportModeDialog(
                 if (onSuggestedCut != null) {
                     Button(
                         onClick = onAllowReencode, enabled = canSave,
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp), shape = CutShape,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = CutSizes.primaryButton), shape = CutShape,
                     ) { Text("정확한 위치로 자동 저장") }
                     OutlinedButton(
                         onClick = onSuggestedCut, enabled = canSave,
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp), shape = CutShape,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = CutSizes.primaryButton), shape = CutShape,
                     ) { Text("추천 위치로 고속 저장") }
                 } else {
                     Button(
                         onClick = onAllowReencode, enabled = canSave,
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp), shape = CutShape,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = CutSizes.primaryButton), shape = CutShape,
                     ) { Text("정확한 위치로 자동 저장") }
                 }
-                TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp), shape = CutShape) {
+                TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth().heightIn(min = CutSizes.touchTarget), shape = CutShape) {
                     Text("취소")
                 }
             }
@@ -308,7 +308,7 @@ internal fun ExportInspectionDialog(progress: Int? = null, onCancel: () -> Unit)
             }
         },
         confirmButton = { TextButton(onClick = onCancel, shape = CutShape,
-            modifier = Modifier.heightIn(min = 48.dp)) { Text("분석 취소") } },
+            modifier = Modifier.heightIn(min = CutSizes.touchTarget)) { Text("분석 취소") } },
         containerColor = palette.panel,
         shape = CutDialogShape,
     )
@@ -333,11 +333,11 @@ internal fun ExportCancelDialog(canCancel: Boolean, onCancel: () -> Unit, onDism
         },
         confirmButton = {
             Button(onClick = onCancel, enabled = canCancel, shape = CutShape,
-                modifier = Modifier.heightIn(min = 48.dp)) { Text("저장 취소") }
+                modifier = Modifier.heightIn(min = CutSizes.touchTarget)) { Text("저장 취소") }
         },
         dismissButton = {
             TextButton(onClick = onDismiss, shape = CutShape,
-                modifier = Modifier.heightIn(min = 48.dp)) { Text("계속 저장") }
+                modifier = Modifier.heightIn(min = CutSizes.touchTarget)) { Text("계속 저장") }
         },
         containerColor = palette.panel,
         shape = CutDialogShape,

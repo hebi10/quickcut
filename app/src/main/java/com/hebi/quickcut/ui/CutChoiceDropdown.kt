@@ -57,7 +57,7 @@ internal fun <T> CutChoiceDropdown(
         OutlinedButton(
             onClick = { expanded = true },
             enabled = enabled,
-            modifier = modifier.fillMaxWidth().heightIn(min = 48.dp)
+            modifier = modifier.fillMaxWidth().heightIn(min = CutSizes.touchTarget)
                 .onSizeChanged { anchorWidth = it.width }
                 .semantics { contentDescription = "$label: $currentLabel" },
             shape = CutShape,
@@ -76,7 +76,7 @@ internal fun <T> CutChoiceDropdown(
                         fontWeight = FontWeight.Medium)
                 }
                 Icon(Icons.Outlined.ArrowDropDown, contentDescription = null,
-                    modifier = Modifier.size(22.dp))
+                    modifier = Modifier.size(CutSizes.icon))
             }
         }
         DropdownMenu(
@@ -91,7 +91,7 @@ internal fun <T> CutChoiceDropdown(
                         { Icon(Icons.Outlined.Check, contentDescription = null, tint = palette.accent) }
                     } else null,
                     enabled = option.enabled,
-                    modifier = Modifier.heightIn(min = 48.dp)
+                    modifier = Modifier.heightIn(min = CutSizes.touchTarget)
                         .testTag("cut-choice-option-${option.label}")
                         .semantics { this.selected = option.value == selected },
                     onClick = {

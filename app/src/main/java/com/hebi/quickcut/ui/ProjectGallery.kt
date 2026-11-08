@@ -95,8 +95,8 @@ internal fun SelectedVideoGallery(
     onImport: (List<String>) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    var selec
-    val palette = LocalCutPalette.currentted by remember(uris) { mutableStateOf(uris.toSet()) }
+    val palette = LocalCutPalette.current
+    var selected by remember(uris) { mutableStateOf(uris.toSet()) }
     Column(
         Modifier.fillMaxSize().background(palette.background).padding(CutSpacing.lg),
         verticalArrangement = Arrangement.spacedBy(CutSpacing.md),

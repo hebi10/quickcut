@@ -168,9 +168,9 @@ private fun <T> ExportOptionRow(
     selected: T,
     onSelected: (T) -> Unit,
 ) {
+    val palette = LocalCutPalette.current
     Row(
-        Modifier.f
-    val palette = LocalCutPalette.currentillMaxWidth().horizontalScroll(rememberScrollState()),
+        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         options.forEach { option ->
@@ -199,8 +199,8 @@ private fun <T> ExportOptionRow(
 
 @Composable
 private fun ExportQualityThumbnail(timeline: EditTimeline) {
-    val first = timeline.clips.firstOrNull(
-    val palette = LocalCutPalette.current) ?: return
+    val palette = LocalCutPalette.current
+    val first = timeline.clips.firstOrNull() ?: return
     val context = LocalContext.current
     val frame by produceState<android.graphics.Bitmap?>(null, first.uri, first.startMs) {
         value = withContext(Dispatchers.IO) {
@@ -227,7 +227,7 @@ private fun ExportQualityThumbnail(timeline: EditTimeline) {
             color = Color.White,
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.align(Alignment.BottomEnd)
-                .padding(8.dp).background(palette.background.copy(alpha = 0.8f))
+                .padding(8.dp).background(Color.Black.copy(alpha = 0.8f))
                 .padding(horizontal = 6.dp, vertical = 2.dp),
         )
     }

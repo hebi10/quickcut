@@ -241,8 +241,8 @@ private fun TrimHandle(
     onDragEnd: () -> Unit,
     onDragAmount: (Float) -> Unit,
 ) {
-    val updatedCallback by re
-    val palette = LocalCutPalette.currentmemberUpdatedState(onDragAmount)
+    val palette = LocalCutPalette.current
+    val updatedCallback by rememberUpdatedState(onDragAmount)
     val updatedStart by rememberUpdatedState(onDragStart)
     val updatedEnd by rememberUpdatedState(onDragEnd)
     Box(

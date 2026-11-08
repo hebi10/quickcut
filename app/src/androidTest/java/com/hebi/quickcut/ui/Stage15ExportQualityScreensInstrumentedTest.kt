@@ -80,6 +80,7 @@ class Stage15ExportQualityScreensInstrumentedTest {
             }
         }
         compose.onNodeWithTag("export-quality-resolution-AUTO").performScrollTo().assertIsSelected()
+        compose.onNodeWithTag("export-quality-resolution-ULTRA_HD_2160").assertIsDisplayed()
         capture("stage15_export_auto.png")
         compose.onNodeWithTag("export-quality-quality-BALANCED").performScrollTo().performClick()
         compose.waitUntil(15_000) {

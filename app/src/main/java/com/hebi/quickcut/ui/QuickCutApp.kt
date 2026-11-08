@@ -994,21 +994,12 @@ private fun CompletedScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Box(
-            modifier = Modifier.size(104.dp)
-                .background(
-                    Brush.linearGradient(listOf(palette.brandLight, palette.brandDeep)),
-                    CircleShape,
-                ),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                CutIcons.Success,
-                contentDescription = null,
-                tint = Color.White,
-                modifier = Modifier.size(64.dp),
-            )
-        }
+        Icon(
+            CutIcons.Success,
+            contentDescription = null,
+            tint = palette.success,
+            modifier = Modifier.size(64.dp),
+        )
         Spacer(Modifier.height(16.dp))
         Text("저장 완료", color = palette.primaryText, fontSize = 28.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(10.dp))

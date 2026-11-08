@@ -58,6 +58,7 @@ object AudioWaveformReader {
             var inputEnded = false
             var outputEnded = false
             var decoded = 0
+            var sampledFrames = 0
             val deadline = SystemClock.elapsedRealtime() + 2_800L
             while (!outputEnded && SystemClock.elapsedRealtime() < deadline && decoded < 300) {
                 if (!inputEnded) {
@@ -98,10 +99,12 @@ object AudioWaveformReader {
                                     else AudioFormat.ENCODING_PCM_16BIT
                                     var peak = 0f
                                     if (encoding == AudioFormat.ENCODING_PCM_16BIT) {
+                                        sampledFrames++
                                         while (pcm.remaining() >= 2) {
                                             peak = max(peak, abs(pcm.short.toInt()) / 32768f)
                                         }
                                     } else if (encoding == AudioFormat.ENCODING_PCM_FLOAT) {
+                                        sampledFrames++
                                         while (pcm.remaining() >= 4) {
                                             peak = max(peak, abs(pcm.float).coerceAtMost(1f))
                                         }
@@ -116,7 +119,7 @@ object AudioWaveformReader {
                     }
                 }
             }
-            if (peaks.none { it > 0f }) return null
+            if (sampledFrames == 0) return null
             AudioWaveform(peaks.toList(), sampledMs)
         } finally {
             runCatching { decoder?.stop() }

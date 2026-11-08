@@ -1,6 +1,12 @@
 package com.hebi.quickcut.ui
 
 import android.graphics.Bitmap
+import android.graphics.Color
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.ui.Modifier
 import android.net.Uri
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.DeviceConfigurationOverride
@@ -49,7 +55,9 @@ class Stage18TextEditorScreensInstrumentedTest {
         compose.setContent {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(360.dp, 640.dp))) {
                 QuickCutTheme {
-                    TextEditorScreen(clip, onApply = {}, onCancel = {})
+                    Box(Modifier.fillMaxSize().background(CutColors.background).safeDrawingPadding()) {
+                            TextEditorScreen(clip, onApply = {}, onCancel = {})
+                        }
                 }
             }
         }
@@ -75,7 +83,9 @@ class Stage18TextEditorScreensInstrumentedTest {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(860.dp, 640.dp))) {
                 DeviceConfigurationOverride(DeviceConfigurationOverride.FontScale(1.6f)) {
                     QuickCutTheme {
-                        TextEditorScreen(clip, onApply = {}, onCancel = {})
+                        Box(Modifier.fillMaxSize().background(CutColors.background).safeDrawingPadding()) {
+                            TextEditorScreen(clip, onApply = {}, onCancel = {})
+                        }
                     }
                 }
             }
@@ -97,6 +107,22 @@ class Stage18TextEditorScreensInstrumentedTest {
             ?: error("Android 화면 캡처 실패")
         val target = File(dir, name)
         try {
+            // Only genuine visible editor frames count as release evidence.
+            val step = maxOf(1, bitmap.width / 40)
+            var scanned = 0
+            var dark = 0
+            for (y in bitmap.height / 12 until bitmap.height * 3 / 4 step step) {
+                for (x in 0 until bitmap.width step step) {
+                    val pixel = bitmap.getPixel(x, y)
+                    if (Color.red(pixel) < 96 && Color.green(pixel) < 96 &&
+                        Color.blue(pixel) < 110
+                    ) dark++
+                    scanned++
+                }
+            }
+            check(dark * 25 > scanned) {
+                "Text editor screenshot is blank or hidden: $name"
+            }
             target.outputStream().use { check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) }
         } finally {
             bitmap.recycle()

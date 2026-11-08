@@ -94,7 +94,7 @@ internal fun QuickCutWelcome(onFinish: () -> Unit) {
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
-                        if (index == 1) Icons.Outlined.PlayCircleOutline else Icons.Outlined.VideoLibrary,
+                        if (index == 1) CutIcons.Preview else CutIcons.Batch,
                         contentDescription = null,
                         tint = palette.secondaryAccent,
                         modifier = Modifier.size(if (compactArtwork) 68.dp else 80.dp),

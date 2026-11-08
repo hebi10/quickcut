@@ -47,7 +47,7 @@ fun ClipThumbnail(uri: String, timeMs: Long, modifier: Modifier = Modifier) {
                 modifier = Modifier.fillMaxSize().testTag("clip-thumbnail-frame"),
             )
         } else {
-            Icon(Icons.Outlined.VideoLibrary, contentDescription = null, tint = palette.mutedText)
+            Icon(CutIcons.Batch, contentDescription = null, tint = palette.mutedText)
         }
     }
 }

@@ -1003,7 +1003,7 @@ private fun CompletedScreen(
             contentAlignment = Alignment.Center,
         ) {
             Icon(
-                Icons.Outlined.CheckCircleOutline,
+                CutIcons.Success,
                 contentDescription = null,
                 tint = Color.White,
                 modifier = Modifier.size(64.dp),
@@ -1074,7 +1074,7 @@ private fun CompletedScreen(
                 modifier = Modifier.fillMaxWidth().heightIn(min = CutSizes.primaryButton),
                 shape = CutShape,
             ) {
-                Icon(Icons.Outlined.PlayCircleOutline, contentDescription = null,
+                Icon(CutIcons.Preview, contentDescription = null,
                     modifier = Modifier.size(CutSizes.icon))
                 Spacer(Modifier.width(CutSpacing.sm))
                 Text("갤러리에서 열기", fontWeight = FontWeight.SemiBold)
@@ -1084,7 +1084,7 @@ private fun CompletedScreen(
                 modifier = Modifier.fillMaxWidth().heightIn(min = CutSizes.primaryButton),
                 shape = CutShape,
             ) {
-                Icon(Icons.Outlined.Share, contentDescription = null,
+                Icon(CutIcons.Share, contentDescription = null,
                     modifier = Modifier.size(CutSizes.icon))
                 Spacer(Modifier.width(CutSpacing.sm))
                 Text("영상 공유")

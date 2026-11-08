@@ -98,7 +98,7 @@ object ExportQualityPolicy {
         val portrait = first.height > first.width
         val width = if (portrait) shortSide else longSide
         val height = if (portrait) longSide else shortSide
-        val fpsForBitrate = requestedFps ?: sources.mapNotNull { it.frameRate }
+        val fpsForBitrate = requestedFps?.toDouble() ?: sources.mapNotNull { it.frameRate }
             .minOrNull()?.toDouble() ?: 30.0
         val scaledBitrate = 8_000_000.0 * (width.toDouble() * height / (1920 * 1080)) *
             (fpsForBitrate / 30.0) * quality.quality.multiplier

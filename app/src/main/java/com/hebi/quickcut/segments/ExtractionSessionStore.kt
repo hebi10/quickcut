@@ -31,8 +31,8 @@ data class ExtractionSession(
     }
 }
 
-class ExtractionSessionStore(context: Context) {
-    private val target = File(context.filesDir, "quickcut_extraction_session.json")
+class ExtractionSessionStore(context: Context, fileName: String = "quickcut_extraction_session.json") {
+    private val target = File(context.filesDir, fileName)
     private val file = AtomicFile(target)
 
     @Synchronized
@@ -58,6 +58,13 @@ class ExtractionSessionStore(context: Context) {
             hasAudio = data.getBoolean("hasAudio"),
             items = rows,
         )
+    }
+
+    @Synchronized
+    fun clear() {
+        file.delete()
+        File(target.path + ".bak").delete()
+        File(target.path + ".new").delete()
     }
 
     @Synchronized

@@ -70,6 +70,8 @@ import androidx.lifecycle.LifecycleEventObserver
 import com.hebi.quickcut.QuickCutApplication
 import com.hebi.quickcut.batch.BatchScreen
 import com.hebi.quickcut.batch.BatchViewModel
+import com.hebi.quickcut.segments.ExtractionScreen
+import com.hebi.quickcut.segments.ExtractionViewModel
 import com.hebi.quickcut.editor.EditorViewModel
 import com.hebi.quickcut.editor.EditTimeline
 import com.hebi.quickcut.editor.TrimInput
@@ -104,6 +106,8 @@ fun QuickCutApp(
         (LocalContext.current.applicationContext as QuickCutApplication).editorModel,
     batchModel: BatchViewModel =
         (LocalContext.current.applicationContext as QuickCutApplication).batchModel,
+    extractionModel: ExtractionViewModel =
+        (LocalContext.current.applicationContext as QuickCutApplication).extractionModel,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -117,6 +121,7 @@ fun QuickCutApp(
     val lifecycleState by lifecycleOwner.lifecycle.currentStateFlow.collectAsState()
     val coroutineScope = rememberCoroutineScope()
     var showBatch by rememberSaveable { mutableStateOf(false) }
+    var showExtraction by rememberSaveable { mutableStateOf(false) }
     var selectedGalleryUris by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
     var showProjectSave by rememberSaveable { mutableStateOf(false) }
     var projectName by rememberSaveable { mutableStateOf("") }
@@ -275,6 +280,11 @@ fun QuickCutApp(
     ) { uris ->
         batchModel.addVideos(context, uris)
     }
+    val extractionPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) extractionModel.importVideo(context, uri)
+    }
     val batchOriginalLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartIntentSenderForResult()
     ) { result ->
@@ -354,6 +364,12 @@ fun QuickCutApp(
                 onboardingPreferences.edit().putBoolean("complete", true).apply()
                 onboardingComplete = true
             })
+        } else if (showExtraction && model.page == QuickCutPage.PICKER) {
+            ExtractionScreen(
+                model = extractionModel,
+                onSelectVideo = { extractionPicker.launch(arrayOf("video/*")) },
+                onBack = { if (!extractionModel.busy) showExtraction = false },
+            )
         } else if (showBatch) {
             BatchScreen(
                 model = batchModel,
@@ -388,6 +404,7 @@ fun QuickCutApp(
                     batchModel.saveDateMode = selectedSaveDateMode
                     showBatch = true
                 },
+                onExtraction = { showExtraction = true },
                 canRestore = model.hasRestorableSession,
                 onRestore = { model.restoreSavedSession(context) },
                 quickSettings = settings.loadQuick(),
@@ -668,6 +685,7 @@ private fun StartScreen(
     onQuick: () -> Unit,
     onSelect: () -> Unit,
     onBatch: () -> Unit,
+    onExtraction: () -> Unit,
     canRestore: Boolean,
     onRestore: () -> Unit,
     quickSettings: QuickTrimSettings,
@@ -681,6 +699,7 @@ private fun StartScreen(
 ) {
     StudioStartScreen(
         onQuick = onQuick, onSelect = onSelect, onBatch = onBatch,
+        onExtraction = onExtraction,
         canRestore = canRestore, onRestore = onRestore,
         quickSettings = quickSettings, dateMode = dateMode,
         onPreferences = onPreferences, onLicenses = onLicenses,

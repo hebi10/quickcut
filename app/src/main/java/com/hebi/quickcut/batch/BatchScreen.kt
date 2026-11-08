@@ -81,7 +81,7 @@ import com.hebi.quickcut.media.ExportStage
 import com.hebi.quickcut.media.MediaOperationDiagnostics
 import com.hebi.quickcut.ui.CutChoice
 import com.hebi.quickcut.ui.CutChoiceDropdown
-import com.hebi.quickcut.ui.CutColors
+import com.hebi.quickcut.ui.LocalCutPalette
 import com.hebi.quickcut.ui.QuickCutDialogHeading
 import com.hebi.quickcut.ui.CutPanelShape
 import com.hebi.quickcut.ui.CutDialogShape
@@ -101,6 +101,7 @@ fun BatchScreen(
     onBack: () -> Unit,
     onApproveOriginals: (List<String>, Uri, OriginalAction) -> Unit,
 ) {
+    val palette = LocalCutPalette.current
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val lifecycleState by lifecycleOwner.lifecycle.currentStateFlow.collectAsState()
@@ -153,7 +154,7 @@ fun BatchScreen(
     }
     BackHandler(onBack = guardedBack)
 
-    BoxWithConstraints(Modifier.fillMaxSize().background(CutColors.background)) {
+    BoxWithConstraints(Modifier.fillMaxSize().background(palette.background)) {
         val actionsMaxHeight = maxHeight * 0.45f
         if (maxWidth >= 840.dp &&
             maxWidth / LocalDensity.current.fontScale >= 700.dp) {
@@ -242,7 +243,7 @@ fun BatchScreen(
                     Text("계속 저장")
                 }
             },
-            containerColor = CutColors.panel,
+            containerColor = palette.panel,
             shape = CutDialogShape,
         )
     }
@@ -285,7 +286,7 @@ fun BatchScreen(
             },
             confirmButton = { TextButton(onClick = { inspectionJob?.cancel() },
                 modifier = Modifier.heightIn(min = 48.dp), shape = CutShape) { Text("분석 취소") } },
-            containerColor = CutColors.panel,
+            containerColor = palette.panel,
             shape = CutDialogShape,
         )
     }
@@ -303,7 +304,7 @@ fun BatchScreen(
             },
             confirmButton = { TextButton(onClick = model::clearNotification,
                 modifier = Modifier.heightIn(min = 48.dp), shape = CutShape) { Text("확인") } },
-            containerColor = CutColors.panel,
+            containerColor = palette.panel,
             shape = CutDialogShape,
         )
     }
@@ -331,7 +332,8 @@ internal fun BatchReviewDialog(
     onAutomatic: () -> Unit,
     onRecommended: () -> Unit,
 ) {
-    var choices by remember(overview) {
+    var
+    val palette = LocalCutPalette.current choices by remember(overview) {
         mutableStateOf(BatchExportChoicePolicy.defaults(overview.reviewedFiles))
     }
     val exactCount = choices.values.count { it == BatchExportChoice.EXACT }
@@ -343,7 +345,7 @@ internal fun BatchReviewDialog(
         Surface(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
                 .widthIn(max = 680.dp).fillMaxWidth().fillMaxHeight(0.94f).testTag("batch-review-dialog"),
-            color = CutColors.panel, contentColor = CutColors.primaryText,
+            color = palette.panel, contentColor = palette.primaryText,
             shape = CutDialogShape,
         ) {
             BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -358,12 +360,12 @@ internal fun BatchReviewDialog(
                                 Text("자동 저장 확인", style = MaterialTheme.typography.titleLarge,
                                     fontWeight = FontWeight.SemiBold)
                                 Text("정확한 위치 $exactCount · 추천 위치 $recommendedCount · 제외 $skippedCount",
-                                    style = MaterialTheme.typography.bodySmall, color = CutColors.secondaryAccent)
+                                    style = MaterialTheme.typography.bodySmall, color = palette.secondaryAccent)
                             }
                         }
                         item {
                             Column(
-                                Modifier.fillMaxWidth().background(CutColors.surface, CutShape).padding(14.dp),
+                                Modifier.fillMaxWidth().background(palette.surface, CutShape).padding(14.dp),
                                 verticalArrangement = Arrangement.spacedBy(8.dp),
                             ) {
                                 templateSummary?.let { Text(it) }
@@ -386,7 +388,7 @@ internal fun BatchReviewDialog(
                         item {
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Text("전체 자동 저장은 위 선택과 관계없이 저장 가능한 모든 영상을 정확한 위치로 저장합니다.",
-                                    color = CutColors.secondaryText, style = MaterialTheme.typography.bodySmall)
+                                    color = palette.secondaryText, style = MaterialTheme.typography.bodySmall)
                                 OutlinedButton(onClick = onAutomatic, enabled = overview.ready > 0,
                                     modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp), shape = CutShape) {
                                     Text("전체 자동 저장")
@@ -394,7 +396,7 @@ internal fun BatchReviewDialog(
                                 if (overview.reviewedFiles.any { it.canRecommend }) {
                                     Text("추천 위치를 일괄 적용하면 ${overview.adjustedFast}개를 고속 저장하고 " +
                                         "${overview.adjustedSkips}개를 건너뜁니다. 소리는 필요할 때 변환합니다.",
-                                        color = CutColors.secondaryText, style = MaterialTheme.typography.bodySmall)
+                                        color = palette.secondaryText, style = MaterialTheme.typography.bodySmall)
                                 }
                             }
                         }
@@ -402,7 +404,7 @@ internal fun BatchReviewDialog(
                     BoxWithConstraints(
                         Modifier.fillMaxWidth().heightIn(max = footerMaxHeight)
                             .verticalScroll(rememberScrollState())
-                            .background(CutColors.surface, CutShape).padding(10.dp).testTag("batch-review-footer"),
+                            .background(palette.surface, CutShape).padding(10.dp).testTag("batch-review-footer"),
                     ) {
                         val useHorizontalActions = maxWidth / LocalDensity.current.fontScale >= 560.dp
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -452,37 +454,38 @@ private fun BatchReviewFile(
     choice: BatchExportChoice,
     onChoice: (BatchExportChoice) -> Unit,
 ) {
-    Column(Modifier.fillMaxWidth()
-        .background(CutColors.surface, CutPanelShape)
-        .border(1.dp, CutColors.border, CutPanelShape).padding(14.dp),
+    Column(Modifier.f
+    val palette = LocalCutPalette.currentillMaxWidth()
+        .background(palette.surface, CutPanelShape)
+        .border(1.dp, palette.border, CutPanelShape).padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(file.displayName, fontWeight = FontWeight.SemiBold)
         file.requested?.let { requested ->
             Text("요청 구간 · " + requested.clips.joinToString(" + ") {
                 "${formatTime(it.startMs)}–${formatTime(it.endMs)}"
-            }, color = CutColors.secondaryText, style = MaterialTheme.typography.bodySmall)
+            }, color = palette.secondaryText, style = MaterialTheme.typography.bodySmall)
         }
         if (file.unavailableReason != null) {
-            Text("저장 불가 · ${file.unavailableReason}", color = CutColors.secondaryText,
+            Text("저장 불가 · ${file.unavailableReason}", color = palette.secondaryText,
                 style = MaterialTheme.typography.bodySmall)
         } else if (file.fastAvailable) {
-            Text("정확한 위치로 고속 저장 가능", color = CutColors.secondaryText,
+            Text("정확한 위치로 고속 저장 가능", color = palette.secondaryText,
                 style = MaterialTheme.typography.bodySmall)
         }
         if (file.canRecommend) {
             val suggestion = checkNotNull(file.suggestion)
-            Text(fastCutSuggestionText(suggestion), color = CutColors.secondaryText,
+            Text(fastCutSuggestionText(suggestion), color = palette.secondaryText,
                 style = MaterialTheme.typography.bodySmall)
             Box(Modifier.fillMaxWidth().testTag("batch-review-${file.uri}-preview")) {
                 FastCutPreview(suggestion)
             }
         } else if (file.requested != null && !file.fastAvailable) {
             Text("검증된 추천 위치 없음 · 정확한 위치로 자동 저장할 수 있습니다.",
-                color = CutColors.secondaryText, style = MaterialTheme.typography.bodySmall)
+                color = palette.secondaryText, style = MaterialTheme.typography.bodySmall)
         }
         if (file.reencodeRequired) {
             Text("이 영상은 고속 저장을 완료할 수 없어 영상 변환이 필요합니다. 정확한 요청 구간을 유지하며 변환해 저장하거나 제외해 주세요.",
-                color = CutColors.secondaryText, style = MaterialTheme.typography.bodySmall)
+                color = palette.secondaryText, style = MaterialTheme.typography.bodySmall)
         }
         CutChoiceDropdown("저장 방식", choice, listOf(
             CutChoice(BatchExportChoice.EXACT,
@@ -495,34 +498,36 @@ private fun BatchReviewFile(
 
 @Composable
 private fun BatchHeader(onBack: () -> Unit) {
-    Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(vertical = 8.dp),
+    Row(Modifier.fillMaxWidth().heigh
+    val palette = LocalCutPalette.currenttIn(min = 64.dp).padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
             Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "뒤로가기",
-                tint = CutColors.accent)
+                tint = palette.accent)
         }
         Column(Modifier.weight(1f)) {
             Text("일괄 편집", fontSize = 22.sp, fontWeight = FontWeight.SemiBold,
-                color = CutColors.primaryText)
+                color = palette.primaryText)
             Text("여러 영상을 같은 설정으로 정리하세요.",
-                color = CutColors.secondaryText, style = MaterialTheme.typography.bodySmall)
+                color = palette.secondaryText, style = MaterialTheme.typography.bodySmall)
         }
     }
 }
 
 @Composable
 private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
-    val disabled = model.isRunning || model.isRecovering
+    val disabled = model.isRunning || model
+    val palette = LocalCutPalette.current.isRecovering
     var showAdvanced by rememberSaveable { mutableStateOf(false) }
     var pendingOriginalAction by rememberSaveable { mutableStateOf<OriginalAction?>(null) }
     Column(
-        modifier = Modifier.fillMaxWidth().background(CutColors.surface, CutPanelShape)
-            .border(1.dp, CutColors.accent.copy(alpha = 0.35f), CutPanelShape).padding(16.dp),
+        modifier = Modifier.fillMaxWidth().background(palette.surface, CutPanelShape)
+            .border(1.dp, palette.accent.copy(alpha = 0.35f), CutPanelShape).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("1. 영상 선택", color = CutColors.secondaryAccent,
+            Text("1. 영상 선택", color = palette.secondaryAccent,
                 style = MaterialTheme.typography.titleMedium)
             val addModifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)
                 .testTag("batch-add-videos")
@@ -538,18 +543,18 @@ private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
                 OutlinedButton(onClick = onSelectVideos, enabled = !disabled && !model.isImporting,
                     modifier = addModifier, shape = CutShape) { addContent() }
             }
-            Text("선택한 영상 ${model.files.size}개", color = CutColors.secondaryText,
+            Text("선택한 영상 ${model.files.size}개", color = palette.secondaryText,
                 style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.testTag("batch-selection-count"))
         }
         PresetEditor(model, disabled)
         Text(
             "2. 자르기 설정",
-            color = CutColors.primaryText,
+            color = palette.primaryText,
             fontWeight = FontWeight.SemiBold,
         )
         Text("마지막 사용값은 자동으로 복원됩니다.",
-            style = MaterialTheme.typography.bodySmall, color = CutColors.secondaryText)
+            style = MaterialTheme.typography.bodySmall, color = palette.secondaryText)
         CutChoiceDropdown("편집 방식", model.draftMode, listOf(
             CutChoice(BatchClipMode.REMOVE_EDGES, "앞뒤 구간 자르기"),
             CutChoice(BatchClipMode.KEEP_FIRST, "처음 구간만 남기기"),
@@ -557,7 +562,7 @@ private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
             CutChoice(BatchClipMode.JOIN_EDGES, "처음 + 마지막 구간 연결"),
         ), enabled = !disabled, modifier = Modifier.testTag("batch-mode")) { model.draftMode = it }
         Text("분·초 입력 · 예: 1분 5.5초 · 소수점 셋째 자리까지 입력 가능",
-            style = MaterialTheme.typography.bodySmall, color = CutColors.secondaryText)
+            style = MaterialTheme.typography.bodySmall, color = palette.secondaryText)
         val useLeading = model.draftMode.usesLeading
         val useTrailing = model.draftMode.usesTrailing
         val removing = model.draftMode == BatchClipMode.REMOVE_EDGES
@@ -580,14 +585,14 @@ private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
         val template = model.previewTemplate()
         Text(
             template?.let(BatchTimeInput::summary) ?: model.draftError().orEmpty(),
-            color = if (template != null) CutColors.secondaryAccent else MaterialTheme.colorScheme.error,
+            color = if (template != null) palette.secondaryAccent else MaterialTheme.colorScheme.error,
             style = MaterialTheme.typography.bodyMedium,
             modifier = Modifier.fillMaxWidth().testTag("batch-edit-summary"),
         )
         Row(
             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
                 .clip(CutShape)
-                .background(if (model.draftMute) CutColors.accentMuted else CutColors.surface)
+                .background(if (model.draftMute) palette.accentMuted else palette.surface)
                 .clickable(enabled = !disabled) { model.draftMute = !model.draftMute }
                 .padding(end = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -597,7 +602,7 @@ private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
                 onCheckedChange = { model.draftMute = it },
                 enabled = !disabled,
             )
-            Text(if (model.draftMute) "원본 소리: 음소거" else "원본 소리: 유지", color = CutColors.primaryText,
+            Text(if (model.draftMute) "원본 소리: 음소거" else "원본 소리: 유지", color = palette.primaryText,
                 modifier = Modifier.weight(1f).padding(vertical = 10.dp))
         }
         TextButton(
@@ -612,7 +617,7 @@ private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
                     OriginalAction.TRASH -> "휴지통"
                     OriginalAction.DELETE -> "영구 삭제"
                 },
-            color = CutColors.secondaryText,
+            color = palette.secondaryText,
             style = MaterialTheme.typography.bodyMedium,
         )
         if (showAdvanced) {
@@ -628,7 +633,7 @@ private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
                     "원본 날짜를 유지하면서 가능한 원본 복사·부분 처리를 우선 사용합니다. " +
                         "원본 날짜는 촬영 메타데이터가 우선이며 없으면 파일 수정 날짜를 사용합니다. " +
                         "날짜 정보가 없거나 기기가 적용을 거부하면 해당 파일은 저장하지 않습니다.",
-                    style = MaterialTheme.typography.bodySmall, color = CutColors.secondaryText,
+                    style = MaterialTheme.typography.bodySmall, color = palette.secondaryText,
                 )
 
                 CutChoiceDropdown("저장 후 원본 처리", model.originalAction, listOf(
@@ -641,7 +646,7 @@ private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
                 }
                 Text(
                     "활성화한 설정은 끌 때까지 유지됩니다. 새로 저장에 성공한 원본만 Android 승인을 요청합니다.",
-                    style = MaterialTheme.typography.bodySmall, color = CutColors.secondaryText,
+                    style = MaterialTheme.typography.bodySmall, color = palette.secondaryText,
                 )
             }
         }
@@ -661,12 +666,13 @@ private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
 @Composable
 private fun PresetEditor(model: BatchViewModel, disabled: Boolean) {
     val context = LocalContext.current
-    var showManager by rememberSaveable { mutableStateOf(false) }
+    var showManager by rememberS
+    val palette = LocalCutPalette.currentaveable { mutableStateOf(false) }
     val selected = model.templates.firstOrNull { it.id == model.selectedTemplateId }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("선택 템플릿: " + (selected?.name ?: "직접 설정"), color = CutColors.primaryText)
+        Text("선택 템플릿: " + (selected?.name ?: "직접 설정"), color = palette.primaryText)
         selected?.let { Text(BatchTimeInput.summary(it), style = MaterialTheme.typography.bodySmall,
-            color = CutColors.secondaryText) }
+            color = palette.secondaryText) }
         OutlinedButton(onClick = { showManager = true }, enabled = !disabled,
             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("batch-template-manager")) {
             Text("템플릿 관리")
@@ -679,16 +685,16 @@ private fun PresetEditor(model: BatchViewModel, disabled: Boolean) {
         Surface(Modifier.padding(horizontal = 16.dp).widthIn(max = 480.dp)
             .fillMaxWidth().heightIn(max = 640.dp)
             .testTag("batch-template-dialog"), shape = CutDialogShape,
-            color = CutColors.panel, contentColor = CutColors.primaryText) {
+            color = palette.panel, contentColor = palette.primaryText) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("내 템플릿", style = MaterialTheme.typography.titleLarge)
                     Text("${model.templates.size}개 저장됨",
-                        style = MaterialTheme.typography.bodySmall, color = CutColors.secondaryAccent)
+                        style = MaterialTheme.typography.bodySmall, color = palette.secondaryAccent)
                 }
                 Text("템플릿에는 자르기·음소거 설정만 저장합니다. 저장 날짜와 원본 처리 설정은 변경되지 않습니다.",
-                    style = MaterialTheme.typography.bodySmall, color = CutColors.secondaryText)
+                    style = MaterialTheme.typography.bodySmall, color = palette.secondaryText)
                 LazyColumn(Modifier.weight(1f, fill = false).fillMaxWidth().testTag("batch-template-list"),
                     verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     item {
@@ -699,40 +705,40 @@ private fun PresetEditor(model: BatchViewModel, disabled: Boolean) {
                     if (model.templates.isEmpty()) {
                         item {
                             Text("저장된 템플릿이 없습니다. 설정을 입력하고 새 템플릿을 저장하세요.",
-                                color = CutColors.secondaryText,
+                                color = palette.secondaryText,
                                 style = MaterialTheme.typography.bodySmall)
                         }
                     }
                     items(model.templates, key = { it.id }) { template ->
                         val isSelected = model.selectedTemplateId == template.id
                         Column(
-                            Modifier.fillMaxWidth().background(CutColors.surface, CutShape)
+                            Modifier.fillMaxWidth().background(palette.surface, CutShape)
                                 .border(1.dp,
-                                    if (isSelected) CutColors.accent else CutColors.border,
+                                    if (isSelected) palette.accent else palette.border,
                                     CutShape).padding(12.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             Row(Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                Box(Modifier.size(44.dp).background(CutColors.accentMuted, CutShape),
+                                Box(Modifier.size(44.dp).background(palette.accentMuted, CutShape),
                                     contentAlignment = Alignment.Center) {
                                     Icon(Icons.Outlined.ContentCut, contentDescription = null,
-                                        tint = CutColors.secondaryAccent)
+                                        tint = palette.secondaryAccent)
                                 }
                                 Column(Modifier.weight(1f),
                                     verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                     Text(template.name, style = MaterialTheme.typography.titleSmall,
-                                        color = CutColors.primaryText, maxLines = 1,
+                                        color = palette.primaryText, maxLines = 1,
                                         overflow = TextOverflow.Ellipsis)
                                     Text(BatchTimeInput.summary(template),
                                         style = MaterialTheme.typography.bodySmall,
-                                        color = CutColors.secondaryText, maxLines = 2,
+                                        color = palette.secondaryText, maxLines = 2,
                                         overflow = TextOverflow.Ellipsis)
                                 }
                                 if (isSelected) {
                                     Text("선택됨", style = MaterialTheme.typography.labelSmall,
-                                        color = CutColors.secondaryAccent)
+                                        color = palette.secondaryAccent)
                                 }
                             }
                             if (LocalDensity.current.fontScale >= 1.5f) {
@@ -746,7 +752,7 @@ private fun PresetEditor(model: BatchViewModel, disabled: Boolean) {
                                     enabled = !disabled,
                                     modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
                                         .testTag("batch-template-${template.id}-remove")) {
-                                    Text("삭제", color = CutColors.error)
+                                    Text("삭제", color = palette.error)
                                 }
                             } else {
                                 Row(Modifier.fillMaxWidth(),
@@ -762,7 +768,7 @@ private fun PresetEditor(model: BatchViewModel, disabled: Boolean) {
                                         enabled = !disabled,
                                         modifier = Modifier.heightIn(min = 48.dp)
                                             .testTag("batch-template-${template.id}-remove")) {
-                                        Text("삭제", color = CutColors.error)
+                                        Text("삭제", color = palette.error)
                                     }
                                 }
                             }
@@ -807,9 +813,10 @@ private fun BatchDurationField(
     tag: String,
 ) {
     val parts = BatchTimeInput.parts(value)
-    val error = if (used) BatchTimeInput.error(parts) else null
+    val error = if (used) BatchTimeInput.error(parts) else nu
+    val palette = LocalCutPalette.currentll
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(title, color = if (used) CutColors.primaryText else CutColors.secondaryText,
+        Text(title, color = if (used) palette.primaryText else palette.secondaryText,
             fontWeight = FontWeight.Medium)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(
@@ -842,7 +849,7 @@ private fun BatchDurationField(
         if (!used || error != null) {
             Text(
                 if (!used) "이 편집 방식에서는 사용하지 않습니다." else error.orEmpty(),
-                color = if (error != null) MaterialTheme.colorScheme.error else CutColors.secondaryText,
+                color = if (error != null) MaterialTheme.colorScheme.error else palette.secondaryText,
                 style = MaterialTheme.typography.bodySmall,
             )
         }
@@ -857,13 +864,14 @@ private fun BatchActions(
     onCancel: () -> Unit,
 ) {
     Column(
-        Modifier.fillMaxWidth().background(CutColors.surface, CutPanelShape)
-            .border(1.dp, CutColors.border, CutPanelShape).padding(14.dp),
+        Modifier.fillMaxWidth().background(palette.surface, CutPanelShape)
+            .border(1.dp
+    val palette = LocalCutPalette.current, palette.border, CutPanelShape).padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         if (model.hasUnresolvedRecovery && !model.isRunning) {
             Text("이전 저장 파일이나 작업 기록을 확인하지 못했습니다. 파일 접근과 저장 공간을 확인한 뒤 다시 확인해 주세요.",
-                color = CutColors.secondaryText, style = MaterialTheme.typography.bodySmall)
+                color = palette.secondaryText, style = MaterialTheme.typography.bodySmall)
             OutlinedButton(onClick = model::retryRecovery,
                 enabled = !model.isRunning && !model.isRecovering && !model.isImporting && !inspecting,
                 modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
@@ -873,7 +881,7 @@ private fun BatchActions(
         }
         when (model.runState) {
             BatchRunState.SETUP -> {
-                Text("3. 저장", color = CutColors.primaryText,
+                Text("3. 저장", color = palette.primaryText,
                     style = MaterialTheme.typography.titleMedium)
                 val disabledReason = when {
                     inspecting -> "저장할 영상을 확인 중입니다."
@@ -891,13 +899,13 @@ private fun BatchActions(
                     shape = CutShape,
                 ) { Text("일괄 저장") }
                 disabledReason?.let { reason ->
-                    Text(reason, color = CutColors.secondaryText,
+                    Text(reason, color = palette.secondaryText,
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.testTag("batch-save-disabled-reason"))
                 }
             }
             BatchRunState.RUNNING -> {
-                Text(model.currentExportStage.label, color = CutColors.secondaryText,
+                Text(model.currentExportStage.label, color = palette.secondaryText,
                     style = MaterialTheme.typography.bodySmall)
                 OutlinedButton(
                     onClick = onCancel,
@@ -908,14 +916,14 @@ private fun BatchActions(
                 Text(
                     "다른 앱으로 이동하거나 화면을 꺼도 순서대로 저장합니다. " +
                         "앱이 종료되면 완료 파일을 복구하고 남은 작업은 재검토 후 다시 시작할 수 있습니다.",
-                    color = CutColors.secondaryText, style = MaterialTheme.typography.bodySmall,
+                    color = palette.secondaryText, style = MaterialTheme.typography.bodySmall,
                 )
             }
             BatchRunState.FINISHED -> {
                 Text(
                     "완료 " + model.successes + "개 · 실패 " + model.failures +
                         "개 · 건너뜀 " + model.skips + "개",
-                    color = CutColors.primaryText, fontWeight = FontWeight.SemiBold,
+                    color = palette.primaryText, fontWeight = FontWeight.SemiBold,
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(
@@ -939,13 +947,14 @@ private fun BatchFileHeader(model: BatchViewModel) {
     Row(
         Modifier.fillMaxWidth().padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    
+    val palette = LocalCutPalette.current    horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Icon(Icons.Outlined.FolderOpen, contentDescription = null,
-            tint = CutColors.secondaryAccent, modifier = Modifier.size(22.dp))
+            tint = palette.secondaryAccent, modifier = Modifier.size(22.dp))
         Text(
             "선택 영상 " + model.files.size + "개 · 원본 길이 → 저장 후 길이",
-            color = CutColors.primaryText, fontWeight = FontWeight.SemiBold,
+            color = palette.primaryText, fontWeight = FontWeight.SemiBold,
             modifier = Modifier.weight(1f),
         )
     }
@@ -962,7 +971,8 @@ private fun BatchFileRow(
 ) {
     val expected = template?.plan(file.uri, file.durationMs, file.hasAudio)
     val subtitle = when {
-        file.status == BatchFileStatus.SAVED && file.outputExpectedDurationMs != null ->
+        file.status == BatchF
+    val palette = LocalCutPalette.currentileStatus.SAVED && file.outputExpectedDurationMs != null ->
             formatTime(file.durationMs) + " → " + formatTime(file.outputExpectedDurationMs)
         file.durationMs < 100 -> file.reason ?: "읽을 수 없는 영상"
         expected is BatchPlan.Skip -> expected.reason
@@ -972,23 +982,23 @@ private fun BatchFileRow(
         else -> ""
     }
     Column(
-        modifier = Modifier.fillMaxWidth().background(CutColors.surface, CutPanelShape)
-            .border(1.dp, CutColors.border, CutPanelShape).padding(14.dp),
+        modifier = Modifier.fillMaxWidth().background(palette.surface, CutPanelShape)
+            .border(1.dp, palette.border, CutPanelShape).padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(
-                    file.displayName, color = CutColors.primaryText,
+                    file.displayName, color = palette.primaryText,
                     maxLines = 1, overflow = TextOverflow.Ellipsis,
                     fontWeight = FontWeight.Medium,
                 )
-                Text(subtitle, color = CutColors.secondaryText, fontSize = 12.sp)
+                Text(subtitle, color = palette.secondaryText, fontSize = 12.sp)
                 file.originalDate?.let {
                     if (dateMode == SaveDateMode.ORIGINAL) {
                         Text(
                             "날짜 출처: " + it.source,
-                            color = CutColors.secondaryText, fontSize = 11.sp,
+                            color = palette.secondaryText, fontSize = 11.sp,
                         )
                     }
                 }
@@ -996,7 +1006,7 @@ private fun BatchFileRow(
             if (canRemove) {
                 IconButton(
                     onClick = { onRemove(file.uri) }, modifier = Modifier.size(48.dp)
-                        .background(CutColors.panel, CutShape),
+                        .background(palette.panel, CutShape),
                 ) { Icon(Icons.Outlined.Close, contentDescription = "선택 영상 제거") }
             }
         }
@@ -1017,11 +1027,11 @@ private fun BatchFileRow(
         Text(
             statusText + (file.reason?.let { " · $it" } ?: ""),
             color = if (file.status == BatchFileStatus.FAILED) MaterialTheme.colorScheme.error
-                else CutColors.secondaryText,
+                else palette.secondaryText,
             fontSize = 12.sp,
         )
         if (file.status == BatchFileStatus.SAVED) {
-            Text(exportReportText(file.exportReport), color = CutColors.secondaryText, fontSize = 12.sp)
+            Text(exportReportText(file.exportReport), color = palette.secondaryText, fontSize = 12.sp)
         }
         file.diagnosticId?.let { operationId ->
             ExportDiagnosticButton(operationId = operationId, label = "저장 진단")
@@ -1034,17 +1044,18 @@ private fun BatchProgress(model: BatchViewModel) {
     Column(
         modifier = Modifier.fillMaxWidth().padding(vertical = 14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        if (model.isRecovering) Text("이전 작업과 완료 파일을 확인 중입니다.", color = CutColors.secondaryText)
+    ) 
+    val palette = LocalCutPalette.current{
+        if (model.isRecovering) Text("이전 작업과 완료 파일을 확인 중입니다.", color = palette.secondaryText)
         if (model.isRunning) Text(
             if (model.isFinalizing) "파일 등록 완료 처리 중입니다. 완료 후 다음 작업을 중단할 수 있습니다."
             else "화면을 끄거나 다른 앱으로 이동해도 저장이 계속됩니다. 알림에서 진행 상태와 중단을 확인할 수 있습니다.",
-            color = CutColors.secondaryText, fontSize = 12.sp,
+            color = palette.secondaryText, fontSize = 12.sp,
         )
         if (model.files.isNotEmpty()) {
             Text(
                 "진행 " + model.completedCount + " / " + model.files.size,
-                color = CutColors.secondaryText, fontSize = 13.sp,
+                color = palette.secondaryText, fontSize = 13.sp,
             )
             LinearProgressIndicator(
                 progress = {
@@ -1069,7 +1080,7 @@ private fun BatchProgress(model: BatchViewModel) {
                 OriginalActionStatus.UNSUPPORTED -> "지원하지 않아 원본 유지"
                 OriginalActionStatus.NONE -> "원본 유지"
             }
-            Text(status, color = CutColors.secondaryText)
+            Text(status, color = palette.secondaryText)
             if (model.originalStatus == OriginalActionStatus.SKIPPED) {
                 OutlinedButton(
                     onClick = model::promptOriginalApproval,

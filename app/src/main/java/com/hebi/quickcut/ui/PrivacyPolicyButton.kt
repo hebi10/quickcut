@@ -23,10 +23,11 @@ import com.hebi.quickcut.R
 
 @Composable
 internal fun PrivacyPolicyButton() {
+    val palette = LocalCutPalette.current
     var showing by rememberSaveable { mutableStateOf(false) }
     TextButton(onClick = { showing = true }, shape = CutShape,
         modifier = Modifier.heightIn(min = 48.dp)) {
-        Text("개인정보처리방침", color = CutColors.mutedText,
+        Text("개인정보처리방침", color = palette.mutedText,
             style = MaterialTheme.typography.labelMedium)
     }
     if (showing) PrivacyPolicyDialog(onDismiss = { showing = false })
@@ -34,7 +35,8 @@ internal fun PrivacyPolicyButton() {
 
 @Composable
 private fun PrivacyPolicyDialog(onDismiss: () -> Unit) {
-    val context = LocalContext.current
+ 
+    val palette = LocalCutPalette.current   val context = LocalContext.current
     val paragraphs = remember(context) {
         context.resources.openRawResource(R.raw.privacy_policy).bufferedReader().use {
             it.readText().split("\n\n")
@@ -55,7 +57,7 @@ private fun PrivacyPolicyDialog(onDismiss: () -> Unit) {
             TextButton(onClick = onDismiss, shape = CutShape,
                 modifier = Modifier.heightIn(min = 48.dp)) { Text("닫기") }
         },
-        containerColor = CutColors.panel,
+        containerColor = palette.panel,
         shape = CutDialogShape,
     )
 }

@@ -25,12 +25,13 @@ import androidx.compose.ui.unit.dp
 /** A preview failure leaves editing and saving available, with an explicit prepare retry. */
 @Composable
 internal fun PreviewRecoveryNotice(message: String, onRetry: () -> Unit) {
+    val palette = LocalCutPalette.current
     Column(
         Modifier.fillMaxWidth().heightIn(max = 220.dp)
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 12.dp, vertical = 8.dp)
-            .background(CutColors.panel, CutShape)
-            .border(1.dp, CutColors.border, CutShape)
+            .background(palette.panel, CutShape)
+            .border(1.dp, palette.border, CutShape)
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
@@ -38,14 +39,14 @@ internal fun PreviewRecoveryNotice(message: String, onRetry: () -> Unit) {
             horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Image(painterResource(R.drawable.quickcut_preview_error),
                 contentDescription = null, modifier = Modifier.size(64.dp),
-                colorFilter = ColorFilter.tint(CutColors.secondaryAccent))
+                colorFilter = ColorFilter.tint(palette.secondaryAccent))
             Column(Modifier.weight(1f)) {
-                Text("미리보기 확인 필요", color = CutColors.secondaryAccent)
-                Text(message, color = CutColors.primaryText)
+                Text("미리보기 확인 필요", color = palette.secondaryAccent)
+                Text(message, color = palette.primaryText)
             }
         }
         Text("편집 내용은 유지됩니다. 미리보기만 다시 준비할 수 있습니다.",
-            color = CutColors.secondaryText)
+            color = palette.secondaryText)
         TextButton(onClick = onRetry, shape = CutShape,
             modifier = Modifier.heightIn(min = 48.dp)) { Text("미리보기 다시 시도") }
         ExportDiagnosticButton()

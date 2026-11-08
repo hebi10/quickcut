@@ -49,26 +49,27 @@ internal fun ProjectCard(
     onOpen: (String) -> Unit,
     onDelete: (String) -> Unit,
 ) {
+    val palette = LocalCutPalette.current
     var confirmDelete by remember(item.id) { mutableStateOf(false) }
     Row(
-        Modifier.fillMaxWidth().background(CutColors.surface, CutShape)
-            .border(1.dp, CutColors.border, CutShape)
+        Modifier.fillMaxWidth().background(palette.surface, CutShape)
+            .border(1.dp, palette.border, CutShape)
             .clickable { onOpen(item.id) }.padding(CutSpacing.md),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(CutSpacing.md),
     ) {
         ClipThumbnail(item.thumbnailUri, item.thumbnailTimeMs,
-            Modifier.size(84.dp).background(CutColors.panel, CutShape))
+            Modifier.size(84.dp).background(palette.panel, CutShape))
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(CutSpacing.xs)) {
             Text(item.title, style = MaterialTheme.typography.titleMedium,
-                color = CutColors.primaryText, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                color = palette.primaryText, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Text("${item.clipCount}개 클립 · " +
                 DateFormat.getDateInstance(DateFormat.SHORT).format(Date(item.modifiedAt)),
-                style = MaterialTheme.typography.bodySmall, color = CutColors.secondaryText)
+                style = MaterialTheme.typography.bodySmall, color = palette.secondaryText)
         }
         IconButton(onClick = { confirmDelete = true }) {
             Icon(Icons.Outlined.DeleteOutline, contentDescription = "프로젝트 삭제",
-                tint = CutColors.secondaryAccent)
+                tint = palette.secondaryAccent)
         }
     }
     if (confirmDelete) {
@@ -81,7 +82,7 @@ internal fun ProjectCard(
                 confirmDelete = false
             }) { Text("삭제") } },
             dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("취소") } },
-            containerColor = CutColors.panel,
+            containerColor = palette.panel,
             shape = CutDialogShape,
         )
     }
@@ -94,9 +95,10 @@ internal fun SelectedVideoGallery(
     onImport: (List<String>) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    var selected by remember(uris) { mutableStateOf(uris.toSet()) }
+    var selec
+    val palette = LocalCutPalette.currentted by remember(uris) { mutableStateOf(uris.toSet()) }
     Column(
-        Modifier.fillMaxSize().background(CutColors.background).padding(CutSpacing.lg),
+        Modifier.fillMaxSize().background(palette.background).padding(CutSpacing.lg),
         verticalArrangement = Arrangement.spacedBy(CutSpacing.md),
     ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
@@ -106,13 +108,13 @@ internal fun SelectedVideoGallery(
                     Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "선택 닫기")
                 }
                 Text("영상 선택", style = MaterialTheme.typography.headlineSmall,
-                    color = CutColors.primaryText)
+                    color = palette.primaryText)
             }
-            Text("${selected.size}개 선택", color = CutColors.secondaryAccent,
+            Text("${selected.size}개 선택", color = palette.secondaryAccent,
                 style = MaterialTheme.typography.labelMedium)
         }
         Text("추가한 영상에서 편집할 항목을 선택하세요.",
-            color = CutColors.secondaryText, style = MaterialTheme.typography.bodySmall)
+            color = palette.secondaryText, style = MaterialTheme.typography.bodySmall)
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
             val columns = if (maxWidth < 600.dp) GridCells.Fixed(2)
                 else GridCells.Adaptive(160.dp)
@@ -126,9 +128,9 @@ internal fun SelectedVideoGallery(
                     val isSelected = uri in selected
                     Column(
                         Modifier.background(
-                            if (isSelected) CutColors.accentMuted else CutColors.surface, CutShape
+                            if (isSelected) palette.accentMuted else palette.surface, CutShape
                         ).border(1.dp,
-                            if (isSelected) CutColors.accent else CutColors.border, CutShape)
+                            if (isSelected) palette.accent else palette.border, CutShape)
                             .testTag("gallery-item-$index")
                             .clickable {
                                 selected = if (isSelected) selected - uri else selected + uri
@@ -138,13 +140,13 @@ internal fun SelectedVideoGallery(
                         Box {
                             ClipThumbnail(uri, 0L, Modifier.fillMaxWidth().height(124.dp))
                             if (isSelected) {
-                                Text("✓", color = CutColors.onAccent,
+                                Text("✓", color = palette.onAccent,
                                     modifier = Modifier.align(Alignment.TopEnd)
-                                        .background(CutColors.accent, CutSmallShape)
+                                        .background(palette.accent, CutSmallShape)
                                         .padding(horizontal = 8.dp, vertical = 3.dp))
                             }
                         }
-                        Text("영상 ${index + 1}", color = CutColors.primaryText,
+                        Text("영상 ${index + 1}", color = palette.primaryText,
                             style = MaterialTheme.typography.labelMedium)
                     }
                 }

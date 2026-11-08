@@ -56,11 +56,12 @@ private val welcomePages = listOf(
 
 @Composable
 internal fun QuickCutWelcome(onFinish: () -> Unit) {
+    val palette = LocalCutPalette.current
     var index by rememberSaveable { mutableIntStateOf(0) }
     val page = welcomePages[index]
     val compactArtwork = LocalDensity.current.fontScale >= 1.6f
     Column(
-        modifier = Modifier.fillMaxSize().background(CutColors.background)
+        modifier = Modifier.fillMaxSize().background(palette.background)
             .padding(horizontal = CutSpacing.xl, vertical = CutSpacing.xxl),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.SpaceBetween,
@@ -92,21 +93,21 @@ internal fun QuickCutWelcome(onFinish: () -> Unit) {
             } else {
                 Box(
                     modifier = Modifier.size(if (compactArtwork) 106.dp else 128.dp)
-                        .background(CutColors.accentMuted, CutPanelShape),
+                        .background(palette.accentMuted, CutPanelShape),
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
                         if (index == 1) Icons.Outlined.PlayCircleOutline else Icons.Outlined.VideoLibrary,
                         contentDescription = null,
-                        tint = CutColors.secondaryAccent,
+                        tint = palette.secondaryAccent,
                         modifier = Modifier.size(if (compactArtwork) 68.dp else 80.dp),
                     )
                 }
             }
-            Text(page.title.replace("\\n", "\n"), color = CutColors.primaryText,
+            Text(page.title.replace("\\n", "\n"), color = palette.primaryText,
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
-            Text(page.detail.replace("\\n", "\n"), color = CutColors.secondaryText,
+            Text(page.detail.replace("\\n", "\n"), color = palette.secondaryText,
                 style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center)
         }
         Column(horizontalAlignment = Alignment.CenterHorizontally,
@@ -115,7 +116,7 @@ internal fun QuickCutWelcome(onFinish: () -> Unit) {
                 verticalAlignment = Alignment.CenterVertically) {
                 repeat(welcomePages.size) { i ->
                     Box(Modifier.size(if (i == index) 9.dp else 7.dp)
-                        .background(if (i == index) CutColors.accent else CutColors.mutedText, CircleShape))
+                        .background(if (i == index) palette.accent else palette.mutedText, CircleShape))
                 }
             }
             Button(

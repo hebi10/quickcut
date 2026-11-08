@@ -116,6 +116,9 @@ class EmulatorFlowTest(unittest.TestCase):
         env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}", FLOW_ROOT=str(root),
                    REAL_PYTHON=sys.executable, PREFLIGHT_STATUS=str(preflight), FULL_STATUS=str(full),
                    **{key: str(value) for key, value in settings.items()})
+        # The CI unit-flow stub has no emulator matrix, but release evidence requires a device API.
+        # Keep explicit API 29 scenarios unchanged and preserve the real runner's API when supplied.
+        env.setdefault("QUICKCUT_EMULATOR_API", "35")
         result = subprocess.run(["bash", str(SCRIPT)], cwd=root, env=env,
                                 capture_output=True, text=True, timeout=10)
         events = [json.loads(line) for line in (root / "events.jsonl").read_text().splitlines()]
@@ -239,7 +242,9 @@ class EmulatorFlowTest(unittest.TestCase):
         self.assertTrue((root / "quickcut-native-preflight-results/results/TEST-preflight.xml").is_file())
         self.assertEqual(sum(e[0] == "python3" and any("verify-android-main10.py" in a for a in e) for e in events), 2)
         self.assertIn("152 distinct tests", result.stdout)
-        self.assertTrue((root / "quickcut-stage20-evidence/verified-screens-and-tests.json").is_file())
+        proof = root / "quickcut-stage20-evidence/verified-screens-and-tests.json"
+        self.assertTrue(proof.is_file())
+        self.assertEqual(json.loads(proof.read_text())["androidApi"], "35")
         for image in ("stage7_home.png", "stage7_projects_empty.png", "stage7_onboarding.png",
                       "stage13_home_populated.png", "stage13_projects_populated.png",
                       "stage13_tools.png", "stage13_settings.png", "stage13_gallery_selected.png",

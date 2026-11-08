@@ -38,7 +38,7 @@ class ExtractionPlannerTest {
 
     @Test fun outputNamesUseStableIndexes() {
         assertEquals("movie_구간03", ExtractionPlanner.outputName("movie.mp4", 3))
-        assertTrue(ExtractionPlanner.outputName("../b@a.mp4", 1).startsWith(".._b_a"))
+        assertTrue(ExtractionPlanner.outputName("../b@a.mp4", 1).startsWith("b_a"))
     }
 
     @Test fun additionStopsAtLimit() {

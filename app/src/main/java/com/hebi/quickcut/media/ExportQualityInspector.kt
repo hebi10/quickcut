@@ -9,6 +9,7 @@ import android.net.Uri
 import com.hebi.quickcut.editor.EditTimeline
 import java.io.File
 import java.io.IOException
+import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
@@ -23,7 +24,15 @@ object ExportQualityInspector {
         if (settings.isAutomatic) return@withContext QualityEvaluation()
         if (timeline.isEmpty) return@withContext QualityEvaluation(error = "편집할 영상이 없습니다.")
         val sources = try {
-            timeline.clips.map { it.uri }.distinct().map { readSource(context, Uri.parse(it)) }
+            timeline.clips.map { clip ->
+                val source = readSource(context, Uri.parse(clip.uri))
+                clip.crop?.let { region ->
+                    source.copy(
+                        width = (source.width * region.width).roundToInt().coerceAtLeast(16),
+                        height = (source.height * region.height).roundToInt().coerceAtLeast(16),
+                    )
+                } ?: source
+            }
         } catch (_: Exception) {
             return@withContext QualityEvaluation(error = "원본 영상의 해상도·FPS를 읽을 수 없습니다.")
         }
@@ -67,10 +76,14 @@ object ExportQualityInspector {
         val retriever = MediaMetadataRetriever()
         try {
             retriever.setDataSource(context, uri)
-            val width = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)
+            val rawWidth = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)
                 ?.toIntOrNull() ?: error("Source width missing")
-            val height = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)
+            val rawHeight = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)
                 ?.toIntOrNull() ?: error("Source height missing")
+            val rotation = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)
+                ?.toIntOrNull() ?: 0
+            val (width, height) = if (rotation % 180 != 0) rawHeight to rawWidth
+                else rawWidth to rawHeight
             val extractor = MediaExtractor()
             var fps: Float? = null
             var hdr = false

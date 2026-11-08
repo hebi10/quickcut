@@ -49,6 +49,24 @@ if name == "adb":
             sys.exit(43)
         if os.environ.get("STAGE7_CAPTURE_STATUS") == "1":
             sys.exit(42)
+        if any("stage17_" in a for a in args):
+            if os.environ.get("STAGE17_CAPTURE_STATUS") == "1":
+                sys.stdout.buffer.write(b"adb: cannot read screenshot")
+                sys.exit(0)
+            import struct, zlib
+            def png_chunk(kind, chunk_data):
+                return (len(chunk_data).to_bytes(4, "big") + kind + chunk_data +
+                    (zlib.crc32(kind + chunk_data) & 0xffffffff).to_bytes(4, "big"))
+            width, height = 360, 640
+            header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+            pixels = (bytes([0]) + bytes(width * 3)) * height
+            sys.stdout.buffer.write(
+                bytes.fromhex("89504e470d0a1a0a") +
+                png_chunk(b"IHDR", header) +
+                png_chunk(b"IDAT", zlib.compress(pixels)) +
+                png_chunk(b"IEND", b"")
+            )
+            sys.exit(0)
         sys.stdout.buffer.write(b"stub-png-evidence")
         sys.exit(0)
     if args[:3] == ["shell", "pm", "path"]:
@@ -151,6 +169,12 @@ class EmulatorFlowTest(unittest.TestCase):
         timed = [e[1:3] for e in events if e[0] == "timeout" and len(e) > 3 and e[3] == "gradle"]
         self.assertEqual(timed, [["--kill-after=30s", "10m"], ["--kill-after=30s", "30m"]])
         self.assertIn("152 distinct tests", result.stdout)
+
+    def test_stage17_non_png_evidence_is_rejected_without_weakening_suite(self):
+        result, _, _, phases = self.run_flow(STAGE17_CAPTURE_STATUS=1)
+        self.assertEqual(phases, ["preflight", "full"])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Invalid Stage 17 PNG", result.stdout + result.stderr)
 
     def test_stage13_capture_failure_remains_a_required_gate(self):
         result, _, _, phases = self.run_flow(STAGE13_CAPTURE_STATUS=1)

@@ -8,6 +8,7 @@ import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.FontScale
 import androidx.compose.ui.test.ForcedSize
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
@@ -53,11 +54,14 @@ class Stage16CropScreensInstrumentedTest {
             }
         }
         waitPreview()
-        compose.onNodeWithTag("crop-preset-VERTICAL").performClick()
+        compose.onNodeWithTag("crop-preset-VERTICAL").performScrollTo().performClick()
+        compose.onNodeWithTag("crop-preset-VERTICAL").assertIsSelected()
         capture("stage16_crop_vertical.png")
-        compose.onNodeWithTag("crop-preset-SQUARE").performClick()
+        compose.onNodeWithTag("crop-preset-SQUARE").performScrollTo().performClick()
+        compose.onNodeWithTag("crop-preset-SQUARE").assertIsSelected()
         capture("stage16_crop_square.png")
-        compose.onNodeWithTag("crop-preset-FREE").performClick()
+        compose.onNodeWithTag("crop-preset-FREE").performScrollTo().performClick()
+        compose.onNodeWithTag("crop-preset-FREE").assertIsSelected()
         compose.onNodeWithTag("crop-free-width").performScrollTo().assertIsDisplayed()
         capture("stage16_crop_free.png")
     }

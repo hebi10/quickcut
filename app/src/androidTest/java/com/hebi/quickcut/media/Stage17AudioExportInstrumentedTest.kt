@@ -51,11 +51,17 @@ class Stage17AudioExportInstrumentedTest {
                 exportMode = ExportMode.ALLOW_REENCODE,
             )
             MediaReader.validateExport(context, requireNotNull(output), duration, true)
+            val reference = AudioWaveformReader.read(context, uri, 0L, duration)
+            assertTrue("Original source audio could not be decoded", reference != null)
             val waveform = AudioWaveformReader.read(context, requireNotNull(output), 0L, duration)
             assertTrue("Actual output audio waveform could not be decoded", waveform != null)
             val peaks = requireNotNull(waveform).peaks
             val middle = peaks.subList(14, 28).maxOrNull() ?: 0f
+            val sourceMiddle = requireNotNull(reference).peaks.subList(14, 28).maxOrNull() ?: 0f
             assertTrue("Middle audio is missing", middle > 0.003f)
+            assertTrue("Volume 50% was not applied: source=$sourceMiddle result=$middle",
+                sourceMiddle > 0.003f && middle < sourceMiddle * 0.78f &&
+                    middle > sourceMiddle * 0.20f)
             assertTrue("Fade-in is not present: first=${peaks.take(3)} middle=$middle",
                 (peaks.take(3).maxOrNull() ?: 0f) < middle * 0.75f)
             assertTrue("Fade-out is not present: last=${peaks.takeLast(3)} middle=$middle",

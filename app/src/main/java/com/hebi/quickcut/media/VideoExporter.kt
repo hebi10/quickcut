@@ -124,9 +124,10 @@ class VideoExporter(private val context: Context) {
             assessment.plan ?: throw IOException(assessment.error
                 ?: "선택한 출력 품질을 적용할 수 없습니다.")
         }
-        if (outputPlan != null && exportMode == ExportMode.FAST_ONLY) {
+        val hasCrop = timeline.clips.any { it.crop != null }
+        if ((outputPlan != null || hasCrop) && exportMode == ExportMode.FAST_ONLY) {
             throw ReencodeRequiredException(
-                "해상도·FPS·압축 품질을 변경하려면 재인코딩 동의가 필요합니다.")
+                "화면 비율·크롭 또는 출력 품질을 변경하려면 재인코딩 동의가 필요합니다.")
         }
         val originalDate = if (saveDateMode == SaveDateMode.ORIGINAL) {
             withContext(Dispatchers.IO) {
@@ -141,7 +142,7 @@ class VideoExporter(private val context: Context) {
         // Fast path: a single unmodified MP4 clip with a safe sync-sample boundary.
         // Original dates change MP4 headers, not compressed pictures.
         onStage(ExportStage.ANALYZING)
-        if (outputPlan == null && timeline.clips.size == 1) {
+        if (outputPlan == null && !hasCrop && timeline.clips.size == 1) {
             val clip = timeline.clips.first()
             val inspection = withContext(Dispatchers.IO) {
                 FastMp4Trimmer.inspect(context, clip)
@@ -212,8 +213,8 @@ class VideoExporter(private val context: Context) {
         val temporary = File(context.cacheDir, "quickcut_" + UUID.randomUUID().toString() + ".mp4")
         try {
             var nativeReason: FastExportReason? = null
-            if (outputPlan == null) onStage(ExportStage.NATIVE_PROCESSING)
-            val nativeResult = if (outputPlan != null) null else try {
+            if (outputPlan == null && !hasCrop) onStage(ExportStage.NATIVE_PROCESSING)
+            val nativeResult = if (outputPlan != null || hasCrop) null else try {
                     NativeSmartCutTrimmer.tryExport(context, timeline, temporary, onProgress,
                         onUnavailable = { nativeReason = it },
                         copyVideoOnly = exportMode == ExportMode.FAST_ONLY)
@@ -233,7 +234,7 @@ class VideoExporter(private val context: Context) {
                     null
                 }
             val media3Result = if (nativeResult == null) {
-                if (outputPlan == null) {
+                if (outputPlan == null && !hasCrop) {
                     diagnostics = diagnostics.copy(smartCutReason = nativeReason ?: FastExportReason.UNKNOWN)
                     showDiagnostics()
                 }
@@ -246,7 +247,7 @@ class VideoExporter(private val context: Context) {
                         throw IOException("이전 저장 시도의 임시 파일을 정리할 수 없습니다.")
                     }
                 }
-                val optimizeTrim = if (outputPlan == null) timeline.clips.singleOrNull()?.let { clip ->
+                val optimizeTrim = if (outputPlan == null && !hasCrop) timeline.clips.singleOrNull()?.let { clip ->
                     withContext(Dispatchers.IO) { ExactTrimOptimization.canOptimize(context, clip) }
                 } ?: false else false
                 onStage(ExportStage.MEDIA3_PROCESSING)

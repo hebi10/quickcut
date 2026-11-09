@@ -90,8 +90,18 @@ def publish(token, assets, commit=False):
         languages = {item.get("language") for item in listing.get("listings", [])}
         if LOCALE not in languages:
             raise ValueError("Existing Korean listing is missing; refusing to create an unexpected locale")
-        for kind in assets:
-            play_request(token, "GET", prefix + "/listings/" + LOCALE + "/" + kind)
+        matching = True
+        for kind, files in assets.items():
+            response = play_request(token, "GET", prefix + "/listings/" + LOCALE + "/" + kind)
+            current = response.get("images", [])
+            if not isinstance(current, list):
+                raise ValueError("Google Play returned malformed image inventory")
+            observed = [item.get("sha256", "").lower() for item in current]
+            expected = [hashlib.sha256(file.read_bytes()).hexdigest() for file in files]
+            if observed != expected:
+                matching = False
+        if matching:
+            return {"mode": "unchanged", "locale": LOCALE, "uploaded": False}
         if not commit:
             return {"mode": "read-only", "locale": LOCALE, "uploaded": False}
         for kind, files in assets.items():

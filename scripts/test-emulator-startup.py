@@ -36,8 +36,9 @@ class Device:
         output = ''
         if self.failure and self.failure in args:
             return subprocess.CompletedProcess(command, 1, '', 'device offline')
-        if args[:4] == ['shell','am','start','-W']:
-            output = 'Status: ok\nActivity: ' + HOME + '\n'
+        if args[:3] == ['shell','am','start']:
+            output = ('Status: ok\nActivity: ' + HOME + '\n' if '-W' in args else
+                      'Starting: Intent { cmp=com.hebi.quickcut/.MainActivity }\n')
         elif args[:3] == ['shell','dumpsys','activity']:
             component = self.components[min(self.probes, len(self.components)-1)]
             self.probes += 1
@@ -63,7 +64,7 @@ class Device:
         return subprocess.CompletedProcess(command, 0, output, '')
 
     def launches(self):
-        return [call for call in self.calls if call[:4] == ['shell','am','start','-W']]
+        return [call for call in self.calls if call[:3] == ['shell','am','start']]
 
 
 class StartupTest(unittest.TestCase):
@@ -82,6 +83,14 @@ class StartupTest(unittest.TestCase):
         self.check(device)
         self.assertEqual(len(device.launches()),2)
         self.assertFalse(any(call[:3] == ['shell','am','force-stop'] for call in device.calls))
+
+    def test_api29_dispatch_returns_without_wait_and_still_requires_foreground_ui(self):
+        device = Device([HOME, APP])
+        with patch.dict(os.environ, {'QUICKCUT_EMULATOR_API': '29'}):
+            self.check(device)
+        self.assertEqual(len(device.launches()), 2)
+        self.assertTrue(all('-W' not in call for call in device.launches()))
+        self.assertGreaterEqual(device.probes, 2)
 
     def test_app_foreground_with_correct_owned_ui_needs_no_relaunch(self):
         device=Device([APP])

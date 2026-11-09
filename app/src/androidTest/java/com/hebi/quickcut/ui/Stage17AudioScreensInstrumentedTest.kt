@@ -66,16 +66,20 @@ class Stage17AudioScreensInstrumentedTest {
         compose.runOnIdle {
             clip = clip.copy(id = 2L, audio = AudioAdjustment(45, 1_000, 1_000))
         }
+        compose.waitForIdle()
         compose.onNodeWithText("원본 음량 · 45%").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("페이드 인 · 00:01.0").performScrollTo().assertIsDisplayed()
+        assertTextVisibleAfterScroll("페이드 인 · 00:01.0")
+        compose.onNodeWithTag("audio-fade-in").assertIsEnabled()
+        compose.onNodeWithTag("audio-apply").assertIsDisplayed()
         capture("stage17_audio_fades.png")
 
         compose.runOnIdle {
             clip = clip.copy(id = 3L, muted = true)
         }
-        compose.onNodeWithText(
+        compose.waitForIdle()
+        assertTextVisibleAfterScroll(
             "현재 클립이 음소거 상태입니다. 스위치를 끄면 소리 조절을 다시 사용할 수 있습니다."
-        ).performScrollTo().assertIsDisplayed()
+        )
         compose.onNodeWithTag("audio-volume").assertIsNotEnabled()
         compose.onNodeWithTag("audio-mute-toggle").assertIsEnabled()
         capture("stage17_audio_muted.png")
@@ -101,6 +105,20 @@ class Stage17AudioScreensInstrumentedTest {
         }
         compose.onNodeWithTag("audio-apply").assertIsDisplayed()
         capture("stage17_audio_largefont.png")
+    }
+
+    private fun assertTextVisibleAfterScroll(text: String) {
+        // The 360dp emulator layout can deliver a scroll frame after Compose
+        // finishes applying a new clip ID. Retain the real visibility check.
+        compose.waitUntil(10_000L) {
+            try {
+                compose.onNodeWithText(text).performScrollTo().assertIsDisplayed()
+                true
+            } catch (_: AssertionError) {
+                false
+            }
+        }
+        compose.onNodeWithText(text).assertIsDisplayed()
     }
 
     private fun capture(name: String) {

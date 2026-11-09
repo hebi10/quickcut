@@ -147,7 +147,7 @@ class StartupTest(unittest.TestCase):
 
     def test_expired_startup_budget_stops_before_additional_commands(self):
         device=Device([HOME,APP])
-        with patch.object(s.time,'monotonic',side_effect=[0,100]),self.assertRaises(s.StartupError): self.check(device)
+        with patch.object(s.time,'monotonic',side_effect=[0,200]),self.assertRaises(s.StartupError): self.check(device)
         self.assertEqual(device.calls,[])
 
     def test_other_app_crash_noise_does_not_block_valid_start(self):

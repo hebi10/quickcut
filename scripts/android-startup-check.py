@@ -72,7 +72,10 @@ def check_startup(directory):
         if filename:
             (directory / filename).write_text(result.stdout + result.stderr, encoding='utf-8')
         if result.returncode:
-            raise StartupError('adb startup command failed; no relaunch will hide the failure')
+            detail = (result.stderr or result.stdout or 'no command output').strip().replace('\\n', ' ')[:220]
+            raise StartupError(
+                'adb startup command failed; no relaunch will hide the failure: '
+                f'{" ".join(args[:4])} (exit {result.returncode}; {detail})')
         return result.stdout
 
     def guard():
@@ -105,8 +108,19 @@ def check_startup(directory):
         component = resumed_component(adb(['shell', 'dumpsys', 'activity', 'activities'], 'activity.txt'))
         print('QuickCut startup actual resumed activity: ' + component)
         if component in APP_COMPONENTS:
-            adb(['shell', 'uiautomator', 'dump', '/sdcard/quickcut-ui.xml'])
-            xml = adb(['shell', 'cat', '/sdcard/quickcut-ui.xml'], 'ui.xml')
+            # Unique paths prevent a stale XML from satisfying a newer foreground probe.
+            ui_path = f'/sdcard/quickcut-ui-{os.getpid()}-{attempt + 1}.xml'
+            try:
+                adb(['shell', 'uiautomator', 'dump', ui_path],
+                    f'ui-dump-{attempt + 1}.txt')
+                xml = adb(['shell', 'cat', ui_path], 'ui.xml')
+            except StartupError as error:
+                if attempt == 4:
+                    raise StartupError(f'UI hierarchy unavailable after five probes: {error}') from None
+                print(f'UI hierarchy unavailable on probe {attempt + 1}/5; '
+                      'retrying without an app relaunch', flush=True)
+                time.sleep(min(2, max(0, deadline - time.monotonic())))
+                continue
             try:
                 tree = ET.fromstring(xml)
             except ET.ParseError:

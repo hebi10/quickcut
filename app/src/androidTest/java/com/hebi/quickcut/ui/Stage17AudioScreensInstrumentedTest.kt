@@ -40,7 +40,7 @@ class Stage17AudioScreensInstrumentedTest {
     @Before fun setupFixture() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         input = File(instrumentation.targetContext.cacheDir, "stage17_audio_ui_source.mp4")
-        instrumentation.context.assets.open("quickcut_keyframes.mp4").use { src ->
+        instrumentation.context.assets.open("quickcut_showcase.mp4").use { src ->
             input.outputStream().use { output -> src.copyTo(output) }
         }
     }

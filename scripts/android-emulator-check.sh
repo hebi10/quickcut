@@ -97,6 +97,9 @@ ffmpeg -hide_banner -loglevel error -y \
   -c:a aac -b:a 64k -shortest \
   app/src/androidTest/assets/quickcut_keyframes.mp4
 
+# Keep codec/trim regression fixtures unchanged; only the visual QA preview uses this clip.
+bash scripts/generate-showcase-fixture.sh
+
 # Long inputs keep background Media3 processing observable without multiplying
 # decoder teardown transitions. API29 goldfish may wait 20s per lost-frame input
 # before the existing exact-frame software recovery can run.

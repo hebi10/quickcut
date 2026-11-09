@@ -126,6 +126,8 @@ jobs:
             -c:a aac -b:a 64k -shortest \
             -metadata creation_time=2021-01-01T00:00:00Z \
             app/src/androidTest/assets/quickcut_fixture.mp4
+      - name: Generate clean showcase video for real Android captures
+        run: bash scripts/generate-showcase-fixture.sh
       - name: Build current debug app and test APKs together
         # Both APKs use this runner's disposable debug key. The downloaded APK is
         # never installed, and the normal preBuild native verification still runs.

@@ -48,7 +48,7 @@ class Stage13ReferenceScreensInstrumentedTest {
         repeat(2) { index ->
             val file = File(context.cacheDir, "quickcut_stage13_$index.mp4")
             InstrumentationRegistry.getInstrumentation().context.assets
-                .open("quickcut_keyframes.mp4").use { input ->
+                .open("quickcut_showcase.mp4").use { input ->
                     file.outputStream().use { output -> input.copyTo(output) }
                 }
             clips.add(file)

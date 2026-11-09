@@ -96,7 +96,7 @@ class EditorDesignInstrumentedTest {
         session = EditorSessionStore(context)
         previousSession = session.load()
         source = File(context.cacheDir, "editor_design_fixture.mp4")
-        InstrumentationRegistry.getInstrumentation().context.assets.open("quickcut_keyframes.mp4").use { input ->
+        InstrumentationRegistry.getInstrumentation().context.assets.open("quickcut_showcase.mp4").use { input ->
             source.outputStream().use { output -> input.copyTo(output) }
         }
         batchStore = BatchSessionStore(File(context.cacheDir, "editor_design_batch_session.json"))

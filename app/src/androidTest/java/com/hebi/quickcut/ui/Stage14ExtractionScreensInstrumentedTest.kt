@@ -37,7 +37,7 @@ class Stage14ExtractionScreensInstrumentedTest {
     @Before fun prepareFixture() {
         val app = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as Application
         video = File(app.cacheDir, "quickcut_stage14_fixture.mp4")
-        InstrumentationRegistry.getInstrumentation().context.assets.open("quickcut_keyframes.mp4").use { input ->
+        InstrumentationRegistry.getInstrumentation().context.assets.open("quickcut_showcase.mp4").use { input ->
             video.outputStream().use { output -> input.copyTo(output) }
         }
         store = ExtractionSessionStore(app, "quickcut_stage14_test_only.json")

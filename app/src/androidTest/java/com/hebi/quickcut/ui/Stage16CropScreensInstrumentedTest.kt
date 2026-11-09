@@ -35,7 +35,7 @@ class Stage16CropScreensInstrumentedTest {
     @Before fun createFixture() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         source = File(context.cacheDir, "stage16_screen_fixture.mp4")
-        InstrumentationRegistry.getInstrumentation().context.assets.open("quickcut_keyframes.mp4")
+        InstrumentationRegistry.getInstrumentation().context.assets.open("quickcut_showcase.mp4")
             .use { input -> source.outputStream().use { output -> input.copyTo(output) } }
     }
 

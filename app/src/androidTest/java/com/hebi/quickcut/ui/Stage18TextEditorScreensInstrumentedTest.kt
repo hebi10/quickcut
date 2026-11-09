@@ -48,7 +48,7 @@ class Stage18TextEditorScreensInstrumentedTest {
     @Before fun prepare() {
         val instrument = InstrumentationRegistry.getInstrumentation()
         source = File(instrument.targetContext.cacheDir, "stage18_text_ui.mp4")
-        instrument.context.assets.open("quickcut_fixture.mp4").use { input ->
+        instrument.context.assets.open("quickcut_showcase.mp4").use { input ->
             source.outputStream().use { output -> input.copyTo(output) }
         }
     }

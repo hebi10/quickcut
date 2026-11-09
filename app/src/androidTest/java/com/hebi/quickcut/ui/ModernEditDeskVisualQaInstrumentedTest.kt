@@ -175,7 +175,12 @@ class ModernEditDeskVisualQaInstrumentedTest {
             "modern_dark_export_dialog.png",
         ))
         compose.waitForIdle()
-        val bitmap = compose.onRoot().captureToImage().asAndroidBitmap()
+        val bitmap = if (name == "modern_dark_export_dialog.png") {
+            InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
+                ?: error("Android window screenshot is unavailable for the modal dialog")
+        } else {
+            compose.onRoot().captureToImage().asAndroidBitmap()
+        }
         val folder = File(
             InstrumentationRegistry.getInstrumentation().targetContext.filesDir,
             "design-review",

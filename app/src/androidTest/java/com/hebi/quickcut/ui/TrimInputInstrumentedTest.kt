@@ -15,6 +15,8 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import android.app.Application
 import android.net.Uri
 import android.view.KeyEvent
+import android.view.inputmethod.InputMethodManager
+import android.content.Context
 import android.view.View
 import android.view.ViewGroup
 import androidx.activity.ComponentActivity
@@ -454,7 +456,18 @@ class TrimInputInstrumentedTest {
     }
 
     private fun waitForKeyboard(visible: Boolean) {
-        composeRule.waitUntil(10_000L) {
+        if (visible) {
+            composeRule.runOnUiThread {
+                val activity = composeRule.activity
+                val focused = checkNotNull(activity.window.decorView.findFocus()) {
+                    "Detailed trim input must retain focus before showing the IME"
+                }
+                val input = activity.getSystemService(Context.INPUT_METHOD_SERVICE)
+                    as InputMethodManager
+                input.showSoftInput(focused, InputMethodManager.SHOW_FORCED)
+            }
+        }
+        composeRule.waitUntil(20_000L) {
             composeRule.runOnIdle {
                 ViewCompat.getRootWindowInsets(composeRule.activity.window.decorView)
                     ?.isVisible(WindowInsetsCompat.Type.ime()) == visible

@@ -31,16 +31,28 @@ def verify(directory: Path):
     for phase in phases:
         file = directory / f"TEST-api29-{phase}.xml"
         document = ET.parse(file).getroot()
+        if document.tag not in ("testsuites", "testsuite"):
+            raise ValueError(f"{phase}: unexpected JUnit document root")
         suites = list(document.iter("testsuite"))
-        if len(suites) != 1:
-            raise ValueError(f"{phase}: expected one JUnit suite")
-        suite = suites[0]
-        cases = list(suite.iter("testcase"))
+        if not suites:
+            raise ValueError(f"{phase}: no JUnit testsuite elements")
+        cases = list(document.iter("testcase"))
         expected = 2 if phase in ISOLATED else REST_COUNT
-        if len(cases) != expected or int(suite.get("tests", "-1")) != expected:
+        if len(cases) != expected or int(document.get("tests", "-1")) != expected:
             raise ValueError(f"{phase}: expected {expected} cases, got {len(cases)}")
-        if any(int(suite.get(key, "-1")) for key in ("errors", "failures", "skipped")):
-            raise ValueError(f"{phase}: failed or skipped tests")
+        if any(int(document.get(key, "-1")) for key in ("errors", "failures", "skipped")):
+            raise ValueError(f"{phase}: failing or skipped tests in JUnit root")
+        aggregate = 0
+        for suite in suites:
+            suite_cases = list(suite.iter("testcase"))
+            suite_count = int(suite.get("tests", "-1"))
+            if suite_count != len(suite_cases):
+                raise ValueError(f"{phase}: testsuite count mismatch")
+            if any(int(suite.get(key, "-1")) for key in ("errors", "failures", "skipped")):
+                raise ValueError(f"{phase}: failed or skipped tests")
+            aggregate += suite_count
+        if aggregate != expected:
+            raise ValueError(f"{phase}: JUnit suites do not cover all {expected} tests")
         found = set()
         for case in cases:
             ident = (case.get("classname"), case.get("name"))

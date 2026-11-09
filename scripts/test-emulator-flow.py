@@ -44,7 +44,14 @@ if name == "gradle":
     # Detect stale preflight XML if shell forgot to clear it before full tests.
     if phase == "full" and (results / "TEST-preflight.xml").exists():
         (root / "stale-preflight-observed").write_text("stale")
-    suite = Element("testsuite", tests=str(count), failures=str(int(failed)), errors="0", skipped="0")
+    document = Element("testsuites", tests=str(count),
+                       failures=str(int(failed)), errors="0", skipped="0")
+    half = count // 2 if phase == "remaining" else count
+    suite = SubElement(document, "testsuite", tests=str(half),
+                       failures=str(int(failed)), errors="0", skipped="0")
+    other_suite = (SubElement(document, "testsuite", tests=str(count - half),
+                              failures="0", errors="0", skipped="0")
+                   if phase == "remaining" else None)
     required = (
         "com.hebi.quickcut.segments.Stage14MultiSegmentExportInstrumentedTest",
         "com.hebi.quickcut.ui.Stage14ExtractionScreensInstrumentedTest",
@@ -72,9 +79,10 @@ if name == "gradle":
                         "cancellingOffscreenMedia3ProcessingLeavesNoGalleryOutputOrStagedWriter")[i]
         if classname.endswith("Stage20RecoveryInstrumentedTest") and os.environ.get("STAGE20_MISSING_SUITE") == "1":
             classname = phase + ".Suite"
-        case = SubElement(suite, "testcase", classname=classname, name=testname)
+        owner = suite if i < half else other_suite
+        case = SubElement(owner, "testcase", classname=classname, name=testname)
         if failed and i == 0: SubElement(case, "failure").text = phase + " original failure"
-    ElementTree(suite).write(results / ("TEST-" + phase + ".xml"))
+    ElementTree(document).write(results / ("TEST-" + phase + ".xml"))
     reports = root / "app/build/reports/androidTests/connected"
     reports.mkdir(parents=True, exist_ok=True)
     (reports / "index.html").write_text(phase + " report")

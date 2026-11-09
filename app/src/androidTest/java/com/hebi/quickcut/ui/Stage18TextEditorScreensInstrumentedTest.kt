@@ -86,25 +86,12 @@ class Stage18TextEditorScreensInstrumentedTest {
         compose.onNodeWithTag("text-apply").assertIsNotEnabled()
         compose.onNodeWithTag("text-layer-input").performTextInput("테스트 영상 문구")
         compose.onNodeWithTag("text-apply").assertIsEnabled()
+        hideImeAndWait()
+        compose.onNodeWithTag("text-layer-input").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("text-apply").assertIsDisplayed().assertIsEnabled()
         capture("stage18_text_selected.png")
         compose.onNodeWithTag("text-color-YELLOW").performScrollTo().performClick()
-        compose.runOnUiThread {
-            val window = compose.activity.window
-            WindowInsetsControllerCompat(window, window.decorView)
-                .hide(WindowInsetsCompat.Type.ime())
-        }
-        // IME removal is asynchronous on emulators; do not capture a frame
-        // with the pinned action row still covered by the keyboard.
-        compose.waitUntil(10_000L) {
-            var imeHidden = false
-            compose.runOnUiThread {
-                val decor = compose.activity.window.decorView
-                imeHidden = ViewCompat.getRootWindowInsets(decor)
-                    ?.isVisible(WindowInsetsCompat.Type.ime()) != true
-            }
-            imeHidden
-        }
-        compose.waitForIdle()
+        hideImeAndWait()
         compose.onNodeWithTag("text-layer-timing").performScrollTo()
         compose.waitUntil(10_000L) {
             try {
@@ -139,6 +126,25 @@ class Stage18TextEditorScreensInstrumentedTest {
         capture("stage18_text_largefont.png")
     }
 
+    private fun hideImeAndWait() {
+        compose.runOnUiThread {
+            val window = compose.activity.window
+            WindowInsetsControllerCompat(window, window.decorView)
+                .hide(WindowInsetsCompat.Type.ime())
+        }
+        // A hide request is asynchronous; require actual window insets before
+        // proving that the editor and pinned apply action are visible.
+        compose.waitUntil(10_000L) {
+            var hidden = false
+            compose.runOnUiThread {
+                val insets = ViewCompat.getRootWindowInsets(compose.activity.window.decorView)
+                hidden = insets != null && !insets.isVisible(WindowInsetsCompat.Type.ime())
+            }
+            hidden
+        }
+        compose.waitForIdle()
+    }
+
     private fun capture(name: String) {
         require(name in setOf(
             "stage18_text_empty.png", "stage18_text_selected.png",
@@ -167,10 +173,12 @@ class Stage18TextEditorScreensInstrumentedTest {
                         scanned++
                     }
                 }
-                val visible = if (name == "stage18_text_styled.png") {
-                    // Scrolling to timing hides the black video preview. Verify
-                    // the fixed title and pinned apply action instead of requiring
-                    // 4% dark pixels in the upper content region.
+                val visible = if (name == "stage18_text_styled.png" ||
+                    name == "stage18_text_selected.png"
+                ) {
+                    // The keyboard and scrolling editor can hide the black
+                    // preview. Validate both real editor chrome regions instead
+                    // of relying on the preview's dark pixel area.
                     hasVisibleEditorChrome(candidate)
                 } else {
                     dark * 25 > scanned
@@ -179,13 +187,15 @@ class Stage18TextEditorScreensInstrumentedTest {
                     verified = candidate
                     break
                 }
-                if (name == "stage18_text_styled.png" && attempt == 6) {
-                    val rejected = File(dir, "stage18_text_styled_rejected.png")
+                if ((name == "stage18_text_styled.png" ||
+                    name == "stage18_text_selected.png") && attempt == 6
+                ) {
+                    val rejected = File(dir, name.removeSuffix(".png") + "_rejected.png")
                     rejected.outputStream().use {
                         check(candidate.compress(Bitmap.CompressFormat.PNG, 100, it))
                     }
                     Log.w("QuickCutStage18Capture",
-                        "Styled screenshot rejected after six real Android captures; " +
+                        "Text editor screenshot rejected after six real Android captures: $name " +
                             "lastCandidate=${candidate.width}x${candidate.height} " +
                             "darkUpper=$dark/$scanned evidence=${rejected.absolutePath}")
                 }

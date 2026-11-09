@@ -17,7 +17,7 @@ HOME = 'com.google.android.apps.nexuslauncher/.NexusLauncherActivity'
 
 
 class Device:
-    def __init__(self, components, *, text='빠른 자르기', package='com.hebi.quickcut', events='', failure=None, malformed_ui=False, launcher_anr=False):
+    def __init__(self, components, *, text='빠른 자르기', package='com.hebi.quickcut', events='', failure=None, malformed_ui=False, launcher_anr=False, system_anr=False):
         self.components = components
         self.text = text
         self.package = package
@@ -25,6 +25,7 @@ class Device:
         self.failure = failure
         self.malformed_ui = malformed_ui
         self.launcher_anr = launcher_anr
+        self.system_anr = system_anr
         self.acknowledged = False
         self.calls = []
         self.probes = 0
@@ -46,15 +47,16 @@ class Device:
         elif args[:3] == ['shell','uiautomator','dump']:
             output = 'UI hierarchy dumped'
         elif args[:2] == ['shell','cat']:
-            if self.launcher_anr and not self.acknowledged:
+            if (self.launcher_anr or self.system_anr) and not self.acknowledged:
+                title = "System UI isn&#39;t responding" if self.system_anr else "Pixel Launcher isn&#39;t responding"
                 output = ('<hierarchy><node package="android" resource-id="android:id/alertTitle" '
-                          'text="Pixel Launcher isn&#39;t responding"/>'
+                          'text="' + title + '"/>'
                           '<node package="android" resource-id="android:id/aerr_wait" '
                           'text="Wait" enabled="true" bounds="[70,1296][1010,1422]"/></hierarchy>')
             else:
                 output = '<invalid' if self.malformed_ui else f'<hierarchy><node package="{self.package}" text="{self.text}"/></hierarchy>'
         elif args[:3] == ['shell','input','tap']:
-            if not self.launcher_anr or self.acknowledged: raise AssertionError('Unexpected launcher tap')
+            if not (self.launcher_anr or self.system_anr) or self.acknowledged: raise AssertionError('Unexpected system tap')
             self.acknowledged = True
         else:
             raise AssertionError('Unexpected adb command: ' + repr(args))
@@ -99,6 +101,14 @@ class StartupTest(unittest.TestCase):
         self.assertEqual(len([c for c in device.calls if c[:3] == ['shell','input','tap']]), 1)
         self.assertEqual(len(device.launches()), 1)
         self.assertGreaterEqual(device.probes, 2)
+
+    def test_system_ui_anr_overlay_acknowledged_once_with_app_reverification(self):
+        device = Device([APP], system_anr=True,
+                        events='I/am_anr(42): [0,1122,com.android.systemui,1,Input dispatching timed out]')
+        self.check(device)
+        self.assertTrue(device.acknowledged)
+        self.assertEqual(len([c for c in device.calls if c[:3] == ['shell','input','tap']]), 1)
+        self.assertEqual(len(device.launches()), 1)
 
     def test_launcher_anr_recovery_never_hides_quickcut_app_anr(self):
         device = Device([APP], launcher_anr=True,

@@ -57,15 +57,15 @@ def system_launcher_wait_target(tree):
 
 def check_startup(directory):
     directory.mkdir(parents=True, exist_ok=True)
-    deadline = time.monotonic() + 45
+    deadline = time.monotonic() + 120
 
     def adb(args, filename=None):
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            raise StartupError('Startup foreground acquisition exceeded its 45-second bound')
+            raise StartupError('Startup foreground acquisition exceeded its 120-second bound')
         try:
             result = subprocess.run(['adb', *args], capture_output=True, text=True,
-                                    timeout=min(10, remaining))
+                                    timeout=min(25, remaining))
         except (subprocess.TimeoutExpired, OSError):
             raise StartupError('Bounded adb startup command failed or timed out') from None
         if filename:

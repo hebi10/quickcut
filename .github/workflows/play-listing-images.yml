@@ -14,9 +14,13 @@ on:
         required: true
         type: boolean
         default: false
+  workflow_run:
+    workflows: [Android build, Android emulator smoke]
+    branches: [main]
+    types: [completed]
 
 concurrency:
-  group: quickcut-play-listing-edit
+  group: quickcut-play-test-edit
   cancel-in-progress: false
 
 permissions:
@@ -30,6 +34,9 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          persist-credentials: false
       - name: Verify exact assets and PNG dimensions
         run: python3 scripts/publish-play-listing-images.py --check-only
       - name: Exercise safe publisher decisions without network calls
@@ -37,11 +44,23 @@ jobs:
 
   publish:
     needs: validate
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.apply == true
+    if: >-
+      (github.event_name == 'workflow_dispatch' &&
+       github.ref == 'refs/heads/main' && inputs.apply == true) ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.repository.full_name == github.repository &&
+       github.event.workflow_run.head_repository.full_name == github.repository &&
+       (github.event.workflow_run.event == 'push' ||
+        github.event.workflow_run.event == 'workflow_dispatch'))
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          persist-credentials: false
       - name: Require latest exact-main Android and emulator CI to both pass
         env:
           GH_TOKEN: ${{ github.token }}

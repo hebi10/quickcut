@@ -72,7 +72,7 @@ import androidx.media3.ui.PlayerView
 import com.hebi.quickcut.editor.TrimInput
 import com.hebi.quickcut.media.MediaReader
 import com.hebi.quickcut.editor.formatTime
-import com.hebi.quickcut.ui.CutColors
+import com.hebi.quickcut.ui.LocalCutPalette
 import com.hebi.quickcut.ui.CutShape
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -85,6 +85,7 @@ fun ExtractionScreen(
     onSelectVideo: () -> Unit,
     onBack: () -> Unit,
 ) {
+    val palette = LocalCutPalette.current
     val context = LocalContext.current
     val session = model.session
     val selected = model.selected
@@ -115,7 +116,7 @@ fun ExtractionScreen(
     BackHandler(enabled = model.busy) { }
 
     Column(
-        Modifier.fillMaxSize().background(CutColors.background)
+        Modifier.fillMaxSize().background(palette.background)
             .verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
@@ -128,24 +129,24 @@ fun ExtractionScreen(
             }
             Column(Modifier.weight(1f)) {
                 Text("여러 구간 추출", style = MaterialTheme.typography.titleLarge,
-                    color = CutColors.primaryText)
+                    color = palette.primaryText)
                 Text("한 영상의 원하는 장면을 개별 MP4로 저장", style = MaterialTheme.typography.bodySmall,
-                    color = CutColors.secondaryText)
+                    color = palette.secondaryText)
             }
             OutlinedButton(onClick = onSelectVideo, enabled = !model.busy && !model.blocked,
                 modifier = Modifier.heightIn(min = 48.dp)) { Text("영상 선택") }
         }
 
         if (session == null) {
-            Surface(shape = CutShape, color = CutColors.panel,
-                border = BorderStroke(1.dp, CutColors.border)) {
+            Surface(shape = CutShape, color = palette.panel,
+                border = BorderStroke(1.dp, palette.border)) {
                 Column(Modifier.fillMaxWidth().padding(24.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                     horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(if (model.blocked) "이전 구간 저장 기록을 확인할 수 없습니다." else "추출할 영상이 없습니다.",
-                        color = if (model.blocked) CutColors.error else CutColors.primaryText)
+                        color = if (model.blocked) palette.error else palette.primaryText)
                     Text("영상을 하나 선택하면 구간을 추가할 수 있습니다.",
-                        color = CutColors.secondaryText,
+                        color = palette.secondaryText,
                         style = MaterialTheme.typography.bodySmall)
                     Button(onClick = onSelectVideo, enabled = !model.importing && !model.blocked) {
                         Text("영상 선택")
@@ -153,7 +154,7 @@ fun ExtractionScreen(
                 }
             }
         } else {
-            Text(session.sourceName, color = CutColors.secondaryText,
+            Text(session.sourceName, color = palette.secondaryText,
                 maxLines = 1, overflow = TextOverflow.Ellipsis,
                 style = MaterialTheme.typography.bodyMedium)
             BoxWithConstraints {
@@ -164,7 +165,7 @@ fun ExtractionScreen(
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             ExtractionPlayer(player)
                             Text("원본 길이: ${formatTime(session.durationMs)}",
-                                color = CutColors.secondaryText)
+                                color = palette.secondaryText)
                         }
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                             ExtractionRangeEditor(model, selected)
@@ -174,7 +175,7 @@ fun ExtractionScreen(
                 } else {
                     ExtractionPlayer(player)
                     Text("원본 길이: ${formatTime(session.durationMs)}",
-                        color = CutColors.secondaryText,
+                        color = palette.secondaryText,
                         style = MaterialTheme.typography.bodySmall)
                     ExtractionRangeEditor(model, selected)
                     ExtractionRows(model)
@@ -188,12 +189,12 @@ fun ExtractionScreen(
                         model.importing -> "영상 정보를 확인하는 중"
                         model.inspecting -> "구간별 저장 방식을 확인하는 중"
                         else -> "이전 저장 결과를 확인하는 중"
-                    }, color = CutColors.secondaryText)
+                    }, color = palette.secondaryText)
                 }
             }
             if (model.exporting) {
                 Text("${model.activeIndex}/${session.items.size} · ${model.currentStage.label}",
-                    color = CutColors.primaryText)
+                    color = palette.primaryText)
                 if (model.progressPercent != null) {
                     LinearProgressIndicator(
                         progress = { (model.progressPercent ?: 0) / 100f },
@@ -204,14 +205,14 @@ fun ExtractionScreen(
                 }
                 Text(if (model.finalizing) "완료 파일 확인 중에는 취소할 수 없습니다."
                     else "완료된 파일은 보존되며 현재 작업은 취소할 수 있습니다.",
-                    color = CutColors.secondaryText,
+                    color = palette.secondaryText,
                     style = MaterialTheme.typography.bodySmall)
                 OutlinedButton(onClick = model::cancel, enabled = !model.finalizing,
                     modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("저장 중단") }
             } else {
                 if (model.blocked) {
                     Text("확인되지 않은 저장 파일이 있어 중복 저장을 제한했습니다.",
-                        color = CutColors.error)
+                        color = palette.error)
                     OutlinedButton(onClick = model::recoverOutputs, enabled = !model.busy) {
                         Text("저장 결과 다시 확인")
                     }
@@ -246,7 +247,7 @@ fun ExtractionScreen(
             dismissButton = {
                 TextButton(onClick = model::declineReencode) { Text("취소") }
             },
-            containerColor = CutColors.panel,
+            containerColor = palette.panel,
         )
     }
 
@@ -258,7 +259,7 @@ fun ExtractionScreen(
             confirmButton = {
                 TextButton(onClick = model::dismissNotice) { Text("확인") }
             },
-            containerColor = CutColors.panel,
+            containerColor = palette.panel,
         )
     }
 }
@@ -266,8 +267,9 @@ fun ExtractionScreen(
 @androidx.annotation.OptIn(markerClass = [UnstableApi::class])
 @Composable
 private fun ExtractionPlayer(player: ExoPlayer) {
+    val palette = LocalCutPalette.current
     Surface(shape = CutShape, color = Color.Black,
-        border = BorderStroke(1.dp, CutColors.border)) {
+        border = BorderStroke(1.dp, palette.border)) {
         AndroidView(
             factory = { context -> PlayerView(context).apply {
                 this.player = player
@@ -282,6 +284,7 @@ private fun ExtractionPlayer(player: ExoPlayer) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ExtractionRangeEditor(model: ExtractionViewModel, selected: ExtractionItem?) {
+    val palette = LocalCutPalette.current
     val session = model.session ?: return
     if (selected == null) return
     val range = selected.range
@@ -303,15 +306,15 @@ private fun ExtractionRangeEditor(model: ExtractionViewModel, selected: Extracti
         (session.items.none { it.range.id != range.id &&
             it.range.startMs == startMs && it.range.endMs == endMs })
 
-    Surface(shape = CutShape, color = CutColors.surface,
-        border = BorderStroke(1.dp, CutColors.border)) {
+    Surface(shape = CutShape, color = palette.surface,
+        border = BorderStroke(1.dp, palette.border)) {
         Column(Modifier.fillMaxWidth().padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("구간 ${session.items.indexOfFirst { it.range.id == range.id } + 1} · " +
                 formatTime(range.startMs) + " ~ " + formatTime(range.endMs),
-                style = MaterialTheme.typography.titleMedium, color = CutColors.primaryText)
+                style = MaterialTheme.typography.titleMedium, color = palette.primaryText)
             Text("타임라인에서 범위를 조정하거나 시작·종료 시간을 직접 입력하세요.",
-                color = CutColors.secondaryText,
+                color = palette.secondaryText,
                 style = MaterialTheme.typography.bodySmall)
             SegmentOverview(session, range.id)
             RangeSlider(
@@ -340,7 +343,7 @@ private fun ExtractionRangeEditor(model: ExtractionViewModel, selected: Extracti
             }
             if (!valid) {
                 Text("0.1초 이상, 원본 길이 이내의 중복되지 않는 구간을 입력해 주세요.",
-                    color = CutColors.error, style = MaterialTheme.typography.bodySmall)
+                    color = palette.error, style = MaterialTheme.typography.bodySmall)
             }
             OutlinedButton(
                 onClick = { if (startMs != null && endMs != null)
@@ -354,15 +357,16 @@ private fun ExtractionRangeEditor(model: ExtractionViewModel, selected: Extracti
 
 @Composable
 private fun ExtractionRows(model: ExtractionViewModel) {
+    val palette = LocalCutPalette.current
     val context = LocalContext.current
     val session = model.session ?: return
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween) {
             Text("추출할 구간 (${session.items.size}개)",
-                color = CutColors.primaryText, style = MaterialTheme.typography.titleMedium)
+                color = palette.primaryText, style = MaterialTheme.typography.titleMedium)
             Text("총 ${formatTime(session.items.sumOf { it.range.durationMs })}",
-                color = CutColors.secondaryText,
+                color = palette.secondaryText,
                 style = MaterialTheme.typography.bodySmall)
         }
         session.items.forEachIndexed { index, item ->
@@ -370,9 +374,9 @@ private fun ExtractionRows(model: ExtractionViewModel) {
             Surface(
                 onClick = { model.selectRange(item.range.id) },
                 shape = CutShape,
-                color = if (selected) CutColors.accentMuted else CutColors.surface,
+                color = if (selected) palette.accentMuted else palette.surface,
                 border = BorderStroke(1.dp,
-                    if (selected) CutColors.accent else CutColors.border),
+                    if (selected) palette.accent else palette.border),
                 enabled = !model.busy,
             ) {
                 Row(Modifier.fillMaxWidth().padding(12.dp),
@@ -381,7 +385,7 @@ private fun ExtractionRows(model: ExtractionViewModel) {
                     ExtractionThumbnail(session.sourceUri, item.range.startMs)
                     Column(Modifier.weight(1f)) {
                         Text("구간 ${index + 1} · ${formatTime(item.range.startMs)}–${formatTime(item.range.endMs)}",
-                            color = CutColors.primaryText, fontWeight = FontWeight.SemiBold)
+                            color = palette.primaryText, fontWeight = FontWeight.SemiBold)
                         Text(
                             when (item.status) {
                                 ExtractionStatus.WAITING -> "저장 대기"
@@ -391,9 +395,9 @@ private fun ExtractionRows(model: ExtractionViewModel) {
                                 ExtractionStatus.BLOCKED -> item.message ?: "저장 상태 확인 필요"
                             },
                             color = when (item.status) {
-                                ExtractionStatus.SAVED -> CutColors.success
-                                ExtractionStatus.FAILED, ExtractionStatus.BLOCKED -> CutColors.warning
-                                else -> CutColors.secondaryText
+                                ExtractionStatus.SAVED -> palette.success
+                                ExtractionStatus.FAILED, ExtractionStatus.BLOCKED -> palette.warning
+                                else -> palette.secondaryText
                             },
                             style = MaterialTheme.typography.bodySmall,
                         )
@@ -417,7 +421,7 @@ private fun ExtractionRows(model: ExtractionViewModel) {
                         IconButton(onClick = { model.removeSegment(item.range.id) },
                             enabled = !model.busy) {
                             Icon(Icons.Outlined.DeleteOutline, contentDescription = "구간 ${index + 1} 제거",
-                                tint = CutColors.secondaryText)
+                                tint = palette.secondaryText)
                         }
                     }
                 }
@@ -438,18 +442,19 @@ private fun ExtractionRows(model: ExtractionViewModel) {
             Text("구간 추가")
         }
         Text("완료된 구간은 다시 저장하지 않습니다. 원본 영상은 삭제하지 않습니다.",
-            color = CutColors.secondaryText, style = MaterialTheme.typography.bodySmall)
-        HorizontalDivider(color = CutColors.border)
+            color = palette.secondaryText, style = MaterialTheme.typography.bodySmall)
+        HorizontalDivider(color = palette.border)
     }
 }
 
 @Composable
 private fun SegmentOverview(session: ExtractionSession, selectedId: Long) {
+    val palette = LocalCutPalette.current
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text("구간 타임라인", color = CutColors.secondaryText,
+        Text("구간 타임라인", color = palette.secondaryText,
             style = MaterialTheme.typography.bodySmall)
         BoxWithConstraints(
-            Modifier.fillMaxWidth().height(26.dp).background(CutColors.border, CutShape)
+            Modifier.fillMaxWidth().height(26.dp).background(palette.border, CutShape)
         ) {
             val duration = session.durationMs.toFloat().coerceAtLeast(1f)
             session.items.forEach { item ->
@@ -459,19 +464,20 @@ private fun SegmentOverview(session: ExtractionSession, selectedId: Long) {
                     Modifier.offset(x = maxWidth * left)
                         .width(maxWidth * widthFraction)
                         .fillMaxHeight()
-                        .background(if (item.range.id == selectedId) CutColors.accent
-                            else CutColors.secondaryAccent.copy(alpha = 0.48f))
+                        .background(if (item.range.id == selectedId) palette.accent
+                            else palette.secondaryAccent.copy(alpha = 0.48f))
                 )
             }
         }
         Text("보라색: 현재 선택 구간 · 다른 구간과 겹쳐도 별도 파일로 저장",
-            color = CutColors.secondaryText,
+            color = palette.secondaryText,
             style = MaterialTheme.typography.bodySmall)
     }
 }
 
 @Composable
 private fun ExtractionThumbnail(sourceUri: String, startMs: Long) {
+    val palette = LocalCutPalette.current
     val context = LocalContext.current
     val image by produceState<android.graphics.Bitmap?>(null, sourceUri, startMs) {
         value = withContext(Dispatchers.IO) {
@@ -487,11 +493,11 @@ private fun ExtractionThumbnail(sourceUri: String, startMs: Long) {
         )
     } else {
         Box(
-            Modifier.size(width = 74.dp, height = 44.dp).background(CutColors.border),
+            Modifier.size(width = 74.dp, height = 44.dp).background(palette.border),
             contentAlignment = Alignment.Center,
         ) {
             Icon(Icons.Outlined.PlayArrow, contentDescription = null,
-                tint = CutColors.secondaryAccent)
+                tint = palette.secondaryAccent)
         }
     }
 }

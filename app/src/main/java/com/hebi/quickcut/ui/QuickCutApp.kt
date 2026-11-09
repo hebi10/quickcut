@@ -89,6 +89,7 @@ import com.hebi.quickcut.media.ExportReport
 import com.hebi.quickcut.media.ExportStage
 import com.hebi.quickcut.media.MediaOperationDiagnostics
 import com.hebi.quickcut.settings.QuickCutSettings
+import com.hebi.quickcut.settings.QuickCutThemeMode
 import com.hebi.quickcut.settings.QuickTrimSettings
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.CancellationException
@@ -112,6 +113,7 @@ fun QuickCutApp(
     extractionModel: ExtractionViewModel =
         (LocalContext.current.applicationContext as QuickCutApplication).extractionModel,
 ) {
+    val palette = LocalCutPalette.current
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val settings = remember(context) { QuickCutSettings(context) }
@@ -140,6 +142,8 @@ fun QuickCutApp(
     var showSaveOptions by rememberSaveable { mutableStateOf(false) }
     val selectedSaveAction by remember(settings) { settings.observeOriginalAction() }
         .collectAsState(initial = settings.loadOriginalAction())
+    val themeMode by remember(settings) { settings.observeThemeMode() }
+        .collectAsState(initial = settings.loadThemeMode())
     var pendingOriginalAction by rememberSaveable { mutableStateOf<OriginalAction?>(null) }
     var selectedSaveDateMode by rememberSaveable {
         mutableStateOf(settings.loadSaveDate())
@@ -339,7 +343,7 @@ fun QuickCutApp(
             dismissButton = {
                 TextButton(onClick = { showProjectSave = false }) { Text("취소") }
             },
-            containerColor = CutColors.panel,
+            containerColor = palette.panel,
             shape = CutDialogShape,
         )
     }
@@ -366,7 +370,7 @@ fun QuickCutApp(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(CutColors.background)
+            .background(palette.background)
             .safeDrawingPadding(),
     ) {
         if (onboardingComplete && !showBatch && model.page == QuickCutPage.PICKER &&
@@ -437,6 +441,8 @@ fun QuickCutApp(
                 onRestore = { model.restoreSavedSession(context) },
                 quickSettings = settings.loadQuick(),
                 dateMode = selectedSaveDateMode,
+                themeMode = themeMode,
+                onThemeModeChange = settings::saveThemeMode,
                 onPreferences = { showLastSettings = true },
                 onLicenses = { showLicenses = true },
                 projects = model.savedProjects,
@@ -557,7 +563,7 @@ fun QuickCutApp(
                 }) { Text(if (model.hasUnresolvedExport) "다시 확인" else "확인") }
             },
             dismissButton = { ExportDiagnosticButton() },
-            containerColor = CutColors.panel, shape = CutDialogShape,
+            containerColor = palette.panel, shape = CutDialogShape,
         )
     }
 
@@ -679,7 +685,7 @@ fun QuickCutApp(
                 TextButton(onClick = model::dismissError, shape = CutShape,
                     modifier = Modifier.heightIn(min = 48.dp)) { Text("확인") }
             },
-            containerColor = CutColors.panel,
+            containerColor = palette.panel,
             shape = CutDialogShape,
         )
     }
@@ -706,7 +712,7 @@ fun QuickCutApp(
                 TextButton(onClick = model::hideExitConfirmation, shape = CutShape,
                     modifier = Modifier.heightIn(min = 48.dp)) { Text("계속 편집") }
             },
-            containerColor = CutColors.panel,
+            containerColor = palette.panel,
             shape = CutDialogShape,
         )
     }
@@ -722,6 +728,8 @@ private fun StartScreen(
     onRestore: () -> Unit,
     quickSettings: QuickTrimSettings,
     dateMode: SaveDateMode,
+    themeMode: QuickCutThemeMode,
+    onThemeModeChange: (QuickCutThemeMode) -> Unit,
     onPreferences: () -> Unit,
     onLicenses: () -> Unit,
     projects: List<com.hebi.quickcut.editor.SavedProject>,
@@ -734,6 +742,7 @@ private fun StartScreen(
         onExtraction = onExtraction,
         canRestore = canRestore, onRestore = onRestore,
         quickSettings = quickSettings, dateMode = dateMode,
+        themeMode = themeMode, onThemeModeChange = onThemeModeChange,
         onPreferences = onPreferences, onLicenses = onLicenses,
         projects = projects,
         onOpenProject = onOpenProject,
@@ -749,6 +758,7 @@ private fun LastSettingsDialog(
     onDateChange: (SaveDateMode) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val palette = LocalCutPalette.current
     val initial = remember(settings) { settings.loadQuick() }
     var headText by remember(initial) {
         mutableStateOf((initial.leadingMs / 1_000.0).toString().removeSuffix(".0"))
@@ -829,7 +839,7 @@ private fun LastSettingsDialog(
             TextButton(onClick = onDismiss, shape = CutShape,
                 modifier = Modifier.heightIn(min = 48.dp)) { Text("취소") }
         },
-        containerColor = CutColors.panel,
+        containerColor = palette.panel,
         shape = CutDialogShape,
     )
 }
@@ -842,6 +852,7 @@ internal fun RestoreRecoveryDialog(
     onReconnect: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val palette = LocalCutPalette.current
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { QuickCutDialogHeading("이전 편집 복원") },
@@ -854,11 +865,11 @@ internal fun RestoreRecoveryDialog(
                     caution = true,
                 )
                 Text("편집 기록은 유지됩니다. 원본 영상에 접근할 수 있으면 다시 시도해 주세요.",
-                    color = CutColors.secondaryText,
+                    color = palette.secondaryText,
                     style = MaterialTheme.typography.bodySmall)
                 if (canReconnect) {
                     Text("원본을 찾을 수 없다면 같은 영상을 다시 선택해 연결할 수 있습니다.",
-                        color = CutColors.secondaryText,
+                        color = palette.secondaryText,
                         style = MaterialTheme.typography.bodySmall)
                     OutlinedButton(onClick = onReconnect, shape = CutShape,
                         modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
@@ -878,7 +889,7 @@ internal fun RestoreRecoveryDialog(
                 Text("닫기")
             }
         },
-        containerColor = CutColors.panel, shape = CutDialogShape,
+        containerColor = palette.panel, shape = CutDialogShape,
     )
 }
 
@@ -895,6 +906,7 @@ internal fun CenterStatus(
     progress: Int?,
     onCancel: (() -> Unit)? = null,
 ) {
+    val palette = LocalCutPalette.current
     Column(
         modifier = Modifier.fillMaxSize()
             .verticalScroll(rememberScrollState())
@@ -903,12 +915,12 @@ internal fun CenterStatus(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text("QuickCut", style = MaterialTheme.typography.titleMedium,
-            color = CutColors.secondaryAccent)
+            color = palette.secondaryAccent)
         Spacer(Modifier.height(CutSpacing.xxl))
         Box(
             modifier = Modifier.widthIn(max = 440.dp).fillMaxWidth()
-                .background(CutColors.surface, CutPanelShape)
-                .border(1.dp, CutColors.border, CutPanelShape)
+                .background(palette.surface, CutPanelShape)
+                .border(1.dp, palette.border, CutPanelShape)
                 .padding(CutSpacing.xl),
             contentAlignment = Alignment.Center,
         ) {
@@ -916,7 +928,7 @@ internal fun CenterStatus(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(CutSpacing.lg),
             ) {
-                Text(title, color = CutColors.primaryText,
+                Text(title, color = palette.primaryText,
                     style = MaterialTheme.typography.headlineSmall,
                     textAlign = TextAlign.Center)
                 Box(contentAlignment = Alignment.Center,
@@ -925,29 +937,29 @@ internal fun CenterStatus(
                         CircularProgressIndicator(
                             modifier = Modifier.size(128.dp),
                             strokeWidth = 7.dp,
-                            color = CutColors.accent,
+                            color = palette.accent,
                         )
-                        Text("처리 중", color = CutColors.primaryText,
+                        Text("처리 중", color = palette.primaryText,
                             style = MaterialTheme.typography.titleMedium)
                     } else {
                         CircularProgressIndicator(
                             progress = { progress.coerceIn(0, 100) / 100f },
                             modifier = Modifier.size(128.dp),
                             strokeWidth = 7.dp,
-                            color = CutColors.accent,
+                            color = palette.accent,
                         )
                         Text(progress.coerceIn(0, 100).toString() + "%",
-                            color = CutColors.primaryText,
+                            color = palette.primaryText,
                             style = MaterialTheme.typography.headlineMedium)
                     }
                 }
                 Text(
                     if (progress == null) "결과 영상 확인 중"
                     else "현재 처리 단계 · " + progress.coerceIn(0, 100) + "%",
-                    color = CutColors.secondaryAccent,
+                    color = palette.secondaryAccent,
                     style = MaterialTheme.typography.labelLarge,
                 )
-                Text(subtitle, color = CutColors.secondaryText,
+                Text(subtitle, color = palette.secondaryText,
                     style = MaterialTheme.typography.bodySmall,
                     textAlign = TextAlign.Center)
             }
@@ -976,6 +988,7 @@ private fun CompletedScreen(
     originalCount: Int,
     onRetryOriginalAction: () -> Unit,
 ) {
+    val palette = LocalCutPalette.current
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -984,7 +997,7 @@ private fun CompletedScreen(
         Box(
             modifier = Modifier.size(104.dp)
                 .background(
-                    Brush.linearGradient(listOf(CutColors.brandLight, CutColors.brandDeep)),
+                    Brush.linearGradient(listOf(palette.brandLight, palette.brandDeep)),
                     CircleShape,
                 ),
             contentAlignment = Alignment.Center,
@@ -997,24 +1010,24 @@ private fun CompletedScreen(
             )
         }
         Spacer(Modifier.height(16.dp))
-        Text("저장 완료", color = CutColors.primaryText, fontSize = 28.sp, fontWeight = FontWeight.Bold)
+        Text("저장 완료", color = palette.primaryText, fontSize = 28.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(10.dp))
-        Text("영상이 갤러리에 저장되었어요.", color = CutColors.secondaryText,
+        Text("영상이 갤러리에 저장되었어요.", color = palette.secondaryText,
             textAlign = TextAlign.Center)
         Spacer(Modifier.height(8.dp))
         Text(exportReportText(exportReport),
             modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth(),
-            color = CutColors.secondaryText,
+            color = palette.secondaryText,
             style = MaterialTheme.typography.bodySmall)
         if (videoUri != null) CompletedExportFacts(videoUri)
         ExportDiagnosticButton()
         if (savedDateMode == SaveDateMode.ORIGINAL) {
-            Text("원본 날짜 기준으로 저장했습니다.", color = CutColors.secondaryText,
+            Text("원본 날짜 기준으로 저장했습니다.", color = palette.secondaryText,
                 textAlign = TextAlign.Center)
         }
         Spacer(Modifier.height(28.dp))
         if (videoUri != null) {
-            Text("저장된 영상", color = CutColors.primaryText,
+            Text("저장된 영상", color = palette.primaryText,
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth())
             Spacer(Modifier.height(CutSpacing.sm))
@@ -1022,7 +1035,7 @@ private fun CompletedScreen(
                 uri = videoUri,
                 timeMs = 0L,
                 modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth().height(210.dp)
-                    .clip(CutPanelShape).border(1.dp, CutColors.border, CutPanelShape),
+                    .clip(CutPanelShape).border(1.dp, palette.border, CutPanelShape),
             )
         }
         if (originalAction != OriginalAction.KEEP) {
@@ -1039,7 +1052,7 @@ private fun CompletedScreen(
             }
             Text(
                 statusLabel,
-                color = CutColors.secondaryText,
+                color = palette.secondaryText,
                 style = MaterialTheme.typography.bodyMedium,
                 textAlign = TextAlign.Center,
             )

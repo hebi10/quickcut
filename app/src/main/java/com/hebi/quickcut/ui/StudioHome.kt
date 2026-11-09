@@ -62,16 +62,18 @@ import com.hebi.quickcut.R
 import com.hebi.quickcut.media.SaveDateMode
 import com.hebi.quickcut.editor.SavedProject
 import com.hebi.quickcut.settings.QuickTrimSettings
+import com.hebi.quickcut.settings.QuickCutThemeMode
 
 @Composable
 internal fun StudioBrand(modifier: Modifier = Modifier) {
+    val palette = LocalCutPalette.current
     Row(modifier, verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         QuickCutLogo(size = CutSizes.touchTarget)
         Column {
             Text("QuickCut", style = MaterialTheme.typography.titleLarge,
-                color = CutColors.primaryText, fontWeight = FontWeight.Bold)
-            Text("빠르고 간편한 영상 편집", color = CutColors.secondaryText,
+                color = palette.primaryText, fontWeight = FontWeight.Bold)
+            Text("빠르고 간편한 영상 편집", color = palette.secondaryText,
                 fontSize = 11.sp, letterSpacing = 0.2.sp)
         }
     }
@@ -93,9 +95,12 @@ internal fun StudioStartScreen(
     onOpenProject: (String) -> Unit = {},
     onDeleteProject: (String) -> Unit = {},
     onGallery: () -> Unit = {},
+    themeMode: QuickCutThemeMode = QuickCutThemeMode.SYSTEM,
+    onThemeModeChange: (QuickCutThemeMode) -> Unit = {},
 ) {
+    val palette = LocalCutPalette.current
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
-    Column(Modifier.fillMaxSize().background(CutColors.background)) {
+    Column(Modifier.fillMaxSize().background(palette.background)) {
         Box(Modifier.weight(1f)) {
             Column(
                 modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
@@ -109,7 +114,7 @@ internal fun StudioStartScreen(
                         TextButton(onClick = { selectedTab = 3 },
                             modifier = Modifier.heightIn(min = CutSizes.touchTarget)) {
                             Icon(Icons.Outlined.Settings, contentDescription = "설정",
-                                tint = CutColors.secondaryAccent)
+                                tint = palette.secondaryAccent)
                         }
                     }
                 }
@@ -131,11 +136,11 @@ internal fun StudioStartScreen(
                         Row(Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text("내 프로젝트", color = CutColors.primaryText,
+                            Text("내 프로젝트", color = palette.primaryText,
                                 style = MaterialTheme.typography.titleMedium)
                             TextButton(onClick = { selectedTab = 1 },
                                 modifier = Modifier.heightIn(min = CutSizes.touchTarget)) {
-                                Text("전체 보기 >", color = CutColors.secondaryAccent)
+                                Text("전체 보기 >", color = palette.secondaryAccent)
                             }
                         }
                         projects.take(3).forEach { project ->
@@ -152,7 +157,7 @@ internal fun StudioStartScreen(
                         } else {
                             if (projects.isEmpty()) {
                                 Text("최근 편집한 프로젝트가 없습니다.",
-                                    color = CutColors.secondaryText,
+                                    color = palette.secondaryText,
                                     style = MaterialTheme.typography.bodySmall)
                             }
                         }
@@ -165,7 +170,7 @@ internal fun StudioStartScreen(
                     }
                     1 -> {
                         Text("내 프로젝트", style = MaterialTheme.typography.headlineSmall,
-                            color = CutColors.primaryText)
+                            color = palette.primaryText)
                         projects.forEach { project ->
                             ProjectCard(project, onOpenProject, onDeleteProject)
                         }
@@ -190,7 +195,7 @@ internal fun StudioStartScreen(
                         }
                     }
                     2 -> {
-                        Text("편집 도구", color = CutColors.primaryText,
+                        Text("편집 도구", color = palette.primaryText,
                             style = MaterialTheme.typography.headlineSmall)
                         OutlinedButton(onClick = onGallery,
                             modifier = Modifier.fillMaxWidth()
@@ -199,9 +204,9 @@ internal fun StudioStartScreen(
                         StudioModes(onQuick, onBatch, onSelect, onExtraction)
                     }
                     3 -> {
-                        Text("설정", color = CutColors.primaryText,
+                        Text("설정", color = palette.primaryText,
                             style = MaterialTheme.typography.headlineSmall)
-                        StudioSettings(quickSettings, dateMode, onPreferences)
+                        StudioSettings(quickSettings, dateMode, themeMode, onThemeModeChange, onPreferences)
                         ExportDiagnosticButton()
                         PrivacyPolicyButton()
                         TextButton(onClick = onLicenses,
@@ -214,7 +219,7 @@ internal fun StudioStartScreen(
         }
         NavigationBar(
             modifier = Modifier.fillMaxWidth().height(72.dp),
-            containerColor = CutColors.surface,
+            containerColor = palette.surface,
             tonalElevation = 0.dp,
         ) {
             val icons = listOf(
@@ -233,11 +238,11 @@ internal fun StudioStartScreen(
                     label = { Text(label) },
                     alwaysShowLabel = true,
                     colors = NavigationBarItemDefaults.colors(
-                        selectedIconColor = CutColors.accent,
-                        selectedTextColor = CutColors.secondaryAccent,
-                        indicatorColor = CutColors.accentMuted,
-                        unselectedIconColor = CutColors.mutedText,
-                        unselectedTextColor = CutColors.mutedText,
+                        selectedIconColor = palette.accent,
+                        selectedTextColor = palette.secondaryAccent,
+                        indicatorColor = palette.accentMuted,
+                        unselectedIconColor = palette.mutedText,
+                        unselectedTextColor = palette.mutedText,
                     ),
                 )
             }
@@ -248,26 +253,27 @@ internal fun StudioStartScreen(
 @Composable
 private fun StudioWelcome(showArt: Boolean, onStart: () -> Unit, modifier: Modifier = Modifier,
     compactHeadline: Boolean = false) {
+    val palette = LocalCutPalette.current
     Column(modifier.fillMaxWidth()
         .background(
             Brush.horizontalGradient(
-                listOf(CutColors.brandDeep.copy(alpha = 0.86f), CutColors.panel, CutColors.surface),
+                listOf(palette.brandDeep.copy(alpha = 0.86f), palette.panel, palette.surface),
             ),
             CutPanelShape,
         )
-        .border(1.dp, CutColors.brandLight.copy(alpha = 0.55f), CutPanelShape).padding(20.dp)) {
-        Text("FAST · SIMPLE · FOCUSED", color = CutColors.secondaryAccent,
+        .border(1.dp, palette.brandLight.copy(alpha = 0.55f), CutPanelShape).padding(20.dp)) {
+        Text("FAST · SIMPLE · FOCUSED", color = palette.secondaryAccent,
             style = MaterialTheme.typography.labelMedium)
         Spacer(Modifier.height(12.dp))
         Row(verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Column(Modifier.weight(1f)) {
-                Text("영상은 빠르게,\n편집은 간단하게.", color = CutColors.primaryText,
+                Text("영상은 빠르게,\n편집은 간단하게.", color = palette.primaryText,
                     style = if (compactHeadline) MaterialTheme.typography.titleMedium.copy(fontSize = 15.sp)
                         else MaterialTheme.typography.headlineSmall)
                 Spacer(Modifier.height(10.dp))
                 Text("필요한 장면만 자르고 안전하게 저장하세요.",
-                    color = CutColors.secondaryText, style = MaterialTheme.typography.bodySmall)
+                    color = palette.secondaryText, style = MaterialTheme.typography.bodySmall)
             }
             if (showArt) {
                 Image(
@@ -275,7 +281,7 @@ private fun StudioWelcome(showArt: Boolean, onStart: () -> Unit, modifier: Modif
                     contentDescription = null,
                     modifier = Modifier.width(132.dp).height(100.dp),
                     contentScale = ContentScale.Fit,
-                    colorFilter = ColorFilter.tint(CutColors.secondaryAccent),
+                    colorFilter = ColorFilter.tint(palette.secondaryAccent),
                 )
             }
         }
@@ -299,9 +305,10 @@ private fun StudioWelcome(showArt: Boolean, onStart: () -> Unit, modifier: Modif
 @Composable
 private fun StudioModes(onQuick: () -> Unit, onBatch: () -> Unit,
     onSelect: () -> Unit, onExtraction: () -> Unit, modifier: Modifier = Modifier) {
+    val palette = LocalCutPalette.current
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text("어떤 영상을 편집할까요?", style = MaterialTheme.typography.titleMedium,
-            color = CutColors.primaryText)
+            color = palette.primaryText)
         StudioModeCard("빠른 자르기", "영상 1개 · 필요한 구간만 빠르게 남기기",
             Icons.Outlined.ContentCut, primary = true, onClick = onQuick)
         StudioModeCard("일괄 편집", "여러 영상 · 같은 설정으로 한 번에",
@@ -316,22 +323,23 @@ private fun StudioModes(onQuick: () -> Unit, onBatch: () -> Unit,
 @Composable
 private fun StudioModeCard(title: String, subtitle: String, icon: ImageVector,
     primary: Boolean = false, onClick: () -> Unit) {
-    val foreground = if (primary) CutColors.onAccent else CutColors.primaryText
+    val palette = LocalCutPalette.current
+    val foreground = if (primary) palette.onAccent else palette.primaryText
     Surface(onClick = onClick, shape = CutShape,
-        color = if (primary) CutColors.accent else CutColors.surface,
+        color = if (primary) palette.accent else palette.surface,
         contentColor = foreground,
-        border = if (primary) null else BorderStroke(1.dp, CutColors.border),
+        border = if (primary) null else BorderStroke(1.dp, palette.border),
         modifier = Modifier.fillMaxWidth().heightIn(min = 84.dp)) {
         Row(Modifier.padding(horizontal = 16.dp, vertical = 16.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             Icon(icon, contentDescription = null, modifier = Modifier.size(25.dp),
-                tint = if (primary) foreground else CutColors.accent)
+                tint = if (primary) foreground else palette.accent)
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(title, fontWeight = FontWeight.SemiBold,
                     style = MaterialTheme.typography.titleSmall)
-                Text(subtitle, color = if (primary) CutColors.onAccent
-                    else CutColors.secondaryText, style = MaterialTheme.typography.bodySmall)
+                Text(subtitle, color = if (primary) palette.onAccent
+                    else palette.secondaryText, style = MaterialTheme.typography.bodySmall)
             }
             Icon(Icons.AutoMirrored.Outlined.ArrowForward, contentDescription = null,
                 modifier = Modifier.size(18.dp), tint = foreground)
@@ -340,29 +348,48 @@ private fun StudioModeCard(title: String, subtitle: String, icon: ImageVector,
 }
 
 @Composable
-private fun StudioSettings(settings: QuickTrimSettings, dateMode: SaveDateMode,
-    onPreferences: () -> Unit) {
-    Column(Modifier.fillMaxWidth().background(CutColors.surface, CutPanelShape)
-        .border(1.dp, CutColors.border, CutPanelShape).padding(16.dp),
+private fun StudioSettings(
+    settings: QuickTrimSettings,
+    dateMode: SaveDateMode,
+    themeMode: QuickCutThemeMode,
+    onThemeModeChange: (QuickCutThemeMode) -> Unit,
+    onPreferences: () -> Unit,
+) {
+    val palette = LocalCutPalette.current
+    Column(Modifier.fillMaxWidth().background(palette.surface, CutPanelShape)
+        .border(1.dp, palette.border, CutPanelShape).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("화면 테마", color = palette.primaryText,
+            style = MaterialTheme.typography.titleSmall)
+        CutChoiceDropdown(
+            label = "테마",
+            selected = themeMode,
+            options = listOf(
+                CutChoice(QuickCutThemeMode.SYSTEM, "시스템 설정"),
+                CutChoice(QuickCutThemeMode.LIGHT, "라이트"),
+                CutChoice(QuickCutThemeMode.DARK, "다크"),
+            ),
+            onSelected = onThemeModeChange,
+        )
+        Spacer(Modifier.height(8.dp))
         if (LocalDensity.current.fontScale >= 1.6f) {
-            Text("마지막 사용 설정", color = CutColors.primaryText,
+            Text("마지막 사용 설정", color = palette.primaryText,
                 style = MaterialTheme.typography.titleSmall)
             TextButton(onClick = onPreferences, shape = CutShape,
                 modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("설정 변경") }
         } else {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text("마지막 사용 설정", modifier = Modifier.weight(1f),
-                    color = CutColors.primaryText, style = MaterialTheme.typography.titleSmall)
+                    color = palette.primaryText, style = MaterialTheme.typography.titleSmall)
                 TextButton(onClick = onPreferences, shape = CutShape,
                     modifier = Modifier.heightIn(min = CutSizes.touchTarget)) { Text("설정 변경") }
             }
         }
         Text("앞 " + (settings.leadingMs / 1_000.0) + "초 삭제 · 뒤 " +
             (settings.trailingMs / 1_000.0) + "초 삭제",
-            color = CutColors.secondaryText, style = MaterialTheme.typography.bodyMedium)
+            color = palette.secondaryText, style = MaterialTheme.typography.bodyMedium)
         Text((if (settings.muteAudio) "음소거" else "소리 유지") + " · " +
             (if (dateMode == SaveDateMode.CURRENT) "현재 날짜 저장" else "원본 날짜 유지"),
-            color = CutColors.mutedText, style = MaterialTheme.typography.bodySmall)
+            color = palette.mutedText, style = MaterialTheme.typography.bodySmall)
     }
 }

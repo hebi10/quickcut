@@ -30,6 +30,7 @@ import com.hebi.quickcut.media.ExportDiagnosticStore
 
 @Composable
 internal fun ExportDiagnosticButton(operationId: String? = null, label: String = "최근 작업 진단") {
+    val palette = LocalCutPalette.current
     val context = LocalContext.current
     var history by remember { mutableStateOf<ExportDiagnosticHistory?>(null) }
     var selected by remember { mutableStateOf<ExportDiagnosticRecord?>(null) }
@@ -56,7 +57,7 @@ internal fun ExportDiagnosticButton(operationId: String? = null, label: String =
                         SelectionContainer { Text(record.text) }
                     } else {
                         Text("최근 ${ExportDiagnosticHistory.RECENT_LIMIT}건과 실패 ${ExportDiagnosticHistory.FAILURE_LIMIT}건을 기기에 보관합니다. 자동 전송하지 않습니다.",
-                            style = MaterialTheme.typography.bodySmall, color = CutColors.secondaryText)
+                            style = MaterialTheme.typography.bodySmall, color = palette.secondaryText)
                         if (missing) Text("이 작업의 진단은 보관 개수를 넘었거나 기록을 읽을 수 없어 표시할 수 없습니다.\n")
                         Text("최근 실패", Modifier.semantics { heading() }, style = MaterialTheme.typography.titleSmall)
                         if (records.failures.isEmpty()) Text("기록된 실패가 없습니다.")
@@ -83,7 +84,7 @@ internal fun ExportDiagnosticButton(operationId: String? = null, label: String =
                 }
             },
             dismissButton = { TextButton(onClick = { history = null }, modifier = Modifier.heightIn(min = 48.dp)) { Text("닫기") } },
-            containerColor = CutColors.panel, shape = CutDialogShape,
+            containerColor = palette.panel, shape = CutDialogShape,
         )
     }
 }

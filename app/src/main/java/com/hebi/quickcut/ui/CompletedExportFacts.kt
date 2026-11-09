@@ -19,6 +19,7 @@ import kotlinx.coroutines.withContext
 
 @Composable
 internal fun CompletedExportFacts(uri: String) {
+    val palette = LocalCutPalette.current
     val context = LocalContext.current
     val data by produceState<SavedVideoTechnicalInfo?>(null, uri) {
         value = withContext(Dispatchers.IO) {
@@ -37,6 +38,6 @@ internal fun CompletedExportFacts(uri: String) {
         "실제 출력: ${details.width}×${details.height}$fps$size",
         modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth(),
         style = MaterialTheme.typography.bodySmall,
-        color = CutColors.secondaryText,
+        color = palette.secondaryText,
     )
 }

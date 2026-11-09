@@ -73,7 +73,7 @@ class Stage13ReferenceScreensInstrumentedTest {
         compose.setContent {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(360.dp, 640.dp))) {
                 QuickCutTheme {
-                    Box(Modifier.fillMaxSize().background(CutColors.background)) {
+                    Box(Modifier.fillMaxSize().background(LocalCutPalette.current.background)) {
                         StudioStartScreen(
                             onQuick = {}, onSelect = {}, onBatch = {},
                             canRestore = false, onRestore = {},

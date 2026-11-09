@@ -26,6 +26,7 @@ import kotlinx.coroutines.withContext
 /** License texts ship in the APK and remain readable without a network connection. */
 @Composable
 internal fun OpenSourceLicensesDialog(onDismiss: () -> Unit) {
+    val palette = LocalCutPalette.current
     val context = LocalContext.current
     val sourceReleaseUrl = remember(context) {
         @Suppress("DEPRECATION")
@@ -96,7 +97,7 @@ internal fun OpenSourceLicensesDialog(onDismiss: () -> Unit) {
                     modifier = Modifier.heightIn(min = 48.dp)) { Text("목록") }
             }
         },
-        containerColor = CutColors.panel,
+        containerColor = palette.panel,
         shape = CutDialogShape,
     )
 }

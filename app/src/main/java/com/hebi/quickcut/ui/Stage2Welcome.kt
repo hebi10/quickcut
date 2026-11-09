@@ -41,12 +41,9 @@ import com.hebi.quickcut.R
 
 private data class WelcomePage(val title: String, val detail: String)
 
-private val filmstripLavender = ColorFilter.colorMatrix(ColorMatrix(floatArrayOf(
-    0.58f, 0.24f, 0.16f, 0f, 0f,
-    0.15f, 0.37f, 0.12f, 0f, 0f,
-    0.45f, 0.55f, 0.34f, 0f, 6f,
-    0f, 0f, 0f, 1f, 0f,
-)))
+private val filmstripNeutral = ColorFilter.colorMatrix(
+    ColorMatrix().apply { setToSaturation(0f) },
+)
 
 private val welcomePages = listOf(
     WelcomePage("빠르고 간편한\\n영상 편집", "복잡한 과정 없이\\n원하는 구간만 자르고 간단하게 편집해 보세요."),
@@ -56,11 +53,12 @@ private val welcomePages = listOf(
 
 @Composable
 internal fun QuickCutWelcome(onFinish: () -> Unit) {
+    val palette = LocalCutPalette.current
     var index by rememberSaveable { mutableIntStateOf(0) }
     val page = welcomePages[index]
     val compactArtwork = LocalDensity.current.fontScale >= 1.6f
     Column(
-        modifier = Modifier.fillMaxSize().background(CutColors.background)
+        modifier = Modifier.fillMaxSize().background(palette.background)
             .padding(horizontal = CutSpacing.xl, vertical = CutSpacing.xxl),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.SpaceBetween,
@@ -78,7 +76,7 @@ internal fun QuickCutWelcome(onFinish: () -> Unit) {
                     Image(
                         painter = painterResource(R.drawable.quickcut_studio),
                         contentDescription = null,
-                        colorFilter = filmstripLavender,
+                        colorFilter = filmstripNeutral,
                         contentScale = ContentScale.Fit,
                         modifier = Modifier.fillMaxWidth(0.88f)
                             .height(if (compactArtwork) 122.dp else 166.dp),
@@ -92,21 +90,21 @@ internal fun QuickCutWelcome(onFinish: () -> Unit) {
             } else {
                 Box(
                     modifier = Modifier.size(if (compactArtwork) 106.dp else 128.dp)
-                        .background(CutColors.accentMuted, CutPanelShape),
+                        .background(palette.accentMuted, CutPanelShape),
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
                         if (index == 1) Icons.Outlined.PlayCircleOutline else Icons.Outlined.VideoLibrary,
                         contentDescription = null,
-                        tint = CutColors.secondaryAccent,
+                        tint = palette.secondaryAccent,
                         modifier = Modifier.size(if (compactArtwork) 68.dp else 80.dp),
                     )
                 }
             }
-            Text(page.title.replace("\\n", "\n"), color = CutColors.primaryText,
+            Text(page.title.replace("\\n", "\n"), color = palette.primaryText,
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
-            Text(page.detail.replace("\\n", "\n"), color = CutColors.secondaryText,
+            Text(page.detail.replace("\\n", "\n"), color = palette.secondaryText,
                 style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center)
         }
         Column(horizontalAlignment = Alignment.CenterHorizontally,
@@ -115,7 +113,7 @@ internal fun QuickCutWelcome(onFinish: () -> Unit) {
                 verticalAlignment = Alignment.CenterVertically) {
                 repeat(welcomePages.size) { i ->
                     Box(Modifier.size(if (i == index) 9.dp else 7.dp)
-                        .background(if (i == index) CutColors.accent else CutColors.mutedText, CircleShape))
+                        .background(if (i == index) palette.accent else palette.mutedText, CircleShape))
                 }
             }
             Button(
@@ -124,7 +122,7 @@ internal fun QuickCutWelcome(onFinish: () -> Unit) {
                 shape = CutShape,
             ) {
                 Text(if (index == welcomePages.lastIndex) "시작하기" else "다음",
-                    color = Color.White)
+                    color = palette.onAccent)
             }
         }
     }

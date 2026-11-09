@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Acquire QuickCut foreground without mistaking an acknowledged launch for UI."""
 from pathlib import Path
+import os
 import re
 import subprocess
 import sys
@@ -35,12 +36,12 @@ def app_failed(report):
 
 
 def system_launcher_wait_target(tree):
-    # Only the OS error dialog for the emulator launcher may be acknowledged.
+    # Only the specified Pixel Launcher/System UI OS ANR dialogs may be acknowledged.
     # Any QuickCut crash/ANR still fails via guard(), and an arbitrary dialog never passes.
     nodes = list(tree.iter('node'))
     titles = [n for n in nodes if n.get('package') == 'android' and
               n.get('resource-id') == 'android:id/alertTitle' and
-              n.get('text') == "Pixel Launcher isn't responding"]
+              n.get('text') in ("Pixel Launcher isn't responding", "System UI isn't responding")]
     waits = [n for n in nodes if n.get('package') == 'android' and
              n.get('resource-id') == 'android:id/aerr_wait' and
              n.get('text') == 'Wait' and n.get('enabled') == 'true']
@@ -57,21 +58,24 @@ def system_launcher_wait_target(tree):
 
 def check_startup(directory):
     directory.mkdir(parents=True, exist_ok=True)
-    deadline = time.monotonic() + 45
+    deadline = time.monotonic() + 120
 
     def adb(args, filename=None):
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            raise StartupError('Startup foreground acquisition exceeded its 45-second bound')
+            raise StartupError('Startup foreground acquisition exceeded its 120-second bound')
         try:
             result = subprocess.run(['adb', *args], capture_output=True, text=True,
-                                    timeout=min(10, remaining))
+                                    timeout=min(25, remaining))
         except (subprocess.TimeoutExpired, OSError):
             raise StartupError('Bounded adb startup command failed or timed out') from None
         if filename:
             (directory / filename).write_text(result.stdout + result.stderr, encoding='utf-8')
         if result.returncode:
-            raise StartupError('adb startup command failed; no relaunch will hide the failure')
+            detail = (result.stderr or result.stdout or 'no command output').strip().replace('\\n', ' ')[:220]
+            raise StartupError(
+                'adb startup command failed; no relaunch will hide the failure: '
+                f'{" ".join(args[:4])} (exit {result.returncode}; {detail})')
         return result.stdout
 
     def guard():
@@ -82,8 +86,17 @@ def check_startup(directory):
             raise StartupError('QuickCut crash/native-crash/ANR evidence prevents startup recovery')
 
     def launch(number):
-        report = adb(['shell', 'am', 'start', '-W', '-n', APP], f'launch-{number}.txt')
-        if not re.search(r'^Status:\s*ok\s*$', report, re.M):
+        # API 29 can stall on 'am start -W'. Non-blocking dispatch still
+        # requires actual foreground activity and a verified QuickCut UI.
+        use_wait = os.environ.get('QUICKCUT_EMULATOR_API') != '29'
+        args = ['shell', 'am', 'start', '-W', '-n', APP] if use_wait else [
+            'shell', 'am', 'start', '-n', APP]
+        report = adb(args, f'launch-{number}.txt')
+        if use_wait:
+            acknowledged = bool(re.search(r'(?m)^Status:[ \t]*ok[ \t]*$', report))
+        else:
+            acknowledged = bool(re.search(r'(?m)^Starting: Intent[ \t]*\{', report))
+        if not acknowledged:
             raise StartupError('Activity start was not acknowledged successfully')
 
     guard()
@@ -95,8 +108,19 @@ def check_startup(directory):
         component = resumed_component(adb(['shell', 'dumpsys', 'activity', 'activities'], 'activity.txt'))
         print('QuickCut startup actual resumed activity: ' + component)
         if component in APP_COMPONENTS:
-            adb(['shell', 'uiautomator', 'dump', '/sdcard/quickcut-ui.xml'])
-            xml = adb(['shell', 'cat', '/sdcard/quickcut-ui.xml'], 'ui.xml')
+            # Unique paths prevent a stale XML from satisfying a newer foreground probe.
+            ui_path = f'/sdcard/quickcut-ui-{os.getpid()}-{attempt + 1}.xml'
+            try:
+                adb(['shell', 'uiautomator', 'dump', ui_path],
+                    f'ui-dump-{attempt + 1}.txt')
+                xml = adb(['shell', 'cat', ui_path], 'ui.xml')
+            except StartupError as error:
+                if attempt == 4:
+                    raise StartupError(f'UI hierarchy unavailable after five probes: {error}') from None
+                print(f'UI hierarchy unavailable on probe {attempt + 1}/5; '
+                      'retrying without an app relaunch', flush=True)
+                time.sleep(min(2, max(0, deadline - time.monotonic())))
+                continue
             try:
                 tree = ET.fromstring(xml)
             except ET.ParseError:
@@ -121,7 +145,7 @@ def check_startup(directory):
                 adb(['shell', 'input', 'tap', str(target[0]), str(target[1])],
                     'launcher-dialog-ack.txt')
                 launcher_dialog_acknowledged = True
-                print('Acknowledged a Pixel Launcher system ANR; QuickCut UI is still unverified')
+                print('Acknowledged an allowed system ANR; QuickCut UI is still unverified')
         elif component in HOME_COMPONENTS:
             if not relaunched:
                 guard()

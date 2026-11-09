@@ -132,6 +132,7 @@ fun EditorScreen(
     addVideos: () -> Unit,
     save: () -> Unit,
 ) {
+    val palette = LocalCutPalette.current
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val player = remember(context) { CompositionPlayer.Builder(context.applicationContext).build() }
@@ -327,7 +328,7 @@ fun EditorScreen(
         return
     }
 
-    Column(modifier = Modifier.fillMaxSize().background(CutColors.background)) {
+    Column(modifier = Modifier.fillMaxSize().background(palette.background)) {
         EditorHeader(
             onBack = model::requestExit,
             onAdd = addVideos,
@@ -349,11 +350,11 @@ fun EditorScreen(
             ) {
                 Image(painterResource(R.drawable.quickcut_new_edit),
                     contentDescription = null, modifier = Modifier.size(108.dp),
-                    colorFilter = ColorFilter.tint(CutColors.secondaryAccent))
-                Text("편집할 영상이 없습니다.", color = CutColors.primaryText,
+                    colorFilter = ColorFilter.tint(palette.secondaryAccent))
+                Text("편집할 영상이 없습니다.", color = palette.primaryText,
                     style = MaterialTheme.typography.titleMedium)
                 Text("실행을 취소하거나 다른 영상을 추가할 수 있습니다.",
-                    color = CutColors.secondaryText)
+                    color = palette.secondaryText)
                 Button(onClick = addVideos, shape = CutShape,
                     modifier = Modifier.heightIn(min = 52.dp)) { Text("영상 추가") }
             }
@@ -388,7 +389,7 @@ fun EditorScreen(
                             )
                             Column(
                                 Modifier.width(if (availableWidth < 600.dp) 128.dp else 160.dp).fillMaxHeight()
-                                    .background(CutColors.surface, CutPanelShape).verticalScroll(rememberScrollState())
+                                    .background(palette.surface, CutPanelShape).verticalScroll(rememberScrollState())
                                     .padding(6.dp),
                             ) {
                                 ToolButtons(
@@ -434,17 +435,17 @@ fun EditorScreen(
                             )
                             Column(
                                 Modifier.width(310.dp).fillMaxHeight()
-                                    .background(CutColors.surface, CutPanelShape)
+                                    .background(palette.surface, CutPanelShape)
                                     .verticalScroll(rememberScrollState())
                                     .padding(14.dp),
                             ) {
                                 selected?.let {
-                                    Text("선택 클립", color = CutColors.secondaryAccent, fontSize = 12.sp)
+                                    Text("선택 클립", color = palette.secondaryAccent, fontSize = 12.sp)
                                     Spacer(Modifier.height(8.dp))
                                     Text("클립 " + (model.timeline.clips.indexOf(it) + 1),
-                                        color = CutColors.primaryText,
+                                        color = palette.primaryText,
                                         fontWeight = FontWeight.SemiBold)
-                                    Text(formatTime(it.durationMs), color = CutColors.secondaryAccent)
+                                    Text(formatTime(it.durationMs), color = palette.secondaryAccent)
                                 }
                                 Spacer(Modifier.height(12.dp))
                                 ToolButtons(
@@ -513,7 +514,7 @@ fun EditorScreen(
                                 model::finishTrim,
                                 model::setTrimInputValidity,
                                 modifier = Modifier.fillMaxWidth()
-                                    .background(CutColors.surface, CutPanelShape)
+                                    .background(palette.surface, CutPanelShape)
                                     .padding(horizontal = 14.dp),
                             )
                         }
@@ -555,7 +556,7 @@ fun EditorScreen(
                 TextButton(onClick = { showDelete = false }, shape = CutShape,
                     modifier = Modifier.heightIn(min = 48.dp)) { Text("취소") }
             },
-            containerColor = CutColors.panel,
+            containerColor = palette.panel,
             shape = CutDialogShape,
         )
     }
@@ -586,7 +587,7 @@ fun EditorScreen(
                 TextButton(onClick = { showMove = false }, shape = CutShape,
                     modifier = Modifier.heightIn(min = 48.dp)) { Text("닫기") }
             },
-            containerColor = CutColors.panel,
+            containerColor = palette.panel,
             shape = CutDialogShape,
         )
     }
@@ -603,8 +604,9 @@ private fun EditorHeader(
     canRedo: Boolean,
     canSave: Boolean,
 ) {
+    val palette = LocalCutPalette.current
     BoxWithConstraints(Modifier.fillMaxWidth()
-        .background(CutColors.surface)
+        .background(palette.surface)
         .padding(horizontal = CutSpacing.sm)) {
         val compactHeader = maxWidth < 500.dp ||
             (LocalDensity.current.fontScale >= 1.5f && maxWidth < 700.dp)
@@ -625,7 +627,7 @@ private fun EditorHeader(
                 IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
                     Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "편집 종료")
                 }
-                Text("상세 편집", color = CutColors.primaryText,
+                Text("상세 편집", color = palette.primaryText,
                     style = MaterialTheme.typography.titleLarge,
                     modifier = Modifier.weight(1f))
                 if (!compactHeader) historyActions()
@@ -633,7 +635,7 @@ private fun EditorHeader(
                     modifier = Modifier.heightIn(min = 48.dp), shape = CutShape,
                     contentPadding = PaddingValues(horizontal = 14.dp),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = CutColors.accent, contentColor = CutColors.onAccent,
+                        containerColor = palette.accent, contentColor = palette.onAccent,
                     )) {
                     Text("영상 저장", style = MaterialTheme.typography.labelLarge)
                 }
@@ -661,11 +663,12 @@ private fun PreviewPanel(
     modifier: Modifier,
     compact: Boolean,
 ) {
-    Column(modifier.background(CutColors.background)) {
+    val palette = LocalCutPalette.current
+    Column(modifier.background(palette.background)) {
         Box(
             modifier = Modifier.weight(1f).fillMaxWidth()
                 .clip(CutShape).background(Color.Black)
-                .border(1.dp, CutColors.border, CutShape),
+                .border(1.dp, palette.border, CutShape),
             contentAlignment = Alignment.Center,
         ) {
             AndroidView(
@@ -708,6 +711,7 @@ internal fun PreviewPlaybackControls(
     onSeek: (Long) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val palette = LocalCutPalette.current
     Row(modifier.fillMaxWidth().heightIn(min = 48.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -717,7 +721,7 @@ internal fun PreviewPlaybackControls(
         }
         Column(Modifier.weight(1f).padding(end = 8.dp)) {
             Text("결과 " + formatTime(currentPosition) + " / " + formatTime(timelineDuration),
-                color = CutColors.primaryText, fontSize = 12.sp,
+                color = palette.primaryText, fontSize = 12.sp,
                 fontWeight = FontWeight.Medium,
                 modifier = Modifier.testTag("editor-playback-time"))
             Slider(
@@ -738,13 +742,14 @@ private fun ToolButtons(
     vertical: Boolean,
     showTrim: Boolean,
 ) {
+    val palette = LocalCutPalette.current
     if (vertical) {
         Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
-            Text("편집 도구", color = CutColors.primaryText,
+            Text("편집 도구", color = palette.primaryText,
                 style = MaterialTheme.typography.titleMedium)
             selected?.let {
                 Text(if (it.muted) "원본 소리: 음소거" else "원본 소리: 유지",
-                    color = CutColors.secondaryText, fontSize = 12.sp)
+                    color = palette.secondaryText, fontSize = 12.sp)
             }
             actions.forEach { item ->
                 val active = item.key == "trim" && showTrim
@@ -752,8 +757,8 @@ private fun ToolButtons(
                     (item.key != "audio" || selected.hasAudio)
                 Row(
                     modifier = Modifier.fillMaxWidth().heightIn(min = 54.dp)
-                        .background(if (active) CutColors.accentMuted else CutColors.panel, CutShape)
-                        .border(1.dp, if (active) CutColors.accent else CutColors.border, CutShape)
+                        .background(if (active) palette.accentMuted else palette.panel, CutShape)
+                        .border(1.dp, if (active) palette.accent else palette.border, CutShape)
                         .clip(CutShape).testTag("editor-tool-${item.key}")
                         .clickable(enabled = enabled) { onAction(item.key) }
                         .padding(horizontal = 12.dp, vertical = 8.dp),
@@ -764,14 +769,14 @@ private fun ToolButtons(
                         if (item.key == "mute" && selected?.muted == true)
                             Icons.Outlined.VolumeUp else item.icon,
                         contentDescription = null,
-                        tint = if (!enabled) CutColors.mutedText
-                            else if (active) CutColors.secondaryAccent else CutColors.primaryText,
+                        tint = if (!enabled) palette.mutedText
+                            else if (active) palette.secondaryAccent else palette.primaryText,
                         modifier = Modifier.size(22.dp),
                     )
                     Text(
                         if (item.key == "mute" && selected?.muted == true)
                             "소리 복원" else item.text,
-                        color = if (enabled) CutColors.primaryText else CutColors.mutedText,
+                        color = if (enabled) palette.primaryText else palette.mutedText,
                         fontSize = 14.sp,
                     )
                 }
@@ -785,18 +790,18 @@ private fun ToolButtons(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Text("편집 도구", color = CutColors.primaryText,
+                Text("편집 도구", color = palette.primaryText,
                     style = MaterialTheme.typography.titleSmall)
                 selected?.let {
                     Text(if (it.muted) "원본 소리: 음소거" else "원본 소리: 유지",
-                        color = CutColors.secondaryText, fontSize = 11.sp)
+                        color = palette.secondaryText, fontSize = 11.sp)
                 }
             }
             BoxWithConstraints(Modifier.fillMaxWidth()) {
                 val fitAllTools = maxWidth >= 720.dp && LocalDensity.current.fontScale < 1.5f
                 if (fitAllTools) {
                     Row(
-                        modifier = Modifier.fillMaxWidth().background(CutColors.surface)
+                        modifier = Modifier.fillMaxWidth().background(palette.surface)
                             .padding(horizontal = 8.dp, vertical = 6.dp),
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
@@ -809,7 +814,7 @@ private fun ToolButtons(
                     Row(
                         modifier = Modifier.fillMaxWidth()
                             .horizontalScroll(rememberScrollState())
-                            .background(CutColors.surface)
+                            .background(palette.surface)
                             .padding(horizontal = 8.dp, vertical = 6.dp),
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
@@ -833,13 +838,14 @@ private fun ToolTile(
     showTrim: Boolean,
     modifier: Modifier,
 ) {
+    val palette = LocalCutPalette.current
     val active = item.key == "trim" && showTrim
     val enabled = selected != null && (item.key != "split" || model.canSplitSelected) &&
                     (item.key != "audio" || selected.hasAudio)
     Column(
         modifier = modifier.heightIn(min = 74.dp)
-            .background(if (active) CutColors.accentMuted else CutColors.surface, CutShape)
-            .border(1.dp, if (active) CutColors.accent else CutColors.border, CutShape)
+            .background(if (active) palette.accentMuted else palette.surface, CutShape)
+            .border(1.dp, if (active) palette.accent else palette.border, CutShape)
             .clip(CutShape).testTag("editor-tool-${item.key}")
             .clickable(enabled = enabled) { onAction(item.key) }
             .padding(horizontal = 3.dp, vertical = 8.dp),
@@ -850,16 +856,16 @@ private fun ToolTile(
             if (item.key == "mute" && selected?.muted == true)
                 Icons.Outlined.VolumeUp else item.icon,
             contentDescription = null,
-            tint = if (!enabled) CutColors.mutedText
-                else if (active) CutColors.secondaryAccent else CutColors.primaryText,
+            tint = if (!enabled) palette.mutedText
+                else if (active) palette.secondaryAccent else palette.primaryText,
             modifier = Modifier.size(22.dp),
         )
         Spacer(Modifier.height(4.dp))
         Text(
             if (item.key == "mute" && selected?.muted == true)
                 "소리 복원" else item.text,
-            color = if (!enabled) CutColors.mutedText
-                else if (active) CutColors.secondaryAccent else CutColors.primaryText,
+            color = if (!enabled) palette.mutedText
+                else if (active) palette.secondaryAccent else palette.primaryText,
             fontSize = 11.sp,
             lineHeight = 13.sp,
             textAlign = TextAlign.Center,
@@ -880,6 +886,7 @@ private fun TrimEditor(
     onValidityChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val palette = LocalCutPalette.current
     fun inputRange(start: String, end: String) {
         val range = TrimInput.selectedRange(start, end, clip.sourceDurationMs)
         onValidityChange(range != null)
@@ -890,8 +897,8 @@ private fun TrimEditor(
     }
     val valid = TrimInput.selectedRange(startText, endText, clip.sourceDurationMs) != null
     SideEffect { onValidityChange(valid) }
-    Column(modifier.background(CutColors.surface, CutPanelShape).padding(vertical = 8.dp)) {
-        Text("자르기 범위", color = CutColors.secondaryAccent, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+    Column(modifier.background(palette.surface, CutPanelShape).padding(vertical = 8.dp)) {
+        Text("자르기 범위", color = palette.secondaryAccent, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
         RangeSlider(
             value = clip.startMs.toFloat()..clip.endMs.toFloat(),
             onValueChange = { range ->
@@ -910,8 +917,8 @@ private fun TrimEditor(
             modifier = Modifier.fillMaxWidth().testTag("detailed-trim-range"),
         )
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("시작 " + formatTime(clip.startMs), color = CutColors.secondaryText, fontSize = 12.sp)
-            Text("끝 " + formatTime(clip.endMs), color = CutColors.secondaryText, fontSize = 12.sp)
+            Text("시작 " + formatTime(clip.startMs), color = palette.secondaryText, fontSize = 12.sp)
+            Text("끝 " + formatTime(clip.endMs), color = palette.secondaryText, fontSize = 12.sp)
         }
         BoxWithConstraints(Modifier.fillMaxWidth()) {
             val changeStart: (String) -> Unit = {

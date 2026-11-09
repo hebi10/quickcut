@@ -9,6 +9,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 
+enum class QuickCutThemeMode { SYSTEM, LIGHT, DARK }
+
 data class QuickTrimSettings(
     val leadingMs: Long = 4_000L,
     val trailingMs: Long = 0L,
@@ -32,6 +34,26 @@ class QuickCutSettings(context: Context) {
     private val preferences = context.applicationContext.getSharedPreferences(
         "quickcut_last_settings_v1", Context.MODE_PRIVATE,
     )
+
+    fun loadThemeMode(): QuickCutThemeMode = runCatching {
+        QuickCutThemeMode.valueOf(
+            preferences.getString("theme_mode", QuickCutThemeMode.SYSTEM.name)
+                ?: QuickCutThemeMode.SYSTEM.name,
+        )
+    }.getOrDefault(QuickCutThemeMode.SYSTEM)
+
+    fun saveThemeMode(mode: QuickCutThemeMode) {
+        preferences.edit().putString("theme_mode", mode.name).apply()
+    }
+
+    fun observeThemeMode(): Flow<QuickCutThemeMode> = callbackFlow {
+        val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == "theme_mode") trySend(loadThemeMode())
+        }
+        preferences.registerOnSharedPreferenceChangeListener(listener)
+        trySend(loadThemeMode())
+        awaitClose { preferences.unregisterOnSharedPreferenceChangeListener(listener) }
+    }.distinctUntilChanged()
 
     fun loadQuick(): QuickTrimSettings = QuickTrimSettings(
         leadingMs = preferences.getLong("quick_leading", 4_000L).coerceIn(0L, 86_400_000L),

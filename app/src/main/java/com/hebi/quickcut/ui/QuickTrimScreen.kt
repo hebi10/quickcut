@@ -99,6 +99,7 @@ fun QuickTrimScreen(
     onSave: () -> Unit,
     onSaveOptions: () -> Unit,
 ) {
+    val palette = LocalCutPalette.current
     val clip = model.timeline.clips.singleOrNull() ?: return
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -276,14 +277,14 @@ fun QuickTrimScreen(
         else preview.togglePlayback()
     }
 
-    BoxWithConstraints(Modifier.fillMaxSize().background(CutColors.background)) {
+    BoxWithConstraints(Modifier.fillMaxSize().background(palette.background)) {
         val fontScale = LocalDensity.current.fontScale
         val compactHeader = maxWidth < 400.dp || (fontScale >= 1.5f && maxWidth < 600.dp)
         val sideBySide = maxWidth >= 480.dp && maxWidth > maxHeight &&
             maxWidth / fontScale >= 480.dp
         Column(Modifier.fillMaxSize()) {
             Column(Modifier.fillMaxWidth()
-                .background(CutColors.surface)
+                .background(palette.surface)
                 .padding(horizontal = CutSpacing.sm)) {
                 Row(
                     Modifier.fillMaxWidth().heightIn(min = CutSizes.appBar),
@@ -293,9 +294,9 @@ fun QuickTrimScreen(
                         Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "뒤로가기")
                     }
                     Icon(Icons.Outlined.ContentCut, contentDescription = null,
-                        tint = CutColors.secondaryAccent, modifier = Modifier.size(22.dp))
+                        tint = palette.secondaryAccent, modifier = Modifier.size(22.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("빠른 자르기", color = CutColors.primaryText,
+                    Text("빠른 자르기", color = palette.primaryText,
                         style = MaterialTheme.typography.titleLarge,
                         modifier = Modifier.weight(1f))
                     if (!compactHeader) DetailedEditButton(openDetailed)
@@ -359,9 +360,10 @@ fun QuickTrimScreen(
 
 @Composable
 private fun DetailedEditButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val palette = LocalCutPalette.current
     OutlinedButton(onClick = onClick, modifier = modifier.heightIn(min = 48.dp),
-        shape = CutShape, border = BorderStroke(1.dp, CutColors.border),
-        colors = ButtonDefaults.outlinedButtonColors(contentColor = CutColors.secondaryText)) {
+        shape = CutShape, border = BorderStroke(1.dp, palette.border),
+        colors = ButtonDefaults.outlinedButtonColors(contentColor = palette.secondaryText)) {
         Icon(Icons.Outlined.Settings, contentDescription = null, modifier = Modifier.size(18.dp))
         Spacer(Modifier.width(6.dp))
         Text("상세 편집")
@@ -381,9 +383,10 @@ private fun QuickPreview(
     output: PreviewOutputState<PlayerView>,
     outputChanged: () -> Unit,
 ) {
+    val palette = LocalCutPalette.current
     Column(modifier.padding(horizontal = 12.dp)) {
         Box(Modifier.weight(1f).fillMaxWidth().clip(CutShape).background(Color.Black)
-            .border(1.dp, CutColors.border, CutShape), contentAlignment = Alignment.Center) {
+            .border(1.dp, palette.border, CutShape), contentAlignment = Alignment.Center) {
             key(player) {
                 AndroidView(
                     factory = { ctx ->
@@ -454,18 +457,19 @@ private fun QuickTrimControls(
     onSaveOptions: () -> Unit,
     modifier: Modifier,
 ) {
-    Column(modifier.background(CutColors.background)) {
+    val palette = LocalCutPalette.current
+    Column(modifier.background(palette.background)) {
         Column(
             modifier = Modifier.fillMaxWidth().weight(1f)
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-                Text("자르기 범위", color = CutColors.primaryText,
+                Text("자르기 범위", color = palette.primaryText,
                     style = MaterialTheme.typography.titleMedium)
                 Column(
                     modifier = Modifier.fillMaxWidth()
-                        .background(CutColors.surface, CutShape)
+                        .background(palette.surface, CutShape)
                         .padding(CutSpacing.md),
                     verticalArrangement = Arrangement.spacedBy(CutSpacing.xs),
                 ) {
@@ -490,85 +494,85 @@ private fun QuickTrimControls(
                         horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
                         Text(formatTime(clip.startMs),
-                            color = CutColors.secondaryAccent,
+                            color = palette.secondaryAccent,
                             style = MaterialTheme.typography.labelMedium)
                         Text(formatTime(clip.endMs),
-                            color = CutColors.secondaryAccent,
+                            color = palette.secondaryAccent,
                             style = MaterialTheme.typography.labelMedium)
                     }
                 }
                 if (LocalDensity.current.fontScale >= 1.5f) {
                 Column(
                     Modifier.fillMaxWidth()
-                        .background(CutColors.surface, CutPanelShape)
-                        .border(1.dp, CutColors.border, CutPanelShape)
+                        .background(palette.surface, CutPanelShape)
+                        .border(1.dp, palette.border, CutPanelShape)
                         .padding(CutSpacing.lg),
                     verticalArrangement = Arrangement.spacedBy(CutSpacing.sm),
                 ) {
-                    Text("선택한 영상", color = CutColors.secondaryAccent,
+                    Text("선택한 영상", color = palette.secondaryAccent,
                         style = MaterialTheme.typography.titleSmall)
                     Row(Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("원본 길이", color = CutColors.secondaryText,
+                        Text("원본 길이", color = palette.secondaryText,
                             style = MaterialTheme.typography.bodySmall)
-                        Text(formatTime(clip.sourceDurationMs), color = CutColors.primaryText,
+                        Text(formatTime(clip.sourceDurationMs), color = palette.primaryText,
                             style = MaterialTheme.typography.titleSmall)
                     }
                     Row(Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("남길 구간", color = CutColors.secondaryText,
+                        Text("남길 구간", color = palette.secondaryText,
                             style = MaterialTheme.typography.bodySmall)
                         Text(formatTime(clip.startMs) + " – " + formatTime(clip.endMs),
-                            color = CutColors.primaryText,
+                            color = palette.primaryText,
                             style = MaterialTheme.typography.titleSmall)
                     }
                     Row(Modifier.fillMaxWidth()
-                        .background(CutColors.accentMuted, CutSmallShape)
+                        .background(palette.accentMuted, CutSmallShape)
                         .padding(CutSpacing.md),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically) {
-                        Text("결과 영상", color = CutColors.secondaryAccent,
+                        Text("결과 영상", color = palette.secondaryAccent,
                             style = MaterialTheme.typography.titleSmall)
-                        Text(formatTime(clip.durationMs), color = CutColors.primaryText,
+                        Text(formatTime(clip.durationMs), color = palette.primaryText,
                             style = MaterialTheme.typography.titleMedium)
                     }
                 }
                 } else {
                 Column(
                     Modifier.fillMaxWidth()
-                        .background(CutColors.surface, CutPanelShape)
-                        .border(1.dp, CutColors.border, CutPanelShape)
+                        .background(palette.surface, CutPanelShape)
+                        .border(1.dp, palette.border, CutPanelShape)
                         .padding(CutSpacing.md),
                     verticalArrangement = Arrangement.spacedBy(CutSpacing.sm),
                 ) {
-                    Text("선택한 영상", color = CutColors.secondaryAccent,
+                    Text("선택한 영상", color = palette.secondaryAccent,
                         style = MaterialTheme.typography.titleSmall)
                     Row(Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(CutSpacing.sm),
                         verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f),
                             verticalArrangement = Arrangement.spacedBy(CutSpacing.xs)) {
-                            Text("원본 길이", color = CutColors.secondaryText,
+                            Text("원본 길이", color = palette.secondaryText,
                                 style = MaterialTheme.typography.bodySmall)
-                            Text(formatTime(clip.sourceDurationMs), color = CutColors.primaryText,
+                            Text(formatTime(clip.sourceDurationMs), color = palette.primaryText,
                                 style = MaterialTheme.typography.titleSmall)
                         }
                         Column(Modifier.weight(1.35f),
                             verticalArrangement = Arrangement.spacedBy(CutSpacing.xs)) {
-                            Text("남길 구간", color = CutColors.secondaryText,
+                            Text("남길 구간", color = palette.secondaryText,
                                 style = MaterialTheme.typography.bodySmall)
                             Text(formatTime(clip.startMs) + " – " + formatTime(clip.endMs),
-                                color = CutColors.primaryText,
+                                color = palette.primaryText,
                                 style = MaterialTheme.typography.labelMedium,
                                 maxLines = 2)
                         }
                         Column(Modifier.weight(1f)
-                            .background(CutColors.accentMuted, CutSmallShape)
+                            .background(palette.accentMuted, CutSmallShape)
                             .padding(CutSpacing.sm),
                             verticalArrangement = Arrangement.spacedBy(CutSpacing.xs)) {
-                            Text("결과 영상", color = CutColors.secondaryAccent,
+                            Text("결과 영상", color = palette.secondaryAccent,
                                 style = MaterialTheme.typography.bodySmall)
-                            Text(formatTime(clip.durationMs), color = CutColors.primaryText,
+                            Text(formatTime(clip.durationMs), color = palette.primaryText,
                                 style = MaterialTheme.typography.titleSmall)
                         }
                     }
@@ -605,15 +609,15 @@ private fun QuickTrimControls(
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
                     Text(if (clip.muted) "원본 소리: 음소거" else "원본 소리: 유지",
-                        color = CutColors.secondaryText, fontSize = 13.sp)
+                        color = palette.secondaryText, fontSize = 13.sp)
                     OutlinedButton(
                         modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
                         onClick = onToggleMute,
                         shape = CutShape,
-                        border = BorderStroke(1.dp, CutColors.border),
+                        border = BorderStroke(1.dp, palette.border),
                         colors = ButtonDefaults.outlinedButtonColors(
-                            contentColor = CutColors.primaryText,
-                            containerColor = CutColors.panel,
+                            contentColor = palette.primaryText,
+                            containerColor = palette.panel,
                         ),
                     ) {
                         Icon(if (clip.muted) Icons.Outlined.VolumeUp else Icons.Outlined.VolumeOff,
@@ -624,7 +628,7 @@ private fun QuickTrimControls(
                 }
                 Text(
                     "마지막 자르기 값은 자동 저장됩니다. 고속 저장 여부는 저장 전에 확인합니다.",
-                    color = CutColors.secondaryText, fontSize = 12.sp,
+                    color = palette.secondaryText, fontSize = 12.sp,
                 )
                 OutlinedButton(
                     onClick = onSaveOptions,
@@ -640,7 +644,7 @@ private fun QuickTrimControls(
                     .heightIn(min = CutSizes.primaryButton),
                 shape = CutShape,
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = CutColors.accent, contentColor = CutColors.onAccent,
+                    containerColor = palette.accent, contentColor = palette.onAccent,
                 ),
             ) {
                 Text("영상 저장", fontWeight = FontWeight.SemiBold)
@@ -655,8 +659,9 @@ private fun TrimSecondsRow(
     onValueChange: (String) -> Unit,
     onStep: (Long) -> Unit,
 ) {
+    val palette = LocalCutPalette.current
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(label, color = CutColors.primaryText, fontSize = 14.sp,
+        Text(label, color = palette.primaryText, fontSize = 14.sp,
             modifier = Modifier.fillMaxWidth())
         Row(
             Modifier.fillMaxWidth().heightIn(min = 56.dp),
@@ -670,9 +675,9 @@ private fun TrimSecondsRow(
                 contentDescription = "$label 1초 감소"
             },
             shape = CutShape,
-            border = BorderStroke(1.dp, CutColors.border),
+            border = BorderStroke(1.dp, palette.border),
             colors = ButtonDefaults.outlinedButtonColors(
-                containerColor = CutColors.panel, contentColor = CutColors.accent,
+                containerColor = palette.panel, contentColor = palette.accent,
             ),
         ) {
             Text("−")
@@ -695,9 +700,9 @@ private fun TrimSecondsRow(
                 contentDescription = "$label 1초 증가"
             },
             shape = CutShape,
-            border = BorderStroke(1.dp, CutColors.border),
+            border = BorderStroke(1.dp, palette.border),
             colors = ButtonDefaults.outlinedButtonColors(
-                containerColor = CutColors.panel, contentColor = CutColors.accent,
+                containerColor = palette.panel, contentColor = palette.accent,
             ),
         ) {
             Text("+")

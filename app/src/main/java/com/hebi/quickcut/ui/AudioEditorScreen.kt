@@ -66,6 +66,7 @@ fun AudioEditorScreen(
     onApply: (AudioAdjustment, Boolean) -> Unit,
     onCancel: () -> Unit,
 ) {
+    val palette = LocalCutPalette.current
     BackHandler(onBack = onCancel)
     val context = LocalContext.current
     var volume by rememberSaveable(clip.id) { mutableStateOf(clip.audio.volumePercent) }
@@ -114,7 +115,7 @@ fun AudioEditorScreen(
     val limitMs = minOf(clip.durationMs, 5_000L)
     val maxSeconds = (limitMs / 1_000f).coerceAtLeast(0.1f)
 
-    Column(Modifier.fillMaxSize().background(CutColors.background)) {
+    Column(Modifier.fillMaxSize().background(palette.background)) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -122,10 +123,10 @@ fun AudioEditorScreen(
                 Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "편집 화면으로")
             }
             Column(Modifier.weight(1f)) {
-                Text("오디오 편집", color = CutColors.primaryText,
+                Text("오디오 편집", color = palette.primaryText,
                     style = MaterialTheme.typography.titleLarge)
                 Text("현재 클립 · ${formatTime(clip.durationMs)}",
-                    color = CutColors.secondaryText, style = MaterialTheme.typography.bodySmall)
+                    color = palette.secondaryText, style = MaterialTheme.typography.bodySmall)
             }
         }
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState())
@@ -142,25 +143,25 @@ fun AudioEditorScreen(
                 )
             }
             previewFailure?.let {
-                Text("미리보기 오류: $it", color = CutColors.error,
+                Text("미리보기 오류: $it", color = palette.error,
                     style = MaterialTheme.typography.bodySmall)
             }
 
-            Text("소리 적용 예상 파형", color = CutColors.primaryText,
+            Text("소리 적용 예상 파형", color = palette.primaryText,
                 style = MaterialTheme.typography.titleMedium)
             if (!clip.hasAudio) {
                 Text("이 영상에는 오디오 트랙이 없습니다.",
-                    color = CutColors.secondaryText, style = MaterialTheme.typography.bodySmall)
+                    color = palette.secondaryText, style = MaterialTheme.typography.bodySmall)
             } else if (waveformResult.loading) {
                 Text("오디오 파형을 분석하고 있습니다.",
-                    color = CutColors.secondaryText, style = MaterialTheme.typography.bodySmall)
+                    color = palette.secondaryText, style = MaterialTheme.typography.bodySmall)
             } else if (waveformResult.waveform == null) {
                 Text("파형을 불러오지 못했습니다. 소리 조절과 저장은 계속 사용할 수 있습니다.",
-                    color = CutColors.secondaryText, style = MaterialTheme.typography.bodySmall)
+                    color = palette.secondaryText, style = MaterialTheme.typography.bodySmall)
             } else {
                 val peaks = requireNotNull(waveformResult.waveform)
                 Canvas(Modifier.fillMaxWidth().height(76.dp)
-                    .background(CutColors.surface).testTag("audio-waveform")) {
+                    .background(palette.surface).testTag("audio-waveform")) {
                     val center = size.height / 2f
                     val step = size.width / peaks.peaks.size
                     peaks.peaks.forEachIndexed { index, peak ->
@@ -171,21 +172,21 @@ fun AudioEditorScreen(
                             peak * AudioEnvelope.gainAtMs(draft, clip.durationMs, time)
                         val height = (applied.coerceIn(0f, 1f) * center * 0.85f)
                             .coerceAtLeast(2.dp.toPx())
-                        drawLine(CutColors.accent, Offset(x, center - height),
+                        drawLine(palette.accent, Offset(x, center - height),
                             Offset(x, center + height), strokeWidth = step * 0.55f)
                     }
                 }
                 if (clip.durationMs > peaks.sampledDurationMs) {
                     Text("처음 ${formatTime(peaks.sampledDurationMs)} 구간의 파형입니다.",
-                        color = CutColors.secondaryText, style = MaterialTheme.typography.bodySmall)
+                        color = palette.secondaryText, style = MaterialTheme.typography.bodySmall)
                 }
             }
 
             if (muted) {
                 Text("현재 클립이 음소거 상태입니다. 스위치를 끄면 소리 조절을 다시 사용할 수 있습니다.",
-                    color = CutColors.secondaryText, style = MaterialTheme.typography.bodySmall)
+                    color = palette.secondaryText, style = MaterialTheme.typography.bodySmall)
             }
-            Text("원본 음량 · ${volume}%", color = CutColors.primaryText,
+            Text("원본 음량 · ${volume}%", color = palette.primaryText,
                 style = MaterialTheme.typography.titleMedium)
             Slider(
                 value = volume.toFloat(), onValueChange = { volume = it.roundToLong().toInt() },
@@ -194,14 +195,14 @@ fun AudioEditorScreen(
                 modifier = Modifier.fillMaxWidth().testTag("audio-volume"),
             )
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("0%", color = CutColors.secondaryText,
+                Text("0%", color = palette.secondaryText,
                     style = MaterialTheme.typography.labelSmall)
-                Text("100%", color = CutColors.secondaryText,
+                Text("100%", color = palette.secondaryText,
                     style = MaterialTheme.typography.labelSmall)
             }
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("음소거", color = CutColors.primaryText,
+                Text("음소거", color = palette.primaryText,
                     style = MaterialTheme.typography.titleSmall)
                 Switch(
                     checked = muted, onCheckedChange = { muted = it },
@@ -209,7 +210,7 @@ fun AudioEditorScreen(
                     modifier = Modifier.testTag("audio-mute-toggle"),
                 )
             }
-            Text("페이드 인 · ${formatTime(fadeIn)}", color = CutColors.primaryText,
+            Text("페이드 인 · ${formatTime(fadeIn)}", color = palette.primaryText,
                 style = MaterialTheme.typography.titleSmall)
             Slider(
                 value = (fadeIn / 1_000f).coerceIn(0f, maxSeconds),
@@ -218,7 +219,7 @@ fun AudioEditorScreen(
                 enabled = editable,
                 modifier = Modifier.fillMaxWidth().testTag("audio-fade-in"),
             )
-            Text("페이드 아웃 · ${formatTime(fadeOut)}", color = CutColors.primaryText,
+            Text("페이드 아웃 · ${formatTime(fadeOut)}", color = palette.primaryText,
                 style = MaterialTheme.typography.titleSmall)
             Slider(
                 value = (fadeOut / 1_000f).coerceIn(0f, maxSeconds),
@@ -228,7 +229,7 @@ fun AudioEditorScreen(
                 modifier = Modifier.fillMaxWidth().testTag("audio-fade-out"),
             )
             Text("0.5초 간격으로 설정합니다. 원본을 변경하지 않으며 저장 시 오디오 변환이 필요할 수 있습니다.",
-                color = CutColors.secondaryText, style = MaterialTheme.typography.bodySmall)
+                color = palette.secondaryText, style = MaterialTheme.typography.bodySmall)
             OutlinedButton(
                 onClick = { volume = 100; fadeIn = 0L; fadeOut = 0L },
                 enabled = editable, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
@@ -236,7 +237,7 @@ fun AudioEditorScreen(
                 shape = CutShape,
             ) { Text("기본 음량으로 초기화") }
         }
-        Row(Modifier.fillMaxWidth().background(CutColors.surface).padding(12.dp),
+        Row(Modifier.fillMaxWidth().background(palette.surface).padding(12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             OutlinedButton(

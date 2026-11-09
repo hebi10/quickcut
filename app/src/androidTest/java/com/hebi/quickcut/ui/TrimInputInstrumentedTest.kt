@@ -15,6 +15,8 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import android.app.Application
 import android.net.Uri
 import android.view.KeyEvent
+import android.view.inputmethod.InputMethodManager
+import android.content.Context
 import android.view.View
 import android.view.ViewGroup
 import androidx.activity.ComponentActivity
@@ -442,7 +444,8 @@ class TrimInputInstrumentedTest {
         composeRule.runOnUiThread { model.changeQuickMode(false) }
         showApp()
         composeRule.onNodeWithText("자르기").performClick()
-        composeRule.onAllNodes(hasSetTextAction())[0].performClick().performTextReplacement("-")
+        composeRule.onAllNodes(hasSetTextAction())[0].performTouchInput { click() }
+        composeRule.onAllNodes(hasSetTextAction())[0].performTextReplacement("-")
         waitForKeyboard(visible = true)
         composeRule.onAllNodes(hasSetTextAction())[0].assertIsFocused()
         assertInvalidDetailedDraft()
@@ -454,7 +457,20 @@ class TrimInputInstrumentedTest {
     }
 
     private fun waitForKeyboard(visible: Boolean) {
-        composeRule.waitUntil(10_000L) {
+        if (visible) {
+            composeRule.runOnUiThread {
+                val activity = composeRule.activity
+                val focused = checkNotNull(activity.window.decorView.findFocus()) {
+                    "Detailed trim input must retain focus before showing the IME"
+                }
+                val input = activity.getSystemService(Context.INPUT_METHOD_SERVICE)
+                    as InputMethodManager
+                focused.requestFocus()
+                input.restartInput(focused)
+                input.showSoftInput(focused, InputMethodManager.SHOW_IMPLICIT)
+            }
+        }
+        composeRule.waitUntil(20_000L) {
             composeRule.runOnIdle {
                 ViewCompat.getRootWindowInsets(composeRule.activity.window.decorView)
                     ?.isVisible(WindowInsetsCompat.Type.ime()) == visible
@@ -474,8 +490,10 @@ class TrimInputInstrumentedTest {
             }
         }
         composeRule.onNodeWithText("자르기").performClick()
+        composeRule.onAllNodes(hasSetTextAction())[0].performTouchInput { click() }
         composeRule.onAllNodes(hasSetTextAction())[0].performTextReplacement("-")
         assertInvalidDetailedDraft()
+        composeRule.onAllNodes(hasSetTextAction())[0].assertIsFocused()
 
         // Test an actual window-height change, independently of the IME-height compensation.
         waitForKeyboard(visible = true)

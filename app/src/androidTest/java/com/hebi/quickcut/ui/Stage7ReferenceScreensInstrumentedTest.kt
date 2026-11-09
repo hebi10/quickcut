@@ -60,7 +60,7 @@ class Stage7ReferenceScreensInstrumentedTest {
         compose.setContent {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(360.dp, 640.dp))) {
                 QuickCutTheme {
-                    Box(Modifier.fillMaxSize().background(CutColors.background)) {
+                    Box(Modifier.fillMaxSize().background(LocalCutPalette.current.background)) {
                         QuickCutWelcome(onFinish = {})
                     }
                 }

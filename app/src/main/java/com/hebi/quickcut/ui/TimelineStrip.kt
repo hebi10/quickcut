@@ -62,10 +62,11 @@ fun TimelineStrip(
     showHint: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
+    val palette = LocalCutPalette.current
     var zoom by rememberSaveable { mutableFloatStateOf(1f) }
     val totalDurationMs = remember(timeline) { timeline.totalDurationMs }
-    Column(modifier.background(CutColors.surface, CutPanelShape)
-        .border(1.dp, CutColors.border, CutPanelShape)
+    Column(modifier.background(palette.surface, CutPanelShape)
+        .border(1.dp, palette.border, CutPanelShape)
         .padding(vertical = CutSpacing.sm)) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
@@ -76,20 +77,20 @@ fun TimelineStrip(
                 Column(Modifier.weight(1f),
                     verticalArrangement = Arrangement.spacedBy(CutSpacing.xs)) {
                     Text("타임라인", style = MaterialTheme.typography.titleSmall,
-                        color = CutColors.primaryText)
+                        color = palette.primaryText)
                     Text("전체 " + formatTime(totalDurationMs),
                         style = MaterialTheme.typography.bodySmall,
-                        color = CutColors.secondaryText)
+                        color = palette.secondaryText)
                 }
             } else {
                 Row(Modifier.weight(1f),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text("타임라인", style = MaterialTheme.typography.titleSmall,
-                        color = CutColors.primaryText)
+                        color = palette.primaryText)
                     Text("전체 " + formatTime(totalDurationMs),
                         style = MaterialTheme.typography.bodySmall,
-                        color = CutColors.secondaryText,
+                        color = palette.secondaryText,
                         maxLines = 1)
                 }
             }
@@ -98,8 +99,8 @@ fun TimelineStrip(
                     enabled = zoom > 1f, shape = CutShape,
                     modifier = Modifier.size(48.dp), contentPadding = PaddingValues(0.dp)) { Text("−") }
                 Text("확대 " + zoom.toInt().toString() + "배", fontSize = 11.sp,
-                    color = CutColors.accent,
-                    modifier = Modifier.background(CutColors.accentMuted, CutSmallShape)
+                    color = palette.accent,
+                    modifier = Modifier.background(palette.accentMuted, CutSmallShape)
                         .padding(horizontal = 6.dp, vertical = 4.dp))
                 TextButton(onClick = { zoom = (zoom * 2f).coerceAtMost(16f) },
                     enabled = zoom < 16f, shape = CutShape,
@@ -133,7 +134,7 @@ fun TimelineStrip(
                         .width(tileWidth).height(78.dp)
                         .border(
                             width = if (selected) 2.dp else 1.dp,
-                            color = if (selected) CutColors.accent else CutColors.border,
+                            color = if (selected) palette.accent else palette.border,
                             shape = CutSmallShape,
                         )
                         .pointerInput(clip.id) {
@@ -165,12 +166,12 @@ fun TimelineStrip(
                             .coerceIn(0f, 1f)
                         Box(
                             Modifier.offset(x = maxWidth * fraction)
-                                .width(2.dp).fillMaxHeight().background(CutColors.secondaryAccent),
+                                .width(2.dp).fillMaxHeight().background(palette.timelineMarker),
                         )
                     }
                     Text(
                         formatTime(clip.durationMs),
-                        color = if (selected) CutColors.accent else CutColors.primaryText,
+                        color = Color.White,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Medium,
                         modifier = Modifier.align(Alignment.BottomStart)
@@ -180,7 +181,7 @@ fun TimelineStrip(
                     if (clip.muted) {
                         Text(
                             "무음",
-                            color = CutColors.secondaryAccent,
+                            color = Color.White,
                             fontSize = 11.sp,
                             modifier = Modifier.align(Alignment.TopEnd)
                                 .background(Color.Black.copy(alpha = 0.82f), CutSmallShape)
@@ -223,7 +224,7 @@ fun TimelineStrip(
         if (showHint) {
             Text(
                 "클립 선택 · 가장자리 드래그로 자르기 · 길게 눌러 순서 변경",
-                color = CutColors.mutedText,
+                color = palette.mutedText,
                 fontSize = 11.sp,
                 modifier = Modifier.padding(start = 16.dp, top = 6.dp),
             )
@@ -240,6 +241,7 @@ private fun TrimHandle(
     onDragEnd: () -> Unit,
     onDragAmount: (Float) -> Unit,
 ) {
+    val palette = LocalCutPalette.current
     val updatedCallback by rememberUpdatedState(onDragAmount)
     val updatedStart by rememberUpdatedState(onDragStart)
     val updatedEnd by rememberUpdatedState(onDragEnd)
@@ -260,11 +262,11 @@ private fun TrimHandle(
     ) {
         Box(
             modifier = Modifier.width(8.dp).fillMaxHeight()
-                .background(CutColors.accent, CutSmallShape),
+                .background(palette.accent, CutSmallShape),
             contentAlignment = Alignment.Center,
         ) {
             Box(Modifier.width(2.dp).height(22.dp)
-                .background(CutColors.onAccent, CutSmallShape))
+                .background(palette.onAccent, CutSmallShape))
         }
     }
 }

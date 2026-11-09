@@ -88,6 +88,7 @@ fun TextEditorScreen(
     onApply: (List<TextLayer>) -> Unit,
     onCancel: () -> Unit,
 ) {
+    val palette = LocalCutPalette.current
     BackHandler(onBack = onCancel)
     val context = LocalContext.current
     val player = remember(context) { CompositionPlayer.Builder(context.applicationContext).build() }
@@ -154,17 +155,17 @@ fun TextEditorScreen(
         layers = layers.map { if (it.id == id) update(it) else it }
     }
 
-    Column(Modifier.fillMaxSize().background(CutColors.background)) {
+    Column(Modifier.fillMaxSize().background(palette.background)) {
         Row(
             Modifier.fillMaxWidth().padding(12.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column {
-                Text("텍스트 오버레이", color = CutColors.primaryText,
+                Text("텍스트 오버레이", color = palette.primaryText,
                     style = MaterialTheme.typography.titleLarge)
                 Text("현재 클립 · ${formatTime(clip.durationMs)}",
-                    color = CutColors.secondaryText, style = MaterialTheme.typography.bodySmall)
+                    color = palette.secondaryText, style = MaterialTheme.typography.bodySmall)
             }
             TextButton(onClick = onCancel, modifier = Modifier.heightIn(min = 48.dp)) {
                 Text("취소")
@@ -208,7 +209,7 @@ fun TextEditorScreen(
                                     x = videoWidth * current.x - 64.dp,
                                     y = videoHeight * current.y - 22.dp,
                                 ).size(width = 128.dp, height = 44.dp)
-                                    .border(1.dp, CutColors.secondaryAccent, CutShape)
+                                    .border(1.dp, palette.secondaryAccent, CutShape)
                                     .testTag("text-selected-frame")
                             )
                         }
@@ -229,9 +230,9 @@ fun TextEditorScreen(
                     },
                     modifier = Modifier.heightIn(min = 48.dp).testTag("text-preview-play"),
                 ) { Text(if (player.isPlaying) "정지" else "재생") }
-                Text(formatTime(positionMs), color = CutColors.secondaryText)
+                Text(formatTime(positionMs), color = palette.secondaryText)
                 Spacer(Modifier.weight(1f))
-                Text(formatTime(clip.durationMs), color = CutColors.secondaryText)
+                Text(formatTime(clip.durationMs), color = palette.secondaryText)
             }
             Slider(
                 value = positionMs.toFloat(),
@@ -243,11 +244,11 @@ fun TextEditorScreen(
                 modifier = Modifier.fillMaxWidth().testTag("text-preview-seek"),
             )
             previewFailure?.let {
-                Text("미리보기 오류: $it", color = CutColors.error,
+                Text("미리보기 오류: $it", color = palette.error,
                     style = MaterialTheme.typography.bodySmall)
             }
             Text("텍스트 레이어 · ${layers.size}/${TextLayerPolicy.MAX_LAYERS}",
-                color = CutColors.primaryText, style = MaterialTheme.typography.titleMedium)
+                color = palette.primaryText, style = MaterialTheme.typography.titleMedium)
             Row(
                 Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -260,7 +261,7 @@ fun TextEditorScreen(
                             seekWhenReady(item.startMs)
                         },
                         border = BorderStroke(1.dp,
-                            if (selectedId == item.id) CutColors.accent else CutColors.border),
+                            if (selectedId == item.id) palette.accent else palette.border),
                         modifier = Modifier.heightIn(min = 48.dp).testTag("text-layer-${item.id}"),
                         shape = CutShape,
                     ) {
@@ -291,8 +292,8 @@ fun TextEditorScreen(
                 val enteredRange = TrimInput.selectedRange(
                     startDraft, endDraft, clip.durationMs,
                 )
-                HorizontalDivider(color = CutColors.border)
-                Text("텍스트 내용", color = CutColors.primaryText,
+                HorizontalDivider(color = palette.border)
+                Text("텍스트 내용", color = palette.primaryText,
                     style = MaterialTheme.typography.titleMedium)
                 OutlinedTextField(
                     value = current.text,
@@ -305,7 +306,7 @@ fun TextEditorScreen(
                     minLines = 2, maxLines = 3,
                     supportingText = { Text("${current.text.length}/${TextLayerPolicy.MAX_CHARS}") },
                 )
-                Text("색상", color = CutColors.primaryText,
+                Text("색상", color = palette.primaryText,
                     style = MaterialTheme.typography.titleSmall)
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -313,7 +314,7 @@ fun TextEditorScreen(
                         OutlinedButton(
                             onClick = { updateLayer { it.copy(color = color) } },
                             border = BorderStroke(1.dp,
-                                if (current.color == color) CutColors.accent else CutColors.border),
+                                if (current.color == color) palette.accent else palette.border),
                             shape = CutShape,
                             modifier = Modifier.heightIn(min = 48.dp)
                                 .testTag("text-color-${color.name}"),
@@ -322,7 +323,7 @@ fun TextEditorScreen(
                 }
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("글자 배경", color = CutColors.primaryText)
+                    Text("글자 배경", color = palette.primaryText)
                     Switch(
                         checked = current.darkBackground,
                         onCheckedChange = { active ->
@@ -332,7 +333,7 @@ fun TextEditorScreen(
                     )
                 }
                 Text("글자 크기 · ${current.size}%",
-                    color = CutColors.primaryText, style = MaterialTheme.typography.titleSmall)
+                    color = palette.primaryText, style = MaterialTheme.typography.titleSmall)
                 Slider(
                     value = current.size.toFloat(),
                     onValueChange = { size ->
@@ -341,14 +342,14 @@ fun TextEditorScreen(
                     valueRange = 60f..170f,
                     modifier = Modifier.testTag("text-layer-size"),
                 )
-                Text("정렬", color = CutColors.primaryText,
+                Text("정렬", color = palette.primaryText,
                     style = MaterialTheme.typography.titleSmall)
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     TextLayerAlignment.entries.forEach { option ->
                         OutlinedButton(
                             onClick = { updateLayer { it.copy(alignment = option) } },
                             border = BorderStroke(1.dp,
-                                if (current.alignment == option) CutColors.accent else CutColors.border),
+                                if (current.alignment == option) palette.accent else palette.border),
                             modifier = Modifier.weight(1f).heightIn(min = 48.dp)
                                 .testTag("text-align-${option.name}"),
                             shape = CutShape,
@@ -356,7 +357,7 @@ fun TextEditorScreen(
                     }
                 }
                 Text("표시 시간: ${formatTime(current.startMs)} ~ ${formatTime(current.endMs)}",
-                    color = CutColors.primaryText, style = MaterialTheme.typography.titleSmall)
+                    color = palette.primaryText, style = MaterialTheme.typography.titleSmall)
                 RangeSlider(
                     value = current.startMs.toFloat()..current.endMs.toFloat(),
                     onValueChange = { range ->
@@ -399,7 +400,7 @@ fun TextEditorScreen(
                     shape = CutShape,
                 ) { Text("표시 시간 적용") }
                 Text("텍스트는 선택한 구간에서만 표시됩니다. 미리보기 위에서 드래그해 위치를 변경할 수 있습니다.",
-                    color = CutColors.secondaryText,
+                    color = palette.secondaryText,
                     style = MaterialTheme.typography.bodySmall)
                 OutlinedButton(
                     onClick = {
@@ -411,12 +412,12 @@ fun TextEditorScreen(
                 ) { Text("이 텍스트 제거") }
             }
             if (!valid) Text("텍스트는 1~80자, 최대 3줄(한 줄 32자), 최소 0.1초로 설정해 주세요.",
-                color = CutColors.error, style = MaterialTheme.typography.bodySmall,
+                color = palette.error, style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.testTag("text-invalid"))
             Spacer(Modifier.height(10.dp))
         }
         Row(
-            Modifier.fillMaxWidth().background(CutColors.surface).padding(12.dp),
+            Modifier.fillMaxWidth().background(palette.surface).padding(12.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {

@@ -29,13 +29,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
-private val brandGradient = Brush.linearGradient(
-    listOf(CutColors.brandLight, CutColors.accent, CutColors.brandDeep),
-)
-
 /** Scissors and a play symbol reflect the QuickCut brand without adding a runtime asset. */
 @Composable
 internal fun QuickCutLogo(size: Dp, modifier: Modifier = Modifier) {
+    val palette = LocalCutPalette.current
+    val brandGradient = Brush.linearGradient(
+        listOf(palette.brandLight, palette.accent, palette.brandDeep),
+    )
     Box(
         modifier = modifier.size(size)
             .clip(RoundedCornerShape(size * 0.24f))
@@ -59,6 +59,7 @@ internal fun QuickCutLogo(size: Dp, modifier: Modifier = Modifier) {
 
 @Composable
 internal fun QuickCutDialogHeading(title: String) {
+    val palette = LocalCutPalette.current
     val caution = title.contains("삭제") || title.contains("취소") || title.contains("종료")
     val icon = when {
         title.contains("삭제") -> Icons.Outlined.DeleteOutline
@@ -77,14 +78,14 @@ internal fun QuickCutDialogHeading(title: String) {
         Box(
             modifier = Modifier.size(36.dp)
                 .clip(RoundedCornerShape(10.dp))
-                .background(if (caution) MaterialTheme.colorScheme.errorContainer else CutColors.accentMuted),
+                .background(if (caution) MaterialTheme.colorScheme.errorContainer else palette.accentMuted),
             contentAlignment = Alignment.Center,
         ) {
             Icon(icon, contentDescription = null,
-                tint = if (caution) MaterialTheme.colorScheme.onErrorContainer else CutColors.secondaryAccent,
+                tint = if (caution) MaterialTheme.colorScheme.onErrorContainer else palette.secondaryAccent,
                 modifier = Modifier.size(CutSizes.icon))
         }
-        Text(title, modifier = Modifier.weight(1f), color = CutColors.primaryText,
+        Text(title, modifier = Modifier.weight(1f), color = palette.primaryText,
             fontWeight = FontWeight.SemiBold,
             style = MaterialTheme.typography.titleLarge)
     }

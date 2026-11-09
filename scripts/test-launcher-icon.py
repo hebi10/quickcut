@@ -39,5 +39,5 @@ for variant in ("mipmap-anydpi-v26", "mipmap-anydpi-v33"):
 
 colors = ET.parse(RES / "values/colors.xml").getroot()
 background = {x.get("name"): (x.text or "").strip().upper() for x in colors}
-assert background.get("ic_launcher_background") == "#6D28D9", "Launcher purple must match brand"
+assert background.get("ic_launcher_background") == "#1C1E20", "Launcher background must match the neutral theme"
 print("QuickCut launcher adaptive/monochrome/splash resources reference the updated scissors-play mark")

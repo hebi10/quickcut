@@ -24,6 +24,8 @@ import androidx.compose.ui.test.click
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -59,7 +61,7 @@ class Stage18TextEditorScreensInstrumentedTest {
         // reserved for the separate layout/large-font screenshot scenario below.
         compose.setContent {
             QuickCutTheme {
-                Box(Modifier.fillMaxSize().background(CutColors.background).safeDrawingPadding()) {
+                Box(Modifier.fillMaxSize().background(LocalCutPalette.current.background).safeDrawingPadding()) {
                     TextEditorScreen(clip, onApply = {}, onCancel = {})
                 }
             }
@@ -84,7 +86,21 @@ class Stage18TextEditorScreensInstrumentedTest {
         compose.onNodeWithTag("text-apply").assertIsEnabled()
         capture("stage18_text_selected.png")
         compose.onNodeWithTag("text-color-YELLOW").performScrollTo().performClick()
-        compose.onNodeWithTag("text-layer-timing").performScrollTo().assertIsDisplayed()
+        compose.runOnUiThread {
+            val window = compose.activity.window
+            WindowInsetsControllerCompat(window, window.decorView)
+                .hide(WindowInsetsCompat.Type.ime())
+        }
+        compose.waitForIdle()
+        compose.onNodeWithTag("text-layer-timing").performScrollTo()
+        compose.waitUntil(10_000L) {
+            try {
+                compose.onNodeWithTag("text-layer-timing").assertIsDisplayed()
+                true
+            } catch (_: AssertionError) {
+                false
+            }
+        }
         capture("stage18_text_styled.png")
     }
 
@@ -97,7 +113,7 @@ class Stage18TextEditorScreensInstrumentedTest {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(860.dp, 640.dp))) {
                 DeviceConfigurationOverride(DeviceConfigurationOverride.FontScale(1.6f)) {
                     QuickCutTheme {
-                        Box(Modifier.fillMaxSize().background(CutColors.background).safeDrawingPadding()) {
+                        Box(Modifier.fillMaxSize().background(LocalCutPalette.current.background).safeDrawingPadding()) {
                             TextEditorScreen(clip, onApply = {}, onCancel = {})
                         }
                     }

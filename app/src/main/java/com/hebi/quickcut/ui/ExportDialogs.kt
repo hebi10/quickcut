@@ -44,6 +44,7 @@ internal fun SaveOptionsDialog(
     outputQuality: ExportQualitySettings = ExportQualitySettings(),
     onOutputQualityChange: (ExportQualitySettings) -> Unit = {},
 ) {
+    val palette = LocalCutPalette.current
     val qualityEvaluation = rememberExportQualityEvaluation(timeline, outputQuality)
     AlertDialog(
         modifier = Modifier.fillMaxWidth().padding(horizontal = CutSpacing.lg).widthIn(max = 480.dp),
@@ -55,14 +56,14 @@ internal fun SaveOptionsDialog(
                 modifier = Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(CutSpacing.md),
             ) {
-                Text("저장 정보", color = CutColors.secondaryAccent,
+                Text("저장 정보", color = palette.secondaryAccent,
                     style = MaterialTheme.typography.titleMedium)
                 Text((if (outputQuality.isAutomatic)
                     "원본 영상의 해상도와 프레임 속도를 유지하며, 가능한 경우 고속 저장을 사용합니다."
                 else
                     "선택한 출력 설정으로 변환합니다. 재인코딩을 승인한 뒤 저장할 수 있습니다.") +
                     " 실제 처리 방식은 저장 전 분석합니다.",
-                    color = CutColors.secondaryText,
+                    color = palette.secondaryText,
                     style = MaterialTheme.typography.bodySmall)
                 if (!timeline.isEmpty) {
                     ExportQualitySection(
@@ -72,12 +73,12 @@ internal fun SaveOptionsDialog(
                         onChange = onOutputQualityChange,
                     )
                 }
-                Text("저장 위치", color = CutColors.primaryText,
+                Text("저장 위치", color = palette.primaryText,
                     style = MaterialTheme.typography.titleSmall)
                 Text("기기 갤러리에 저장",
-                    color = CutColors.secondaryText,
+                    color = palette.secondaryText,
                     style = MaterialTheme.typography.bodyMedium)
-                Text("원본 동영상", color = CutColors.primaryText,
+                Text("원본 동영상", color = palette.primaryText,
                     style = MaterialTheme.typography.titleSmall)
                 CutChoiceDropdown(
                     label = "저장 완료 후 원본 동영상 처리",
@@ -96,7 +97,7 @@ internal fun SaveOptionsDialog(
                         caution = true,
                     )
                 }
-                Text("결과 영상 날짜", color = CutColors.primaryText,
+                Text("결과 영상 날짜", color = palette.primaryText,
                     style = MaterialTheme.typography.titleSmall)
                 CutChoiceDropdown(
                     label = "저장 날짜",
@@ -111,20 +112,20 @@ internal fun SaveOptionsDialog(
                     Text(
                         "원본 날짜를 유지하며 원본 복사·부분 처리를 우선 시도합니다. " +
                             "날짜 기록에 추가 저장 공간이 필요할 수 있습니다.",
-                        color = CutColors.secondaryText,
+                        color = palette.secondaryText,
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
                 Text(
                     "여러 영상을 합치면 첫 영상 날짜를 사용합니다. 원본 날짜 정보가 없으면 " +
                         "해당 방식의 저장이 취소됩니다.",
-                    color = CutColors.secondaryText,
+                    color = palette.secondaryText,
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Text(
                     "저장 실패·취소 시 원본은 유지됩니다. 원본 처리 설정은 끌 때까지 유지되며, " +
                         "저장에 성공한 뒤 Android 승인을 요청합니다.",
-                    color = CutColors.secondaryText,
+                    color = palette.secondaryText,
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
@@ -138,7 +139,7 @@ internal fun SaveOptionsDialog(
             TextButton(onClick = onDismiss, shape = CutShape,
                 modifier = Modifier.heightIn(min = 48.dp)) { Text("취소") }
         },
-        containerColor = CutColors.panel,
+        containerColor = palette.panel,
         shape = CutDialogShape,
     )
 }
@@ -149,6 +150,7 @@ internal fun OriginalActionEnableDialog(
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val palette = LocalCutPalette.current
     val permanent = action == OriginalAction.DELETE
     AlertDialog(
         modifier = Modifier.fillMaxWidth().padding(horizontal = CutSpacing.lg).widthIn(max = 480.dp),
@@ -165,9 +167,9 @@ internal fun OriginalActionEnableDialog(
                     "하도록 설정합니다.")
                 Text("새 작업·재편집·앱 재시작 후에도 이 설정은 유지되며, " +
                     "원본 처리는 매번 Android 승인이 필요합니다.",
-                    color = CutColors.secondaryText, style = MaterialTheme.typography.bodySmall)
+                    color = palette.secondaryText, style = MaterialTheme.typography.bodySmall)
                 Text("실패·취소·건너뛴 영상의 원본은 유지됩니다.",
-                    color = CutColors.secondaryText, style = MaterialTheme.typography.bodySmall)
+                    color = palette.secondaryText, style = MaterialTheme.typography.bodySmall)
                 if (permanent) {
                     CutInfoSection(
                         title = "원본 영구 삭제",
@@ -181,7 +183,7 @@ internal fun OriginalActionEnableDialog(
             modifier = Modifier.heightIn(min = 48.dp)) { Text("활성화") } },
         dismissButton = { TextButton(onClick = onDismiss, shape = CutShape,
             modifier = Modifier.heightIn(min = 48.dp)) { Text("취소") } },
-        containerColor = CutColors.panel,
+        containerColor = palette.panel,
         shape = CutDialogShape,
     )
 }
@@ -195,6 +197,7 @@ internal fun ExportModeDialog(
     onSuggestedCut: (() -> Unit)?,
     onDismiss: () -> Unit,
 ) {
+    val palette = LocalCutPalette.current
     AlertDialog(
         modifier = Modifier.fillMaxWidth().padding(horizontal = CutSpacing.lg).widthIn(max = 480.dp),
         properties = DialogProperties(usePlatformDefaultWidth = false),
@@ -216,18 +219,18 @@ internal fun ExportModeDialog(
                 Text(
                     "정확한 위치로 저장하면 지정한 시작·끝 시점을 유지합니다. 원본 복사·부분 처리를 " +
                         "우선 시도하고 필요하면 영상 전체를 변환합니다. 실제 처리 방식은 완료 후 표시합니다.",
-                    color = CutColors.secondaryText,
+                    color = palette.secondaryText,
                     style = MaterialTheme.typography.bodySmall,
                 )
                 assessment.suggestion?.let { suggestion ->
                     Text("고속 저장 추천 위치", style = MaterialTheme.typography.titleSmall,
-                        color = CutColors.secondaryAccent)
+                        color = palette.secondaryAccent)
                     Text(fastCutSuggestionText(suggestion))
                     FastCutPreview(suggestion)
                     Text("추천 위치는 원본 영상의 키프레임을 기준으로 제안합니다. " +
                         "선택하면 자르는 시점이 변경되고 영상은 재인코딩 없이 저장됩니다. " +
                         "소리는 필요하면 변환합니다.",
-                        color = CutColors.secondaryText, style = MaterialTheme.typography.bodySmall)
+                        color = palette.secondaryText, style = MaterialTheme.typography.bodySmall)
                 }
             }
         },
@@ -253,7 +256,7 @@ internal fun ExportModeDialog(
                 }
             }
         },
-        containerColor = CutColors.panel,
+        containerColor = palette.panel,
         shape = CutDialogShape,
     )
 }
@@ -282,6 +285,7 @@ internal fun exportReportText(report: ExportReport?): String {
 
 @Composable
 internal fun ExportInspectionDialog(progress: Int? = null, onCancel: () -> Unit) {
+    val palette = LocalCutPalette.current
     AlertDialog(
         modifier = Modifier.fillMaxWidth().padding(horizontal = CutSpacing.lg).widthIn(max = 480.dp),
         properties = DialogProperties(usePlatformDefaultWidth = false),
@@ -305,13 +309,14 @@ internal fun ExportInspectionDialog(progress: Int? = null, onCancel: () -> Unit)
         },
         confirmButton = { TextButton(onClick = onCancel, shape = CutShape,
             modifier = Modifier.heightIn(min = 48.dp)) { Text("분석 취소") } },
-        containerColor = CutColors.panel,
+        containerColor = palette.panel,
         shape = CutDialogShape,
     )
 }
 
 @Composable
 internal fun ExportCancelDialog(canCancel: Boolean, onCancel: () -> Unit, onDismiss: () -> Unit) {
+    val palette = LocalCutPalette.current
     AlertDialog(
         modifier = Modifier.fillMaxWidth().padding(horizontal = CutSpacing.lg).widthIn(max = 480.dp),
         properties = DialogProperties(usePlatformDefaultWidth = false),
@@ -334,7 +339,7 @@ internal fun ExportCancelDialog(canCancel: Boolean, onCancel: () -> Unit, onDism
             TextButton(onClick = onDismiss, shape = CutShape,
                 modifier = Modifier.heightIn(min = 48.dp)) { Text("계속 저장") }
         },
-        containerColor = CutColors.panel,
+        containerColor = palette.panel,
         shape = CutDialogShape,
     )
 }

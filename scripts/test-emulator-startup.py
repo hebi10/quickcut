@@ -17,7 +17,7 @@ HOME = 'com.google.android.apps.nexuslauncher/.NexusLauncherActivity'
 
 
 class Device:
-    def __init__(self, components, *, text='빠른 자르기', package='com.hebi.quickcut', events='', failure=None, malformed_ui=False, launcher_anr=False):
+    def __init__(self, components, *, text='빠른 자르기', package='com.hebi.quickcut', events='', failure=None, malformed_ui=False, launcher_anr=False, system_anr=False, missing_ui_xml=0):
         self.components = components
         self.text = text
         self.package = package
@@ -25,6 +25,8 @@ class Device:
         self.failure = failure
         self.malformed_ui = malformed_ui
         self.launcher_anr = launcher_anr
+        self.system_anr = system_anr
+        self.missing_ui_xml = missing_ui_xml
         self.acknowledged = False
         self.calls = []
         self.probes = 0
@@ -35,8 +37,9 @@ class Device:
         output = ''
         if self.failure and self.failure in args:
             return subprocess.CompletedProcess(command, 1, '', 'device offline')
-        if args[:4] == ['shell','am','start','-W']:
-            output = 'Status: ok\nActivity: ' + HOME + '\n'
+        if args[:3] == ['shell','am','start']:
+            output = ('Status: ok\nActivity: ' + HOME + '\n' if '-W' in args else
+                      'Starting: Intent { cmp=com.hebi.quickcut/.MainActivity }\n')
         elif args[:3] == ['shell','dumpsys','activity']:
             component = self.components[min(self.probes, len(self.components)-1)]
             self.probes += 1
@@ -46,22 +49,26 @@ class Device:
         elif args[:3] == ['shell','uiautomator','dump']:
             output = 'UI hierarchy dumped'
         elif args[:2] == ['shell','cat']:
-            if self.launcher_anr and not self.acknowledged:
+            if self.missing_ui_xml:
+                self.missing_ui_xml -= 1
+                return subprocess.CompletedProcess(command, 1, '', 'cat: XML not ready: No such file or directory')
+            if (self.launcher_anr or self.system_anr) and not self.acknowledged:
+                title = "System UI isn&#39;t responding" if self.system_anr else "Pixel Launcher isn&#39;t responding"
                 output = ('<hierarchy><node package="android" resource-id="android:id/alertTitle" '
-                          'text="Pixel Launcher isn&#39;t responding"/>'
+                          'text="' + title + '"/>'
                           '<node package="android" resource-id="android:id/aerr_wait" '
                           'text="Wait" enabled="true" bounds="[70,1296][1010,1422]"/></hierarchy>')
             else:
                 output = '<invalid' if self.malformed_ui else f'<hierarchy><node package="{self.package}" text="{self.text}"/></hierarchy>'
         elif args[:3] == ['shell','input','tap']:
-            if not self.launcher_anr or self.acknowledged: raise AssertionError('Unexpected launcher tap')
+            if not (self.launcher_anr or self.system_anr) or self.acknowledged: raise AssertionError('Unexpected system tap')
             self.acknowledged = True
         else:
             raise AssertionError('Unexpected adb command: ' + repr(args))
         return subprocess.CompletedProcess(command, 0, output, '')
 
     def launches(self):
-        return [call for call in self.calls if call[:4] == ['shell','am','start','-W']]
+        return [call for call in self.calls if call[:3] == ['shell','am','start']]
 
 
 class StartupTest(unittest.TestCase):
@@ -81,6 +88,29 @@ class StartupTest(unittest.TestCase):
         self.assertEqual(len(device.launches()),2)
         self.assertFalse(any(call[:3] == ['shell','am','force-stop'] for call in device.calls))
 
+    def test_api29_dispatch_returns_without_wait_and_still_requires_foreground_ui(self):
+        device = Device([HOME, APP])
+        with patch.dict(os.environ, {'QUICKCUT_EMULATOR_API': '29'}):
+            self.check(device)
+        self.assertEqual(len(device.launches()), 2)
+        self.assertTrue(all('-W' not in call for call in device.launches()))
+        self.assertGreaterEqual(device.probes, 2)
+
+    def test_ui_dump_first_missing_xml_retries_without_relaunch(self):
+        device = Device([APP], missing_ui_xml=1)
+        self.check(device)
+        self.assertEqual(len(device.launches()), 1)
+        dumps = [c for c in device.calls if c[:3] == ['shell', 'uiautomator', 'dump']]
+        self.assertEqual(len(dumps), 2)
+        self.assertNotEqual(dumps[0][-1], dumps[1][-1])
+
+    def test_ui_dump_persistently_missing_xml_never_passes(self):
+        device = Device([APP], missing_ui_xml=5)
+        with self.assertRaisesRegex(s.StartupError, 'UI hierarchy unavailable after five probes'):
+            self.check(device)
+        self.assertEqual(len(device.launches()), 1)
+        self.assertEqual(len([c for c in device.calls if c[:3] == ['shell', 'uiautomator', 'dump']]), 5)
+
     def test_app_foreground_with_correct_owned_ui_needs_no_relaunch(self):
         device=Device([APP])
         self.check(device)
@@ -99,6 +129,14 @@ class StartupTest(unittest.TestCase):
         self.assertEqual(len([c for c in device.calls if c[:3] == ['shell','input','tap']]), 1)
         self.assertEqual(len(device.launches()), 1)
         self.assertGreaterEqual(device.probes, 2)
+
+    def test_system_ui_anr_overlay_acknowledged_once_with_app_reverification(self):
+        device = Device([APP], system_anr=True,
+                        events='I/am_anr(42): [0,1122,com.android.systemui,1,Input dispatching timed out]')
+        self.check(device)
+        self.assertTrue(device.acknowledged)
+        self.assertEqual(len([c for c in device.calls if c[:3] == ['shell','input','tap']]), 1)
+        self.assertEqual(len(device.launches()), 1)
 
     def test_launcher_anr_recovery_never_hides_quickcut_app_anr(self):
         device = Device([APP], launcher_anr=True,
@@ -147,7 +185,7 @@ class StartupTest(unittest.TestCase):
 
     def test_expired_startup_budget_stops_before_additional_commands(self):
         device=Device([HOME,APP])
-        with patch.object(s.time,'monotonic',side_effect=[0,100]),self.assertRaises(s.StartupError): self.check(device)
+        with patch.object(s.time,'monotonic',side_effect=[0,200]),self.assertRaises(s.StartupError): self.check(device)
         self.assertEqual(device.calls,[])
 
     def test_other_app_crash_noise_does_not_block_valid_start(self):

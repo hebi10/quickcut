@@ -48,6 +48,7 @@ if name == "gradle":
         "com.hebi.quickcut.ui.Stage18TextEditorScreensInstrumentedTest",
         "com.hebi.quickcut.media.Stage19CombinedExportInstrumentedTest",
         "com.hebi.quickcut.media.Stage20RecoveryInstrumentedTest",
+        "com.hebi.quickcut.ui.ThemeModeInstrumentedTest",
     )
     for i in range(count):
         classname = required[i] if phase == "full" and i < len(required) else phase + ".Suite"
@@ -66,8 +67,9 @@ if name == "adb":
             sys.exit(43)
         if os.environ.get("STAGE7_CAPTURE_STATUS") == "1":
             sys.exit(42)
-        if any(("stage14_" in a or "stage15_" in a or "stage16_" in a or "stage17_" in a or "stage18_" in a) for a in args):
-            if any(os.environ.get("STAGE"+str(i)+"_CAPTURE_STATUS") == "1" for i in (14, 15, 16, 17, 18)):
+        if any(("stage14_" in a or "stage15_" in a or "stage16_" in a or "stage17_" in a or "stage18_" in a or "theme_" in a) for a in args):
+            if (any(os.environ.get("STAGE"+str(i)+"_CAPTURE_STATUS") == "1" for i in (14, 15, 16, 17, 18)) or
+                    (os.environ.get("STAGE1A_CAPTURE_STATUS") == "1" and any("theme_" in a for a in args))):
                 sys.stdout.buffer.write(b"cat: files/design-review/stage15_export_auto.png: No such file")
                 sys.exit(0)
             import struct, zlib
@@ -177,6 +179,11 @@ class EmulatorFlowTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("failed or skipped", result.stdout + result.stderr)
 
+    def test_theme_1a_non_png_evidence_rejected(self):
+        result, _, _, _ = self.run_flow(STAGE1A_CAPTURE_STATUS=1)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Missing/corrupt PNG evidence", result.stdout + result.stderr)
+
     def test_stage7_capture_failure_remains_a_required_gate(self):
         result, _, _, phases = self.run_flow(STAGE7_CAPTURE_STATUS=1)
         self.assertEqual(phases, ["preflight", "full"])
@@ -245,7 +252,8 @@ class EmulatorFlowTest(unittest.TestCase):
         proof = root / "quickcut-stage20-evidence/verified-screens-and-tests.json"
         self.assertTrue(proof.is_file())
         self.assertEqual(json.loads(proof.read_text())["androidApi"], "35")
-        for image in ("stage7_home.png", "stage7_projects_empty.png", "stage7_onboarding.png",
+        for image in ("theme_light_home.png", "theme_dark_home.png",
+                      "stage7_home.png", "stage7_projects_empty.png", "stage7_onboarding.png",
                       "stage13_home_populated.png", "stage13_projects_populated.png",
                       "stage13_tools.png", "stage13_settings.png", "stage13_gallery_selected.png",
                       "stage13_gallery_one_selected.png", "stage13_projects_empty_large_font.png"):

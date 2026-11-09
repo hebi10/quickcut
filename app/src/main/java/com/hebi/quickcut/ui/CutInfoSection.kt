@@ -20,12 +20,13 @@ internal fun CutInfoSection(
     modifier: Modifier = Modifier,
     caution: Boolean = false,
 ) {
+    val palette = LocalCutPalette.current
     Surface(
         modifier = modifier.fillMaxWidth(),
-        color = if (caution) MaterialTheme.colorScheme.errorContainer else CutColors.surface,
-        contentColor = if (caution) MaterialTheme.colorScheme.onErrorContainer else CutColors.primaryText,
+        color = if (caution) MaterialTheme.colorScheme.errorContainer else palette.surface,
+        contentColor = if (caution) MaterialTheme.colorScheme.onErrorContainer else palette.primaryText,
         shape = CutShape,
-        border = BorderStroke(1.dp, if (caution) CutColors.error else CutColors.border),
+        border = BorderStroke(1.dp, if (caution) palette.error else palette.border),
         
     ) {
         Column(

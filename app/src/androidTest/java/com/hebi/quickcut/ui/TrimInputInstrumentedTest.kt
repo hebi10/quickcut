@@ -444,7 +444,8 @@ class TrimInputInstrumentedTest {
         composeRule.runOnUiThread { model.changeQuickMode(false) }
         showApp()
         composeRule.onNodeWithText("자르기").performClick()
-        composeRule.onAllNodes(hasSetTextAction())[0].performClick().performTextReplacement("-")
+        composeRule.onAllNodes(hasSetTextAction())[0].performTouchInput { click() }
+        composeRule.onAllNodes(hasSetTextAction())[0].performTextReplacement("-")
         waitForKeyboard(visible = true)
         composeRule.onAllNodes(hasSetTextAction())[0].assertIsFocused()
         assertInvalidDetailedDraft()
@@ -464,7 +465,9 @@ class TrimInputInstrumentedTest {
                 }
                 val input = activity.getSystemService(Context.INPUT_METHOD_SERVICE)
                     as InputMethodManager
-                input.showSoftInput(focused, InputMethodManager.SHOW_FORCED)
+                focused.requestFocus()
+                input.restartInput(focused)
+                input.showSoftInput(focused, InputMethodManager.SHOW_IMPLICIT)
             }
         }
         composeRule.waitUntil(20_000L) {
@@ -487,7 +490,8 @@ class TrimInputInstrumentedTest {
             }
         }
         composeRule.onNodeWithText("자르기").performClick()
-        composeRule.onAllNodes(hasSetTextAction())[0].performClick().performTextReplacement("-")
+        composeRule.onAllNodes(hasSetTextAction())[0].performTouchInput { click() }
+        composeRule.onAllNodes(hasSetTextAction())[0].performTextReplacement("-")
         assertInvalidDetailedDraft()
         composeRule.onAllNodes(hasSetTextAction())[0].assertIsFocused()
 

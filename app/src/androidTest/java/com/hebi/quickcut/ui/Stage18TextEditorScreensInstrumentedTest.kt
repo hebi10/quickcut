@@ -24,6 +24,8 @@ import androidx.compose.ui.test.click
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -84,7 +86,21 @@ class Stage18TextEditorScreensInstrumentedTest {
         compose.onNodeWithTag("text-apply").assertIsEnabled()
         capture("stage18_text_selected.png")
         compose.onNodeWithTag("text-color-YELLOW").performScrollTo().performClick()
-        compose.onNodeWithTag("text-layer-timing").performScrollTo().assertIsDisplayed()
+        compose.runOnUiThread {
+            val window = compose.activity.window
+            WindowInsetsControllerCompat(window, window.decorView)
+                .hide(WindowInsetsCompat.Type.ime())
+        }
+        compose.waitForIdle()
+        compose.onNodeWithTag("text-layer-timing").performScrollTo()
+        compose.waitUntil(10_000L) {
+            try {
+                compose.onNodeWithTag("text-layer-timing").assertIsDisplayed()
+                true
+            } catch (_: AssertionError) {
+                false
+            }
+        }
         capture("stage18_text_styled.png")
     }
 

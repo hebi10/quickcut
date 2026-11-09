@@ -51,7 +51,7 @@ printf 'gradle_exit=%s\nphase_exit=%s\n' "$preflight_gradle_status" "$first_fail
 # using fresh XML so a preflight report cannot satisfy the unfiltered gate.
 rm -rf "$RESULTS" "$REPORTS" quickcut-main10-full
 run_checked "Clear full-suite Main10 evidence" timeout --kill-after=2s 10s adb shell rm -rf /data/local/tmp/quickcut-main10
-# API29: preserve all 292 original tests, but separate the date/Media3
+# API29: preserve all 297 tests, including five Modern Edit Desk QA cases, but separate the date/Media3
 # codec stress classes into fresh instrumentation processes. Consecutive
 # API29 media tests have repeatedly wedged the emulator service at test 105.
 if [[ "${QUICKCUT_EMULATOR_API:-}" == 29 ]]; then
@@ -99,7 +99,7 @@ if [[ "${QUICKCUT_EMULATOR_API:-}" == 29 ]]; then
         cp -- "$phase_dir/TEST-api29-$phase.xml" "$RESULTS/debug/"
     fi
   done
-  run_checked "Require all 292 original API29 tests" \
+  run_checked "Require all 297 API29 tests" \
     python3 "$SCRIPT_DIR/verify-api29-complete-suite.py" "$RESULTS/debug"
 else
   run_checked "Full instrumentation suite" timeout --kill-after=30s 20m gradle --no-daemon \

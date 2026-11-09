@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Require all 292 Android 10 tests across isolated instrumentation processes."""
+"""Require all 297 Android 10 tests across isolated instrumentation processes."""
 from pathlib import Path
 import sys
 import xml.etree.ElementTree as ET
@@ -16,8 +16,8 @@ ISOLATED = {
         (MEDIA3, "cancellingOffscreenMedia3ProcessingLeavesNoGalleryOutputOrStagedWriter"),
     },
 }
-TOTAL_COUNT = 292
-REST_COUNT = 288
+TOTAL_COUNT = 297
+REST_COUNT = 293
 
 
 def verify(directory: Path):

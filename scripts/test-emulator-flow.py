@@ -36,7 +36,7 @@ if name == "gradle":
     else:
         phase = "full"
     status = int(os.environ.get(phase.upper() + "_STATUS", os.environ.get("FULL_STATUS", "0")))
-    count = {"preflight": 1, "date": 2, "remaining": 288, "media3": 2}.get(
+    count = {"preflight": 1, "date": 2, "remaining": 293, "media3": 2}.get(
         phase, int(os.environ.get("FULL_COUNT", "152")))
     failed = status != 0 or (phase in ("full", "remaining") and os.environ.get("FULL_XML_FAILED") == "1")
     results = root / "app/build/outputs/androidTest-results/connected"
@@ -233,7 +233,7 @@ class EmulatorFlowTest(unittest.TestCase):
         timed = [e[1:3] for e in events if e[0] == "timeout" and len(e) > 3 and e[3] == "gradle"]
         self.assertEqual(timed, [["--kill-after=30s", "10m"], ["--kill-after=30s", "10m"],
                                  ["--kill-after=30s", "25m"], ["--kill-after=30s", "15m"]])
-        self.assertIn("All 292 distinct API29 tests passed", result.stdout)
+        self.assertIn("All 297 distinct API29 tests passed", result.stdout)
 
     def test_api29_failed_media3_phase_stays_failed_after_coverage_check(self):
         result, root, _, phases = self.run_flow(QUICKCUT_EMULATOR_API="29", MEDIA3_STATUS=44)

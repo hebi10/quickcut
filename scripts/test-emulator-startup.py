@@ -17,7 +17,7 @@ HOME = 'com.google.android.apps.nexuslauncher/.NexusLauncherActivity'
 
 
 class Device:
-    def __init__(self, components, *, text='빠른 자르기', package='com.hebi.quickcut', events='', failure=None, malformed_ui=False, launcher_anr=False, system_anr=False):
+    def __init__(self, components, *, text='빠른 자르기', package='com.hebi.quickcut', events='', failure=None, malformed_ui=False, launcher_anr=False, system_anr=False, missing_ui_xml=0):
         self.components = components
         self.text = text
         self.package = package
@@ -26,6 +26,7 @@ class Device:
         self.malformed_ui = malformed_ui
         self.launcher_anr = launcher_anr
         self.system_anr = system_anr
+        self.missing_ui_xml = missing_ui_xml
         self.acknowledged = False
         self.calls = []
         self.probes = 0
@@ -48,6 +49,9 @@ class Device:
         elif args[:3] == ['shell','uiautomator','dump']:
             output = 'UI hierarchy dumped'
         elif args[:2] == ['shell','cat']:
+            if self.missing_ui_xml:
+                self.missing_ui_xml -= 1
+                return subprocess.CompletedProcess(command, 1, '', 'cat: XML not ready: No such file or directory')
             if (self.launcher_anr or self.system_anr) and not self.acknowledged:
                 title = "System UI isn&#39;t responding" if self.system_anr else "Pixel Launcher isn&#39;t responding"
                 output = ('<hierarchy><node package="android" resource-id="android:id/alertTitle" '
@@ -91,6 +95,21 @@ class StartupTest(unittest.TestCase):
         self.assertEqual(len(device.launches()), 2)
         self.assertTrue(all('-W' not in call for call in device.launches()))
         self.assertGreaterEqual(device.probes, 2)
+
+    def test_ui_dump_first_missing_xml_retries_without_relaunch(self):
+        device = Device([APP], missing_ui_xml=1)
+        self.check(device)
+        self.assertEqual(len(device.launches()), 1)
+        dumps = [c for c in device.calls if c[:3] == ['shell', 'uiautomator', 'dump']]
+        self.assertEqual(len(dumps), 2)
+        self.assertNotEqual(dumps[0][-1], dumps[1][-1])
+
+    def test_ui_dump_persistently_missing_xml_never_passes(self):
+        device = Device([APP], missing_ui_xml=5)
+        with self.assertRaisesRegex(s.StartupError, 'UI hierarchy unavailable after five probes'):
+            self.check(device)
+        self.assertEqual(len(device.launches()), 1)
+        self.assertEqual(len([c for c in device.calls if c[:3] == ['shell', 'uiautomator', 'dump']]), 5)
 
     def test_app_foreground_with_correct_owned_ui_needs_no_relaunch(self):
         device=Device([APP])

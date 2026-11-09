@@ -122,7 +122,7 @@ internal fun StudioStartScreen(
                     0 -> {
                         Button(onClick = onQuick, shape = CutShape,
                             modifier = Modifier.fillMaxWidth()
-                                .heightIn(min = 92.dp)) {
+                                .heightIn(min = 60.dp)) {
                             Icon(Icons.Outlined.ContentCut, contentDescription = null,
                                 modifier = Modifier.size(CutSizes.icon))
                             Spacer(Modifier.width(CutSpacing.sm))
@@ -149,7 +149,7 @@ internal fun StudioStartScreen(
                         if (canRestore) {
                             OutlinedButton(onClick = onRestore, shape = CutShape,
                                 modifier = Modifier.fillMaxWidth()
-                                    .heightIn(min = 82.dp)) {
+                                    .heightIn(min = CutSizes.primaryButton)) {
                                 Icon(Icons.Outlined.History, contentDescription = null)
                                 Spacer(Modifier.width(CutSpacing.md))
                                 Text("이전 편집 이어서 진행")
@@ -177,7 +177,7 @@ internal fun StudioStartScreen(
                         if (canRestore) {
                             OutlinedButton(onClick = onRestore,
                                 modifier = Modifier.fillMaxWidth()
-                                    .heightIn(min = 80.dp), shape = CutShape) {
+                                    .heightIn(min = CutSizes.primaryButton), shape = CutShape) {
                                 Icon(Icons.Outlined.History, contentDescription = null)
                                 Spacer(Modifier.width(CutSpacing.sm))
                                 Text("이전 편집 이어서 진행")

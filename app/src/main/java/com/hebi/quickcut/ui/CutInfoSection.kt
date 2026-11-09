@@ -25,7 +25,7 @@ internal fun CutInfoSection(
         modifier = modifier.fillMaxWidth(),
         color = if (caution) MaterialTheme.colorScheme.errorContainer else palette.surface,
         contentColor = if (caution) MaterialTheme.colorScheme.onErrorContainer else palette.primaryText,
-        shape = CutShape,
+        shape = CutPanelShape,
         border = BorderStroke(1.dp, if (caution) palette.error else palette.border),
         
     ) {

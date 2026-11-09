@@ -39,6 +39,33 @@ class ListingAssetTests(unittest.TestCase):
                 mod.publish("dummy", assets, commit=True)
         self.assertEqual([m for m, _ in called], ["POST", "GET", "DELETE"])
 
+    def test_matching_remote_checksums_never_upload_or_commit(self):
+        events = []
+        assets, _ = mod.verified_assets()
+        expected = {kind: [
+            __import__("hashlib").sha256(file.read_bytes()).hexdigest() for file in files
+        ] for kind, files in assets.items()}
+
+        def fake(token, method, path, body=None, asset=None):
+            events.append((method, path, asset))
+            if method == "POST" and path == "/edits":
+                return {"id": "test_edit"}
+            if method == "GET" and path.endswith("/listings"):
+                return {"listings": [{"language": "ko-KR"}]}
+            if method == "GET":
+                kind = path.rsplit("/", 1)[-1]
+                return {"images": [{"sha256": sha} for sha in expected[kind]]}
+            return {}
+
+        with patch.object(mod, "play_request", side_effect=fake):
+            result = mod.publish("dummy", assets, commit=True)
+        self.assertFalse(result["uploaded"])
+        self.assertEqual(result["mode"], "unchanged")
+        self.assertFalse(any(kind == "POST" and path.endswith(":commit")
+                             for kind, path, _ in events))
+        self.assertFalse(any(method == "DELETE" and "/listings/" in path
+                             for method, path, _ in events))
+
     def test_exactly_three_types_and_eight_phone_images(self):
         records = []
         def fake(token, method, path, body=None, asset=None):

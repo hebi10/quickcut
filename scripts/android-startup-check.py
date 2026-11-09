@@ -83,14 +83,18 @@ def check_startup(directory):
             raise StartupError('QuickCut crash/native-crash/ANR evidence prevents startup recovery')
 
     def launch(number):
-        # API 29's Activity Manager can stall on -W even after dispatching the intent.
-        # Require the launch command to succeed, then independently prove foreground/UI.
+        # API 29 can stall on 'am start -W'. Non-blocking dispatch still
+        # requires actual foreground activity and a verified QuickCut UI.
         use_wait = os.environ.get('QUICKCUT_EMULATOR_API') != '29'
         args = ['shell', 'am', 'start', '-W', '-n', APP] if use_wait else [
             'shell', 'am', 'start', '-n', APP]
         report = adb(args, f'launch-{number}.txt')
-        acknowledged = (
-            re.search(r'^Status:\s*ok\s*
+        if use_wait:
+            acknowledged = bool(re.search(r'(?m)^Status:[ \t]*ok[ \t]*$', report))
+        else:
+            acknowledged = bool(re.search(r'(?m)^Starting: Intent[ \t]*\{', report))
+        if not acknowledged:
+            raise StartupError('Activity start was not acknowledged successfully')
 
     guard()
     launch(1)

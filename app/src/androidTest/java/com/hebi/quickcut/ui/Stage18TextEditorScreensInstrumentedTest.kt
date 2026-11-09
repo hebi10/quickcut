@@ -2,6 +2,7 @@ package com.hebi.quickcut.ui
 
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.util.Log
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -26,6 +27,7 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.core.view.ViewCompat
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -84,14 +86,12 @@ class Stage18TextEditorScreensInstrumentedTest {
         compose.onNodeWithTag("text-apply").assertIsNotEnabled()
         compose.onNodeWithTag("text-layer-input").performTextInput("테스트 영상 문구")
         compose.onNodeWithTag("text-apply").assertIsEnabled()
+        hideImeAndWait()
+        compose.onNodeWithTag("text-layer-input").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("text-apply").assertIsDisplayed().assertIsEnabled()
         capture("stage18_text_selected.png")
         compose.onNodeWithTag("text-color-YELLOW").performScrollTo().performClick()
-        compose.runOnUiThread {
-            val window = compose.activity.window
-            WindowInsetsControllerCompat(window, window.decorView)
-                .hide(WindowInsetsCompat.Type.ime())
-        }
-        compose.waitForIdle()
+        hideImeAndWait()
         compose.onNodeWithTag("text-layer-timing").performScrollTo()
         compose.waitUntil(10_000L) {
             try {
@@ -101,6 +101,7 @@ class Stage18TextEditorScreensInstrumentedTest {
                 false
             }
         }
+        compose.onNodeWithTag("text-apply").assertIsDisplayed().assertIsEnabled()
         capture("stage18_text_styled.png")
     }
 
@@ -123,6 +124,25 @@ class Stage18TextEditorScreensInstrumentedTest {
         compose.onNodeWithTag("text-apply").assertIsDisplayed()
         compose.onNodeWithTag("text-apply").assertIsEnabled()
         capture("stage18_text_largefont.png")
+    }
+
+    private fun hideImeAndWait() {
+        compose.runOnUiThread {
+            val window = compose.activity.window
+            WindowInsetsControllerCompat(window, window.decorView)
+                .hide(WindowInsetsCompat.Type.ime())
+        }
+        // A hide request is asynchronous; require actual window insets before
+        // proving that the editor and pinned apply action are visible.
+        compose.waitUntil(10_000L) {
+            var hidden = false
+            compose.runOnUiThread {
+                val insets = ViewCompat.getRootWindowInsets(compose.activity.window.decorView)
+                hidden = insets != null && !insets.isVisible(WindowInsetsCompat.Type.ime())
+            }
+            hidden
+        }
+        compose.waitForIdle()
     }
 
     private fun capture(name: String) {
@@ -153,9 +173,31 @@ class Stage18TextEditorScreensInstrumentedTest {
                         scanned++
                     }
                 }
-                if (dark * 25 > scanned) {
+                val visible = if (name == "stage18_text_styled.png" ||
+                    name == "stage18_text_selected.png"
+                ) {
+                    // The keyboard and scrolling editor can hide the black
+                    // preview. Validate both real editor chrome regions instead
+                    // of relying on the preview's dark pixel area.
+                    hasVisibleEditorChrome(candidate)
+                } else {
+                    dark * 25 > scanned
+                }
+                if (visible) {
                     verified = candidate
                     break
+                }
+                if ((name == "stage18_text_styled.png" ||
+                    name == "stage18_text_selected.png") && attempt == 6
+                ) {
+                    val rejected = File(dir, name.removeSuffix(".png") + "_rejected.png")
+                    rejected.outputStream().use {
+                        check(candidate.compress(Bitmap.CompressFormat.PNG, 100, it))
+                    }
+                    Log.w("QuickCutStage18Capture",
+                        "Text editor screenshot rejected after six real Android captures: $name " +
+                            "lastCandidate=${candidate.width}x${candidate.height} " +
+                            "darkUpper=$dark/$scanned evidence=${rejected.absolutePath}")
                 }
                 candidate.recycle()
             }
@@ -171,5 +213,37 @@ class Stage18TextEditorScreensInstrumentedTest {
             bitmap.recycle()
         }
         check(target.length() > 0L)
+    }
+
+    private fun hasVisibleEditorChrome(bitmap: Bitmap): Boolean {
+        if (bitmap.width < 200 || bitmap.height < 200) return false
+        val stride = maxOf(1, bitmap.width / 40)
+        fun countContrast(from: Int, to: Int): Triple<Int, Int, Int> {
+            var dark = 0
+            var light = 0
+            var pixels = 0
+            for (y in from until to step stride) {
+                for (x in 0 until bitmap.width step stride) {
+                    val color = bitmap.getPixel(x, y)
+                    if (Color.red(color) < 96 && Color.green(color) < 96 &&
+                        Color.blue(color) < 110) dark++
+                    if (Color.red(color) > 190 && Color.green(color) > 190 &&
+                        Color.blue(color) > 190) light++
+                    pixels++
+                }
+            }
+            return Triple(dark, light, pixels)
+        }
+        // The header is fixed above the scrolling editor; the bottom action row
+        // stays pinned even when the black preview is scrolled completely away.
+        val (headerDark, headerLight, headerPixels) =
+            countContrast(bitmap.height / 12, bitmap.height / 6)
+        val (footerDark, footerLight, footerPixels) =
+            countContrast(bitmap.height * 7 / 8, bitmap.height * 39 / 40)
+        return headerPixels > 0 && footerPixels > 0 &&
+            headerDark * 100 >= headerPixels &&
+            footerDark * 20 >= footerPixels &&
+            headerLight * 100 >= headerPixels &&
+            footerLight * 100 >= footerPixels
     }
 }

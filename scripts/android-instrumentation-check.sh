@@ -57,6 +57,14 @@ full_suite_budget=20m
 if [[ "${QUICKCUT_EMULATOR_API:-}" == 29 ]]; then full_suite_budget=30m; fi
 run_checked "Full instrumentation suite" timeout --kill-after=30s "$full_suite_budget" gradle --no-daemon \
   -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true :app:connectedDebugAndroidTest
+if [[ "$last_status" -ne 0 && "${QUICKCUT_EMULATOR_API:-}" == 29 ]]; then
+  mkdir -p quickcut-host-diagnostics
+  timeout --kill-after=2s 15s adb logcat -d -v threadtime \
+    -s QuickCutApi29Probe:I TestRunner:I AndroidRuntime:E ActivityManager:E \
+    > quickcut-host-diagnostics/api29-instrumentation-failure.log || true
+  timeout --kill-after=2s 10s adb shell dumpsys activity processes \
+    > quickcut-host-diagnostics/api29-activity-processes.txt || true
+fi
 run_checked "Pull full-suite Main10 evidence" timeout --kill-after=2s 10s adb pull /data/local/tmp/quickcut-main10 quickcut-main10-full
 run_checked "Verify full-suite Main10 evidence" python3 "$SCRIPT_DIR/verify-android-main10.py" quickcut-main10-full
 # Only fixture-generated MP4s are archived; never capture user-selected media.

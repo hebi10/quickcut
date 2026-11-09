@@ -113,7 +113,7 @@ internal fun StudioStartScreen(
                     if (selectedTab != 3) {
                         TextButton(onClick = { selectedTab = 3 },
                             modifier = Modifier.heightIn(min = CutSizes.touchTarget)) {
-                            Icon(Icons.Outlined.Settings, contentDescription = "설정",
+                            Icon(CutIcons.Settings, contentDescription = "설정",
                                 tint = palette.secondaryAccent)
                         }
                     }
@@ -123,7 +123,7 @@ internal fun StudioStartScreen(
                         Button(onClick = onQuick, shape = CutShape,
                             modifier = Modifier.fillMaxWidth()
                                 .heightIn(min = 60.dp)) {
-                            Icon(Icons.Outlined.ContentCut, contentDescription = null,
+                            Icon(CutIcons.Trim, contentDescription = null,
                                 modifier = Modifier.size(CutSizes.icon))
                             Spacer(Modifier.width(CutSpacing.sm))
                             Column {
@@ -150,7 +150,7 @@ internal fun StudioStartScreen(
                             OutlinedButton(onClick = onRestore, shape = CutShape,
                                 modifier = Modifier.fillMaxWidth()
                                     .heightIn(min = CutSizes.primaryButton)) {
-                                Icon(Icons.Outlined.History, contentDescription = null)
+                                Icon(CutIcons.Restore, contentDescription = null)
                                 Spacer(Modifier.width(CutSpacing.md))
                                 Text("이전 편집 이어서 진행")
                             }
@@ -178,7 +178,7 @@ internal fun StudioStartScreen(
                             OutlinedButton(onClick = onRestore,
                                 modifier = Modifier.fillMaxWidth()
                                     .heightIn(min = CutSizes.primaryButton), shape = CutShape) {
-                                Icon(Icons.Outlined.History, contentDescription = null)
+                                Icon(CutIcons.Restore, contentDescription = null)
                                 Spacer(Modifier.width(CutSpacing.sm))
                                 Text("이전 편집 이어서 진행")
                             }
@@ -223,8 +223,8 @@ internal fun StudioStartScreen(
             tonalElevation = 0.dp,
         ) {
             val icons = listOf(
-                Icons.Outlined.Home, Icons.Outlined.FolderOpen,
-                Icons.Outlined.Build, Icons.Outlined.Settings,
+                CutIcons.Home, CutIcons.Projects,
+                CutIcons.Tools, CutIcons.Settings,
             )
             val labels = listOf("홈", "프로젝트", "도구", "설정")
             labels.forEachIndexed { index, label ->
@@ -293,7 +293,7 @@ private fun StudioWelcome(showArt: Boolean, onStart: () -> Unit, modifier: Modif
             modifier = Modifier.fillMaxWidth().heightIn(min = 54.dp),
         ) {
             if (LocalDensity.current.fontScale <= 1.4f) {
-                Icon(Icons.Outlined.Movie, contentDescription = null,
+                Icon(CutIcons.Detailed, contentDescription = null,
                     modifier = Modifier.size(CutSizes.icon))
                 Spacer(Modifier.width(8.dp))
             }
@@ -310,13 +310,13 @@ private fun StudioModes(onQuick: () -> Unit, onBatch: () -> Unit,
         Text("어떤 영상을 편집할까요?", style = MaterialTheme.typography.titleMedium,
             color = palette.primaryText)
         StudioModeCard("빠른 자르기", "영상 1개 · 필요한 구간만 빠르게 남기기",
-            Icons.Outlined.ContentCut, primary = true, onClick = onQuick)
+            CutIcons.Trim, primary = true, onClick = onQuick)
         StudioModeCard("일괄 편집", "여러 영상 · 같은 설정으로 한 번에",
-            Icons.Outlined.VideoLibrary, onClick = onBatch)
+            CutIcons.Batch, onClick = onBatch)
         StudioModeCard("상세 편집", "자르기·분할·순서 변경을 자유롭게",
-            Icons.Outlined.Movie, onClick = onSelect)
+            CutIcons.Detailed, onClick = onSelect)
         StudioModeCard("여러 구간 추출", "영상 1개 · 여러 장면을 각각 MP4로 저장",
-            Icons.Outlined.ContentCut, onClick = onExtraction)
+            CutIcons.Segments, onClick = onExtraction)
     }
 }
 
@@ -333,7 +333,7 @@ private fun StudioModeCard(title: String, subtitle: String, icon: ImageVector,
         Row(Modifier.padding(horizontal = 16.dp, vertical = 16.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            Icon(icon, contentDescription = null, modifier = Modifier.size(25.dp),
+            Icon(icon, contentDescription = null, modifier = Modifier.size(CutSizes.icon),
                 tint = if (primary) foreground else palette.accent)
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(title, fontWeight = FontWeight.SemiBold,
@@ -341,8 +341,8 @@ private fun StudioModeCard(title: String, subtitle: String, icon: ImageVector,
                 Text(subtitle, color = if (primary) palette.onAccent
                     else palette.secondaryText, style = MaterialTheme.typography.bodySmall)
             }
-            Icon(Icons.AutoMirrored.Outlined.ArrowForward, contentDescription = null,
-                modifier = Modifier.size(18.dp), tint = foreground)
+            Icon(CutIcons.Forward, contentDescription = null,
+                modifier = Modifier.size(CutSizes.icon), tint = foreground)
         }
     }
 }

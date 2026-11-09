@@ -130,7 +130,7 @@ fun CropEditorScreen(
                     style = MaterialTheme.typography.bodySmall)
             }
             IconButton(onClick = onCancel, modifier = Modifier.size(48.dp)) {
-                Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "편집 화면으로")
+                Icon(CutIcons.Back, contentDescription = "편집 화면으로")
             }
         }
 

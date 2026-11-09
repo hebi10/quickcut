@@ -68,7 +68,7 @@ internal fun ProjectCard(
                 style = MaterialTheme.typography.bodySmall, color = palette.secondaryText)
         }
         IconButton(onClick = { confirmDelete = true }) {
-            Icon(Icons.Outlined.DeleteOutline, contentDescription = "프로젝트 삭제",
+            Icon(CutIcons.Delete, contentDescription = "프로젝트 삭제",
                 tint = palette.secondaryAccent)
         }
     }
@@ -105,7 +105,7 @@ internal fun SelectedVideoGallery(
             horizontalArrangement = Arrangement.SpaceBetween) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onDismiss, modifier = Modifier.size(48.dp)) {
-                    Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "선택 닫기")
+                    Icon(CutIcons.Back, contentDescription = "선택 닫기")
                 }
                 Text("영상 선택", style = MaterialTheme.typography.headlineSmall,
                     color = palette.primaryText)
@@ -167,7 +167,7 @@ internal fun SelectedVideoGallery(
             modifier = Modifier.fillMaxWidth().heightIn(min = CutSizes.primaryButton)
                 .testTag("gallery-import"),
             shape = CutShape) {
-            Icon(Icons.Outlined.Movie, contentDescription = null)
+            Icon(CutIcons.Detailed, contentDescription = null)
             Text("선택한 영상 편집 (${selected.size})")
         }
     }

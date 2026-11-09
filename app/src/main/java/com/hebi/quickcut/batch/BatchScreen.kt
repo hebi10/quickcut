@@ -1,5 +1,7 @@
 package com.hebi.quickcut.batch
 
+import com.hebi.quickcut.ui.CutIcons
+import com.hebi.quickcut.ui.CutSizes
 import android.app.Activity
 import android.net.Uri
 import android.view.WindowManager
@@ -503,7 +505,7 @@ private fun BatchHeader(onBack: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
-            Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "뒤로가기",
+            Icon(CutIcons.Back, contentDescription = "뒤로가기",
                 tint = palette.accent)
         }
         Column(Modifier.weight(1f)) {
@@ -532,7 +534,7 @@ private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
             val addModifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)
                 .testTag("batch-add-videos")
             val addContent: @Composable () -> Unit = {
-                Icon(Icons.Outlined.Add, contentDescription = null)
+                Icon(CutIcons.Add, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
                 Text(if (model.isImporting) "영상 불러오는 중" else "영상 선택·추가")
             }
@@ -723,7 +725,7 @@ private fun PresetEditor(model: BatchViewModel, disabled: Boolean) {
                                 horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                 Box(Modifier.size(44.dp).background(palette.accentMuted, CutShape),
                                     contentAlignment = Alignment.Center) {
-                                    Icon(Icons.Outlined.ContentCut, contentDescription = null,
+                                    Icon(CutIcons.Trim, contentDescription = null,
                                         tint = palette.secondaryAccent)
                                 }
                                 Column(Modifier.weight(1f),
@@ -785,8 +787,8 @@ private fun PresetEditor(model: BatchViewModel, disabled: Boolean) {
                             shape = CutShape,
                             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
                             if (LocalDensity.current.fontScale < 1.5f) {
-                                Icon(Icons.Outlined.Add, contentDescription = null,
-                                    modifier = Modifier.size(20.dp))
+                                Icon(CutIcons.Add, contentDescription = null,
+                                    modifier = Modifier.size(CutSizes.icon))
                                 Spacer(Modifier.width(8.dp))
                             }
                             Text("새 템플릿으로 저장")
@@ -950,8 +952,8 @@ private fun BatchFileHeader(model: BatchViewModel) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Icon(Icons.Outlined.FolderOpen, contentDescription = null,
-            tint = palette.secondaryAccent, modifier = Modifier.size(22.dp))
+        Icon(CutIcons.Projects, contentDescription = null,
+            tint = palette.secondaryAccent, modifier = Modifier.size(CutSizes.icon))
         Text(
             "선택 영상 " + model.files.size + "개 · 원본 길이 → 저장 후 길이",
             color = palette.primaryText, fontWeight = FontWeight.SemiBold,
@@ -1007,7 +1009,7 @@ private fun BatchFileRow(
                 IconButton(
                     onClick = { onRemove(file.uri) }, modifier = Modifier.size(48.dp)
                         .background(palette.panel, CutShape),
-                ) { Icon(Icons.Outlined.Close, contentDescription = "선택 영상 제거") }
+                ) { Icon(CutIcons.Close, contentDescription = "선택 영상 제거") }
             }
         }
         if (file.status == BatchFileStatus.RUNNING && file.progress != null) {

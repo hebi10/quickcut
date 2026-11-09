@@ -291,10 +291,10 @@ fun QuickTrimScreen(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
-                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "뒤로가기")
+                        Icon(CutIcons.Back, contentDescription = "뒤로가기")
                     }
-                    Icon(Icons.Outlined.ContentCut, contentDescription = null,
-                        tint = palette.secondaryAccent, modifier = Modifier.size(22.dp))
+                    Icon(CutIcons.Trim, contentDescription = null,
+                        tint = palette.secondaryAccent, modifier = Modifier.size(CutSizes.icon))
                     Spacer(Modifier.width(8.dp))
                     Text("빠른 자르기", color = palette.primaryText,
                         style = MaterialTheme.typography.titleLarge,
@@ -364,7 +364,7 @@ private fun DetailedEditButton(onClick: () -> Unit, modifier: Modifier = Modifie
     OutlinedButton(onClick = onClick, modifier = modifier.heightIn(min = 48.dp),
         shape = CutShape, border = BorderStroke(1.dp, palette.border),
         colors = ButtonDefaults.outlinedButtonColors(contentColor = palette.secondaryText)) {
-        Icon(Icons.Outlined.Settings, contentDescription = null, modifier = Modifier.size(18.dp))
+        Icon(CutIcons.Detailed, contentDescription = null, modifier = Modifier.size(CutSizes.icon))
         Spacer(Modifier.width(6.dp))
         Text("상세 편집")
     }
@@ -620,8 +620,8 @@ private fun QuickTrimControls(
                             containerColor = palette.panel,
                         ),
                     ) {
-                        Icon(if (clip.muted) Icons.Outlined.VolumeUp else Icons.Outlined.VolumeOff,
-                            contentDescription = null, modifier = Modifier.size(18.dp))
+                        Icon(if (clip.muted) CutIcons.Volume else CutIcons.Mute,
+                            contentDescription = null, modifier = Modifier.size(CutSizes.icon))
                         Spacer(Modifier.width(8.dp))
                         Text(if (clip.muted) "소리 복원" else "음소거")
                     }

@@ -120,7 +120,7 @@ fun AudioEditorScreen(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             IconButton(onClick = onCancel, modifier = Modifier.size(48.dp)) {
-                Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "편집 화면으로")
+                Icon(CutIcons.Back, contentDescription = "편집 화면으로")
             }
             Column(Modifier.weight(1f)) {
                 Text("오디오 편집", color = palette.primaryText,

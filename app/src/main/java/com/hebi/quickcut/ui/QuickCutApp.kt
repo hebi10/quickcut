@@ -994,21 +994,12 @@ private fun CompletedScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Box(
-            modifier = Modifier.size(104.dp)
-                .background(
-                    Brush.linearGradient(listOf(palette.brandLight, palette.brandDeep)),
-                    CircleShape,
-                ),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                Icons.Outlined.CheckCircleOutline,
-                contentDescription = null,
-                tint = Color.White,
-                modifier = Modifier.size(64.dp),
-            )
-        }
+        Icon(
+            CutIcons.Success,
+            contentDescription = null,
+            tint = palette.success,
+            modifier = Modifier.size(64.dp),
+        )
         Spacer(Modifier.height(16.dp))
         Text("저장 완료", color = palette.primaryText, fontSize = 28.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(10.dp))
@@ -1074,7 +1065,7 @@ private fun CompletedScreen(
                 modifier = Modifier.fillMaxWidth().heightIn(min = CutSizes.primaryButton),
                 shape = CutShape,
             ) {
-                Icon(Icons.Outlined.PlayCircleOutline, contentDescription = null,
+                Icon(CutIcons.Preview, contentDescription = null,
                     modifier = Modifier.size(CutSizes.icon))
                 Spacer(Modifier.width(CutSpacing.sm))
                 Text("갤러리에서 열기", fontWeight = FontWeight.SemiBold)
@@ -1084,7 +1075,7 @@ private fun CompletedScreen(
                 modifier = Modifier.fillMaxWidth().heightIn(min = CutSizes.primaryButton),
                 shape = CutShape,
             ) {
-                Icon(Icons.Outlined.Share, contentDescription = null,
+                Icon(CutIcons.Share, contentDescription = null,
                     modifier = Modifier.size(CutSizes.icon))
                 Spacer(Modifier.width(CutSpacing.sm))
                 Text("영상 공유")

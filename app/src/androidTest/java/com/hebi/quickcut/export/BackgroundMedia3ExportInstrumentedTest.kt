@@ -193,26 +193,41 @@ class BackgroundMedia3ExportInstrumentedTest {
                 exportMode = ExportMode.ALLOW_REENCODE)
             assertEquals(QuickCutPage.EXPORTING, model.page)
         }
+        trace("offscreen.exportStarted")
         var movedOffscreen = false
         withTimeout(60_000L) {
             while (!movedOffscreen) {
-                // Check progress and switch in the same Main turn. A fast fixture
-                // cannot complete between observing progress and backgrounding.
-                activityRule.scenario.onActivity { activity ->
-                    assertEquals("Export ended before genuine Media3 progress: ${model.errorMessage}",
-                        QuickCutPage.EXPORTING, model.page)
-                    val progress = model.progressPercent
-                    if (model.exportDiagnostics.smartCutReason == FastExportReason.MULTIPLE_SOURCES &&
-                        progress != null && progress in 1..90 && !model.isFinalizing) {
-                        assertTrue(ExportWorkMonitor.isRunning)
-                        assertTrue("The active export must allow going to Home", activity.moveTaskToBack(true))
-                        activity.startActivity(Intent(Settings.ACTION_SETTINGS))
+                val progress = model.progressPercent
+                if (model.exportDiagnostics.smartCutReason == FastExportReason.MULTIPLE_SOURCES &&
+                    progress != null && progress in 1..90 && !model.isFinalizing) {
+                    // Poll observable progress off the UI thread; synchronize with Main
+                    // only when a real in-flight frame is available.
+                    activityRule.scenario.onActivity { activity ->
+                        if (model.page == QuickCutPage.EXPORTING &&
+                            model.exportDiagnostics.smartCutReason == FastExportReason.MULTIPLE_SOURCES &&
+                            model.progressPercent?.let { it in 1..90 } == true &&
+                            !model.isFinalizing) {
+                            assertTrue(ExportWorkMonitor.isRunning)
+                            assertTrue("The active export must allow going to Home", activity.moveTaskToBack(true))
+                            activity.startActivity(Intent(Settings.ACTION_SETTINGS))
+                            movedOffscreen = true
+                        }
+                    }
+                    if (movedOffscreen) {
+                        trace("offscreen.taskMoved")
+                        // UiAutomation shell commands can wait for system services.
+                        // Never block Android Main while sleeping the API 29 display.
                         shell("input keyevent KEYCODE_SLEEP")
                         assertFalse("Media3 must remain in flight with the display off", power.isInteractive)
-                        movedOffscreen = true
+                        assertTrue("Media3 must still be processing when offscreen", ExportWorkMonitor.isRunning)
+                        trace("offscreen.displayOff")
                     }
                 }
-                if (!movedOffscreen) delay(25L)
+                if (!movedOffscreen) {
+                    assertEquals("Export ended before genuine Media3 progress: ${model.errorMessage}",
+                        QuickCutPage.EXPORTING, model.page)
+                    delay(25L)
+                }
             }
         }
     }

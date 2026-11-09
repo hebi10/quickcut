@@ -25,10 +25,20 @@ with (root / "events.jsonl").open("a") as out:
 if name == "timeout":
     os.execvp(args[2], args[2:])
 if name == "gradle":
-    phase = "preflight" if any("NativeSmartCutInstrumentedTest" in a for a in args) else "full"
-    status = int(os.environ[phase.upper() + "_STATUS"])
-    count = 1 if phase == "preflight" else int(os.environ.get("FULL_COUNT", "152"))
-    failed = status != 0 or (phase == "full" and os.environ.get("FULL_XML_FAILED") == "1")
+    if any("NativeSmartCutInstrumentedTest" in a for a in args):
+        phase = "preflight"
+    elif any("android.testInstrumentationRunnerArguments.notClass=" in a for a in args):
+        phase = "remaining"
+    elif any("android.testInstrumentationRunnerArguments.class=com.hebi.quickcut.media.BatchDateExportInstrumentedTest" in a for a in args):
+        phase = "date"
+    elif any("android.testInstrumentationRunnerArguments.class=com.hebi.quickcut.export.BackgroundMedia3ExportInstrumentedTest" in a for a in args):
+        phase = "media3"
+    else:
+        phase = "full"
+    status = int(os.environ.get(phase.upper() + "_STATUS", os.environ.get("FULL_STATUS", "0")))
+    count = {"preflight": 1, "date": 2, "remaining": 288, "media3": 2}.get(
+        phase, int(os.environ.get("FULL_COUNT", "152")))
+    failed = status != 0 or (phase in ("full", "remaining") and os.environ.get("FULL_XML_FAILED") == "1")
     results = root / "app/build/outputs/androidTest-results/connected"
     results.mkdir(parents=True, exist_ok=True)
     # Detect stale preflight XML if shell forgot to clear it before full tests.
@@ -51,10 +61,18 @@ if name == "gradle":
         "com.hebi.quickcut.ui.ThemeModeInstrumentedTest",
     )
     for i in range(count):
-        classname = required[i] if phase == "full" and i < len(required) else phase + ".Suite"
+        classname = required[i] if phase in ("full", "remaining") and i < len(required) else phase + ".Suite"
+        testname = "case" + str(i)
+        if phase == "date":
+            classname = "com.hebi.quickcut.media.BatchDateExportInstrumentedTest"
+            testname = ("originalDatePreservesVideoCreationDate", "currentDateSavesAsNewVideo")[i]
+        elif phase == "media3":
+            classname = "com.hebi.quickcut.export.BackgroundMedia3ExportInstrumentedTest"
+            testname = ("media3ProcessingPublishesAValidOutputAfterAppSwitchAndScreenOff",
+                        "cancellingOffscreenMedia3ProcessingLeavesNoGalleryOutputOrStagedWriter")[i]
         if classname.endswith("Stage20RecoveryInstrumentedTest") and os.environ.get("STAGE20_MISSING_SUITE") == "1":
             classname = phase + ".Suite"
-        case = SubElement(suite, "testcase", classname=classname, name="case" + str(i))
+        case = SubElement(suite, "testcase", classname=classname, name=testname)
         if failed and i == 0: SubElement(case, "failure").text = phase + " original failure"
     ElementTree(suite).write(results / ("TEST-" + phase + ".xml"))
     reports = root / "app/build/reports/androidTests/connected"
@@ -124,8 +142,17 @@ class EmulatorFlowTest(unittest.TestCase):
         result = subprocess.run(["bash", str(SCRIPT)], cwd=root, env=env,
                                 capture_output=True, text=True, timeout=10)
         events = [json.loads(line) for line in (root / "events.jsonl").read_text().splitlines()]
-        phases = ["preflight" if any("NativeSmartCutInstrumentedTest" in a for a in event) else "full"
-                  for event in events if event[0] == "gradle"]
+        def gradle_phase(args):
+            if any("NativeSmartCutInstrumentedTest" in a for a in args):
+                return "preflight"
+            if any("android.testInstrumentationRunnerArguments.notClass=" in a for a in args):
+                return "remaining"
+            if any("android.testInstrumentationRunnerArguments.class=com.hebi.quickcut.media.BatchDateExportInstrumentedTest" in a for a in args):
+                return "date"
+            if any("android.testInstrumentationRunnerArguments.class=com.hebi.quickcut.export.BackgroundMedia3ExportInstrumentedTest" in a for a in args):
+                return "media3"
+            return "full"
+        phases = [gradle_phase(event) for event in events if event[0] == "gradle"]
         return result, root, events, phases
 
     def test_preflight_failure_still_runs_full_and_keeps_original_status_and_xml(self):
@@ -193,10 +220,17 @@ class EmulatorFlowTest(unittest.TestCase):
     def test_api29_keeps_full_suite_and_uses_bounded_30m_budget(self):
         result, _, events, phases = self.run_flow(QUICKCUT_EMULATOR_API="29")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(phases, ["preflight", "full"])
+        self.assertEqual(phases, ["preflight", "date", "remaining", "media3"])
         timed = [e[1:3] for e in events if e[0] == "timeout" and len(e) > 3 and e[3] == "gradle"]
-        self.assertEqual(timed, [["--kill-after=30s", "10m"], ["--kill-after=30s", "30m"]])
-        self.assertIn("152 distinct tests", result.stdout)
+        self.assertEqual(timed, [["--kill-after=30s", "10m"], ["--kill-after=30s", "10m"],
+                                 ["--kill-after=30s", "25m"], ["--kill-after=30s", "15m"]])
+        self.assertIn("All 292 distinct API29 tests passed", result.stdout)
+
+    def test_api29_failed_media3_phase_stays_failed_after_coverage_check(self):
+        result, root, _, phases = self.run_flow(QUICKCUT_EMULATOR_API="29", MEDIA3_STATUS=44)
+        self.assertEqual(phases, ["preflight", "date", "remaining", "media3"])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((root / "quickcut-stage20-evidence/verified-screens-and-tests.json").exists())
 
     def test_stage16_non_png_error_text_does_not_pass_image_integrity_gate(self):
         result, _, _, phases = self.run_flow(STAGE16_CAPTURE_STATUS=1)

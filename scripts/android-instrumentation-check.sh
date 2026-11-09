@@ -51,19 +51,59 @@ printf 'gradle_exit=%s\nphase_exit=%s\n' "$preflight_gradle_status" "$first_fail
 # using fresh XML so a preflight report cannot satisfy the unfiltered gate.
 rm -rf "$RESULTS" "$REPORTS" quickcut-main10-full
 run_checked "Clear full-suite Main10 evidence" timeout --kill-after=2s 10s adb shell rm -rf /data/local/tmp/quickcut-main10
-# Keep the full, unfiltered suite mandatory. Android 10 media exports can run slowly
-# under software decoding; extend its bounded budget without relaxing any gate.
-full_suite_budget=20m
-if [[ "${QUICKCUT_EMULATOR_API:-}" == 29 ]]; then full_suite_budget=30m; fi
-run_checked "Full instrumentation suite" timeout --kill-after=30s "$full_suite_budget" gradle --no-daemon \
-  -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true :app:connectedDebugAndroidTest
-if [[ "$last_status" -ne 0 && "${QUICKCUT_EMULATOR_API:-}" == 29 ]]; then
-  mkdir -p quickcut-host-diagnostics
-  timeout --kill-after=2s 15s adb logcat -d -v threadtime \
-    -s QuickCutApi29Probe:I TestRunner:I AndroidRuntime:E ActivityManager:E \
-    > quickcut-host-diagnostics/api29-instrumentation-failure.log || true
-  timeout --kill-after=2s 10s adb shell dumpsys activity processes \
-    > quickcut-host-diagnostics/api29-activity-processes.txt || true
+# API29: preserve all 292 original tests, but separate the date/Media3
+# codec stress classes into fresh instrumentation processes. Consecutive
+# API29 media tests have repeatedly wedged the emulator service at test 105.
+if [[ "${QUICKCUT_EMULATOR_API:-}" == 29 ]]; then
+  phase_dir=quickcut-api29-full-suite
+  rm -rf "$phase_dir"
+  mkdir -p "$phase_dir" quickcut-host-diagnostics
+
+  run_api29_phase() {
+    local phase="$1" selector="$2" budget="$3"
+    local phase_status
+    local xmls=()
+    rm -rf "$RESULTS" "$REPORTS"
+    run_checked "API29 full-suite phase $phase" timeout --kill-after=30s "$budget" gradle --no-daemon \
+      -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true :app:connectedDebugAndroidTest \
+      "$selector"
+    phase_status="$last_status"
+    if [[ "$phase_status" -ne 0 ]]; then
+      timeout --kill-after=2s 15s adb logcat -d -v threadtime \
+        -s QuickCutApi29Probe:I TestRunner:I AndroidRuntime:E ActivityManager:E \
+        > "quickcut-host-diagnostics/api29-$phase-failure.log" || true
+      timeout --kill-after=2s 10s adb shell dumpsys activity processes \
+        > "quickcut-host-diagnostics/api29-$phase-processes.txt" || true
+    fi
+    mapfile -d '' xmls < <(find "$RESULTS" -name 'TEST-*.xml' -print0 2>/dev/null)
+    if [[ "${#xmls[@]}" -ne 1 ]]; then
+      run_checked "Require one API29 $phase XML result" false
+    else
+      run_checked "Preserve API29 $phase XML" cp -- "${xmls[0]}" "$phase_dir/TEST-api29-$phase.xml"
+    fi
+  }
+  # Each original test runs once. Run Media3 screen-off stress last, so its
+  # codec state cannot contaminate the subsequent date-export test.
+  run_api29_phase date \
+    "-Pandroid.testInstrumentationRunnerArguments.class=com.hebi.quickcut.media.BatchDateExportInstrumentedTest" 10m
+  run_api29_phase remaining \
+    "-Pandroid.testInstrumentationRunnerArguments.notClass=com.hebi.quickcut.media.BatchDateExportInstrumentedTest,com.hebi.quickcut.export.BackgroundMedia3ExportInstrumentedTest" 25m
+  run_api29_phase media3 \
+    "-Pandroid.testInstrumentationRunnerArguments.class=com.hebi.quickcut.export.BackgroundMedia3ExportInstrumentedTest" 15m
+
+  rm -rf "$RESULTS"
+  mkdir -p "$RESULTS/debug"
+  for phase in date remaining media3; do
+    if [[ -f "$phase_dir/TEST-api29-$phase.xml" ]]; then
+      run_checked "Restore API29 $phase XML" \
+        cp -- "$phase_dir/TEST-api29-$phase.xml" "$RESULTS/debug/"
+    fi
+  done
+  run_checked "Require all 292 original API29 tests" \
+    python3 "$SCRIPT_DIR/verify-api29-complete-suite.py" "$RESULTS/debug"
+else
+  run_checked "Full instrumentation suite" timeout --kill-after=30s 20m gradle --no-daemon \
+    -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true :app:connectedDebugAndroidTest
 fi
 run_checked "Pull full-suite Main10 evidence" timeout --kill-after=2s 10s adb pull /data/local/tmp/quickcut-main10 quickcut-main10-full
 run_checked "Verify full-suite Main10 evidence" python3 "$SCRIPT_DIR/verify-android-main10.py" quickcut-main10-full

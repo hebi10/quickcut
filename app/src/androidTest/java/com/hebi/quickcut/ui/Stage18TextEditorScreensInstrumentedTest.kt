@@ -2,6 +2,7 @@ package com.hebi.quickcut.ui
 
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.util.Log
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -26,6 +27,7 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.core.view.ViewCompat
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -91,6 +93,17 @@ class Stage18TextEditorScreensInstrumentedTest {
             WindowInsetsControllerCompat(window, window.decorView)
                 .hide(WindowInsetsCompat.Type.ime())
         }
+        // IME removal is asynchronous on emulators; do not capture a frame
+        // with the pinned action row still covered by the keyboard.
+        compose.waitUntil(10_000L) {
+            var imeHidden = false
+            compose.runOnUiThread {
+                val decor = compose.activity.window.decorView
+                imeHidden = ViewCompat.getRootWindowInsets(decor)
+                    ?.isVisible(WindowInsetsCompat.Type.ime()) != true
+            }
+            imeHidden
+        }
         compose.waitForIdle()
         compose.onNodeWithTag("text-layer-timing").performScrollTo()
         compose.waitUntil(10_000L) {
@@ -101,6 +114,7 @@ class Stage18TextEditorScreensInstrumentedTest {
                 false
             }
         }
+        compose.onNodeWithTag("text-apply").assertIsDisplayed().assertIsEnabled()
         capture("stage18_text_styled.png")
     }
 
@@ -153,9 +167,27 @@ class Stage18TextEditorScreensInstrumentedTest {
                         scanned++
                     }
                 }
-                if (dark * 25 > scanned) {
+                val visible = if (name == "stage18_text_styled.png") {
+                    // Scrolling to timing hides the black video preview. Verify
+                    // the fixed title and pinned apply action instead of requiring
+                    // 4% dark pixels in the upper content region.
+                    hasVisibleEditorChrome(candidate)
+                } else {
+                    dark * 25 > scanned
+                }
+                if (visible) {
                     verified = candidate
                     break
+                }
+                if (name == "stage18_text_styled.png" && attempt == 6) {
+                    val rejected = File(dir, "stage18_text_styled_rejected.png")
+                    rejected.outputStream().use {
+                        check(candidate.compress(Bitmap.CompressFormat.PNG, 100, it))
+                    }
+                    Log.w("QuickCutStage18Capture",
+                        "Styled screenshot rejected after six real Android captures; " +
+                            "lastCandidate=${candidate.width}x${candidate.height} " +
+                            "darkUpper=$dark/$scanned evidence=${rejected.absolutePath}")
                 }
                 candidate.recycle()
             }
@@ -171,5 +203,37 @@ class Stage18TextEditorScreensInstrumentedTest {
             bitmap.recycle()
         }
         check(target.length() > 0L)
+    }
+
+    private fun hasVisibleEditorChrome(bitmap: Bitmap): Boolean {
+        if (bitmap.width < 200 || bitmap.height < 200) return false
+        val stride = maxOf(1, bitmap.width / 40)
+        fun countContrast(from: Int, to: Int): Triple<Int, Int, Int> {
+            var dark = 0
+            var light = 0
+            var pixels = 0
+            for (y in from until to step stride) {
+                for (x in 0 until bitmap.width step stride) {
+                    val color = bitmap.getPixel(x, y)
+                    if (Color.red(color) < 96 && Color.green(color) < 96 &&
+                        Color.blue(color) < 110) dark++
+                    if (Color.red(color) > 190 && Color.green(color) > 190 &&
+                        Color.blue(color) > 190) light++
+                    pixels++
+                }
+            }
+            return Triple(dark, light, pixels)
+        }
+        // The header is fixed above the scrolling editor; the bottom action row
+        // stays pinned even when the black preview is scrolled completely away.
+        val (headerDark, headerLight, headerPixels) =
+            countContrast(bitmap.height / 12, bitmap.height / 6)
+        val (footerDark, footerLight, footerPixels) =
+            countContrast(bitmap.height * 7 / 8, bitmap.height * 39 / 40)
+        return headerPixels > 0 && footerPixels > 0 &&
+            headerDark * 100 >= headerPixels &&
+            footerDark * 20 >= footerPixels &&
+            headerLight * 100 >= headerPixels &&
+            footerLight * 100 >= footerPixels
     }
 }

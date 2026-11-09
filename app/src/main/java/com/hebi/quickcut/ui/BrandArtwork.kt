@@ -29,30 +29,21 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
-/** Scissors and a play symbol reflect the QuickCut brand without adding a runtime asset. */
+/** The same flat film-frame cut mark is used by the launcher, splash and home. */
 @Composable
 internal fun QuickCutLogo(size: Dp, modifier: Modifier = Modifier) {
     val palette = LocalCutPalette.current
-    val brandGradient = Brush.linearGradient(
-        listOf(palette.brandLight, palette.accent, palette.brandDeep),
-    )
     Box(
         modifier = modifier.size(size)
-            .clip(RoundedCornerShape(size * 0.24f))
-            .background(brandGradient),
+            .clip(CutShape)
+            .background(palette.accent),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(
-            imageVector = Icons.Outlined.ContentCut,
+        androidx.compose.foundation.Image(
+            painter = androidx.compose.ui.res.painterResource(com.hebi.quickcut.R.drawable.ic_launcher_foreground),
             contentDescription = null,
-            modifier = Modifier.align(Alignment.CenterStart).size(size * 0.67f),
-            tint = Color.White,
-        )
-        Icon(
-            imageVector = Icons.Outlined.PlayArrow,
-            contentDescription = null,
-            modifier = Modifier.align(Alignment.CenterEnd).size(size * 0.43f),
-            tint = Color.White,
+            colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(palette.onAccent),
+            modifier = Modifier.size(size),
         )
     }
 }

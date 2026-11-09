@@ -22,12 +22,14 @@ icon = ET.parse(RES / "drawable/ic_launcher_foreground.xml").getroot()
 assert icon.tag == "vector", "Launcher foreground must be a scalable vector"
 assert attr(icon, "viewportWidth") == "108"
 assert attr(icon, "viewportHeight") == "108"
-groups = {attr(group, "name"): group for group in icon.findall("group")}
-assert {"scissors", "play"} == set(groups), "New QuickCut mark requires white scissors + play"
-for name in ("scissors", "play"):
-    paths = groups[name].findall("path")
-    assert len(paths) == 1 and attr(paths[0], "fillColor") == "#FFFFFFFF"
-    assert attr(paths[0], "pathData"), f"{name} path missing"
+paths = icon.findall("path")
+assert len(paths) == 1, "QuickCut launcher should contain one flat geometric mark"
+mark = paths[0]
+assert attr(mark, "name") == "film_frame_cut_mark"
+assert attr(mark, "fillColor") == "#FFFFFFFF"
+data = attr(mark, "pathData") or ""
+for feature in ("M28,34", "M52,29", "M23,43", "M81,59"):
+    assert feature in data, f"Missing film frame / cut marker geometry: {feature}"
 
 for variant in ("mipmap-anydpi-v26", "mipmap-anydpi-v33"):
     adaptive = ET.parse(RES / variant / "ic_launcher.xml").getroot()
@@ -40,4 +42,4 @@ for variant in ("mipmap-anydpi-v26", "mipmap-anydpi-v33"):
 colors = ET.parse(RES / "values/colors.xml").getroot()
 background = {x.get("name"): (x.text or "").strip().upper() for x in colors}
 assert background.get("ic_launcher_background") == "#1C1E20", "Launcher background must match the neutral theme"
-print("QuickCut launcher adaptive/monochrome/splash resources reference the updated scissors-play mark")
+print("QuickCut flat film-cut launcher, monochrome and splash resources verified")

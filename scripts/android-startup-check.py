@@ -35,12 +35,12 @@ def app_failed(report):
 
 
 def system_launcher_wait_target(tree):
-    # Only the OS error dialog for the emulator launcher may be acknowledged.
+    # Only the specified Pixel Launcher/System UI OS ANR dialogs may be acknowledged.
     # Any QuickCut crash/ANR still fails via guard(), and an arbitrary dialog never passes.
     nodes = list(tree.iter('node'))
     titles = [n for n in nodes if n.get('package') == 'android' and
               n.get('resource-id') == 'android:id/alertTitle' and
-              n.get('text') == "Pixel Launcher isn't responding"]
+              n.get('text') in ("Pixel Launcher isn't responding", "System UI isn't responding")]
     waits = [n for n in nodes if n.get('package') == 'android' and
              n.get('resource-id') == 'android:id/aerr_wait' and
              n.get('text') == 'Wait' and n.get('enabled') == 'true']
@@ -121,7 +121,7 @@ def check_startup(directory):
                 adb(['shell', 'input', 'tap', str(target[0]), str(target[1])],
                     'launcher-dialog-ack.txt')
                 launcher_dialog_acknowledged = True
-                print('Acknowledged a Pixel Launcher system ANR; QuickCut UI is still unverified')
+                print('Acknowledged an allowed system ANR; QuickCut UI is still unverified')
         elif component in HOME_COMPONENTS:
             if not relaunched:
                 guard()

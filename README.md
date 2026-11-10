@@ -117,7 +117,9 @@
 | AndroidX Media3 | 1.11.1 |
 | Android API | minSdk 29, targetSdk 36, compileSdk 36 |
 
-이 저장소는 Android 앱을 빌드하기 전에 Rust·FFmpeg·x264·x265 네이티브 엔진을 생성해야 합니다. 현재 네이티브 빌드 스크립트는 **Linux x86_64**를 지원합니다. Windows에서는 WSL2의 Linux 환경에서 Android용 Linux SDK/NDK를 준비하고 아래 작업을 실행하세요. Android Studio의 Windows Gradle 명령만으로는 깨끗한 저장소를 빌드할 수 없습니다.
+**Windows에서는 Android Studio로 앱을 개발하고, 네이티브 엔진이 바뀔 때만 GitHub Actions에서 빌드한 엔진을 가져옵니다.** 최초 엔진 준비 후에는 Run만 누르면 됩니다. Gradle은 엔진의 소스 일치 여부를 검사하고 `clean` 후에도 검증된 캐시에서 자동 복구합니다. [Windows 개발·엔진 갱신 안내](docs/WINDOWS_DEVELOPMENT.md)를 참고하세요.
+
+네이티브 엔진 자체를 소스에서 빌드하는 스크립트는 **Linux x86_64**를 지원하며, 엔진 전용 Actions가 이 작업을 맡습니다. 아래 명령은 Linux에서 직접 빌드할 때 사용합니다.
 
 JDK 17, Android SDK API 36, Build Tools 36.0.0, NDK 27.3.13750724, Python 3.12 이상, C/C++ 빌드 도구, CMake, Make, NASM, pkg-config, rustup·Cargo가 필요합니다. `ANDROID_HOME`을 Linux SDK 위치로 설정하세요. 스크립트는 고정한 Rust 툴체인과 네이티브 소스를 검사해 엔진을 생성합니다. 준비 절차와 라이선스는 [네이티브 빌드 안내](docs/20_NATIVE_SMART_CUT.md#소스에서-빌드하고-본인-키로-설치하기)를 참고하세요.
 

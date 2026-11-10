@@ -67,20 +67,31 @@ android {
     }
 }
 
-// The reproducible script is run before Gradle by CI and documented local builds.
+// Linux CI builds from source; Windows restores a source-matched Actions bundle.
 // Never produce a release that silently omitted the requested native engine.
 val prepareLicenseAssets by tasks.registering(Sync::class) {
     from(rootProject.file("third_party")) { include("licenses/**") }
     into(rootProject.layout.buildDirectory.dir("generated/licenseAssets"))
 }
+val prepareWindowsNativeSmartCut by tasks.registering(Exec::class) {
+    onlyIf { System.getProperty("os.name").startsWith("Windows", ignoreCase = true) }
+    workingDir(rootProject.projectDir)
+    commandLine(
+        providers.environmentVariable("QUICKCUT_PYTHON").getOrElse("python"),
+        rootProject.file("scripts/native-engine-artifact.py").absolutePath,
+        "prepare"
+    )
+}
 val verifyNativeSmartCut by tasks.registering {
+    dependsOn(prepareWindowsNativeSmartCut)
     doLast {
         listOf("arm64-v8a", "x86_64").forEach { abi ->
             val library = layout.buildDirectory.file(
                 "generated/nativeLibs/$abi/libquickcut_smartcut.so"
             ).get().asFile
             check(library.isFile && library.length() > 0L) {
-                "Missing $abi smart-cut engine. Run bash scripts/build-native-smartcut.sh before Gradle."
+                "Missing $abi smart-cut engine. On Windows run Update-Engine.cmd; " +
+                    "on Linux run bash scripts/build-native-smartcut.sh before Gradle."
             }
         }
         val notices = rootProject.layout.buildDirectory.file(

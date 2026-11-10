@@ -1,0 +1,125 @@
+name: QuickCut native engine
+
+on:
+  # GitHub only enables manual dispatch after this file reaches the default branch.
+  # The scoped push trigger also supports the first run on a development branch.
+  workflow_dispatch:
+  push:
+    branches:
+      - dev/native-engine/**
+    paths:
+      - native/**
+      - third_party/licenses/**
+      - scripts/build-native-smartcut.sh
+      - scripts/native-smartcut-sources.json
+      - scripts/collect-native-licenses.py
+      - scripts/native-engine-artifact.py
+      - .github/workflows/native-engine.yml
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+      - name: Install native build tools and test-video encoder
+        timeout-minutes: 25
+        run: |
+          set -euo pipefail
+          missing=()
+          command -v make >/dev/null 2>&1 || missing+=(make)
+          command -v cmake >/dev/null 2>&1 || missing+=(cmake)
+          command -v nasm >/dev/null 2>&1 || missing+=(nasm)
+          command -v pkg-config >/dev/null 2>&1 || missing+=(pkg-config)
+          if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then
+            missing+=(ffmpeg)
+          else
+            encoders="$(ffmpeg -hide_banner -encoders)"
+            if [[ "$encoders" != *libx264* || "$encoders" != *libx265* || "$encoders" != *libmp3lame* ]]; then
+              missing+=(ffmpeg)
+            fi
+          fi
+          if (( ${#missing[@]} == 0 )); then
+            echo "Using preinstalled native tools and media encoders"
+          else
+            echo "Installing missing packages: ${missing[*]}"
+            # Preserve the signed, preconfigured Ubuntu mirror list.
+            sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update -qq
+            sudo DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends "${missing[@]}"
+          fi
+      - name: Install pinned Android NDK
+        run: |
+          set -euo pipefail
+          ndk_version="$(python3 -c 'import json; print(json.load(open("scripts/native-smartcut-sources.json"))["toolchains"]["ndk"])')"
+          [[ "$ndk_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid pinned NDK version" >&2; exit 1; }
+          sdkmanager --install "ndk;$ndk_version"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$ndk_version" >> "$GITHUB_ENV"
+      - name: Restore native build cache
+        id: native_cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            build/native-smartcut
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: native-smartcut-${{ runner.os }}-${{ hashFiles('scripts/build-native-smartcut.sh', 'scripts/native-smartcut-sources.json') }}-${{ hashFiles('native/**') }}
+          restore-keys: |
+            native-smartcut-${{ runner.os }}-${{ hashFiles('scripts/build-native-smartcut.sh', 'scripts/native-smartcut-sources.json') }}-
+            native-smartcut-${{ runner.os }}-
+      - name: Reset Rust outputs from a different native dependency cache
+        env:
+          NATIVE_CACHE_MATCHED_KEY: ${{ steps.native_cache.outputs.cache-matched-key }}
+          NATIVE_CACHE_DEPENDENCY_PREFIX: native-smartcut-${{ runner.os }}-${{ hashFiles('scripts/build-native-smartcut.sh', 'scripts/native-smartcut-sources.json') }}-
+        run: |
+          # C dependency caches validate their own .build-key before reuse.
+          # Rebuild Rust when restored dependencies could contain stale static libraries.
+          if [[ -n "$NATIVE_CACHE_MATCHED_KEY" && "$NATIVE_CACHE_MATCHED_KEY" != "$NATIVE_CACHE_DEPENDENCY_PREFIX"* ]]; then
+            rm -rf build/native-smartcut/cargo-target
+          fi
+      - name: Build native smart-cut engine and run host tests
+        # The builder installs the manifest-pinned Rust toolchain (currently 1.98.0)
+        # and verifies the manifest-pinned NDK (currently 27.3.13750724).
+        run: bash scripts/build-native-smartcut.sh --host-tests
+      - name: Package verified native engine
+        run: |
+          python3 scripts/native-engine-artifact.py pack \
+            --output "$RUNNER_TEMP/quickcut-native-engine.zip" \
+            --commit "$GITHUB_SHA" \
+            --producer-kind github-actions
+      - name: Save native build cache
+        if: success() && steps.native_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            build/native-smartcut
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ steps.native_cache.outputs.cache-primary-key }}
+      - name: Upload native engine bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: quickcut-native-engine
+          path: ${{ runner.temp }}/quickcut-native-engine.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30

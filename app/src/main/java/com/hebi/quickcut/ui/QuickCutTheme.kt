@@ -23,6 +23,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -174,6 +175,14 @@ val CutShape = RoundedCornerShape(8.dp)
 val CutPanelShape = RoundedCornerShape(12.dp)
 val CutDialogShape = RoundedCornerShape(12.dp)
 val CutSmallShape = RoundedCornerShape(6.dp)
+
+internal val CutTimecodeStyle = TextStyle(
+    fontFamily = FontFamily.Monospace,
+    fontFeatureSettings = "tnum",
+)
+
+/** Keep each caller's size, weight and line height while aligning time digits. */
+internal fun TextStyle.withTimecodeDigits(): TextStyle = merge(CutTimecodeStyle)
 
 private val cutShapes = Shapes(
     extraSmall = CutSmallShape,

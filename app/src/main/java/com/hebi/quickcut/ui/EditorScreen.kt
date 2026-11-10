@@ -56,6 +56,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -81,6 +82,8 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -445,7 +448,8 @@ fun EditorScreen(
                                     Text("클립 " + (model.timeline.clips.indexOf(it) + 1),
                                         color = palette.primaryText,
                                         fontWeight = FontWeight.SemiBold)
-                                    Text(formatTime(it.durationMs), color = palette.secondaryAccent)
+                                    Text(formatTime(it.durationMs), color = palette.secondaryAccent,
+                                        style = LocalTextStyle.current.withTimecodeDigits())
                                 }
                                 Spacer(Modifier.height(12.dp))
                                 ToolButtons(
@@ -720,7 +724,12 @@ internal fun PreviewPlaybackControls(
                 contentDescription = if (playing) "일시정지" else "재생")
         }
         Column(Modifier.weight(1f).padding(end = 8.dp)) {
-            Text("결과 " + formatTime(currentPosition) + " / " + formatTime(timelineDuration),
+            Text(buildAnnotatedString {
+                append("결과 ")
+                withStyle(CutTimecodeStyle.toSpanStyle()) {
+                    append(formatTime(currentPosition) + " / " + formatTime(timelineDuration))
+                }
+            },
                 color = palette.primaryText, fontSize = 12.sp,
                 fontWeight = FontWeight.Medium,
                 modifier = Modifier.testTag("editor-playback-time"))
@@ -917,8 +926,14 @@ private fun TrimEditor(
             modifier = Modifier.fillMaxWidth().testTag("detailed-trim-range"),
         )
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("시작 " + formatTime(clip.startMs), color = palette.secondaryText, fontSize = 12.sp)
-            Text("끝 " + formatTime(clip.endMs), color = palette.secondaryText, fontSize = 12.sp)
+            Text(buildAnnotatedString {
+                append("시작 ")
+                withStyle(CutTimecodeStyle.toSpanStyle()) { append(formatTime(clip.startMs)) }
+            }, color = palette.secondaryText, fontSize = 12.sp)
+            Text(buildAnnotatedString {
+                append("끝 ")
+                withStyle(CutTimecodeStyle.toSpanStyle()) { append(formatTime(clip.endMs)) }
+            }, color = palette.secondaryText, fontSize = 12.sp)
         }
         BoxWithConstraints(Modifier.fillMaxWidth()) {
             val changeStart: (String) -> Unit = {
@@ -965,6 +980,7 @@ private fun TrimTimeField(
         onValueChange = onValueChange,
         label = { Text(label) },
         isError = isError,
+        textStyle = LocalTextStyle.current.withTimecodeDigits(),
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
         singleLine = true,
         shape = CutShape,

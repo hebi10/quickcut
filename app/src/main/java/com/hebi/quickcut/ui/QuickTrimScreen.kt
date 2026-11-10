@@ -36,6 +36,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.RangeSlider
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -495,10 +496,10 @@ private fun QuickTrimControls(
                     ) {
                         Text(formatTime(clip.startMs),
                             color = palette.secondaryAccent,
-                            style = MaterialTheme.typography.labelMedium)
+                            style = MaterialTheme.typography.labelMedium.withTimecodeDigits())
                         Text(formatTime(clip.endMs),
                             color = palette.secondaryAccent,
-                            style = MaterialTheme.typography.labelMedium)
+                            style = MaterialTheme.typography.labelMedium.withTimecodeDigits())
                     }
                 }
                 if (LocalDensity.current.fontScale >= 1.5f) {
@@ -516,7 +517,7 @@ private fun QuickTrimControls(
                         Text("원본 길이", color = palette.secondaryText,
                             style = MaterialTheme.typography.bodySmall)
                         Text(formatTime(clip.sourceDurationMs), color = palette.primaryText,
-                            style = MaterialTheme.typography.titleSmall)
+                            style = MaterialTheme.typography.titleSmall.withTimecodeDigits())
                     }
                     Row(Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween) {
@@ -524,7 +525,7 @@ private fun QuickTrimControls(
                             style = MaterialTheme.typography.bodySmall)
                         Text(formatTime(clip.startMs) + " – " + formatTime(clip.endMs),
                             color = palette.primaryText,
-                            style = MaterialTheme.typography.titleSmall)
+                            style = MaterialTheme.typography.titleSmall.withTimecodeDigits())
                     }
                     Row(Modifier.fillMaxWidth()
                         .background(palette.accentMuted, CutSmallShape)
@@ -534,7 +535,7 @@ private fun QuickTrimControls(
                         Text("결과 영상", color = palette.secondaryAccent,
                             style = MaterialTheme.typography.titleSmall)
                         Text(formatTime(clip.durationMs), color = palette.primaryText,
-                            style = MaterialTheme.typography.titleMedium)
+                            style = MaterialTheme.typography.titleMedium.withTimecodeDigits())
                     }
                 }
                 } else {
@@ -555,7 +556,7 @@ private fun QuickTrimControls(
                             Text("원본 길이", color = palette.secondaryText,
                                 style = MaterialTheme.typography.bodySmall)
                             Text(formatTime(clip.sourceDurationMs), color = palette.primaryText,
-                                style = MaterialTheme.typography.titleSmall)
+                                style = MaterialTheme.typography.titleSmall.withTimecodeDigits())
                         }
                         Column(Modifier.weight(1.35f),
                             verticalArrangement = Arrangement.spacedBy(CutSpacing.xs)) {
@@ -563,7 +564,7 @@ private fun QuickTrimControls(
                                 style = MaterialTheme.typography.bodySmall)
                             Text(formatTime(clip.startMs) + " – " + formatTime(clip.endMs),
                                 color = palette.primaryText,
-                                style = MaterialTheme.typography.labelMedium,
+                                style = MaterialTheme.typography.labelMedium.withTimecodeDigits(),
                                 maxLines = 2)
                         }
                         Column(Modifier.weight(1f)
@@ -573,7 +574,7 @@ private fun QuickTrimControls(
                             Text("결과 영상", color = palette.secondaryAccent,
                                 style = MaterialTheme.typography.bodySmall)
                             Text(formatTime(clip.durationMs), color = palette.primaryText,
-                                style = MaterialTheme.typography.titleSmall)
+                                style = MaterialTheme.typography.titleSmall.withTimecodeDigits())
                         }
                     }
                 }
@@ -686,6 +687,7 @@ private fun TrimSecondsRow(
             value = value,
             onValueChange = onValueChange,
             suffix = { Text("초") },
+            textStyle = LocalTextStyle.current.withTimecodeDigits(),
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
             shape = CutShape,

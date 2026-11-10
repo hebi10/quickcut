@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -39,6 +40,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.IntOffset
@@ -78,7 +81,10 @@ fun TimelineStrip(
                     verticalArrangement = Arrangement.spacedBy(CutSpacing.xs)) {
                     Text("타임라인", style = MaterialTheme.typography.titleSmall,
                         color = palette.primaryText)
-                    Text("전체 " + formatTime(totalDurationMs),
+                    Text(buildAnnotatedString {
+                        append("전체 ")
+                        withStyle(CutTimecodeStyle.toSpanStyle()) { append(formatTime(totalDurationMs)) }
+                    },
                         style = MaterialTheme.typography.bodySmall,
                         color = palette.secondaryText)
                 }
@@ -88,7 +94,10 @@ fun TimelineStrip(
                     horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text("타임라인", style = MaterialTheme.typography.titleSmall,
                         color = palette.primaryText)
-                    Text("전체 " + formatTime(totalDurationMs),
+                    Text(buildAnnotatedString {
+                        append("전체 ")
+                        withStyle(CutTimecodeStyle.toSpanStyle()) { append(formatTime(totalDurationMs)) }
+                    },
                         style = MaterialTheme.typography.bodySmall,
                         color = palette.secondaryText,
                         maxLines = 1)
@@ -172,6 +181,7 @@ fun TimelineStrip(
                     Text(
                         formatTime(clip.durationMs),
                         color = Color.White,
+                        style = LocalTextStyle.current.withTimecodeDigits(),
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Medium,
                         modifier = Modifier.align(Alignment.BottomStart)

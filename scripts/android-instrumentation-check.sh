@@ -50,6 +50,23 @@ printf 'gradle_exit=%s\nphase_exit=%s\n' "$preflight_gradle_status" "$first_fail
 # Native failures must not hide UI/recovery results. Always run the full suite,
 # using fresh XML so a preflight report cannot satisfy the unfiltered gate.
 rm -rf "$RESULTS" "$REPORTS" quickcut-main10-full
+# Only API35 has observed a Pixel Launcher ANR obscuring editor/IME tests.
+# The watchdog accepts an exact system "Wait" dialog only; never QuickCut
+# crashes, arbitrary popups, or a failed instrumented test.
+if [[ "${QUICKCUT_EMULATOR_API:-}" == "35" ]]; then
+  mkdir -p quickcut-host-diagnostics
+  python3 -u "$SCRIPT_DIR/android-system-anr-watchdog.py" \
+    --max-seconds 3600 --poll-seconds 2 \
+    > quickcut-host-diagnostics/system-anr-watchdog.log 2>&1 &
+  system_anr_watchdog_pid=$!
+  stop_system_anr_watchdog() {
+    if kill -0 "$system_anr_watchdog_pid" 2>/dev/null; then
+      kill "$system_anr_watchdog_pid" 2>/dev/null || true
+      wait "$system_anr_watchdog_pid" || true
+    fi
+  }
+  trap stop_system_anr_watchdog EXIT
+fi
 run_checked "Clear full-suite Main10 evidence" timeout --kill-after=2s 10s adb shell rm -rf /data/local/tmp/quickcut-main10
 # API29: preserve all 292 original tests, but separate the date/Media3
 # codec stress classes into fresh instrumentation processes. Consecutive
@@ -82,18 +99,26 @@ if [[ "${QUICKCUT_EMULATOR_API:-}" == 29 ]]; then
       run_checked "Preserve API29 $phase XML" cp -- "${xmls[0]}" "$phase_dir/TEST-api29-$phase.xml"
     fi
   }
-  # Each original test runs once. Run Media3 screen-off stress last, so its
-  # codec state cannot contaminate the subsequent date-export test.
+  # API29: background-screen-off tests share MainActivity, native encoder and
+  # Android Settings state. A 4GB emulator stalled after the batch-screen-off
+  # test while launching the single-screen-off test (101/288 completed).
+  # Execute every original test exactly once, but isolate the two high-risk
+  # methods in separate instrumentation processes after the 286 regular tests.
+  # Keep the existing Media3 screen-off stress process last.
   run_api29_phase date \
     "-Pandroid.testInstrumentationRunnerArguments.class=com.hebi.quickcut.media.BatchDateExportInstrumentedTest" 10m
   run_api29_phase remaining \
-    "-Pandroid.testInstrumentationRunnerArguments.notClass=com.hebi.quickcut.media.BatchDateExportInstrumentedTest,com.hebi.quickcut.export.BackgroundMedia3ExportInstrumentedTest" 25m
+    "-Pandroid.testInstrumentationRunnerArguments.notClass=com.hebi.quickcut.media.BatchDateExportInstrumentedTest,com.hebi.quickcut.export.BackgroundExportInstrumentedTest,com.hebi.quickcut.export.BackgroundMedia3ExportInstrumentedTest" 25m
+  run_api29_phase offscreen_single \
+    "-Pandroid.testInstrumentationRunnerArguments.class=com.hebi.quickcut.export.BackgroundExportInstrumentedTest#actualExportFinishesOffscreenAndItsResultSurvivesActivityRecreation" 10m
+  run_api29_phase offscreen_batch \
+    "-Pandroid.testInstrumentationRunnerArguments.class=com.hebi.quickcut.export.BackgroundExportInstrumentedTest#batchContinuesToTheSecondFileAndPublishesBothWhileScreenIsOff" 10m
   run_api29_phase media3 \
     "-Pandroid.testInstrumentationRunnerArguments.class=com.hebi.quickcut.export.BackgroundMedia3ExportInstrumentedTest" 15m
 
   rm -rf "$RESULTS"
   mkdir -p "$RESULTS/debug"
-  for phase in date remaining media3; do
+  for phase in date remaining offscreen_single offscreen_batch media3; do
     if [[ -f "$phase_dir/TEST-api29-$phase.xml" ]]; then
       run_checked "Restore API29 $phase XML" \
         cp -- "$phase_dir/TEST-api29-$phase.xml" "$RESULTS/debug/"

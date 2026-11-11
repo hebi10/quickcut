@@ -1,0 +1,87 @@
+{
+  "artifact": "QuickCut Korean Play phone screenshots (actual Android captured UI; final approved copy)",
+  "locale": "ko-KR",
+  "dimensions": [
+    1080,
+    1920
+  ],
+  "source_commit": "098bd70a9a100513c35be668b142953019f810ac",
+  "source_run": "https://github.com/hebi10/quickcut/actions/runs/42567790852",
+  "source_api": 35,
+  "final_copy": "2026-11-09",
+  "publish_gate": "PR #44-#49 ordered merges, exact-main Android build and API 29/35/36 emulator success",
+  "screenshots": [
+    {
+      "number": 1,
+      "name": "01.png",
+      "title": "영상 편집을 간편하게",
+      "source_filename": "stage13_home_populated.png",
+      "source_sha256": "e55a721079f1dcba98b0f9770a8a82facddde3d7a4227c3489f1ab54622121c5",
+      "sha256": "8150f74b3c7e8108db6b677f3d6917f57bf8848bdd502a1425a79fa32dd6e224",
+      "git_blob_sha": "1a08ef15e9588a132c63f3dfdf5475cc9cf4345b"
+    },
+    {
+      "number": 2,
+      "name": "02.png",
+      "title": "빠른 자르기",
+      "source_filename": "editor_design_quick_trim.png",
+      "source_sha256": "3188a3871b284e38583b68dbc41b787bfb687d7370b9142b120e4493a5d7cf43",
+      "sha256": "e08f6e0c081f6ab753235b53781129e7c83811ea4695e1ba9f33d2cb187bcbbc",
+      "git_blob_sha": "c38427c0d427893b1380156b92bcbf05199b19a2"
+    },
+    {
+      "number": 3,
+      "name": "03.png",
+      "title": "타임라인 상세 편집",
+      "source_filename": "editor_design_detailed.png",
+      "source_sha256": "50081208a5b6f0a4a9f94c01cef23736bd7e936b13377596a4d25e229c6c304c",
+      "sha256": "e75f5168874b0cd06fde40340f6293164f6c5505e17090ddacaefcea5cfe8d4f",
+      "git_blob_sha": "1cb4d3be987f06f81b8b14efc99360c8d51a48e9"
+    },
+    {
+      "number": 4,
+      "name": "04.png",
+      "title": "파일별 일괄 편집",
+      "source_filename": "editor_design_batch_selected.png",
+      "source_sha256": "ae1e57e8f2e51fced4e871c5c2854fb3a522ce9716c15d9af6b6b4380a1a01eb",
+      "sha256": "864dfffd828a0343683dacccd90db019b39a2a4d191393d318ee37a12a1849e5",
+      "git_blob_sha": "4030225143fffec5ebe9bec15370a028bcca78d9"
+    },
+    {
+      "number": 5,
+      "name": "05.png",
+      "title": "여러 구간 한 번에 추출",
+      "source_filename": "stage14_extraction_three.png",
+      "source_sha256": "a7708ef76b2fca8e48fe6bd0878a2e355325a11cac3142ad81a257a29c25fde9",
+      "sha256": "14ec262ffe0c44e9797cbe9d1bf8e74623ee6a80cac368015692a364970ac860",
+      "git_blob_sha": "73dbb5a8189b8545e38de84f9aa5c85e3c425dbd"
+    },
+    {
+      "number": 6,
+      "name": "06.png",
+      "title": "원하는 비율로 크롭",
+      "source_filename": "stage16_crop_square.png",
+      "source_sha256": "a4a246cfec278a4861dffeefd6ba4fcde95bcf1a816ae8f40bb57fe5878977da",
+      "sha256": "85b4737076a27e2c3a0c5afa9af79a145bcd372be214937fde38d3e69962564d",
+      "git_blob_sha": "3a805f63bfc9e640b265fb2a88dff188aefc7a6c"
+    },
+    {
+      "number": 7,
+      "name": "07.png",
+      "title": "오디오 음량과 페이드",
+      "source_filename": "stage17_audio_fades.png",
+      "source_sha256": "8954bf6a51e811557cdd56c72cbe109dd3f7893a50979cbfd2682d0b3835f652",
+      "sha256": "9ab1c9979208a5925cc6a537517f74dcd1cd53008afc180a0f4bb8396fb38313",
+      "git_blob_sha": "35e06187047c0e4b4ddec658270a588653ea61f9"
+    },
+    {
+      "number": 8,
+      "name": "08.png",
+      "title": "텍스트 오버레이 편집",
+      "source_filename": "stage18_text_styled.png",
+      "source_sha256": "2c7a6e4ff5447bc70795ea6c566ca0c6a6856048f7490ddd0e997868c83b485b",
+      "sha256": "998482bf81fec787c1487d0176aaf44c081ab3c7d8172bf7d5cd3f50c130060d",
+      "git_blob_sha": "cf8de51fb91be35a248d7f1d6abb53239df3aa46"
+    }
+  ]
+}

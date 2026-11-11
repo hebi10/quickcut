@@ -151,6 +151,11 @@ class Stage18TextEditorScreensInstrumentedTest {
             "stage18_text_styled.png", "stage18_text_largefont.png",
         ))
         compose.waitForIdle()
+        // A Pixel Launcher/System UI ANR can overlay an otherwise valid Compose screen.
+        // Require real activity window focus; never approve a screenshot of that OS dialog.
+        compose.waitUntil(20_000L) {
+            compose.activity.window.decorView.hasWindowFocus()
+        }
         val dir = File(InstrumentationRegistry.getInstrumentation().targetContext.filesDir, "design-review")
         check(dir.isDirectory || dir.mkdirs())
         val automation = InstrumentationRegistry.getInstrumentation().uiAutomation

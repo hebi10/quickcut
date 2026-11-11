@@ -96,11 +96,13 @@ jobs:
           bash -n scripts/android-emulator-check.sh scripts/android-instrumentation-check.sh scripts/android-dialog-geometry-check.sh scripts/verify-release-apk.sh scripts/build-native-smartcut.sh
           python3 scripts/test-emulator-failure.py
           python3 scripts/test-emulator-startup.py
+          python3 scripts/test-system-anr-watchdog.py
           python3 scripts/test-emulator-flow.py
           python3 scripts/test-stage20-evidence.py
           python3 scripts/test-dialog-geometry.py
           python3 scripts/test-launcher-icon.py
           python3 scripts/test-release-gate.py
+          python3 scripts/test-app-release-change.py
           python3 scripts/test-play-publisher.py
           python3 scripts/test-play-bundle.py
           python3 scripts/test-runtime-publication-metadata.py

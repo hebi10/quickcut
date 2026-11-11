@@ -167,6 +167,10 @@ class EmulatorFlowTest(unittest.TestCase):
                 return "remaining"
             if any("android.testInstrumentationRunnerArguments.class=com.hebi.quickcut.media.BatchDateExportInstrumentedTest" in a for a in args):
                 return "date"
+            if any("android.testInstrumentationRunnerArguments.class=com.hebi.quickcut.export.BackgroundExportInstrumentedTest#actualExportFinishesOffscreenAndItsResultSurvivesActivityRecreation" in a for a in args):
+                return "offscreen_single"
+            if any("android.testInstrumentationRunnerArguments.class=com.hebi.quickcut.export.BackgroundExportInstrumentedTest#batchContinuesToTheSecondFileAndPublishesBothWhileScreenIsOff" in a for a in args):
+                return "offscreen_batch"
             if any("android.testInstrumentationRunnerArguments.class=com.hebi.quickcut.export.BackgroundMedia3ExportInstrumentedTest" in a for a in args):
                 return "media3"
             return "full"

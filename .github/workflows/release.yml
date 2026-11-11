@@ -39,10 +39,19 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 2
           persist-credentials: false
+      - name: Gate automatic signed releases on runtime source changes
+        id: scope
+        if: github.event_name == 'workflow_run'
+        run: |
+          python3 scripts/test-app-release-change.py
+          python3 scripts/require-app-release-change.py
       - name: Test release authorization
+        if: github.event_name != 'workflow_run' || steps.scope.outputs.eligible == 'true'
         run: python3 scripts/test-release-gate.py
       - name: Require both workflows on the exact current main commit
+        if: github.event_name != 'workflow_run' || steps.scope.outputs.eligible == 'true'
         id: gate
         env:
           GH_TOKEN: ${{ github.token }}

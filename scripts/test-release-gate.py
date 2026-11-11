@@ -79,12 +79,30 @@ class ReleaseGateTest(unittest.TestCase):
         for workflow, name in gate.REQUIRED_WORKFLOWS.items():
             self.runs[workflow] = [run_record(name)]
         self.calls = []
+        self.active_workflow = None
+        self.job_changes = {}
 
     def fetch(self, path):
         self.calls.append(path)
         for workflow, runs in self.runs.items():
             if f'/actions/workflows/{workflow}/runs?' in path:
+                self.active_workflow = workflow
                 return {'workflow_runs': runs, 'total_count': len(runs)}
+        if '/actions/runs/' in path and path.endswith('/jobs?per_page=100'):
+            self.assertIsNotNone(self.active_workflow)
+            run_id = int(path.split('/actions/runs/')[1].split('/')[0])
+            latest = next(run for run in self.runs[self.active_workflow]
+                          if run['id'] == run_id)
+            jobs = [dict(id=index + 1000, name=name, head_sha=latest['head_sha'],
+                         run_id=latest['id'], run_attempt=latest.get('run_attempt'),
+                         status='completed', conclusion='success')
+                    for index, name in enumerate(sorted(
+                        gate.REQUIRED_CI_JOBS[self.active_workflow]))]
+            response = {'total_count': len(jobs), 'jobs': jobs}
+            change = self.job_changes.get(self.active_workflow)
+            if change is not None:
+                change(response)
+            return response
         return self.responses[path]
 
     def check(self):
@@ -111,7 +129,7 @@ class ReleaseGateTest(unittest.TestCase):
         ready, reason = self.check()
         self.assertFalse(ready)
         self.assertIn('in_progress', reason)
-        self.assertEqual(len(self.calls), 3)
+        self.assertEqual(len(self.calls), 4)
 
     def test_failure_is_explained(self):
         self.runs['emulator-smoke.yml'][0]['conclusion'] = 'failure'
@@ -124,6 +142,61 @@ class ReleaseGateTest(unittest.TestCase):
             with self.subTest(status=status):
                 self.runs['android.yml'] = [run_record('Android build'), run_record('Android build', id=11, run_number=11, status=status, conclusion=conclusion)]
                 self.assertFalse(self.check()[0])
+
+    def test_exact_four_job_proof_is_required_for_success(self):
+        self.assertTrue(self.check()[0])
+        paths = [path for path in self.calls if '/jobs?per_page=100' in path]
+        self.assertEqual(len(paths), 2)
+
+    def test_missing_api29_job_blocks_release_even_with_green_workflow(self):
+        self.job_changes['emulator-smoke.yml'] = lambda response: (
+            response['jobs'].remove(next(job for job in response['jobs']
+                                         if job['name'] == 'emulator (29)')),
+            response.__setitem__('total_count', 2))
+        ready, reason = self.check()
+        self.assertFalse(ready)
+        self.assertIn('required job matrix', reason)
+
+    def test_incomplete_jobs_pagination_blocks_release(self):
+        self.job_changes['emulator-smoke.yml'] = lambda response: (
+            response.__setitem__('total_count', 101))
+        self.assertFalse(self.check()[0])
+
+    def test_duplicate_or_unknown_job_blocks_release(self):
+        for invalid_name in ('emulator (35)', 'emulator (37)'):
+            self.setUp()
+            self.job_changes['emulator-smoke.yml'] = lambda response, name=invalid_name: (
+                response['jobs'][0].__setitem__('name', name))
+            self.assertFalse(self.check()[0])
+
+    def test_failed_skipped_or_incomplete_api_job_blocks_release(self):
+        for status, conclusion in (('completed', 'failure'),
+                                   ('completed', 'skipped'),
+                                   ('in_progress', None),
+                                   ('cancelled', 'cancelled')):
+            self.setUp()
+            self.job_changes['emulator-smoke.yml'] = lambda response, a=status, b=conclusion: (
+                response['jobs'][0].update(status=a, conclusion=b))
+            ready, reason = self.check()
+            self.assertFalse(ready)
+            self.assertIn('emulator-smoke.yml', reason)
+
+    def test_unrelated_job_sha_run_or_attempt_blocks_release(self):
+        for key, value in (('head_sha', 'b' * 40), ('run_id', 42),
+                           ('run_attempt', 4)):
+            self.setUp()
+            self.job_changes['android.yml'] = lambda response, k=key, v=value: (
+                response['jobs'][0].__setitem__(k, v))
+            ready, reason = self.check()
+            self.assertFalse(ready)
+            self.assertIn('unrelated', reason)
+
+    def test_exact_matrix_required_for_play_mode_too(self):
+        self.job_changes['emulator-smoke.yml'] = lambda response: (
+            response['jobs'][0].update(conclusion='skipped'))
+        ready, reason = gate.evaluate(REPO, SHA, 'v0.4.11', self.fetch, mode='play')
+        self.assertFalse(ready)
+        self.assertIn('skipped', reason)
 
     def test_manual_main_smoke_is_allowed(self):
         self.runs['emulator-smoke.yml'][0]['event'] = 'workflow_dispatch'

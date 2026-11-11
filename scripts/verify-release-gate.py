@@ -18,6 +18,14 @@ REQUIRED_WORKFLOWS = {
     'android.yml': 'Android build',
     'emulator-smoke.yml': 'Android emulator smoke',
 }
+# Do not infer that every Android API passed from a workflow-level success alone.
+# Require the exact Android build and complete three-device smoke job matrix.
+REQUIRED_CI_JOBS = {
+    'android.yml': frozenset({'build'}),
+    'emulator-smoke.yml': frozenset({
+        'emulator (29)', 'emulator (35)', 'emulator (36)',
+    }),
+}
 
 
 def trusted_run(run, repo, sha, name):
@@ -62,6 +70,44 @@ def completion_order(run):
         raise ValueError('Missing or invalid trusted CI completion metadata') from None
 
 
+def validate_ci_jobs(repo, sha, workflow, run, fetch):
+    """Verify all required jobs belong to one exact successful workflow attempt.
+
+    GitHub's jobs endpoint without an attempts suffix returns the latest attempt.
+    Incomplete pages, renamed/extra matrix jobs, stale SHA, skips and duplicates
+    must fail closed instead of allowing a release based on a green run badge.
+    """
+    run_id = run.get('id')
+    attempt = run.get('run_attempt')
+    if type(run_id) is not int or run_id <= 0 or type(attempt) is not int or attempt < 1:
+        raise ValueError('Invalid trusted CI run identifier or attempt')
+    response = fetch(f'/repos/{repo}/actions/runs/{run_id}/jobs?per_page=100')
+    if not isinstance(response, dict):
+        raise ValueError(f'{workflow}: malformed CI jobs response')
+    jobs = response.get('jobs')
+    total_count = response.get('total_count')
+    expected = REQUIRED_CI_JOBS[workflow]
+    if (type(total_count) is not int or not isinstance(jobs, list)
+            or total_count != len(jobs) or total_count != len(expected)):
+        return False, f'{workflow}: incomplete or unexpected required job matrix'
+    observed = set()
+    for job in jobs:
+        if not isinstance(job, dict):
+            return False, f'{workflow}: malformed job entry'
+        name = job.get('name')
+        if not isinstance(name, str) or name not in expected or name in observed:
+            return False, f'{workflow}: missing, duplicate or unexpected CI job'
+        observed.add(name)
+        if (job.get('head_sha') != sha or job.get('run_id') != run_id
+                or job.get('run_attempt') != attempt):
+            return False, f'{workflow}/{name}: unrelated commit, run or attempt'
+        if job.get('status') != 'completed' or job.get('conclusion') != 'success':
+            return False, f"{workflow}/{name}: {job.get('status')}/{job.get('conclusion')}"
+    if observed != expected:
+        return False, f'{workflow}: required CI API matrix incomplete'
+    return True, f'{workflow}: {len(observed)} same-SHA jobs passed'
+
+
 def evaluate(repo, sha, tag, fetch, mode="release", trigger=None):
     if mode not in ("release", "play"):
         raise ValueError("Unknown publication gate mode")
@@ -82,6 +128,9 @@ def evaluate(repo, sha, tag, fetch, mode="release", trigger=None):
         latest = max(runs, key=lambda run: (run['run_number'], run['id']))
         if latest.get('status') != 'completed' or latest.get('conclusion') != 'success':
             return False, f"{name}: {latest.get('status')}/{latest.get('conclusion')}"
+        jobs_ready, jobs_reason = validate_ci_jobs(repo, sha, workflow, latest, fetch)
+        if not jobs_ready:
+            return False, jobs_reason
         completed_runs.append(latest)
     if mode == 'play' and trigger is not None:
         winner = max(completed_runs, key=completion_order)
@@ -90,7 +139,7 @@ def evaluate(repo, sha, tag, fetch, mode="release", trigger=None):
     for endpoint in (() if mode == 'play' else ('git/ref/tags', 'releases/tags')):
         if fetch(f'{prefix}/{endpoint}/{tag}') is not None:
             return False, f'{tag} already exists; releases and assets are never overwritten'
-    return True, 'Both required workflows succeeded on the exact current main commit'
+    return True, 'Android build and all API29/35/36 jobs passed on the exact current main commit'
 
 
 def api_fetch(path):

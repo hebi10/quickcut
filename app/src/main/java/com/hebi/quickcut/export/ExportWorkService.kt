@@ -40,15 +40,19 @@ class ExportWorkService : Service() {
             return START_NOT_STICKY
         }
         val state = ExportWorkMonitor.status.value
-        if (id == null || state?.id != id) {
-            stopIfIdle()
-            return START_NOT_STICKY
-        }
-        workId = id
         try {
             val type = if (Build.VERSION.SDK_INT >= 35) ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING
                 else ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-            startForeground(NOTIFICATION_ID, notification(state), type)
+            // A finished or superseded export still owes Android a foreground promotion.
+            val notificationState = state ?: ExportWorkStatus(
+                id.orEmpty(), "영상 저장", "저장 종료 중", canCancel = false,
+            )
+            startForeground(NOTIFICATION_ID, notification(notificationState), type)
+            if (id == null || state?.id != id) {
+                stopIfIdle()
+                return START_NOT_STICKY
+            }
+            workId = id
             if (wakeLock?.isHeld != true) {
                 wakeLock = getSystemService(PowerManager::class.java)
                     .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "QuickCut:VideoExport").apply {
@@ -69,7 +73,9 @@ class ExportWorkService : Service() {
                 }
             }
         } catch (error: Exception) {
-            ExportWorkMonitor.serviceFailed(id, error)
+            if (id != null && state?.id == id) {
+                ExportWorkMonitor.serviceFailed(id, error)
+            }
             releaseWakeLock()
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()

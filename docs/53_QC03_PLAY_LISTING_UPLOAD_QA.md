@@ -27,3 +27,13 @@
 - 최종 상태: Play API edit commit 응답과 스토어 상세 페이지/콘솔 심사 현황을 구분해 기록
 
 최종 상태: PR 및 CI 진행 중. `main` 병합·Play image commit·심사 상태 확인 전에는 배포 완료로 표기하지 않음.
+
+## 스토어 이미지만 바꿀 때 앱 버전 불변
+
+- `main`의 스토어 이미지/문서/CI-only 커밋도 Android 두 워크플로를 트리거하므로, 기존 Google Play internal 자동 업로드 또는 GitHub Signed release 워크플로가 불필요한 새 앱 버전을 만들 수 있었음.
+- `scripts/require-app-release-change.py`: 자동 `workflow_run`에서 현재 HEAD와 첫 부모 사이의 변경 파일을 검증하고, 앱 실행 리소스·네이티브 소스·빌드 구성의 실제 변경이 있는 경우만 앱 버전 릴리스 승인. 소스가 없거나 Git 비교 실패하면 자동 릴리스 거부.
+- `.github/workflows/play-closed-test.yml`, `.github/workflows/release.yml`: automatic-only gate 적용. **명시적 수동 앱 릴리스**는 기존 승인 조건을 따르며 방해하지 않음.
+- `.github/workflows/play-listing-images.yml`: 이번 보호 대상으로 삼지 않으므로, 이미지 변경은 동일 HEAD 전체 CI 성공 후 기존 이미지 등록 자동화를 그대로 진행.
+- `scripts/test-app-release-change.py`: 스토어 파일/CI-only 변경 시 앱 자동 릴리스 차단 및 앱 소스 변경 시 기존 자동 릴리스 허용을 회귀 검사.
+
+주의: 스토어 이미지 edit commit만으로 Google Play 외부 공개나 심사 완료가 증명되지는 않음.

@@ -4,6 +4,10 @@ on:
   workflow_dispatch:
   pull_request:
     paths:
+      - ".github/workflows/play-listing-images.yml"
+      - "scripts/publish-play-listing-images.py"
+      - "scripts/test-play-listing-images.py"
+      - "store/google-play/**"
       - ".github/workflows/emulator-smoke.yml"
       - ".github/workflows/release.yml"
       - ".github/workflows/android.yml"
@@ -45,6 +49,10 @@ on:
   push:
     branches: [main]
     paths:
+      - ".github/workflows/play-listing-images.yml"
+      - "scripts/publish-play-listing-images.py"
+      - "scripts/test-play-listing-images.py"
+      - "store/google-play/**"
       - ".github/workflows/emulator-smoke.yml"
       - ".github/workflows/release.yml"
       - ".github/workflows/android.yml"

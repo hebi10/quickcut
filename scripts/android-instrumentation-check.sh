@@ -50,6 +50,23 @@ printf 'gradle_exit=%s\nphase_exit=%s\n' "$preflight_gradle_status" "$first_fail
 # Native failures must not hide UI/recovery results. Always run the full suite,
 # using fresh XML so a preflight report cannot satisfy the unfiltered gate.
 rm -rf "$RESULTS" "$REPORTS" quickcut-main10-full
+# Only API35 has observed a Pixel Launcher ANR obscuring editor/IME tests.
+# The watchdog accepts an exact system "Wait" dialog only; never QuickCut
+# crashes, arbitrary popups, or a failed instrumented test.
+if [[ "${QUICKCUT_EMULATOR_API:-}" == "35" ]]; then
+  mkdir -p quickcut-host-diagnostics
+  python3 -u "$SCRIPT_DIR/android-system-anr-watchdog.py" \
+    --max-seconds 3600 --poll-seconds 2 \
+    > quickcut-host-diagnostics/system-anr-watchdog.log 2>&1 &
+  system_anr_watchdog_pid=$!
+  stop_system_anr_watchdog() {
+    if kill -0 "$system_anr_watchdog_pid" 2>/dev/null; then
+      kill "$system_anr_watchdog_pid" 2>/dev/null || true
+      wait "$system_anr_watchdog_pid" || true
+    fi
+  }
+  trap stop_system_anr_watchdog EXIT
+fi
 run_checked "Clear full-suite Main10 evidence" timeout --kill-after=2s 10s adb shell rm -rf /data/local/tmp/quickcut-main10
 # API29: preserve all 292 original tests, but separate the date/Media3
 # codec stress classes into fresh instrumentation processes. Consecutive

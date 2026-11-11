@@ -9,6 +9,7 @@ import androidx.activity.compose.LocalActivityResultRegistryOwner
 import androidx.core.app.ActivityOptionsCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -458,16 +459,18 @@ class TrimInputInstrumentedTest {
 
     private fun waitForKeyboard(visible: Boolean) {
         if (visible) {
+            // An emulator launcher ANR steals window focus and makes direct
+            // InputMethodManager.showSoftInput() fail ("view is not served").
+            // Wait for the actual editor window before requesting its Compose IME.
+            composeRule.waitUntil(20_000L) {
+                composeRule.activity.window.decorView.hasWindowFocus()
+            }
+            composeRule.onAllNodes(hasSetTextAction())[0].performClick()
+            composeRule.onAllNodes(hasSetTextAction())[0].assertIsFocused()
             composeRule.runOnUiThread {
-                val activity = composeRule.activity
-                val focused = checkNotNull(activity.window.decorView.findFocus()) {
-                    "Detailed trim input must retain focus before showing the IME"
-                }
-                val input = activity.getSystemService(Context.INPUT_METHOD_SERVICE)
-                    as InputMethodManager
-                focused.requestFocus()
-                input.restartInput(focused)
-                input.showSoftInput(focused, InputMethodManager.SHOW_IMPLICIT)
+                val window = composeRule.activity.window
+                WindowInsetsControllerCompat(window, window.decorView)
+                    .show(WindowInsetsCompat.Type.ime())
             }
         }
         composeRule.waitUntil(20_000L) {

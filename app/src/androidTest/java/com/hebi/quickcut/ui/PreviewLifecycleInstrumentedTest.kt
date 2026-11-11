@@ -105,6 +105,20 @@ class PreviewLifecycleInstrumentedTest {
         }
     }
 
+    @Test fun anImmediatelyFinishedExportDoesNotCrashThePendingForegroundService() {
+        compose.runOnIdle {
+            val id = ExportWorkMonitor.begin(compose.activity, "Immediate export completion", {})
+            ExportWorkMonitor.finish(id)
+            assertFalse(ExportWorkMonitor.isRunning)
+        }
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+        Thread.sleep(6_000L)
+        compose.runOnIdle {
+            assertFalse(ExportWorkMonitor.isRunning)
+            assertNull(ExportWorkMonitor.status.value)
+        }
+    }
+
     @Test fun preparationFailureFromOnStartIsReportedWithoutCrashingLifecycleDispatch() {
         compose.runOnIdle {
             player.failPreparation = true

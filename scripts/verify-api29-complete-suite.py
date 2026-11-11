@@ -5,11 +5,18 @@ import sys
 import xml.etree.ElementTree as ET
 
 DATE = "com.hebi.quickcut.media.BatchDateExportInstrumentedTest"
+OFFSCREEN = "com.hebi.quickcut.export.BackgroundExportInstrumentedTest"
 MEDIA3 = "com.hebi.quickcut.export.BackgroundMedia3ExportInstrumentedTest"
 ISOLATED = {
     "date": {
         (DATE, "originalDatePreservesVideoCreationDate"),
         (DATE, "currentDateSavesAsNewVideo"),
+    },
+    "offscreen_single": {
+        (OFFSCREEN, "actualExportFinishesOffscreenAndItsResultSurvivesActivityRecreation"),
+    },
+    "offscreen_batch": {
+        (OFFSCREEN, "batchContinuesToTheSecondFileAndPublishesBothWhileScreenIsOff"),
     },
     "media3": {
         (MEDIA3, "media3ProcessingPublishesAValidOutputAfterAppSwitchAndScreenOff"),
@@ -17,13 +24,14 @@ ISOLATED = {
     },
 }
 TOTAL_COUNT = 292
-REST_COUNT = 288
+REST_COUNT = 286
+PHASES = ("date", "remaining", "offscreen_single", "offscreen_batch", "media3")
 
 
 def verify(directory: Path):
-    phases = ("date", "remaining", "media3")
+    phases = PHASES
     files = list(directory.rglob("TEST-*.xml"))
-    if len(files) != 3 or {p.name for p in files} != {
+    if len(files) != len(phases) or {p.name for p in files} != {
         f"TEST-api29-{phase}.xml" for phase in phases
     }:
         raise ValueError("Missing, extra or stale API29 suite XML files")
@@ -37,7 +45,7 @@ def verify(directory: Path):
         if not suites:
             raise ValueError(f"{phase}: no JUnit testsuite elements")
         cases = list(document.iter("testcase"))
-        expected = 2 if phase in ISOLATED else REST_COUNT
+        expected = len(ISOLATED[phase]) if phase in ISOLATED else REST_COUNT
         if len(cases) != expected or int(document.get("tests", "-1")) != expected:
             raise ValueError(f"{phase}: expected {expected} cases, got {len(cases)}")
         if any(int(document.get(key, "-1")) for key in ("errors", "failures", "skipped")):
@@ -64,8 +72,8 @@ def verify(directory: Path):
             covered.add(ident)
         if phase in ISOLATED and found != ISOLATED[phase]:
             raise ValueError(f"{phase}: required original tests were not executed")
-        if phase == "remaining" and any(cls in (DATE, MEDIA3) for cls, _ in found):
-            raise ValueError("remaining: an isolated test was executed twice")
+        if phase == "remaining" and any(cls in (DATE, OFFSCREEN, MEDIA3) for cls, _ in found):
+            raise ValueError("remaining: an isolated background/export test was executed twice")
         print(f"API29 {phase}: verified {len(found)} passing tests")
     if len(covered) != TOTAL_COUNT:
         raise ValueError(f"API29 coverage missing: {len(covered)} of {TOTAL_COUNT}")

@@ -99,18 +99,26 @@ if [[ "${QUICKCUT_EMULATOR_API:-}" == 29 ]]; then
       run_checked "Preserve API29 $phase XML" cp -- "${xmls[0]}" "$phase_dir/TEST-api29-$phase.xml"
     fi
   }
-  # Each original test runs once. Run Media3 screen-off stress last, so its
-  # codec state cannot contaminate the subsequent date-export test.
+  # API29: background-screen-off tests share MainActivity, native encoder and
+  # Android Settings state. A 4GB emulator stalled after the batch-screen-off
+  # test while launching the single-screen-off test (101/288 completed).
+  # Execute every original test exactly once, but isolate the two high-risk
+  # methods in separate instrumentation processes after the 286 regular tests.
+  # Keep the existing Media3 screen-off stress process last.
   run_api29_phase date \
     "-Pandroid.testInstrumentationRunnerArguments.class=com.hebi.quickcut.media.BatchDateExportInstrumentedTest" 10m
   run_api29_phase remaining \
-    "-Pandroid.testInstrumentationRunnerArguments.notClass=com.hebi.quickcut.media.BatchDateExportInstrumentedTest,com.hebi.quickcut.export.BackgroundMedia3ExportInstrumentedTest" 25m
+    "-Pandroid.testInstrumentationRunnerArguments.notClass=com.hebi.quickcut.media.BatchDateExportInstrumentedTest,com.hebi.quickcut.export.BackgroundExportInstrumentedTest,com.hebi.quickcut.export.BackgroundMedia3ExportInstrumentedTest" 25m
+  run_api29_phase offscreen_single \
+    "-Pandroid.testInstrumentationRunnerArguments.class=com.hebi.quickcut.export.BackgroundExportInstrumentedTest#actualExportFinishesOffscreenAndItsResultSurvivesActivityRecreation" 10m
+  run_api29_phase offscreen_batch \
+    "-Pandroid.testInstrumentationRunnerArguments.class=com.hebi.quickcut.export.BackgroundExportInstrumentedTest#batchContinuesToTheSecondFileAndPublishesBothWhileScreenIsOff" 10m
   run_api29_phase media3 \
     "-Pandroid.testInstrumentationRunnerArguments.class=com.hebi.quickcut.export.BackgroundMedia3ExportInstrumentedTest" 15m
 
   rm -rf "$RESULTS"
   mkdir -p "$RESULTS/debug"
-  for phase in date remaining media3; do
+  for phase in date remaining offscreen_single offscreen_batch media3; do
     if [[ -f "$phase_dir/TEST-api29-$phase.xml" ]]; then
       run_checked "Restore API29 $phase XML" \
         cp -- "$phase_dir/TEST-api29-$phase.xml" "$RESULTS/debug/"

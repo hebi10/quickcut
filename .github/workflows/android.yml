@@ -102,6 +102,7 @@ jobs:
           python3 scripts/test-dialog-geometry.py
           python3 scripts/test-launcher-icon.py
           python3 scripts/test-release-gate.py
+          python3 scripts/test-app-release-change.py
           python3 scripts/test-play-publisher.py
           python3 scripts/test-play-bundle.py
           python3 scripts/test-runtime-publication-metadata.py

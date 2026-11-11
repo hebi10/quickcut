@@ -1,0 +1,28 @@
+name: QuickCut explicitly approved closed test request
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  request-closed:
+    if: >-
+      github.repository == 'hebi10/quickcut' &&
+      github.event.issue.number == 48 &&
+      github.event.issue.pull_request != null &&
+      github.event.comment.user.login == 'hebi10' &&
+      github.event.comment.body == '/deploy-quickcut-closed-20261111'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Dispatch existing closed alpha workflow on main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/actions/workflows/play-closed-test.yml/dispatches" \
+            -f ref=main \
+            -f 'inputs[target]=closed'

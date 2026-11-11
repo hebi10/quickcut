@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """Offline safety tests for one-edit Google Play image publication."""
 import importlib.util
+import hashlib
+import json
 from pathlib import Path
+import shutil
+import tempfile
 from unittest.mock import patch
 import unittest
 
@@ -23,6 +27,17 @@ class ListingAssetTests(unittest.TestCase):
     def test_wrong_directory_fails_closed(self):
         with self.assertRaisesRegex(ValueError, "exactly eight"):
             mod.verified_assets(Path("/this-does-not-exist"))
+
+    def test_approved_screenshot_digest_mismatch_blocks_upload(self):
+        with tempfile.TemporaryDirectory() as temp:
+            cloned = Path(temp) / "google-play"
+            shutil.copytree(mod.FOLDER, cloned)
+            manifest = cloned / "ko-KR" / "phoneScreenshots" / "manifest.json"
+            data = json.loads(manifest.read_text(encoding="utf-8"))
+            data["screenshots"][0]["sha256"] = "0" * 64
+            manifest.write_text(json.dumps(data), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "approved final-copy"):
+                mod.verified_assets(cloned)
 
     def test_no_listing_does_not_delete_any_current_images(self):
         called = []
@@ -68,24 +83,62 @@ class ListingAssetTests(unittest.TestCase):
 
     def test_exactly_three_types_and_eight_phone_images(self):
         records = []
+        remote = {kind: [] for kind in ("icon", "featureGraphic", "phoneScreenshots")}
         def fake(token, method, path, body=None, asset=None):
             records.append((method, path, asset))
             if method == "POST" and path == "/edits":
                 return {"id": "test_edit"}
             if method == "GET" and path.endswith("/listings"):
                 return {"listings": [{"language": "ko-KR"}]}
+            kind = path.rsplit("/", 1)[-1]
+            if method == "GET":
+                return {"images": remote[kind]}
+            if method == "DELETE" and "/listings/" in path:
+                remote[kind].clear()
             if method == "POST" and asset is not None:
+                remote[kind].append({
+                    "id": "test-image",
+                    "sha256": hashlib.sha256(Path(asset).read_bytes()).hexdigest(),
+                })
                 return {"image": {"id": "test-image"}}
             return {}
         assets, _ = mod.verified_assets()
         with patch.object(mod, "play_request", side_effect=fake):
             result = mod.publish("dummy", assets, commit=True)
         self.assertTrue(result["uploaded"])
+        self.assertEqual(result["mode"], "committed")
+        self.assertTrue(result["precommit_sha256_verified"])
+        self.assertFalse(result["review_or_publication_verified"])
         uploads = [r for r in records if r[2] is not None]
         self.assertEqual(len(uploads), 10)
         self.assertEqual(len([r for r in records if r[0] == "DELETE"]), 3)
         self.assertEqual(len([r for r in records if r[1].endswith(":commit")]), 1)
         self.assertFalse(any("/tracks" in path for _, path, _ in records))
+
+    def test_bad_uploaded_sha_never_reaches_play_commit(self):
+        records = []
+        assets, _ = mod.verified_assets()
+        remote = {kind: [] for kind in assets}
+        def fake(token, method, path, body=None, asset=None):
+            records.append((method, path))
+            if method == "POST" and path == "/edits":
+                return {"id": "test_edit"}
+            if method == "GET" and path.endswith("/listings"):
+                return {"listings": [{"language": "ko-KR"}]}
+            kind = path.rsplit("/", 1)[-1]
+            if method == "GET":
+                return {"images": remote[kind]}
+            if method == "DELETE" and "/listings/" in path:
+                remote[kind].clear()
+            if method == "POST" and asset is not None:
+                remote[kind].append({"id": "test-image", "sha256": "0" * 64})
+                return {"image": {"id": "test-image"}}
+            return {}
+        with patch.object(mod, "play_request", side_effect=fake):
+            with self.assertRaisesRegex(ValueError, "does not match approved"):
+                mod.publish("dummy", assets, commit=True)
+        self.assertFalse(any(path.endswith(":commit") for _, path in records))
+        self.assertIn(("DELETE", "/edits/test_edit"), records)
 
 
 if __name__ == "__main__":

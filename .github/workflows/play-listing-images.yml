@@ -1,0 +1,113 @@
+name: QuickCut Play listing images
+
+on:
+  pull_request:
+    paths:
+      - "store/google-play/**"
+      - "scripts/publish-play-listing-images.py"
+      - "scripts/test-play-listing-images.py"
+      - ".github/workflows/play-listing-images.yml"
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: Upload the approved icon, feature graphic and eight Korean phone screenshots
+        required: true
+        type: boolean
+        default: false
+  workflow_run:
+    workflows: [Android build, Android emulator smoke]
+    branches: [main]
+    types: [completed]
+
+concurrency:
+  group: quickcut-play-test-edit
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+  id-token: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          persist-credentials: false
+      - name: Verify exact assets and PNG dimensions
+        run: python3 scripts/publish-play-listing-images.py --check-only
+      - name: Exercise safe publisher decisions without network calls
+        run: python3 scripts/test-play-listing-images.py
+
+  publish:
+    needs: validate
+    if: >-
+      (github.event_name == 'workflow_dispatch' &&
+       github.ref == 'refs/heads/main' && inputs.apply == true) ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.repository.full_name == github.repository &&
+       github.event.workflow_run.head_repository.full_name == github.repository &&
+       (github.event.workflow_run.event == 'push' ||
+        github.event.workflow_run.event == 'workflow_dispatch'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          persist-credentials: false
+      - name: Require latest exact-main Android and emulator CI to both pass
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 scripts/verify-release-gate.py --mode play
+          if ! grep -qx 'ready=true' "$GITHUB_OUTPUT"; then
+            echo "::error::Exact main HEAD is not fully verified; Play images were not edited."
+            exit 1
+          fi
+      - name: Choose existing Google Play credentials
+        id: preflight
+        env:
+          PLAY_IDENTITY_PROVIDER: ${{ vars.QUICKCUT_PLAY_WORKLOAD_IDENTITY_PROVIDER }}
+          PLAY_SERVICE_ACCOUNT: ${{ vars.QUICKCUT_PLAY_SERVICE_ACCOUNT }}
+          PLAY_CREDENTIALS_JSON: ${{ secrets.QUICKCUT_PLAY_SERVICE_ACCOUNT_JSON }}
+        run: |
+          if [[ -n "$PLAY_IDENTITY_PROVIDER" && -n "$PLAY_SERVICE_ACCOUNT" ]]; then
+            echo 'auth_mode=wif' >> "$GITHUB_OUTPUT"
+          elif [[ -n "$PLAY_CREDENTIALS_JSON" ]]; then
+            echo 'auth_mode=json' >> "$GITHUB_OUTPUT"
+          else
+            echo '::error::No existing authorized Google Play credentials for listing images.'
+            exit 1
+          fi
+      - name: Authenticate Play with Workload Identity Federation
+        if: steps.preflight.outputs.auth_mode == 'wif'
+        id: auth_wif
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
+        with:
+          workload_identity_provider: ${{ vars.QUICKCUT_PLAY_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.QUICKCUT_PLAY_SERVICE_ACCOUNT }}
+          token_format: access_token
+          access_token_scopes: https://www.googleapis.com/auth/androidpublisher
+          create_credentials_file: false
+          export_environment_variables: false
+      - name: Authenticate Play with existing service account JSON
+        if: steps.preflight.outputs.auth_mode == 'json'
+        id: auth_json
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
+        with:
+          credentials_json: ${{ secrets.QUICKCUT_PLAY_SERVICE_ACCOUNT_JSON }}
+          token_format: access_token
+          access_token_scopes: https://www.googleapis.com/auth/androidpublisher
+          create_credentials_file: false
+          export_environment_variables: false
+      - name: Apply the existing ko-KR listing images in one non-retrying edit
+        env:
+          PLAY_ACCESS_TOKEN: ${{ steps.auth_wif.outputs.access_token || steps.auth_json.outputs.access_token }}
+        run: python3 scripts/publish-play-listing-images.py --publish

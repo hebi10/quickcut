@@ -45,6 +45,15 @@ def verified_assets(folder=FOLDER):
             entries.append({"file": str(file), "bytes": len(data),
                             "sha256": hashlib.sha256(data).hexdigest()})
         summary[kind] = entries
+    manifest = json.loads((folder / LOCALE / "phoneScreenshots" / "manifest.json").read_text(encoding="utf-8"))
+    screenshots = manifest.get("screenshots", [])
+    if manifest.get("locale") != LOCALE or not isinstance(screenshots, list) or len(screenshots) != 8:
+        raise ValueError("Screenshot approval manifest does not match the Korean listing")
+    for entry, approved in zip(summary["phoneScreenshots"], screenshots):
+        if (not isinstance(approved, dict)
+                or Path(entry["file"]).name != approved.get("name")
+                or entry["sha256"] != approved.get("sha256")):
+            raise ValueError("Screenshot content differs from the approved final-copy manifest")
     return assets, summary
 
 
@@ -111,10 +120,26 @@ def publish(token, assets, commit=False):
                 result = play_request(token, "POST", endpoint, asset=file)
                 if not result.get("image", {}).get("id"):
                     raise ValueError("Google Play image upload did not return an image ID")
+        # This is a readback inside the same uncommitted edit: we can reject
+        # a bad server-side image inventory without replacing the live listing.
+        # A committed edit is a separate Play review/publication state.
+        for kind, files in assets.items():
+            endpoint = prefix + "/listings/" + LOCALE + "/" + kind
+            response = play_request(token, "GET", endpoint)
+            remote = response.get("images", [])
+            if not isinstance(remote, list) or any(not isinstance(item, dict) for item in remote):
+                raise ValueError("Google Play returned malformed uploaded image inventory")
+            actual = [item.get("sha256", "").lower() for item in remote]
+            expected = [hashlib.sha256(file.read_bytes()).hexdigest() for file in files]
+            if actual != expected:
+                raise ValueError(f"Google Play uploaded {kind} does not match approved file hashes")
         play_request(token, "POST", prefix + ":validate", {})
+        # Never retry an uncertain commit or destroy its edit on a network error.
         committed = True
         play_request(token, "POST", prefix + ":commit")
-        return {"mode": "publish", "locale": LOCALE, "uploaded": True,
+        return {"mode": "committed", "locale": LOCALE, "uploaded": True,
+                "precommit_sha256_verified": True,
+                "review_or_publication_verified": False,
                 "images": {key: len(value) for key, value in assets.items()}}
     finally:
         if not committed:

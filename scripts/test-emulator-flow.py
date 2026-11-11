@@ -31,12 +31,17 @@ if name == "gradle":
         phase = "remaining"
     elif any("android.testInstrumentationRunnerArguments.class=com.hebi.quickcut.media.BatchDateExportInstrumentedTest" in a for a in args):
         phase = "date"
+    elif any("android.testInstrumentationRunnerArguments.class=com.hebi.quickcut.export.BackgroundExportInstrumentedTest#actualExportFinishesOffscreenAndItsResultSurvivesActivityRecreation" in a for a in args):
+        phase = "offscreen_single"
+    elif any("android.testInstrumentationRunnerArguments.class=com.hebi.quickcut.export.BackgroundExportInstrumentedTest#batchContinuesToTheSecondFileAndPublishesBothWhileScreenIsOff" in a for a in args):
+        phase = "offscreen_batch"
     elif any("android.testInstrumentationRunnerArguments.class=com.hebi.quickcut.export.BackgroundMedia3ExportInstrumentedTest" in a for a in args):
         phase = "media3"
     else:
         phase = "full"
     status = int(os.environ.get(phase.upper() + "_STATUS", os.environ.get("FULL_STATUS", "0")))
-    count = {"preflight": 1, "date": 2, "remaining": 288, "media3": 2}.get(
+    count = {"preflight": 1, "date": 2, "remaining": 286, "offscreen_single": 1,
+             "offscreen_batch": 1, "media3": 2}.get(
         phase, int(os.environ.get("FULL_COUNT", "152")))
     failed = status != 0 or (phase in ("full", "remaining") and os.environ.get("FULL_XML_FAILED") == "1")
     results = root / "app/build/outputs/androidTest-results/connected"
@@ -73,6 +78,11 @@ if name == "gradle":
         if phase == "date":
             classname = "com.hebi.quickcut.media.BatchDateExportInstrumentedTest"
             testname = ("originalDatePreservesVideoCreationDate", "currentDateSavesAsNewVideo")[i]
+        elif phase in ("offscreen_single", "offscreen_batch"):
+            classname = "com.hebi.quickcut.export.BackgroundExportInstrumentedTest"
+            testname = ("actualExportFinishesOffscreenAndItsResultSurvivesActivityRecreation"
+                        if phase == "offscreen_single" else
+                        "batchContinuesToTheSecondFileAndPublishesBothWhileScreenIsOff")
         elif phase == "media3":
             classname = "com.hebi.quickcut.export.BackgroundMedia3ExportInstrumentedTest"
             testname = ("media3ProcessingPublishesAValidOutputAfterAppSwitchAndScreenOff",
@@ -228,16 +238,35 @@ class EmulatorFlowTest(unittest.TestCase):
     def test_api29_keeps_full_suite_and_uses_bounded_30m_budget(self):
         result, _, events, phases = self.run_flow(QUICKCUT_EMULATOR_API="29")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(phases, ["preflight", "date", "remaining", "media3"])
+        self.assertEqual(phases, ["preflight", "date", "remaining", "offscreen_single", "offscreen_batch", "media3"])
         timed = [e[1:3] for e in events if e[0] == "timeout" and len(e) > 3 and e[3] == "gradle"]
         self.assertEqual(timed, [["--kill-after=30s", "10m"], ["--kill-after=30s", "10m"],
-                                 ["--kill-after=30s", "25m"], ["--kill-after=30s", "15m"]])
+                                 ["--kill-after=30s", "25m"], ["--kill-after=30s", "10m"],
+                                 ["--kill-after=30s", "10m"], ["--kill-after=30s", "15m"]])
         self.assertIn("All 292 distinct API29 tests passed", result.stdout)
 
     def test_api29_failed_media3_phase_stays_failed_after_coverage_check(self):
         result, root, _, phases = self.run_flow(QUICKCUT_EMULATOR_API="29", MEDIA3_STATUS=44)
-        self.assertEqual(phases, ["preflight", "date", "remaining", "media3"])
+        self.assertEqual(phases, ["preflight", "date", "remaining", "offscreen_single", "offscreen_batch", "media3"])
         self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((root / "quickcut-stage20-evidence/verified-screens-and-tests.json").exists())
+
+    def test_api29_failed_offscreen_single_fails_closed_with_no_approved_manifest(self):
+        result, root, _, phases = self.run_flow(
+            QUICKCUT_EMULATOR_API="29", OFFSCREEN_SINGLE_STATUS=46)
+        self.assertEqual(phases, ["preflight", "date", "remaining", "offscreen_single",
+                                  "offscreen_batch", "media3"])
+        self.assertEqual(result.returncode, 46)
+        self.assertIn("offscreen_single: failing or skipped tests", result.stdout + result.stderr)
+        self.assertFalse((root / "quickcut-stage20-evidence/verified-screens-and-tests.json").exists())
+
+    def test_api29_failed_offscreen_batch_fails_closed_with_no_approved_manifest(self):
+        result, root, _, phases = self.run_flow(
+            QUICKCUT_EMULATOR_API="29", OFFSCREEN_BATCH_STATUS=47)
+        self.assertEqual(phases, ["preflight", "date", "remaining", "offscreen_single",
+                                  "offscreen_batch", "media3"])
+        self.assertEqual(result.returncode, 47)
+        self.assertIn("offscreen_batch: failing or skipped tests", result.stdout + result.stderr)
         self.assertFalse((root / "quickcut-stage20-evidence/verified-screens-and-tests.json").exists())
 
     def test_stage16_non_png_error_text_does_not_pass_image_integrity_gate(self):

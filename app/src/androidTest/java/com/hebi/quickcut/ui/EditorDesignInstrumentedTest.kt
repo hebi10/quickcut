@@ -386,24 +386,32 @@ class EditorDesignInstrumentedTest {
     }
 
     private fun awaitRenderedPalette(expectLight: Boolean) {
-        // The video/CompositionPlayer can still be drawing after Compose is
-        // idle. Verify the actual app header, not the Android status bar or
-        // the video frame, before assigning a theme label to the PNG.
-        compose.waitUntil(12_000L) {
-            val screenshot = InstrumentationRegistry.getInstrumentation()
-                .uiAutomation.takeScreenshot() ?: return@waitUntil false
-            try {
+        // UIAutomator screenshots must be bounded. Taking a screenshot on
+        // every waitUntil poll exhausted the API29 emulator's graphics memory.
+        // Check only a few rendered frames after Compose becomes idle.
+        compose.waitForIdle()
+        val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+        var lastBrightness: Int? = null
+        repeat(5) { attempt ->
+            if (attempt > 0) Thread.sleep(300L)
+            val screenshot = automation.takeScreenshot() ?: return@repeat
+            val brightness = try {
                 val color = screenshot.getPixel(
                     (screenshot.width / 25).coerceIn(0, screenshot.width - 1),
                     (screenshot.height / 10).coerceIn(0, screenshot.height - 1),
                 )
-                val luminance = (Color.red(color) + Color.green(color) +
+                (Color.red(color) + Color.green(color) +
                     Color.blue(color)) / 3
-                if (expectLight) luminance >= 170 else luminance <= 110
             } finally {
                 screenshot.recycle()
             }
+            lastBrightness = brightness
+            if (if (expectLight) brightness >= 170 else brightness <= 110) return
         }
+        throw AssertionError(
+            "Editor theme not rendered: expectedLight=$expectLight, " +
+                "lastBrightness=$lastBrightness"
+        )
     }
 
     private fun capture(name: String) {

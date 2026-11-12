@@ -21,9 +21,10 @@ internal object Ui07aVisualEvidence {
         val instrument = InstrumentationRegistry.getInstrumentation()
         var accepted: Bitmap? = null
         var sampledColors = 0
-        for (attempt in 0 until 8) {
-            Thread.sleep(if (attempt == 0) 350L else 220L)
-            val shot = instrument.uiAutomation.takeScreenshot() ?: continue
+        val automation = instrument.uiAutomation
+        for (attempt in 0 until 3) {
+            Thread.sleep(if (attempt == 0) 450L else 300L)
+            val shot = automation.takeScreenshot() ?: continue
             if (shot.width < 200 || shot.height < 200) {
                 shot.recycle()
                 continue

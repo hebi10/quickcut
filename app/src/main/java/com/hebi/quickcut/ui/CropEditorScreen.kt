@@ -30,6 +30,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
@@ -213,7 +214,11 @@ fun CropEditorScreen(
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 CropRatio.entries.forEach { ratio ->
-                    OutlinedButton(
+                    // FilterChip owns the selected semantics as well as the
+                    // accessible click target; a Button with an attached
+                    // selected modifier did not update reliably after taps.
+                    FilterChip(
+                        selected = preset == ratio,
                         onClick = {
                             preset = ratio
                             if (ratio == CropRatio.ORIGINAL) region = CropRegion.FULL
@@ -222,16 +227,16 @@ fun CropEditorScreen(
                             }
                         },
                         modifier = Modifier.width(86.dp).heightIn(min = 48.dp)
-                            .testTag("crop-preset-${ratio.name}")
-                            .semantics { this.selected = preset == ratio },
+                            .testTag("crop-preset-${ratio.name}"),
                         border = androidx.compose.foundation.BorderStroke(1.dp,
                             if (preset == ratio) palette.accent else palette.border),
                         shape = CutShape,
-                    ) {
-                        Text(ratio.label,
-                            color = if (preset == ratio) palette.secondaryAccent
-                                else palette.primaryText)
-                    }
+                        label = {
+                            Text(ratio.label,
+                                color = if (preset == ratio) palette.primaryText
+                                    else palette.secondaryText)
+                        },
+                    )
                 }
             }
             Text("위치 및 확대", color = palette.primaryText,

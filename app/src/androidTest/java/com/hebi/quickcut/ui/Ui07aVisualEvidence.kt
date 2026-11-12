@@ -19,22 +19,35 @@ internal object Ui07aVisualEvidence {
             "Invalid UI-07-A screenshot name: $name"
         }
         val instrument = InstrumentationRegistry.getInstrumentation()
-        val screenshot = checkNotNull(instrument.uiAutomation.takeScreenshot()) {
-            "Android window screenshot unavailable: $name"
-        }
-        try {
-            check(screenshot.width >= 200 && screenshot.height >= 200) {
-                "Invalid device screenshot geometry: $name"
+        var accepted: Bitmap? = null
+        var sampledColors = 0
+        for (attempt in 0 until 8) {
+            Thread.sleep(if (attempt == 0) 350L else 220L)
+            val shot = instrument.uiAutomation.takeScreenshot() ?: continue
+            if (shot.width < 200 || shot.height < 200) {
+                shot.recycle()
+                continue
             }
             val samples = HashSet<Int>()
-            for (row in 1..48) for (column in 1..32) {
-                val x = screenshot.width * column / 33
-                val y = screenshot.height * row / 49
-                samples.add(screenshot.getPixel(x, y) and 0x00FFFFFF)
+            // Exclude status/navigation bars: their pixels can make a completely
+            // blank application frame appear to have multiple colors.
+            for (row in 9..42) for (column in 4..28) {
+                samples.add(shot.getPixel(
+                    shot.width * column / 32,
+                    shot.height * row / 50,
+                ) and 0x00FFFFFF)
             }
-            check(samples.size >= 3) {
-                "Blank/flat Android UI screenshot: $name (${samples.size} sampled colors)"
+            sampledColors = samples.size
+            if (sampledColors >= 3) {
+                accepted = shot
+                break
             }
+            shot.recycle()
+        }
+        val screenshot = checkNotNull(accepted) {
+            "Blank Android UI screenshot: $name ($sampledColors content colors)"
+        }
+        try {
             val dir = File(instrument.targetContext.filesDir, "design-review")
             check(dir.isDirectory || dir.mkdirs())
             val target = File(dir, name)

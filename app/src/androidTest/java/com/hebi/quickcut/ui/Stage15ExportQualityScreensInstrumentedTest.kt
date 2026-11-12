@@ -72,6 +72,7 @@ class Stage15ExportQualityScreensInstrumentedTest {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(360.dp, 640.dp))) {
                 QuickCutTheme(modeOverride = theme) {
                     if (showCompleted) {
+                        Ui07aAppSafeSurface {
                         CompletedScreen(
                             videoUri = uri.toString(),
                             onOpen = {},
@@ -84,6 +85,7 @@ class Stage15ExportQualityScreensInstrumentedTest {
                             originalCount = 1,
                             onRetryOriginalAction = {},
                         )
+                        }
                     } else {
                         SaveOptionsDialog(
                             originalAction = OriginalAction.KEEP,

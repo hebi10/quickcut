@@ -3,6 +3,10 @@ package com.hebi.quickcut.ui
 import android.graphics.Bitmap
 import android.net.Uri
 import androidx.activity.ComponentActivity
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import com.hebi.quickcut.settings.QuickCutThemeMode
 import androidx.compose.ui.test.DeviceConfigurationOverride
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.FontScale
@@ -46,9 +50,10 @@ class Stage16CropScreensInstrumentedTest {
     private fun clip(): VideoClip = VideoClip(1, Uri.fromFile(source).toString(), 8_000)
 
     @Test fun verticalSquareAndFreeformHaveRealVideoCapture() {
+        var theme by mutableStateOf(QuickCutThemeMode.LIGHT)
         compose.setContent {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(360.dp, 640.dp))) {
-                QuickCutTheme {
+                QuickCutTheme(modeOverride = theme) {
                     CropEditorScreen(clip(), onApply = {}, onCancel = {})
                 }
             }
@@ -65,6 +70,10 @@ class Stage16CropScreensInstrumentedTest {
         compose.onNodeWithTag("crop-preset-FREE").assertIsSelected()
         compose.onNodeWithTag("crop-free-width").performScrollTo().assertIsDisplayed()
         capture("stage16_crop_free.png")
+        Ui07aVisualEvidence.capture("ui07a_light_crop.png")
+        compose.runOnIdle { theme = QuickCutThemeMode.DARK }
+        compose.onNodeWithTag("crop-preset-FREE").assertIsSelected()
+        Ui07aVisualEvidence.capture("ui07a_dark_crop.png")
     }
 
     @Test fun largeFontTabletCanReachApplyAction() {

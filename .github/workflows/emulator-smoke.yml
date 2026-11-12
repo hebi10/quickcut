@@ -346,6 +346,13 @@ jobs:
             quickcut-fast-review.png
             quickcut-design-review/
           if-no-files-found: ignore
+      - name: Upload UI-07-A paired theme comparison manifest
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quickcut-ui07a-visual-matrix-api-${{ matrix.api }}
+          path: quickcut-ui07a-evidence/visual-matrix.json
+          if-no-files-found: warn
       - name: Upload Stage 20 verified screen and test manifest
         if: always()
         uses: actions/upload-artifact@v4

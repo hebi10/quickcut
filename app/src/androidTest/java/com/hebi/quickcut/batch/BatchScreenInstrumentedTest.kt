@@ -1,9 +1,6 @@
 package com.hebi.quickcut.batch
 
 import android.graphics.Bitmap
-import androidx.compose.ui.graphics.asAndroidBitmap
-import androidx.compose.ui.test.captureToImage
-import androidx.compose.ui.test.onRoot
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
 import androidx.compose.ui.test.assertIsEnabled
@@ -214,7 +211,11 @@ class BatchScreenInstrumentedTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val folder = File(context.filesDir, "design-review")
         check(folder.isDirectory || folder.mkdirs())
-        val bitmap = composeRule.onRoot().captureToImage().asAndroidBitmap()
+        val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+        automation.waitForIdle(300L, 5_000L)
+        val bitmap = checkNotNull(automation.takeScreenshot()) {
+            "Android 시스템 화면 캡처에 실패했습니다."
+        }
         val file = File(folder, name)
         try {
             file.outputStream().use {

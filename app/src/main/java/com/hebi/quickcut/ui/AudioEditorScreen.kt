@@ -4,6 +4,7 @@ import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -132,6 +133,8 @@ fun AudioEditorScreen(
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState())
             .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            Text("오디오 미리보기", color = palette.primaryText,
+                style = MaterialTheme.typography.titleMedium)
             Box(Modifier.fillMaxWidth().height(200.dp).background(Color.Black)) {
                 AndroidView(
                     factory = { viewContext -> PlayerView(viewContext).apply {
@@ -182,6 +185,29 @@ fun AudioEditorScreen(
                 }
             }
 
+            Column(
+                Modifier.fillMaxWidth()
+                    .background(palette.surface, CutShape)
+                    .border(1.dp, palette.border, CutShape)
+                    .padding(CutSpacing.md)
+                    .testTag("ui05a-audio-summary"),
+                verticalArrangement = Arrangement.spacedBy(CutSpacing.xs),
+            ) {
+                Text("음량·페이드 설정 비교", color = palette.primaryText,
+                    style = MaterialTheme.typography.titleSmall)
+                Text(
+                    "이전 · " + (if (clip.muted) "음소거" else "음량 ${clip.audio.volumePercent}%") +
+                        " · 인 ${formatTime(clip.audio.fadeInMs)} · 아웃 ${formatTime(clip.audio.fadeOutMs)}",
+                    color = palette.secondaryText,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text(
+                    "현재 · " + (if (muted) "음소거" else "음량 ${volume}%") +
+                        " · 인 ${formatTime(fadeIn)} · 아웃 ${formatTime(fadeOut)}",
+                    color = palette.primaryText,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
             if (muted) {
                 Text("현재 클립이 음소거 상태입니다. 스위치를 끄면 소리 조절을 다시 사용할 수 있습니다.",
                     color = palette.secondaryText, style = MaterialTheme.typography.bodySmall)

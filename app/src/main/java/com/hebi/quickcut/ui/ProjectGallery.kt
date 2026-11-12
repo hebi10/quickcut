@@ -52,24 +52,52 @@ internal fun ProjectCard(
     val palette = LocalCutPalette.current
     var confirmDelete by remember(item.id) { mutableStateOf(false) }
     Row(
-        Modifier.fillMaxWidth().background(palette.surface, CutShape)
+        Modifier.fillMaxWidth().heightIn(min = 96.dp)
+            .background(palette.surface, CutShape)
             .border(1.dp, palette.border, CutShape)
-            .clickable { onOpen(item.id) }.padding(CutSpacing.md),
+            .testTag("quickcut-project-card-" + item.id)
+            .clickable { onOpen(item.id) }
+            .padding(CutSpacing.lg),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(CutSpacing.md),
     ) {
-        ClipThumbnail(item.thumbnailUri, item.thumbnailTimeMs,
-            Modifier.size(84.dp).background(palette.panel, CutShape))
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(CutSpacing.xs)) {
-            Text(item.title, style = MaterialTheme.typography.titleMedium,
-                color = palette.primaryText, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Text("${item.clipCount}개 클립 · " +
-                DateFormat.getDateInstance(DateFormat.SHORT).format(Date(item.modifiedAt)),
-                style = MaterialTheme.typography.bodySmall, color = palette.secondaryText)
+        ClipThumbnail(
+            item.thumbnailUri,
+            item.thumbnailTimeMs,
+            Modifier.size(68.dp).background(palette.panel, CutShape),
+        )
+        Column(
+            Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(CutSpacing.xs),
+        ) {
+            Text(
+                item.title,
+                style = MaterialTheme.typography.titleMedium,
+                color = palette.primaryText,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                "${item.clipCount}개 클립",
+                style = MaterialTheme.typography.bodySmall,
+                color = palette.secondaryText,
+            )
+            Text(
+                "수정 " + DateFormat.getDateInstance(DateFormat.SHORT)
+                    .format(Date(item.modifiedAt)),
+                style = MaterialTheme.typography.bodySmall,
+                color = palette.secondaryText,
+            )
         }
-        IconButton(onClick = { confirmDelete = true }) {
-            Icon(CutIcons.Delete, contentDescription = "프로젝트 삭제",
-                tint = palette.secondaryAccent)
+        IconButton(
+            onClick = { confirmDelete = true },
+            modifier = Modifier.size(CutSizes.touchTarget),
+        ) {
+            Icon(
+                CutIcons.Delete,
+                contentDescription = "프로젝트 삭제",
+                tint = palette.secondaryAccent,
+            )
         }
     }
     if (confirmDelete) {

@@ -1,80 +1,70 @@
 package com.hebi.quickcut.ui
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowForward
-import androidx.compose.material.icons.outlined.ContentCut
-import androidx.compose.material.icons.outlined.History
-import androidx.compose.material.icons.outlined.Movie
-import androidx.compose.material.icons.outlined.VideoLibrary
-import androidx.compose.material.icons.outlined.Home
-import androidx.compose.material.icons.outlined.FolderOpen
-import androidx.compose.material.icons.outlined.Build
-import androidx.compose.material.icons.outlined.Settings
-import androidx.compose.foundation.layout.Box
+import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
-
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Button
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.ColorFilter
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.hebi.quickcut.R
-import com.hebi.quickcut.media.SaveDateMode
 import com.hebi.quickcut.editor.SavedProject
-import com.hebi.quickcut.settings.QuickTrimSettings
+import com.hebi.quickcut.media.SaveDateMode
 import com.hebi.quickcut.settings.QuickCutThemeMode
+import com.hebi.quickcut.settings.QuickTrimSettings
 
 @Composable
 internal fun StudioBrand(modifier: Modifier = Modifier) {
     val palette = LocalCutPalette.current
-    Row(modifier, verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+    Row(
+        modifier,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(CutSpacing.md),
+    ) {
         QuickCutLogo(size = CutSizes.touchTarget)
-        Column {
-            Text("QuickCut", style = MaterialTheme.typography.titleLarge,
-                color = palette.primaryText, fontWeight = FontWeight.Bold)
-            Text("빠르고 간편한 영상 편집", color = palette.secondaryText,
-                fontSize = 11.sp, letterSpacing = 0.2.sp)
+        Column(verticalArrangement = Arrangement.spacedBy(CutSpacing.xs)) {
+            Text(
+                "QuickCut",
+                style = MaterialTheme.typography.titleLarge,
+                color = palette.primaryText,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                "영상 편집 작업대",
+                color = palette.secondaryText,
+                fontSize = 12.sp,
+            )
         }
     }
 }
@@ -100,131 +90,207 @@ internal fun StudioStartScreen(
 ) {
     val palette = LocalCutPalette.current
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
+
     Column(Modifier.fillMaxSize().background(palette.background)) {
-        Box(Modifier.weight(1f)) {
-            Column(
-                modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
-                    .padding(horizontal = CutSpacing.lg, vertical = CutSpacing.xl),
-                verticalArrangement = Arrangement.spacedBy(CutSpacing.xl),
-            ) {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween) {
+        Column(
+            modifier = Modifier.weight(1f).fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = CutSpacing.lg, vertical = CutSpacing.xl),
+            verticalArrangement = Arrangement.spacedBy(CutSpacing.xl),
+        ) {
+            when (selectedTab) {
+                0 -> {
                     StudioBrand()
-                    if (selectedTab != 3) {
-                        TextButton(onClick = { selectedTab = 3 },
-                            modifier = Modifier.heightIn(min = CutSizes.touchTarget)) {
-                            Icon(CutIcons.Settings, contentDescription = "설정",
-                                tint = palette.secondaryAccent)
+                    Button(
+                        onClick = onQuick,
+                        shape = CutShape,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp)
+                            .testTag("quickcut-home-start"),
+                    ) {
+                        Icon(
+                            CutIcons.Trim,
+                            contentDescription = null,
+                            modifier = Modifier.size(CutSizes.icon),
+                        )
+                        Spacer(Modifier.width(CutSpacing.md))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                "+ 영상 편집 시작하기",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = palette.onAccent,
+                            )
+                            Text(
+                                "영상을 선택해 필요한 구간을 편집하세요.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = palette.onAccent,
+                            )
                         }
                     }
-                }
-                when (selectedTab) {
-                    0 -> {
-                        Button(onClick = onQuick, shape = CutShape,
-                            modifier = Modifier.fillMaxWidth()
-                                .heightIn(min = 60.dp)) {
-                            Icon(CutIcons.Trim, contentDescription = null,
-                                modifier = Modifier.size(CutSizes.icon))
-                            Spacer(Modifier.width(CutSpacing.sm))
-                            Column {
-                                Text("+ 영상 편집 시작하기",
-                                    style = MaterialTheme.typography.titleMedium)
-                                Text("영상 선택 후 바로 편집할 수 있어요.",
-                                    style = MaterialTheme.typography.bodySmall)
-                            }
-                        }
-                        Row(Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text("내 프로젝트", color = palette.primaryText,
-                                style = MaterialTheme.typography.titleMedium)
-                            TextButton(onClick = { selectedTab = 1 },
-                                modifier = Modifier.heightIn(min = CutSizes.touchTarget)) {
+                    if (LocalDensity.current.fontScale >= 1.6f) {
+                        Column {
+                            Text(
+                                "최근 프로젝트",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = palette.primaryText,
+                            )
+                            TextButton(
+                                onClick = { selectedTab = 1 },
+                                modifier = Modifier.heightIn(min = CutSizes.touchTarget),
+                            ) {
                                 Text("전체 보기 >", color = palette.secondaryAccent)
                             }
                         }
+                    } else {
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Text(
+                                "최근 프로젝트",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = palette.primaryText,
+                            )
+                            TextButton(
+                                onClick = { selectedTab = 1 },
+                                modifier = Modifier.heightIn(min = CutSizes.touchTarget),
+                            ) {
+                                Text("전체 보기 >", color = palette.secondaryAccent)
+                            }
+                        }
+                    }
+                    if (projects.isEmpty()) {
+                        Text(
+                            "저장한 프로젝트가 없습니다. 편집한 영상을 프로젝트로 저장하면 여기에서 다시 열 수 있습니다.",
+                            color = palette.secondaryText,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.testTag("quickcut-home-empty-projects"),
+                        )
+                    } else {
                         projects.take(3).forEach { project ->
                             ProjectCard(project, onOpenProject, onDeleteProject)
                         }
-                        if (canRestore) {
-                            OutlinedButton(onClick = onRestore, shape = CutShape,
-                                modifier = Modifier.fillMaxWidth()
-                                    .heightIn(min = CutSizes.primaryButton)) {
-                                Icon(CutIcons.Restore, contentDescription = null)
-                                Spacer(Modifier.width(CutSpacing.md))
-                                Text("이전 편집 이어서 진행")
-                            }
-                        } else {
-                            if (projects.isEmpty()) {
-                                Text("최근 편집한 프로젝트가 없습니다.",
-                                    color = palette.secondaryText,
-                                    style = MaterialTheme.typography.bodySmall)
-                            }
-                        }
-                        OutlinedButton(onClick = { selectedTab = 2 },
+                    }
+                    if (canRestore) {
+                        OutlinedButton(
+                            onClick = onRestore,
                             modifier = Modifier.fillMaxWidth()
                                 .heightIn(min = CutSizes.primaryButton),
-                            shape = CutShape) {
-                            Text("편집 도구 보기")
+                            shape = CutShape,
+                        ) {
+                            Icon(CutIcons.Restore, contentDescription = null)
+                            Spacer(Modifier.width(CutSpacing.sm))
+                            Text("이전 편집 이어서 진행")
                         }
                     }
-                    1 -> {
-                        Text("내 프로젝트", style = MaterialTheme.typography.headlineSmall,
-                            color = palette.primaryText)
+                    OutlinedButton(
+                        onClick = { selectedTab = 2 },
+                        modifier = Modifier.fillMaxWidth()
+                            .heightIn(min = CutSizes.primaryButton),
+                        shape = CutShape,
+                    ) {
+                        Text("편집 도구 보기")
+                    }
+                }
+                1 -> {
+                    Column(verticalArrangement = Arrangement.spacedBy(CutSpacing.xs)) {
+                        Text(
+                            "내 프로젝트",
+                            style = MaterialTheme.typography.headlineSmall,
+                            color = palette.primaryText,
+                        )
+                        Text(
+                            "저장한 프로젝트 ${projects.size}개",
+                            color = palette.secondaryText,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                    if (projects.isEmpty()) {
+                        CutInfoSection(
+                            title = "프로젝트 없음",
+                            message = "영상 편집 후 프로젝트를 저장하면 여기에서 이어서 작업할 수 있습니다.",
+                        )
+                        Button(
+                            onClick = onQuick,
+                            modifier = Modifier.fillMaxWidth()
+                                .heightIn(min = CutSizes.primaryButton),
+                            shape = CutShape,
+                        ) { Text("영상 편집 시작하기") }
+                    } else {
                         projects.forEach { project ->
                             ProjectCard(project, onOpenProject, onDeleteProject)
                         }
-                        if (canRestore) {
-                            OutlinedButton(onClick = onRestore,
-                                modifier = Modifier.fillMaxWidth()
-                                    .heightIn(min = CutSizes.primaryButton), shape = CutShape) {
-                                Icon(CutIcons.Restore, contentDescription = null)
-                                Spacer(Modifier.width(CutSpacing.sm))
-                                Text("이전 편집 이어서 진행")
-                            }
-                        }
-                        if (projects.isEmpty()) {
-                            CutInfoSection(
-                                title = "프로젝트 없음",
-                                message = "영상 편집 후 프로젝트를 저장하면 여기에서 이어서 작업할 수 있습니다.",
-                            )
-                            Button(onClick = onQuick, modifier = Modifier.fillMaxWidth()
-                                .heightIn(min = CutSizes.primaryButton), shape = CutShape) {
-                                Text("영상 편집 시작하기")
-                            }
-                        }
                     }
-                    2 -> {
-                        Text("편집 도구", color = palette.primaryText,
-                            style = MaterialTheme.typography.headlineSmall)
-                        OutlinedButton(onClick = onGallery,
+                    if (canRestore) {
+                        OutlinedButton(
+                            onClick = onRestore,
                             modifier = Modifier.fillMaxWidth()
                                 .heightIn(min = CutSizes.primaryButton),
-                            shape = CutShape) { Text("영상 갤러리") }
-                        StudioModes(onQuick, onBatch, onSelect, onExtraction)
+                            shape = CutShape,
+                        ) {
+                            Icon(CutIcons.Restore, contentDescription = null)
+                            Spacer(Modifier.width(CutSpacing.sm))
+                            Text("이전 편집 이어서 진행")
+                        }
                     }
-                    3 -> {
-                        Text("설정", color = palette.primaryText,
-                            style = MaterialTheme.typography.headlineSmall)
-                        StudioSettings(quickSettings, dateMode, themeMode, onThemeModeChange, onPreferences)
+                }
+                2 -> {
+                    Column(verticalArrangement = Arrangement.spacedBy(CutSpacing.xs)) {
+                        Text(
+                            "편집 도구",
+                            style = MaterialTheme.typography.headlineSmall,
+                            color = palette.primaryText,
+                        )
+                        Text(
+                            "작업 방식에 맞는 도구를 선택하세요.",
+                            color = palette.secondaryText,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                    StudioModes(onQuick, onBatch, onSelect, onExtraction)
+                    OutlinedButton(
+                        onClick = onGallery,
+                        modifier = Modifier.fillMaxWidth()
+                            .heightIn(min = CutSizes.primaryButton),
+                        shape = CutShape,
+                    ) {
+                        Icon(CutIcons.Projects, contentDescription = null)
+                        Spacer(Modifier.width(CutSpacing.sm))
+                        Text("영상 갤러리")
+                    }
+                }
+                3 -> {
+                    Text(
+                        "설정",
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = palette.primaryText,
+                    )
+                    StudioSettings(
+                        quickSettings,
+                        dateMode,
+                        themeMode,
+                        onThemeModeChange,
+                        onPreferences,
+                    )
+                    StudioSettingsPanel("진단 및 정보") {
                         ExportDiagnosticButton()
                         PrivacyPolicyButton()
-                        TextButton(onClick = onLicenses,
-                            modifier = Modifier.heightIn(min = CutSizes.touchTarget)) {
-                            Text("오픈소스 라이선스")
-                        }
+                        TextButton(
+                            onClick = onLicenses,
+                            modifier = Modifier.heightIn(min = CutSizes.touchTarget),
+                        ) { Text("오픈소스 라이선스") }
                     }
                 }
             }
         }
+
         NavigationBar(
-            modifier = Modifier.fillMaxWidth().height(72.dp),
+            modifier = Modifier.fillMaxWidth().heightIn(min = 72.dp),
             containerColor = palette.surface,
             tonalElevation = 0.dp,
         ) {
             val icons = listOf(
-                CutIcons.Home, CutIcons.Projects,
-                CutIcons.Tools, CutIcons.Settings,
+                CutIcons.Home, CutIcons.Projects, CutIcons.Tools, CutIcons.Settings,
             )
             val labels = listOf("홈", "프로젝트", "도구", "설정")
             labels.forEachIndexed { index, label ->
@@ -232,8 +298,11 @@ internal fun StudioStartScreen(
                     selected = selectedTab == index,
                     onClick = { selectedTab = index },
                     icon = {
-                        Icon(icons[index], contentDescription = null,
-                            modifier = Modifier.size(CutSizes.icon))
+                        Icon(
+                            icons[index],
+                            contentDescription = null,
+                            modifier = Modifier.size(CutSizes.icon),
+                        )
                     },
                     label = { Text(label) },
                     alwaysShowLabel = true,
@@ -251,99 +320,106 @@ internal fun StudioStartScreen(
 }
 
 @Composable
-private fun StudioWelcome(showArt: Boolean, onStart: () -> Unit, modifier: Modifier = Modifier,
-    compactHeadline: Boolean = false) {
-    val palette = LocalCutPalette.current
-    Column(modifier.fillMaxWidth()
-        .background(
-            Brush.horizontalGradient(
-                listOf(palette.brandDeep.copy(alpha = 0.86f), palette.panel, palette.surface),
-            ),
-            CutPanelShape,
+private fun StudioModes(
+    onQuick: () -> Unit,
+    onBatch: () -> Unit,
+    onSelect: () -> Unit,
+    onExtraction: () -> Unit,
+) {
+    Column(
+        Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(CutSpacing.md),
+    ) {
+        StudioModeCard(
+            "빠른 자르기", "영상 1개 · 필요한 구간만 빠르게 남기기",
+            CutIcons.Trim, onClick = onQuick,
         )
-        .border(1.dp, palette.brandLight.copy(alpha = 0.55f), CutPanelShape).padding(20.dp)) {
-        Text("FAST · SIMPLE · FOCUSED", color = palette.secondaryAccent,
-            style = MaterialTheme.typography.labelMedium)
-        Spacer(Modifier.height(12.dp))
-        Row(verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Column(Modifier.weight(1f)) {
-                Text("영상은 빠르게,\n편집은 간단하게.", color = palette.primaryText,
-                    style = if (compactHeadline) MaterialTheme.typography.titleMedium.copy(fontSize = 15.sp)
-                        else MaterialTheme.typography.headlineSmall)
-                Spacer(Modifier.height(10.dp))
-                Text("필요한 장면만 자르고 안전하게 저장하세요.",
-                    color = palette.secondaryText, style = MaterialTheme.typography.bodySmall)
-            }
-            if (showArt) {
-                Image(
-                    painter = painterResource(R.drawable.quickcut_studio),
-                    contentDescription = null,
-                    modifier = Modifier.width(132.dp).height(100.dp),
-                    contentScale = ContentScale.Fit,
-                    colorFilter = ColorFilter.tint(palette.secondaryAccent),
+        StudioModeCard(
+            "상세 편집", "자르기·분할·순서 변경을 자유롭게",
+            CutIcons.Detailed, onClick = onSelect,
+        )
+        StudioModeCard(
+            "일괄 편집", "여러 영상 · 같은 설정으로 한 번에",
+            CutIcons.Batch, onClick = onBatch,
+        )
+        StudioModeCard(
+            "여러 구간 추출", "영상 1개 · 여러 장면을 각각 MP4로 저장",
+            CutIcons.Segments, onClick = onExtraction,
+        )
+    }
+}
+
+@Composable
+private fun StudioModeCard(
+    title: String,
+    subtitle: String,
+    icon: ImageVector,
+    onClick: () -> Unit,
+) {
+    val palette = LocalCutPalette.current
+    Surface(
+        onClick = onClick,
+        shape = CutShape,
+        color = palette.surface,
+        contentColor = palette.primaryText,
+        border = BorderStroke(1.dp, palette.border),
+        modifier = Modifier.fillMaxWidth().heightIn(min = 80.dp),
+    ) {
+        Row(
+            Modifier.padding(CutSpacing.lg),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(CutSpacing.md),
+        ) {
+            Icon(
+                icon,
+                contentDescription = null,
+                modifier = Modifier.size(CutSizes.icon),
+                tint = palette.secondaryAccent,
+            )
+            Column(
+                Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(CutSpacing.xs),
+            ) {
+                Text(
+                    title,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = palette.primaryText,
+                )
+                Text(
+                    subtitle,
+                    color = palette.secondaryText,
+                    style = MaterialTheme.typography.bodySmall,
                 )
             }
-        }
-        Spacer(Modifier.height(16.dp))
-        Button(
-            onClick = onStart,
-            shape = CutShape,
-            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
-            modifier = Modifier.fillMaxWidth().heightIn(min = 54.dp),
-        ) {
-            if (LocalDensity.current.fontScale <= 1.4f) {
-                Icon(CutIcons.Detailed, contentDescription = null,
-                    modifier = Modifier.size(CutSizes.icon))
-                Spacer(Modifier.width(8.dp))
-            }
-            Text("영상 편집 시작하기", fontWeight = FontWeight.SemiBold)
+            Icon(
+                CutIcons.Forward,
+                contentDescription = null,
+                modifier = Modifier.size(CutSizes.icon),
+                tint = palette.secondaryText,
+            )
         }
     }
 }
 
 @Composable
-private fun StudioModes(onQuick: () -> Unit, onBatch: () -> Unit,
-    onSelect: () -> Unit, onExtraction: () -> Unit, modifier: Modifier = Modifier) {
+private fun StudioSettingsPanel(
+    title: String,
+    content: @Composable ColumnScope.() -> Unit,
+) {
     val palette = LocalCutPalette.current
-    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("어떤 영상을 편집할까요?", style = MaterialTheme.typography.titleMedium,
-            color = palette.primaryText)
-        StudioModeCard("빠른 자르기", "영상 1개 · 필요한 구간만 빠르게 남기기",
-            CutIcons.Trim, primary = true, onClick = onQuick)
-        StudioModeCard("일괄 편집", "여러 영상 · 같은 설정으로 한 번에",
-            CutIcons.Batch, onClick = onBatch)
-        StudioModeCard("상세 편집", "자르기·분할·순서 변경을 자유롭게",
-            CutIcons.Detailed, onClick = onSelect)
-        StudioModeCard("여러 구간 추출", "영상 1개 · 여러 장면을 각각 MP4로 저장",
-            CutIcons.Segments, onClick = onExtraction)
-    }
-}
-
-@Composable
-private fun StudioModeCard(title: String, subtitle: String, icon: ImageVector,
-    primary: Boolean = false, onClick: () -> Unit) {
-    val palette = LocalCutPalette.current
-    val foreground = if (primary) palette.onAccent else palette.primaryText
-    Surface(onClick = onClick, shape = CutShape,
-        color = if (primary) palette.accent else palette.surface,
-        contentColor = foreground,
-        border = if (primary) null else BorderStroke(1.dp, palette.border),
-        modifier = Modifier.fillMaxWidth().heightIn(min = 84.dp)) {
-        Row(Modifier.padding(horizontal = 16.dp, vertical = 16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            Icon(icon, contentDescription = null, modifier = Modifier.size(CutSizes.icon),
-                tint = if (primary) foreground else palette.accent)
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(title, fontWeight = FontWeight.SemiBold,
-                    style = MaterialTheme.typography.titleSmall)
-                Text(subtitle, color = if (primary) palette.onAccent
-                    else palette.secondaryText, style = MaterialTheme.typography.bodySmall)
-            }
-            Icon(CutIcons.Forward, contentDescription = null,
-                modifier = Modifier.size(CutSizes.icon), tint = foreground)
-        }
+    Column(
+        Modifier.fillMaxWidth()
+            .background(palette.surface, CutPanelShape)
+            .border(1.dp, palette.border, CutPanelShape)
+            .padding(CutSpacing.lg),
+        verticalArrangement = Arrangement.spacedBy(CutSpacing.md),
+    ) {
+        Text(
+            title,
+            color = palette.primaryText,
+            style = MaterialTheme.typography.titleMedium,
+        )
+        content()
     }
 }
 
@@ -356,40 +432,82 @@ private fun StudioSettings(
     onPreferences: () -> Unit,
 ) {
     val palette = LocalCutPalette.current
-    Column(Modifier.fillMaxWidth().background(palette.surface, CutPanelShape)
-        .border(1.dp, palette.border, CutPanelShape).padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text("화면 테마", color = palette.primaryText,
-            style = MaterialTheme.typography.titleSmall)
-        CutChoiceDropdown(
-            label = "테마",
-            selected = themeMode,
-            options = listOf(
-                CutChoice(QuickCutThemeMode.SYSTEM, "시스템 설정"),
-                CutChoice(QuickCutThemeMode.LIGHT, "라이트"),
-                CutChoice(QuickCutThemeMode.DARK, "다크"),
-            ),
-            onSelected = onThemeModeChange,
-        )
-        Spacer(Modifier.height(8.dp))
-        if (LocalDensity.current.fontScale >= 1.6f) {
-            Text("마지막 사용 설정", color = palette.primaryText,
-                style = MaterialTheme.typography.titleSmall)
-            TextButton(onClick = onPreferences, shape = CutShape,
-                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("설정 변경") }
-        } else {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("마지막 사용 설정", modifier = Modifier.weight(1f),
-                    color = palette.primaryText, style = MaterialTheme.typography.titleSmall)
-                TextButton(onClick = onPreferences, shape = CutShape,
-                    modifier = Modifier.heightIn(min = CutSizes.touchTarget)) { Text("설정 변경") }
-            }
+    Column(
+        Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(CutSpacing.md),
+    ) {
+        StudioSettingsPanel("화면") {
+            CutChoiceDropdown(
+                label = "테마",
+                selected = themeMode,
+                options = listOf(
+                    CutChoice(QuickCutThemeMode.SYSTEM, "시스템 설정"),
+                    CutChoice(QuickCutThemeMode.LIGHT, "라이트"),
+                    CutChoice(QuickCutThemeMode.DARK, "다크"),
+                ),
+                onSelected = onThemeModeChange,
+            )
         }
-        Text("앞 " + (settings.leadingMs / 1_000.0) + "초 삭제 · 뒤 " +
-            (settings.trailingMs / 1_000.0) + "초 삭제",
-            color = palette.secondaryText, style = MaterialTheme.typography.bodyMedium)
-        Text((if (settings.muteAudio) "음소거" else "소리 유지") + " · " +
-            (if (dateMode == SaveDateMode.CURRENT) "현재 날짜 저장" else "원본 날짜 유지"),
-            color = palette.mutedText, style = MaterialTheme.typography.bodySmall)
+        StudioSettingsPanel("편집 기본값") {
+            if (LocalDensity.current.fontScale >= 1.6f) {
+                Text(
+                    "마지막 사용 설정",
+                    color = palette.primaryText,
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                TextButton(
+                    onClick = onPreferences,
+                    modifier = Modifier.fillMaxWidth()
+                        .heightIn(min = CutSizes.touchTarget),
+                    shape = CutShape,
+                ) { Text("설정 변경") }
+            } else {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "마지막 사용 설정",
+                        modifier = Modifier.weight(1f),
+                        color = palette.primaryText,
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    TextButton(
+                        onClick = onPreferences,
+                        modifier = Modifier.heightIn(min = CutSizes.touchTarget),
+                        shape = CutShape,
+                    ) { Text("설정 변경") }
+                }
+            }
+            Text(
+                "앞 " + (settings.leadingMs / 1_000.0) + "초 삭제 · 뒤 " +
+                    (settings.trailingMs / 1_000.0) + "초 삭제",
+                color = palette.secondaryText,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(
+                if (settings.muteAudio) "음소거" else "소리 유지",
+                color = palette.secondaryText,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        StudioSettingsPanel("저장") {
+            Text(
+                "결과 영상 날짜",
+                color = palette.primaryText,
+                style = MaterialTheme.typography.titleSmall,
+            )
+            Text(
+                if (dateMode == SaveDateMode.CURRENT) "현재 날짜로 저장"
+                else "원본 날짜 유지",
+                color = palette.secondaryText,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(
+                "원본 영상 처리는 저장할 때 확인합니다.",
+                color = palette.secondaryText,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
     }
 }

@@ -105,23 +105,30 @@ class BatchScreenInstrumentedTest {
     }
 
     private fun waitForTheme(expectLight: Boolean) {
-        // Android 15+ enforces edge-to-edge: statusBarColor is not a reliable
-        // indicator of the Compose palette. Verify an actual app-content pixel.
-        composeRule.waitUntil(15_000L) {
+        // Android 15+ can ignore statusBarColor. Use the actual Compose content
+        // but cap screenshots to avoid exhausting emulator graphics memory.
+        var lastBrightness: Int? = null
+        repeat(8) { attempt ->
+            composeRule.waitForIdle()
+            if (attempt > 0) Thread.sleep(250L)
             val image = composeRule.onRoot().captureToImage().asAndroidBitmap()
-            try {
+            val brightness = try {
                 val color = image.getPixel(
                     (image.width / 25).coerceIn(0, image.width - 1),
                     (image.height / 10).coerceIn(0, image.height - 1),
                 )
-                val brightness = (AndroidColor.red(color) +
+                (AndroidColor.red(color) +
                     AndroidColor.green(color) + AndroidColor.blue(color)) / 3
-                if (expectLight) brightness >= 170 else brightness <= 110
             } finally {
                 image.recycle()
             }
+            lastBrightness = brightness
+            if (if (expectLight) brightness >= 170 else brightness <= 110) return
         }
-        composeRule.waitForIdle()
+        throw AssertionError(
+            "Batch theme did not render: expectedLight=$expectLight, " +
+                "lastBrightness=$lastBrightness"
+        )
     }
 
 

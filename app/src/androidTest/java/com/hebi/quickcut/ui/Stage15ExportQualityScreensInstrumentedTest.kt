@@ -25,6 +25,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.hebi.quickcut.editor.EditTimeline
 import com.hebi.quickcut.editor.OriginalAction
+import com.hebi.quickcut.editor.OriginalActionStatus
 import com.hebi.quickcut.editor.VideoClip
 import com.hebi.quickcut.media.ExportQualitySettings
 import com.hebi.quickcut.media.ExportResolution
@@ -64,22 +65,39 @@ class Stage15ExportQualityScreensInstrumentedTest {
             hasAudio = metadata.hasAudio,
         )))
         var selected by mutableStateOf(ExportQualitySettings())
+        var showCompleted by mutableStateOf(false)
         compose.setContent {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(360.dp, 640.dp))) {
                 QuickCutTheme {
-                    SaveOptionsDialog(
-                        originalAction = OriginalAction.KEEP,
-                        onOriginalActionChange = {},
-                        dateMode = SaveDateMode.CURRENT,
-                        onDateModeChange = {},
-                        canSave = true, onSave = {}, onDismiss = {},
-                        timeline = timeline, outputQuality = selected,
-                        onOutputQualityChange = { selected = it },
-                    )
+                    if (showCompleted) {
+                        CompletedScreen(
+                            videoUri = uri.toString(),
+                            onOpen = {},
+                            onNew = {},
+                            onShare = {},
+                            originalAction = OriginalAction.KEEP,
+                            savedDateMode = SaveDateMode.CURRENT,
+                            exportReport = null,
+                            originalStatus = OriginalActionStatus.NONE,
+                            originalCount = 1,
+                            onRetryOriginalAction = {},
+                        )
+                    } else {
+                        SaveOptionsDialog(
+                            originalAction = OriginalAction.KEEP,
+                            onOriginalActionChange = {},
+                            dateMode = SaveDateMode.CURRENT,
+                            onDateModeChange = {},
+                            canSave = true, onSave = {}, onDismiss = {},
+                            timeline = timeline, outputQuality = selected,
+                            onOutputQualityChange = { selected = it },
+                        )
+                    }
                 }
             }
         }
         compose.onNodeWithTag("export-quality-resolution-AUTO").performScrollTo().assertIsSelected()
+        compose.onNodeWithTag("ui05b-quality-result").performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("export-quality-resolution-ULTRA_HD_2160").assertIsDisplayed()
         capture("stage15_export_auto.png")
         compose.onNodeWithTag("export-quality-quality-BALANCED").performScrollTo().performClick()
@@ -99,11 +117,20 @@ class Stage15ExportQualityScreensInstrumentedTest {
         compose.onNodeWithTag("export-quality-unavailable").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("저장 시작").assertIsNotEnabled()
         capture("stage15_export_unsupported.png")
+
+        // Real Android UI screenshot using an on-device MP4 fixture; this is a
+        // layout check, not a claim that the fixture was exported by the app.
+        compose.runOnIdle { showCompleted = true }
+        compose.onNodeWithText("저장 완료").assertIsDisplayed()
+        capture("ui05b_export_completed.png")
+        compose.onNodeWithTag("ui05b-completed-facts").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("ui05b-original-status").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("갤러리에서 열기").performScrollTo().assertIsDisplayed()
     }
 
     private fun capture(name: String) {
         check(name in setOf("stage15_export_auto.png", "stage15_export_quality.png",
-            "stage15_export_unsupported.png"))
+            "stage15_export_unsupported.png", "ui05b_export_completed.png"))
         compose.waitForIdle()
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val dir = File(context.filesDir, "design-review")

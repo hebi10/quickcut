@@ -198,10 +198,13 @@ class EditorDesignInstrumentedTest {
         }
         waitForPreview(ExoPlayer::class.java)
         capture("editor_design_quick_trim")
+        awaitRenderedPalette(expectLight = false)
         capture("editor_design_quick_trim_dark")
         compose.runOnIdle { themeMode = QuickCutThemeMode.LIGHT }
+        awaitRenderedPalette(expectLight = true)
         capture("editor_design_quick_trim_light")
         compose.runOnIdle { themeMode = QuickCutThemeMode.DARK }
+        awaitRenderedPalette(expectLight = false)
         compose.onNodeWithTag("ui04a-quick-result-summary").assertExists()
         compose.onNodeWithText("결과 영상").performScrollTo().assertIsDisplayed()
         capture("editor_design_quick_trim_result")
@@ -223,10 +226,13 @@ class EditorDesignInstrumentedTest {
                 .assertIsDisplayed().assertHeightIsAtLeast(48.dp)
         }
         capture("editor_design_detailed")
+        awaitRenderedPalette(expectLight = false)
         capture("editor_design_detailed_dark")
         compose.runOnIdle { themeMode = QuickCutThemeMode.LIGHT }
+        awaitRenderedPalette(expectLight = true)
         capture("editor_design_detailed_light")
         compose.runOnIdle { themeMode = QuickCutThemeMode.DARK }
+        awaitRenderedPalette(expectLight = false)
         compose.runOnIdle {
             assertEquals(4_000L, editor.timeline.clips.single().startMs)
             assertEquals(7_400L, editor.timeline.clips.single().endMs)
@@ -377,6 +383,27 @@ class EditorDesignInstrumentedTest {
             }
             colored >= 5
         } finally { bitmap.recycle() }
+    }
+
+    private fun awaitRenderedPalette(expectLight: Boolean) {
+        // The video/CompositionPlayer can still be drawing after Compose is
+        // idle. Verify the actual app header, not the Android status bar or
+        // the video frame, before assigning a theme label to the PNG.
+        compose.waitUntil(12_000L) {
+            val screenshot = InstrumentationRegistry.getInstrumentation()
+                .uiAutomation.takeScreenshot() ?: return@waitUntil false
+            try {
+                val color = screenshot.getPixel(
+                    (screenshot.width / 25).coerceIn(0, screenshot.width - 1),
+                    (screenshot.height / 10).coerceIn(0, screenshot.height - 1),
+                )
+                val luminance = (Color.red(color) + Color.green(color) +
+                    Color.blue(color)) / 3
+                if (expectLight) luminance >= 170 else luminance <= 110
+            } finally {
+                screenshot.recycle()
+            }
+        }
     }
 
     private fun capture(name: String) {

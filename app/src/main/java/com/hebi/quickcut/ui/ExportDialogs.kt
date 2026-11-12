@@ -128,7 +128,8 @@ internal fun SaveOptionsDialog(
                 if (originalAction == OriginalAction.DELETE) {
                     CutInfoSection(
                         title = "영구 삭제 주의",
-                        message = "영구 삭제는 복구할 수 없습니다. 저장 결과를 확인한 뒤 진행됩니다.",
+                        message = "영구 삭제는 복구할 수 없습니다. 저장 성공을 확인한 뒤 " +
+                            "Android 시스템 승인 화면에서만 원본 삭제를 요청합니다.",
                         caution = true,
                     )
                 }
@@ -306,6 +307,42 @@ internal fun exportReportText(report: ExportReport?): String {
         }
     }
     return "처리 방식: " + method + elapsed + if (reasons.isBlank()) "" else "\n" + reasons
+}
+
+@Composable
+internal fun TaskErrorDialog(message: String, onDismiss: () -> Unit) {
+    val palette = LocalCutPalette.current
+    AlertDialog(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = CutSpacing.lg).widthIn(max = 480.dp),
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+        onDismissRequest = onDismiss,
+        title = { QuickCutDialogHeading("작업 오류") },
+        text = {
+            Column(
+                modifier = Modifier.heightIn(max = 400.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(CutSpacing.md),
+            ) {
+                CutInfoSection(
+                    title = "오류 내용",
+                    message = message,
+                    caution = true,
+                )
+                Text(
+                    "문제가 계속되면 아래 진단 기록에서 작업 상태를 확인할 수 있습니다. " +
+                        "진단은 사용자가 직접 복사하기 전에는 외부로 전송하지 않습니다.",
+                    color = palette.secondaryText,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                ExportDiagnosticButton()
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss, shape = CutShape,
+                modifier = Modifier.heightIn(min = CutSizes.touchTarget)) { Text("확인") }
+        },
+        containerColor = palette.panel,
+        shape = CutDialogShape,
+    )
 }
 
 @Composable

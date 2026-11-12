@@ -534,13 +534,14 @@ class TrimInputInstrumentedTest {
             model.seek(123L)
         }
         showQuick()
-        composeRule.onNodeWithText("남길 구간").performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithText(formatTime(234L) + " – " + formatTime(2_345L)).assertIsDisplayed()
-        composeRule.onNodeWithText("결과 영상").assertIsDisplayed()
         composeRule.onNodeWithText("결과 " + formatTime(123L) + " / " + formatTime(2_111L))
             .assertIsDisplayed()
         composeRule.onNodeWithContentDescription("결과 미리보기 위치").assertIsDisplayed()
         composeRule.onNodeWithContentDescription("재생").assertIsDisplayed()
+        composeRule.onNodeWithText("남길 구간").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText(formatTime(234L) + " – " + formatTime(2_345L))
+            .performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("결과 영상").performScrollTo().assertIsDisplayed()
         composeRule.runOnIdle {
             org.junit.Assert.assertFalse("Only Compose controls should show preview time",
                 requirePlayerView().useController)

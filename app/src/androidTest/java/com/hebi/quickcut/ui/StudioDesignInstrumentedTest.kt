@@ -50,6 +50,21 @@ class StudioDesignInstrumentedTest {
             .performScrollTo().assertIsDisplayed().assertIsEnabled()
     }
 
+    @Test fun everyToolAndGalleryRetainsItsOriginalCallback() {
+        val events = mutableListOf<String>()
+        showHome(360, 640, 1f, canRestore = false, events = events)
+        composeRule.onNodeWithText("도구").performClick()
+        listOf("빠른 자르기", "상세 편집", "일괄 편집", "여러 구간 추출").forEach { label ->
+            composeRule.onNode(hasText(label) and hasClickAction())
+                .performScrollTo().assertIsDisplayed().performClick()
+        }
+        composeRule.onNodeWithText("영상 갤러리")
+            .performScrollTo().assertIsDisplayed().performClick()
+        composeRule.runOnIdle {
+            assertEquals(listOf("quick", "detailed", "batch", "segments", "gallery"), events)
+        }
+    }
+
     @Test fun expandedFoldCanOpenEveryEditorMode() {
         val events = mutableListOf<String>()
         showHome(840, 720, 1f, canRestore = false, events = events)
@@ -76,6 +91,8 @@ class StudioDesignInstrumentedTest {
                                 onQuick = { events += "quick" },
                                 onSelect = { events += "detailed" },
                                 onBatch = { events += "batch" },
+                                onExtraction = { events += "segments" },
+                                onGallery = { events += "gallery" },
                                 canRestore = canRestore,
                                 onRestore = { events += "restore" },
                                 quickSettings = QuickTrimSettings(4_000L, 1_500L, true),

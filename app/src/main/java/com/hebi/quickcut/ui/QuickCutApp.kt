@@ -555,8 +555,27 @@ fun QuickCutApp(
                     dismissedRecoveryNotice = model.exportRecoveryNotice
             },
             title = { QuickCutDialogHeading("이전 저장 확인") },
-            text = { Text(if (model.isRecoveringExport) "중단된 저장 파일과 완료 여부를 확인하고 있습니다."
-                else model.exportRecoveryNotice.orEmpty()) },
+            text = {
+                Column(
+                    Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(CutSpacing.md),
+                ) {
+                    CutInfoSection(
+                        title = if (model.isRecoveringExport) "저장 파일 확인 중"
+                            else "저장 결과 확인 필요",
+                        message = if (model.isRecoveringExport)
+                            "중단된 저장 파일과 완료 여부를 확인하고 있습니다."
+                        else model.exportRecoveryNotice.orEmpty(),
+                        caution = model.hasUnresolvedExport,
+                    )
+                    Text(
+                        "확인되지 않은 저장 결과는 자동으로 다시 등록하지 않습니다. " +
+                            "진단 기록에서 이전 작업 상태를 확인할 수 있습니다.",
+                        color = palette.secondaryText,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            },
             confirmButton = {
                 TextButton(enabled = !model.isRecoveringExport,
                 modifier = Modifier.heightIn(min = 48.dp), onClick = {
@@ -673,23 +692,8 @@ fun QuickCutApp(
         )
     }
 
-    model.errorMessage?.let { text ->
-        AlertDialog(
-            onDismissRequest = model::dismissError,
-            title = { QuickCutDialogHeading("안내") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(CutSpacing.md)) {
-                    CutInfoSection("작업 안내", text, caution = true)
-                    ExportDiagnosticButton()
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = model::dismissError, shape = CutShape,
-                    modifier = Modifier.heightIn(min = 48.dp)) { Text("확인") }
-            },
-            containerColor = palette.panel,
-            shape = CutDialogShape,
-        )
+    model.errorMessage?.let { message ->
+        TaskErrorDialog(message, model::dismissError)
     }
 
     if (model.showExitConfirmation) {
@@ -869,6 +873,8 @@ internal fun RestoreRecoveryDialog(
                 Text("편집 기록은 유지됩니다. 원본 영상에 접근할 수 있으면 다시 시도해 주세요.",
                     color = palette.secondaryText,
                     style = MaterialTheme.typography.bodySmall)
+                Text("복원 방법", color = palette.primaryText,
+                    style = MaterialTheme.typography.titleSmall)
                 if (canReconnect) {
                     Text("원본을 찾을 수 없다면 같은 영상을 다시 선택해 연결할 수 있습니다.",
                         color = palette.secondaryText,

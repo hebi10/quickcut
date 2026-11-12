@@ -60,6 +60,7 @@ class Stage17AudioScreensInstrumentedTest {
             }
         }
         compose.onNodeWithText("원본 음량 · 100%").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("ui05a-audio-summary").performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("audio-apply").assertIsDisplayed()
         capture("stage17_audio_default.png")
 
@@ -68,6 +69,7 @@ class Stage17AudioScreensInstrumentedTest {
         }
         compose.waitForIdle()
         compose.onNodeWithText("원본 음량 · 45%").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("ui05a-audio-summary").performScrollTo().assertIsDisplayed()
         assertTextVisibleAfterScroll("페이드 인 · 00:01.0")
         compose.onNodeWithTag("audio-fade-in").assertIsEnabled()
         compose.onNodeWithTag("audio-apply").assertIsDisplayed()

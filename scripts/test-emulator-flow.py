@@ -103,10 +103,11 @@ if name == "adb":
             sys.exit(43)
         if os.environ.get("STAGE7_CAPTURE_STATUS") == "1":
             sys.exit(42)
-        if any(("stage14_" in a or "stage15_" in a or "stage16_" in a or "stage17_" in a or "stage18_" in a or "theme_" in a or "ui03a_" in a) for a in args):
+        if any(("stage14_" in a or "stage15_" in a or "stage16_" in a or "stage17_" in a or "stage18_" in a or "theme_" in a or "ui03a_" in a or "ui04b_" in a) for a in args):
             if (any(os.environ.get("STAGE"+str(i)+"_CAPTURE_STATUS") == "1" for i in (14, 15, 16, 17, 18)) or
                     (os.environ.get("STAGE1A_CAPTURE_STATUS") == "1" and any("theme_" in a for a in args)) or
-                    (os.environ.get("UI03A_CAPTURE_STATUS") == "1" and any("ui03a_" in a for a in args))):
+                    (os.environ.get("UI03A_CAPTURE_STATUS") == "1" and any("ui03a_" in a for a in args)) or
+                    (os.environ.get("UI04B_CAPTURE_STATUS") == "1" and any("ui04b_batch_templates" in a for a in args))):
                 sys.stdout.buffer.write(b"cat: files/design-review/stage15_export_auto.png: No such file")
                 sys.exit(0)
             import struct, zlib
@@ -264,6 +265,12 @@ class EmulatorFlowTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Missing/corrupt PNG evidence", result.stdout + result.stderr)
 
+    def test_ui04b_bad_template_dialog_capture_fails_closed(self):
+        result, _, _, phases = self.run_flow(UI04B_CAPTURE_STATUS=1)
+        self.assertEqual(phases, ["preflight", "full"])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Missing/corrupt PNG evidence", result.stdout + result.stderr)
+
     def test_stage7_capture_failure_remains_a_required_gate(self):
         result, _, _, phases = self.run_flow(STAGE7_CAPTURE_STATUS=1)
         self.assertEqual(phases, ["preflight", "full"])
@@ -361,6 +368,9 @@ class EmulatorFlowTest(unittest.TestCase):
         for name in ("editor_design_quick_trim_light.png", "editor_design_quick_trim_dark.png",
                      "editor_design_detailed_light.png", "editor_design_detailed_dark.png"):
             self.assertTrue((root / "quickcut-design-review" / name).is_file())
+        for image in ("ui04b_extraction_three.png", "ui04b_extraction_largefont.png",
+                      "ui04b_batch_setup.png", "ui04b_batch_templates.png"):
+            self.assertTrue((root / "quickcut-design-review" / image).is_file())
         for image in ("theme_light_home.png", "theme_dark_home.png",
                        *(f"ui03a_{theme}_{tab}.png"
                          for theme in ("light", "dark")

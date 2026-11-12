@@ -54,6 +54,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
@@ -145,6 +146,8 @@ fun CropEditorScreen(
             OutlinedButton(onClick = onCancel) { Text("편집 화면으로") }
         } else {
             val active = requireNotNull(source)
+            Text("크롭 영역 미리보기", color = palette.primaryText,
+                style = MaterialTheme.typography.titleMedium)
             BoxWithConstraints(Modifier.fillMaxWidth().height(320.dp),
                 contentAlignment = Alignment.Center) {
                 val aspect = active.width.toFloat() / active.height
@@ -218,7 +221,7 @@ fun CropEditorScreen(
                                 region = CropGeometry.centerForRatio(active.width, active.height, ratio)
                             }
                         },
-                        modifier = Modifier.heightIn(min = 48.dp)
+                        modifier = Modifier.width(86.dp).heightIn(min = 48.dp)
                             .testTag("crop-preset-${ratio.name}")
                             .semantics { this.selected = preset == ratio },
                         border = androidx.compose.foundation.BorderStroke(1.dp,
@@ -233,15 +236,46 @@ fun CropEditorScreen(
             }
             Text("위치 및 확대", color = palette.primaryText,
                 style = MaterialTheme.typography.titleSmall)
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { region = region.zoom(1f / 1.15f) },
-                    modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text("축소") }
-                OutlinedButton(onClick = { region = region.move(-0.05f, 0f) },
-                    modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text("왼쪽") }
-                OutlinedButton(onClick = { region = region.move(0.05f, 0f) },
-                    modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text("오른쪽") }
-                OutlinedButton(onClick = { region = region.zoom(1.15f) },
-                    modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text("확대") }
+            Text("선택 범위 · 가로 ${(region.width * 100f).toInt()}% · 세로 ${(region.height * 100f).toInt()}%",
+                color = palette.secondaryText,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.testTag("ui05a-crop-selection"))
+            BoxWithConstraints(Modifier.fillMaxWidth().testTag("ui05a-crop-controls")) {
+                if (maxWidth < 400.dp || LocalDensity.current.fontScale >= 1.5f) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            CropNudgeButton("축소", Modifier.weight(1f)) {
+                                region = region.zoom(1f / 1.15f)
+                            }
+                            CropNudgeButton("확대", Modifier.weight(1f)) {
+                                region = region.zoom(1.15f)
+                            }
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            CropNudgeButton("왼쪽", Modifier.weight(1f)) {
+                                region = region.move(-0.05f, 0f)
+                            }
+                            CropNudgeButton("오른쪽", Modifier.weight(1f)) {
+                                region = region.move(0.05f, 0f)
+                            }
+                        }
+                    }
+                } else {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        CropNudgeButton("축소", Modifier.weight(1f)) {
+                            region = region.zoom(1f / 1.15f)
+                        }
+                        CropNudgeButton("왼쪽", Modifier.weight(1f)) {
+                            region = region.move(-0.05f, 0f)
+                        }
+                        CropNudgeButton("오른쪽", Modifier.weight(1f)) {
+                            region = region.move(0.05f, 0f)
+                        }
+                        CropNudgeButton("확대", Modifier.weight(1f)) {
+                            region = region.zoom(1.15f)
+                        }
+                    }
+                }
             }
             if (preset == CropRatio.FREE) {
                 Text("자유 비율 크기", color = palette.primaryText,
@@ -283,5 +317,20 @@ fun CropEditorScreen(
               modifier = Modifier.weight(1f).heightIn(min = 52.dp).testTag("crop-apply"),
               shape = CutShape) { Text("크롭 적용") }
       }
+    }
+}
+
+@Composable
+private fun CropNudgeButton(
+    label: String,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    OutlinedButton(
+        onClick = onClick,
+        modifier = modifier.heightIn(min = 48.dp),
+        shape = CutShape,
+    ) {
+        Text(label)
     }
 }

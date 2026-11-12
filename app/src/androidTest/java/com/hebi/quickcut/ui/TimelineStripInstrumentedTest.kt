@@ -51,8 +51,8 @@ class TimelineStripInstrumentedTest {
         composeRule.onNode(hasScrollToIndexAction()).performScrollToIndex(99)
         composeRule.onNodeWithText("00:10.9").assertIsDisplayed().performClick()
         composeRule.runOnIdle { assertEquals(100L, selectedId) }
-        composeRule.onNodeWithTag("ui04a-trim-start-100").assertExists()
-        composeRule.onNodeWithTag("ui04a-trim-end-100").assertExists()
+        composeRule.onNodeWithTag("ui04a-trim-start-100", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithTag("ui04a-trim-end-100", useUnmergedTree = true).assertExists()
         composeRule.onNodeWithText("+").performClick()
         composeRule.onNodeWithText("확대 2배").assertIsDisplayed()
         composeRule.onNode(hasScrollToIndexAction()).performScrollToIndex(99)

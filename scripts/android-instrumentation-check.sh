@@ -291,6 +291,33 @@ for name in ("stage15_export_auto.png", "stage15_export_quality.png", "stage15_e
         raise SystemExit(f"Corrupted PNG IHDR checksum: {path}")
     print(f"Verified Stage 15 PNG: {name} ({width}x{height})")
 PYVERIFY
+# UI-05-B: state screenshots are actual Android renders. Controlled progress
+# values are UI fixtures; Stage19/20 separately verify real media exports.
+for file in ui05b_export_progress.png ui05b_export_finalizing.png \
+    ui05b_export_completed.png; do
+  if timeout --kill-after=2s 20s adb exec-out run-as com.hebi.quickcut cat "files/design-review/$file" > "quickcut-design-review/$file" && [[ -s "quickcut-design-review/$file" ]]; then
+    echo "UI-05-B screenshot preserved: $file"
+  else
+    echo "::error::UI-05-B screenshot missing or empty: $file"
+    if [[ "$first_failure" -eq 0 ]]; then first_failure=1; fi
+  fi
+done
+run_checked "Verify UI-05-B Android export/progress/completed screenshots" python3 - "$SCRIPT_DIR/stage20-evidence-verify.py" <<'PYUI05B'
+from pathlib import Path
+import importlib.util
+import sys
+
+spec = importlib.util.spec_from_file_location("stage20_images", sys.argv[1])
+validator = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(validator)
+for name in (
+    "ui05b_export_progress.png",
+    "ui05b_export_finalizing.png",
+    "ui05b_export_completed.png",
+):
+    dimensions = validator.verify_png(Path("quickcut-design-review") / name)
+    print(f"Verified UI-05-B screenshot: {name} {dimensions}")
+PYUI05B
 # Stage 16 real crop UI renders must exist on every tested API.
 for file in stage16_crop_vertical.png stage16_crop_square.png \
     stage16_crop_free.png stage16_crop_largefont.png; do

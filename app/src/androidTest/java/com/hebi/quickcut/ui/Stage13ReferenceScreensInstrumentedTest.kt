@@ -10,6 +10,7 @@ import com.hebi.quickcut.settings.QuickCutThemeMode
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.DeviceConfigurationOverride
@@ -78,7 +79,8 @@ class Stage13ReferenceScreensInstrumentedTest {
         compose.setContent {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(360.dp, 640.dp))) {
                 QuickCutTheme(modeOverride = theme) {
-                    Box(Modifier.fillMaxSize().background(LocalCutPalette.current.background)) {
+                    Box(Modifier.fillMaxSize().background(LocalCutPalette.current.background)
+                        .safeDrawingPadding()) {
                         StudioStartScreen(
                             onQuick = {}, onSelect = {}, onBatch = {},
                             canRestore = false, onRestore = {},
@@ -117,8 +119,10 @@ class Stage13ReferenceScreensInstrumentedTest {
         compose.setContent {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(360.dp, 640.dp))) {
                 QuickCutTheme(modeOverride = theme) {
-                    SelectedVideoGallery(uris, onAdd = {},
-                        onImport = { imported = it }, onDismiss = {})
+                    Ui07aAppSafeSurface {
+                        SelectedVideoGallery(uris, onAdd = {},
+                            onImport = { imported = it }, onDismiss = {})
+                    }
                 }
             }
         }
@@ -144,13 +148,15 @@ class Stage13ReferenceScreensInstrumentedTest {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(320.dp, 640.dp))) {
                 DeviceConfigurationOverride(DeviceConfigurationOverride.FontScale(1.6f)) {
                     QuickCutTheme {
-                        StudioStartScreen(
-                            onQuick = {}, onSelect = {}, onBatch = {},
-                            canRestore = false, onRestore = {},
-                            quickSettings = QuickTrimSettings(0L, 0L, false),
-                            dateMode = SaveDateMode.CURRENT,
-                            onPreferences = {}, onLicenses = {},
-                        )
+                        Ui07aAppSafeSurface {
+                            StudioStartScreen(
+                                onQuick = {}, onSelect = {}, onBatch = {},
+                                canRestore = false, onRestore = {},
+                                quickSettings = QuickTrimSettings(0L, 0L, false),
+                                dateMode = SaveDateMode.CURRENT,
+                                onPreferences = {}, onLicenses = {},
+                            )
+                        }
                     }
                 }
             }

@@ -721,20 +721,35 @@ internal fun PreviewPlaybackControls(
                 contentDescription = if (playing) "일시정지" else "재생")
         }
         Column(Modifier.weight(1f).padding(end = CutSpacing.sm)) {
-            Row(
-                Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Text("현재 " + formatTime(currentPosition),
-                    color = palette.primaryText,
-                    style = MaterialTheme.typography.labelMedium,
-                    fontFamily = FontFamily.Monospace,
-                    modifier = Modifier.testTag("editor-playback-time"))
-                Text("전체 " + formatTime(timelineDuration),
-                    color = palette.secondaryText,
-                    style = MaterialTheme.typography.labelMedium,
-                    fontFamily = FontFamily.Monospace)
+            BoxWithConstraints(Modifier.fillMaxWidth()) {
+                val compactTime = maxWidth < 250.dp || LocalDensity.current.fontScale >= 1.5f
+                if (compactTime) {
+                    Column(verticalArrangement = Arrangement.spacedBy(CutSpacing.xs)) {
+                        Text("현재 " + formatTime(currentPosition),
+                            color = palette.primaryText,
+                            style = MaterialTheme.typography.labelMedium,
+                            fontFamily = FontFamily.Monospace,
+                            modifier = Modifier.testTag("editor-playback-time"))
+                        Text("전체 " + formatTime(timelineDuration),
+                            color = palette.secondaryText,
+                            style = MaterialTheme.typography.labelMedium,
+                            fontFamily = FontFamily.Monospace)
+                    }
+                } else {
+                    Row(Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("현재 " + formatTime(currentPosition),
+                            color = palette.primaryText,
+                            style = MaterialTheme.typography.labelMedium,
+                            fontFamily = FontFamily.Monospace,
+                            modifier = Modifier.testTag("editor-playback-time"))
+                        Text("전체 " + formatTime(timelineDuration),
+                            color = palette.secondaryText,
+                            style = MaterialTheme.typography.labelMedium,
+                            fontFamily = FontFamily.Monospace)
+                    }
+                }
             }
             Slider(
                 value = currentPosition.toFloat().coerceIn(0f, timelineDuration.coerceAtLeast(1L).toFloat()),
@@ -802,26 +817,23 @@ private fun ToolButtons(
         }
     } else {
         Column(Modifier.fillMaxWidth()) {
-            Row(
+            Column(
                 Modifier.fillMaxWidth()
-                    .padding(horizontal = CutSpacing.md, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
+                    .padding(horizontal = CutSpacing.md, vertical = CutSpacing.xs),
+                verticalArrangement = Arrangement.spacedBy(CutSpacing.xs),
             ) {
                 Text("편집 도구", color = palette.primaryText,
                     style = MaterialTheme.typography.titleSmall)
                 selected?.let {
-                    Column(horizontalAlignment = Alignment.End) {
-                        Text("클립 " + (model.timeline.clips.indexOf(it) + 1) +
-                            " · " + formatTime(it.durationMs),
-                            color = palette.primaryText,
-                            style = MaterialTheme.typography.bodySmall,
-                            fontFamily = FontFamily.Monospace,
-                            modifier = Modifier.testTag("ui04a-selected-clip"))
-                        Text(if (it.muted) "원본 소리: 음소거" else "원본 소리: 유지",
-                            color = palette.secondaryText,
-                            style = MaterialTheme.typography.labelSmall)
-                    }
+                    Text("클립 " + (model.timeline.clips.indexOf(it) + 1) +
+                        " · " + formatTime(it.durationMs),
+                        color = palette.primaryText,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace,
+                        modifier = Modifier.testTag("ui04a-selected-clip"))
+                    Text(if (it.muted) "원본 소리: 음소거" else "원본 소리: 유지",
+                        color = palette.secondaryText,
+                        style = MaterialTheme.typography.labelSmall)
                 }
             }
             BoxWithConstraints(Modifier.fillMaxWidth()) {

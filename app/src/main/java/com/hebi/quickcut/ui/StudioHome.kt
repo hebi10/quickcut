@@ -27,6 +27,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -90,11 +91,13 @@ internal fun StudioStartScreen(
 ) {
     val palette = LocalCutPalette.current
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
+    val contentScroll = rememberScrollState()
+    LaunchedEffect(selectedTab) { contentScroll.scrollTo(0) }
 
     Column(Modifier.fillMaxSize().background(palette.background)) {
         Column(
             modifier = Modifier.weight(1f).fillMaxWidth()
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(contentScroll)
                 .padding(horizontal = CutSpacing.lg, vertical = CutSpacing.xl),
             verticalArrangement = Arrangement.spacedBy(CutSpacing.xl),
         ) {

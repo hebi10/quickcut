@@ -50,18 +50,22 @@ class Stage16CropScreensInstrumentedTest {
     private fun clip(): VideoClip = VideoClip(1, Uri.fromFile(source).toString(), 8_000)
 
     @Test fun verticalSquareAndFreeformHaveRealVideoCapture() {
+        // Retain the same clip object across preview loads, click dispatch and
+        // theme recomposition; only the Compose theme should be switched.
+        val stableClip = clip()
         var theme by mutableStateOf(QuickCutThemeMode.LIGHT)
         compose.setContent {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(360.dp, 640.dp))) {
                 QuickCutTheme(modeOverride = theme) {
                     Ui07aAppSafeSurface {
-                        CropEditorScreen(clip(), onApply = {}, onCancel = {})
+                        CropEditorScreen(stableClip, onApply = {}, onCancel = {})
                     }
                 }
             }
         }
         waitPreview()
         compose.onNodeWithTag("crop-preset-VERTICAL").performScrollTo().performClick()
+        compose.waitForIdle()
         compose.onNodeWithTag("crop-preset-VERTICAL").assertIsSelected()
         compose.onNodeWithTag("ui05a-crop-selection").performScrollTo().assertIsDisplayed()
         capture("stage16_crop_vertical.png")

@@ -18,6 +18,11 @@ import androidx.compose.ui.test.performTextReplacement
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.hebi.quickcut.MainActivity
 import com.hebi.quickcut.QuickCutApplication
+import com.hebi.quickcut.settings.QuickCutSettings
+import com.hebi.quickcut.settings.QuickCutThemeMode
+import com.hebi.quickcut.ui.Ui07aVisualEvidence
+import com.hebi.quickcut.ui.CutPalettes
+import androidx.compose.ui.graphics.toArgb
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -74,14 +79,34 @@ class BatchScreenInstrumentedTest {
 
     @Test
     fun launchBatchEditorAndShowTimestampChoices() {
-        openBatchEditor()
-        composeRule.onNodeWithText("일괄 편집").assertExists()
-        composeRule.onNodeWithTag("batch-mode").assertExists()
-        composeRule.onNodeWithTag("ui04b-template-summary").assertExists()
-        captureUi04b("ui04b_batch_setup.png")
-        composeRule.onNodeWithText("템플릿·저장 옵션 펼치기").performScrollTo().performClick()
-        choose("batch-date", "현재 날짜로 저장 (최신 파일)")
-        choose("batch-date", "원본 날짜 유지")
+        val settings = QuickCutSettings(composeRule.activity)
+        val previousTheme = settings.loadThemeMode()
+        try {
+            settings.saveThemeMode(QuickCutThemeMode.LIGHT)
+            openBatchEditor()
+            composeRule.onNodeWithText("일괄 편집").assertExists()
+            composeRule.onNodeWithTag("batch-mode").assertExists()
+            composeRule.onNodeWithTag("ui04b-template-summary").assertExists()
+            captureUi04b("ui04b_batch_setup.png")
+            waitForTheme(CutPalettes.Light.background.toArgb())
+            Ui07aVisualEvidence.capture("ui07a_light_batch.png")
+            settings.saveThemeMode(QuickCutThemeMode.DARK)
+            waitForTheme(CutPalettes.Dark.background.toArgb())
+            composeRule.onNodeWithTag("ui04b-template-summary").performScrollTo().assertExists()
+            Ui07aVisualEvidence.capture("ui07a_dark_batch.png")
+            composeRule.onNodeWithText("템플릿·저장 옵션 펼치기").performScrollTo().performClick()
+            choose("batch-date", "현재 날짜로 저장 (최신 파일)")
+            choose("batch-date", "원본 날짜 유지")
+        } finally {
+            settings.saveThemeMode(previousTheme)
+        }
+    }
+
+    private fun waitForTheme(expectedStatusBar: Int) {
+        composeRule.waitUntil(10_000L) {
+            composeRule.activity.window.statusBarColor == expectedStatusBar
+        }
+        composeRule.waitForIdle()
     }
 
 

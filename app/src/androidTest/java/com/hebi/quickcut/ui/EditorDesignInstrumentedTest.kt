@@ -17,6 +17,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.DeviceConfigurationOverride
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.FontScale
@@ -187,7 +192,15 @@ class EditorDesignInstrumentedTest {
         var themeMode by mutableStateOf(QuickCutThemeMode.DARK)
         compose.setContent {
             QuickCutTheme(modeOverride = themeMode) {
-                Box(Modifier.fillMaxSize().background(LocalCutPalette.current.background).safeDrawingPadding()) {
+                val renderedTheme = if (LocalCutPalette.current.background ==
+                    CutPalettes.Light.background) "light" else "dark"
+                Box(
+                    Modifier.fillMaxSize()
+                        .background(LocalCutPalette.current.background)
+                        .safeDrawingPadding()
+                        .testTag("ui07a-editor-theme-host")
+                        .semantics { stateDescription = renderedTheme }
+                ) {
                     if (detailed) EditorScreen(editor, {}, {})
                     else QuickTrimScreen(editor, settings, {}, {
                         editor.changeQuickMode(false)
@@ -386,31 +399,15 @@ class EditorDesignInstrumentedTest {
     }
 
     private fun awaitRenderedPalette(expectLight: Boolean) {
-        // UIAutomator screenshots must be bounded. Taking a screenshot on
-        // every waitUntil poll exhausted the API29 emulator's graphics memory.
-        // Check only a few rendered frames after Compose becomes idle.
+        // Inspect the actual Compose palette before the Android full-window
+        // capture. Avoid repeated UiAutomation screenshots while decoding
+        // video on API29: these previously exhausted the emulator connection.
         compose.waitForIdle()
-        val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
-        var lastBrightness: Int? = null
-        repeat(5) { attempt ->
-            if (attempt > 0) Thread.sleep(300L)
-            val screenshot = automation.takeScreenshot() ?: return@repeat
-            val brightness = try {
-                val color = screenshot.getPixel(
-                    (screenshot.width / 25).coerceIn(0, screenshot.width - 1),
-                    (screenshot.height / 10).coerceIn(0, screenshot.height - 1),
-                )
-                (Color.red(color) + Color.green(color) +
-                    Color.blue(color)) / 3
-            } finally {
-                screenshot.recycle()
-            }
-            lastBrightness = brightness
-            if (if (expectLight) brightness >= 170 else brightness <= 110) return
-        }
-        throw AssertionError(
-            "Editor theme not rendered: expectedLight=$expectLight, " +
-                "lastBrightness=$lastBrightness"
+        compose.onNodeWithTag("ui07a-editor-theme-host").assert(
+            SemanticsMatcher.expectValue(
+                SemanticsProperties.StateDescription,
+                if (expectLight) "light" else "dark",
+            )
         )
     }
 

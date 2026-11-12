@@ -5,11 +5,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.test.assertExists
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasScrollToIndexAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToIndex
@@ -50,6 +52,8 @@ class TimelineStripInstrumentedTest {
         composeRule.onNode(hasScrollToIndexAction()).performScrollToIndex(99)
         composeRule.onNodeWithText("00:10.9").assertIsDisplayed().performClick()
         composeRule.runOnIdle { assertEquals(100L, selectedId) }
+        composeRule.onNodeWithTag("ui04a-trim-start-100").assertExists()
+        composeRule.onNodeWithTag("ui04a-trim-end-100").assertExists()
         composeRule.onNodeWithText("+").performClick()
         composeRule.onNodeWithText("확대 2배").assertIsDisplayed()
         composeRule.onNode(hasScrollToIndexAction()).performScrollToIndex(99)

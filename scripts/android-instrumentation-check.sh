@@ -191,6 +191,7 @@ for name in (
     "dialog_edit_recovery.png",
     "dialog_diagnostics.png",
     "dialog_task_error.png",
+    "ui06a_preview_recovery.png",
     "dialog_save_large_font.png",
     "dialog_export_analysis_large_font.png",
     "dialog_licenses.png",

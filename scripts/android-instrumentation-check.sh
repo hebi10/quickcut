@@ -499,6 +499,20 @@ else
   run_checked "Stage 20 mandatory test and PNG evidence" python3 "$SCRIPT_DIR/stage20-evidence-verify.py" \
     --xml "$RESULTS" --screenshots quickcut-design-review
 fi
+# UI-08-A: a release readiness report is issued only after all mandatory
+# Android tests, media evidence, and the 40-screen visual matrix succeeded.
+# The generated file is not a Google Play release authorization.
+if [[ "$first_failure" -eq 0 ]]; then
+  run_checked "UI-08-A full regression and release evidence" \
+    python3 "$SCRIPT_DIR/verify-ui08a-release-evidence.py" \
+      --api "${QUICKCUT_EMULATOR_API:-unknown}" \
+      --xml "$RESULTS" \
+      --screenshots quickcut-design-review \
+      --stage20 quickcut-stage20-evidence/verified-screens-and-tests.json \
+      --ui07a quickcut-ui07a-evidence/visual-matrix.json \
+      --png-script "$SCRIPT_DIR/stage20-evidence-verify.py" \
+      --out quickcut-ui08a-evidence/release-qa.json
+fi
 if [[ "$first_failure" -ne 0 ]]; then
   echo "::error::Instrumentation failed; preserving the first failure (exit $first_failure)."
   exit "$first_failure"

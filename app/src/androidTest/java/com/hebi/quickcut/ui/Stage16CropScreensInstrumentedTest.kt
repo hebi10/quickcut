@@ -54,7 +54,9 @@ class Stage16CropScreensInstrumentedTest {
         compose.setContent {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(360.dp, 640.dp))) {
                 QuickCutTheme(modeOverride = theme) {
-                    CropEditorScreen(clip(), onApply = {}, onCancel = {})
+                    Ui07aAppSafeSurface {
+                        CropEditorScreen(clip(), onApply = {}, onCancel = {})
+                    }
                 }
             }
         }
@@ -82,7 +84,9 @@ class Stage16CropScreensInstrumentedTest {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(860.dp, 640.dp))) {
                 DeviceConfigurationOverride(DeviceConfigurationOverride.FontScale(1.6f)) {
                     QuickCutTheme {
-                        CropEditorScreen(clip(), onApply = { applied = true }, onCancel = {})
+                        Ui07aAppSafeSurface {
+                            CropEditorScreen(clip(), onApply = { applied = true }, onCancel = {})
+                        }
                     }
                 }
             }

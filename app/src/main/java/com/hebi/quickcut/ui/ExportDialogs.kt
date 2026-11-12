@@ -20,6 +20,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
@@ -56,7 +57,7 @@ internal fun SaveOptionsDialog(
                 modifier = Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(CutSpacing.md),
             ) {
-                Text("저장 정보", color = palette.secondaryAccent,
+                Text("저장 정보", color = palette.primaryText,
                     style = MaterialTheme.typography.titleMedium)
                 Text((if (outputQuality.isAutomatic)
                     "원본 영상의 해상도와 프레임 속도를 유지하며, 가능한 경우 고속 저장을 사용합니다."
@@ -78,23 +79,12 @@ internal fun SaveOptionsDialog(
                 Text("기기 갤러리에 저장",
                     color = palette.secondaryText,
                     style = MaterialTheme.typography.bodyMedium)
-                Text("원본 동영상", color = palette.primaryText,
-                    style = MaterialTheme.typography.titleSmall)
-                CutChoiceDropdown(
-                    label = "저장 완료 후 원본 동영상 처리",
-                    selected = originalAction,
-                    options = listOf(
-                        CutChoice(OriginalAction.KEEP, "원본 유지 (기본값)"),
-                        CutChoice(OriginalAction.TRASH, "원본 휴지통으로 이동"),
-                        CutChoice(OriginalAction.DELETE, "원본 영구 삭제"),
-                    ),
-                    onSelected = onOriginalActionChange,
-                )
-                if (originalAction == OriginalAction.DELETE) {
-                    CutInfoSection(
-                        title = "영구 삭제 주의",
-                        message = "영구 삭제는 복구할 수 없습니다. 저장 결과를 확인한 뒤 진행됩니다.",
-                        caution = true,
+                if (!canSave) {
+                    Text(
+                        "편집 결과를 확인한 뒤 저장할 수 있습니다.",
+                        color = palette.secondaryText,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.testTag("ui05b-save-disabled-reason"),
                     )
                 }
                 Text("결과 영상 날짜", color = palette.primaryText,
@@ -122,6 +112,26 @@ internal fun SaveOptionsDialog(
                     color = palette.secondaryText,
                     style = MaterialTheme.typography.bodySmall,
                 )
+                Text("원본 동영상", color = palette.primaryText,
+                    style = MaterialTheme.typography.titleSmall)
+
+                CutChoiceDropdown(
+                    label = "저장 완료 후 원본 동영상 처리",
+                    selected = originalAction,
+                    options = listOf(
+                        CutChoice(OriginalAction.KEEP, "원본 유지 (기본값)"),
+                        CutChoice(OriginalAction.TRASH, "원본 휴지통으로 이동"),
+                        CutChoice(OriginalAction.DELETE, "원본 영구 삭제"),
+                    ),
+                    onSelected = onOriginalActionChange,
+                )
+                if (originalAction == OriginalAction.DELETE) {
+                    CutInfoSection(
+                        title = "영구 삭제 주의",
+                        message = "영구 삭제는 복구할 수 없습니다. 저장 결과를 확인한 뒤 진행됩니다.",
+                        caution = true,
+                    )
+                }
                 Text(
                     "저장 실패·취소 시 원본은 유지됩니다. 원본 처리 설정은 끌 때까지 유지되며, " +
                         "저장에 성공한 뒤 Android 승인을 요청합니다.",

@@ -1,6 +1,12 @@
 package com.hebi.quickcut.ui
 
 import android.graphics.Bitmap
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
 
@@ -39,5 +45,19 @@ internal object Ui07aVisualEvidence {
         } finally {
             screenshot.recycle()
         }
+    }
+}
+
+/** The real app uses this viewport wrapper in QuickCutApp. Standalone
+ * screen test screenshots must not overlap the Android status/navigation bars.
+ */
+@Composable
+internal fun Ui07aAppSafeSurface(content: @Composable () -> Unit) {
+    Box(
+        Modifier.fillMaxSize()
+            .background(LocalCutPalette.current.background)
+            .safeDrawingPadding()
+    ) {
+        content()
     }
 }

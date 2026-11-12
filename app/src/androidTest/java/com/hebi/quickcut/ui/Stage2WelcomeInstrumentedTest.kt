@@ -24,7 +24,9 @@ class Stage2WelcomeInstrumentedTest {
         var theme by mutableStateOf(QuickCutThemeMode.LIGHT)
         composeRule.setContent {
             QuickCutTheme(modeOverride = theme) {
-                QuickCutWelcome(onFinish = { completions++ })
+                Ui07aAppSafeSurface {
+                    QuickCutWelcome(onFinish = { completions++ })
+                }
             }
         }
         composeRule.onNodeWithText("다음").assertIsDisplayed()

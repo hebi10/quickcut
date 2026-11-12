@@ -33,6 +33,7 @@ class ThemeModeInstrumentedTest {
         var mode by mutableStateOf(QuickCutThemeMode.LIGHT)
         compose.setContent {
             QuickCutTheme(modeOverride = mode) {
+                Ui07aAppSafeSurface {
                 StudioStartScreen(
                     onQuick = {}, onSelect = {}, onBatch = {},
                     canRestore = false, onRestore = {},
@@ -40,6 +41,7 @@ class ThemeModeInstrumentedTest {
                     onPreferences = {}, onLicenses = {},
                     themeMode = mode, onThemeModeChange = { mode = it },
                 )
+                }
             }
         }
         compose.onNodeWithText("+ 영상 편집 시작하기").assertIsDisplayed()
@@ -55,6 +57,7 @@ class ThemeModeInstrumentedTest {
         var mode by mutableStateOf(QuickCutThemeMode.SYSTEM)
         compose.setContent {
             QuickCutTheme(modeOverride = mode) {
+                Ui07aAppSafeSurface {
                 StudioStartScreen(
                     onQuick = {}, onSelect = {}, onBatch = {},
                     canRestore = false, onRestore = {},
@@ -62,6 +65,7 @@ class ThemeModeInstrumentedTest {
                     onPreferences = {}, onLicenses = {},
                     themeMode = mode, onThemeModeChange = { mode = it },
                 )
+                }
             }
         }
         compose.onNodeWithText("설정").performClick()

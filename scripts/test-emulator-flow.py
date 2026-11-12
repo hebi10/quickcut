@@ -122,7 +122,7 @@ if name == "adb":
             # A deliberately identical pair exercises the release-blocking gate.
             light = any("_light_" in a for a in args)
             if (os.environ.get("UI07A_IDENTICAL_STATUS") == "1" and any(
-                    "ui07a_dark_crop" in a for a in args):
+                    "ui07a_dark_crop" in a for a in args)):
                 light = True
             shade = 224 if light else 32
             pixels = (b"\x00" + bytes((shade, shade, shade)) * width) * height
@@ -195,6 +195,10 @@ if name == "python3":
 raise SystemExit("Unexpected stub invocation")
 '''
 
+# Compile the generated executable before test cases to report syntax errors
+# at the real source line, not as a cascade of missing events.jsonl files.
+compile(STUB, "<quickcut-emulator-flow-stub>", "exec")
+
 
 class EmulatorFlowTest(unittest.TestCase):
     def run_flow(self, preflight=0, full=0, **settings):
@@ -215,7 +219,14 @@ class EmulatorFlowTest(unittest.TestCase):
         env.setdefault("QUICKCUT_EMULATOR_API", "35")
         result = subprocess.run(["bash", str(SCRIPT)], cwd=root, env=env,
                                 capture_output=True, text=True, timeout=10)
-        events = [json.loads(line) for line in (root / "events.jsonl").read_text().splitlines()]
+        events_path = root / "events.jsonl"
+        if not events_path.is_file():
+            raise AssertionError(
+                "Emulator tool stub did not start (events.jsonl missing). "
+                f"exit={result.returncode}\nstdout:\n{result.stdout[-2500:]}\n"
+                f"stderr:\n{result.stderr[-2500:]}"
+            )
+        events = [json.loads(line) for line in events_path.read_text().splitlines()]
         def gradle_phase(args):
             if any("NativeSmartCutInstrumentedTest" in a for a in args):
                 return "preflight"

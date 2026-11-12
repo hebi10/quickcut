@@ -73,8 +73,12 @@ class BatchRecoveryUiInstrumentedTest {
         show(vm)
         compose.onNodeWithTag("batch-file-list").performScrollToNode(hasText("저장 진단"))
         compose.onNodeWithText("저장 진단").performClick()
-        compose.onNodeWithText("이 작업의 진단은 보관 개수를 넘었거나 기록을 읽을 수 없어 표시할 수 없습니다.\n")
-            .assertExists()
+        compose.onNodeWithText("진단 기록 없음").assertExists()
+        compose.onNodeWithText(
+            "이 작업의 진단은 보관 개수를 넘었거나 기록을 읽을 수 없어 표시할 수 없습니다.",
+            substring = true,
+            useUnmergedTree = true,
+        ).assertExists()
     }
 
     private fun show(vm: BatchViewModel) {

@@ -62,6 +62,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
@@ -384,7 +385,10 @@ private fun QuickPreview(
     outputChanged: () -> Unit,
 ) {
     val palette = LocalCutPalette.current
-    Column(modifier.padding(horizontal = 12.dp)) {
+    Column(modifier.padding(horizontal = CutSpacing.md)) {
+        Text("영상 미리보기", color = palette.secondaryText,
+            style = MaterialTheme.typography.labelMedium,
+            modifier = Modifier.padding(bottom = CutSpacing.sm))
         Box(Modifier.weight(1f).fillMaxWidth().clip(CutShape).background(Color.Black)
             .border(1.dp, palette.border, CutShape), contentAlignment = Alignment.Center) {
             key(player) {
@@ -493,20 +497,51 @@ private fun QuickTrimControls(
                         Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
-                        Text(formatTime(clip.startMs),
-                            color = palette.secondaryAccent,
+                        Text("시작 " + formatTime(clip.startMs),
+                            color = palette.secondaryText,
+                            fontFamily = FontFamily.Monospace,
                             style = MaterialTheme.typography.labelMedium)
-                        Text(formatTime(clip.endMs),
-                            color = palette.secondaryAccent,
+                        Text("끝 " + formatTime(clip.endMs),
+                            color = palette.secondaryText,
+                            fontFamily = FontFamily.Monospace,
                             style = MaterialTheme.typography.labelMedium)
                     }
+                }
+                Text("삭제 시간 조절", color = palette.primaryText,
+                    style = MaterialTheme.typography.titleSmall)
+                TrimSecondsRow(
+                    label = "앞부분 삭제",
+                    value = leadingText,
+                    onValueChange = onLeadingChange,
+                    onStep = { delta ->
+                        onLeadingChange(secondsText(
+                            ((millisValue(leadingText) ?: clip.startMs) + delta)
+                                .coerceIn(0L, clip.sourceDurationMs)
+                        ))
+                    },
+                )
+                TrimSecondsRow(
+                    label = "뒷부분 삭제",
+                    value = trailingText,
+                    onValueChange = onTrailingChange,
+                    onStep = { delta ->
+                        onTrailingChange(secondsText(
+                            ((millisValue(trailingText) ?: (clip.sourceDurationMs - clip.endMs)) + delta)
+                                .coerceIn(0L, clip.sourceDurationMs)
+                        ))
+                    },
+                )
+                if (!valid) {
+                    Text("시간을 확인해 주세요. 결과 영상은 최소 0.1초 이상이어야 합니다.",
+                        color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
                 }
                 if (LocalDensity.current.fontScale >= 1.5f) {
                 Column(
                     Modifier.fillMaxWidth()
                         .background(palette.surface, CutPanelShape)
                         .border(1.dp, palette.border, CutPanelShape)
-                        .padding(CutSpacing.lg),
+                        .padding(CutSpacing.lg)
+                        .testTag("ui04a-quick-result-summary"),
                     verticalArrangement = Arrangement.spacedBy(CutSpacing.sm),
                 ) {
                     Text("선택한 영상", color = palette.secondaryAccent,
@@ -542,7 +577,8 @@ private fun QuickTrimControls(
                     Modifier.fillMaxWidth()
                         .background(palette.surface, CutPanelShape)
                         .border(1.dp, palette.border, CutPanelShape)
-                        .padding(CutSpacing.md),
+                        .padding(CutSpacing.md)
+                        .testTag("ui04a-quick-result-summary"),
                     verticalArrangement = Arrangement.spacedBy(CutSpacing.sm),
                 ) {
                     Text("선택한 영상", color = palette.secondaryAccent,
@@ -577,32 +613,6 @@ private fun QuickTrimControls(
                         }
                     }
                 }
-                }
-                TrimSecondsRow(
-                    label = "앞부분 삭제",
-                    value = leadingText,
-                    onValueChange = onLeadingChange,
-                    onStep = { delta ->
-                        onLeadingChange(secondsText(
-                            ((millisValue(leadingText) ?: clip.startMs) + delta)
-                                .coerceIn(0L, clip.sourceDurationMs)
-                        ))
-                    },
-                )
-                TrimSecondsRow(
-                    label = "뒷부분 삭제",
-                    value = trailingText,
-                    onValueChange = onTrailingChange,
-                    onStep = { delta ->
-                        onTrailingChange(secondsText(
-                            ((millisValue(trailingText) ?: (clip.sourceDurationMs - clip.endMs)) + delta)
-                                .coerceIn(0L, clip.sourceDurationMs)
-                        ))
-                    },
-                )
-                if (!valid) {
-                    Text("시간을 확인해 주세요. 결과 영상은 최소 0.1초 이상이어야 합니다.",
-                        color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
                 }
                 Column(
                     Modifier.fillMaxWidth(),
@@ -647,6 +657,9 @@ private fun QuickTrimControls(
                     containerColor = palette.accent, contentColor = palette.onAccent,
                 ),
             ) {
+                Icon(CutIcons.Save, contentDescription = null,
+                    modifier = Modifier.size(CutSizes.icon))
+                Spacer(Modifier.width(CutSpacing.sm))
                 Text("영상 저장", fontWeight = FontWeight.SemiBold)
         }
         }

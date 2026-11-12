@@ -93,7 +93,7 @@ class Stage13ReferenceScreensInstrumentedTest {
         compose.onNodeWithText("테스트 영상 2").assertIsDisplayed()
         capture("stage13_projects_populated.png")
         compose.onNodeWithText("도구").performClick()
-        compose.onNodeWithText("영상 갤러리").assertIsDisplayed()
+        compose.onNodeWithText("영상 갤러리").performScrollTo().assertIsDisplayed()
         capture("stage13_tools.png")
         compose.onNodeWithText("설정").performClick()
         compose.onNodeWithText("마지막 사용 설정").assertIsDisplayed()

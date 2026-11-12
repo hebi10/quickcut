@@ -1,6 +1,7 @@
 package com.hebi.quickcut.batch
 
 import android.graphics.Bitmap
+import android.graphics.Color as AndroidColor
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
 import androidx.compose.ui.test.assertIsEnabled
@@ -8,6 +9,9 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
@@ -21,8 +25,6 @@ import com.hebi.quickcut.QuickCutApplication
 import com.hebi.quickcut.settings.QuickCutSettings
 import com.hebi.quickcut.settings.QuickCutThemeMode
 import com.hebi.quickcut.ui.Ui07aVisualEvidence
-import com.hebi.quickcut.ui.CutPalettes
-import androidx.compose.ui.graphics.toArgb
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -88,10 +90,10 @@ class BatchScreenInstrumentedTest {
             composeRule.onNodeWithTag("batch-mode").assertExists()
             composeRule.onNodeWithTag("ui04b-template-summary").assertExists()
             captureUi04b("ui04b_batch_setup.png")
-            waitForTheme(CutPalettes.Light.background.toArgb())
+            waitForTheme(expectLight = true)
             Ui07aVisualEvidence.capture("ui07a_light_batch.png")
             settings.saveThemeMode(QuickCutThemeMode.DARK)
-            waitForTheme(CutPalettes.Dark.background.toArgb())
+            waitForTheme(expectLight = false)
             composeRule.onNodeWithTag("ui04b-template-summary").performScrollTo().assertExists()
             Ui07aVisualEvidence.capture("ui07a_dark_batch.png")
             composeRule.onNodeWithText("템플릿·저장 옵션 펼치기").performScrollTo().performClick()
@@ -102,9 +104,22 @@ class BatchScreenInstrumentedTest {
         }
     }
 
-    private fun waitForTheme(expectedStatusBar: Int) {
-        composeRule.waitUntil(10_000L) {
-            composeRule.activity.window.statusBarColor == expectedStatusBar
+    private fun waitForTheme(expectLight: Boolean) {
+        // Android 15+ enforces edge-to-edge: statusBarColor is not a reliable
+        // indicator of the Compose palette. Verify an actual app-content pixel.
+        composeRule.waitUntil(15_000L) {
+            val image = composeRule.onRoot().captureToImage().asAndroidBitmap()
+            try {
+                val color = image.getPixel(
+                    (image.width / 25).coerceIn(0, image.width - 1),
+                    (image.height / 10).coerceIn(0, image.height - 1),
+                )
+                val brightness = (AndroidColor.red(color) +
+                    AndroidColor.green(color) + AndroidColor.blue(color)) / 3
+                if (expectLight) brightness >= 170 else brightness <= 110
+            } finally {
+                image.recycle()
+            }
         }
         composeRule.waitForIdle()
     }

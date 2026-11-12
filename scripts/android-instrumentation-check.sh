@@ -204,6 +204,32 @@ for name in ("theme_light_home.png", "theme_dark_home.png"):
     dimensions = validator.verify_png(Path("quickcut-design-review") / name)
     print("Verified theme screenshot: " + name + " " + str(dimensions))
 PYTHEME
+# UI-03-A: each navigation tab must be a real light/dark Compose screenshot.
+for theme in light dark; do
+  for tab in home projects tools settings; do
+    file="ui03a_${theme}_${tab}.png"
+    if timeout --kill-after=2s 20s adb exec-out run-as com.hebi.quickcut cat "files/design-review/$file" > "quickcut-design-review/$file" && [[ -s "quickcut-design-review/$file" ]]; then
+      echo "UI-03-A screenshot preserved: $file"
+    else
+      echo "::error::UI-03-A screenshot missing or empty: $file"
+      if [[ "$first_failure" -eq 0 ]]; then first_failure=1; fi
+    fi
+  done
+done
+run_checked "Verify actual UI-03-A light/dark navigation screenshots" python3 - "$SCRIPT_DIR/stage20-evidence-verify.py" <<'PYUI03A'
+from pathlib import Path
+import importlib.util
+import sys
+
+spec = importlib.util.spec_from_file_location("stage20_images", sys.argv[1])
+validator = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(validator)
+for theme in ("light", "dark"):
+    for tab in ("home", "projects", "tools", "settings"):
+        name = f"ui03a_{theme}_{tab}.png"
+        dimensions = validator.verify_png(Path("quickcut-design-review") / name)
+        print("Verified UI-03-A screenshot: " + name + " " + str(dimensions))
+PYUI03A
 # Stage 13 reference states are rendered from decoded local video fixtures, not demo placeholders.
 # Keep them as a separate required screenshot set without weakening the Stage 7 evidence.
 for file in stage13_home_populated.png stage13_projects_populated.png stage13_tools.png \

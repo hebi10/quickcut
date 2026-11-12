@@ -3,6 +3,10 @@ package com.hebi.quickcut.ui
 import android.graphics.Bitmap
 import android.net.Uri
 import androidx.activity.ComponentActivity
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import com.hebi.quickcut.settings.QuickCutThemeMode
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -60,6 +64,7 @@ class Stage13ReferenceScreensInstrumentedTest {
     }
 
     @Test fun populatedProjectsToolsAndSettingsHaveRealScreenCaptures() {
+        var theme by mutableStateOf(QuickCutThemeMode.LIGHT)
         val samples = clips.mapIndexed { index, clip ->
             SavedProject(
                 id = "00000000-0000-0000-0000-00000000000${index + 1}",
@@ -72,7 +77,7 @@ class Stage13ReferenceScreensInstrumentedTest {
         }
         compose.setContent {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(360.dp, 640.dp))) {
-                QuickCutTheme {
+                QuickCutTheme(modeOverride = theme) {
                     Box(Modifier.fillMaxSize().background(LocalCutPalette.current.background)) {
                         StudioStartScreen(
                             onQuick = {}, onSelect = {}, onBatch = {},
@@ -92,6 +97,10 @@ class Stage13ReferenceScreensInstrumentedTest {
         compose.onNodeWithText("프로젝트").performClick()
         compose.onNodeWithText("테스트 영상 2").assertIsDisplayed()
         capture("stage13_projects_populated.png")
+        Ui07aVisualEvidence.capture("ui07a_light_projects.png")
+        compose.runOnIdle { theme = QuickCutThemeMode.DARK }
+        compose.onNodeWithText("테스트 영상 2").assertIsDisplayed()
+        Ui07aVisualEvidence.capture("ui07a_dark_projects.png")
         compose.onNodeWithText("도구").performClick()
         compose.onNodeWithText("편집 도구").assertIsDisplayed()
         capture("stage13_tools.png")
@@ -104,9 +113,10 @@ class Stage13ReferenceScreensInstrumentedTest {
     @Test fun selectedVideoGridCapturesActualFixtureThumbnailsAndState() {
         val uris = clips.map { Uri.fromFile(it).toString() }
         var imported = emptyList<String>()
+        var theme by mutableStateOf(QuickCutThemeMode.LIGHT)
         compose.setContent {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(360.dp, 640.dp))) {
-                QuickCutTheme {
+                QuickCutTheme(modeOverride = theme) {
                     SelectedVideoGallery(uris, onAdd = {},
                         onImport = { imported = it }, onDismiss = {})
                 }
@@ -118,6 +128,10 @@ class Stage13ReferenceScreensInstrumentedTest {
         waitForDecodedThumbnails()
         compose.onNodeWithText("2개 선택").assertIsDisplayed()
         capture("stage13_gallery_selected.png")
+        Ui07aVisualEvidence.capture("ui07a_light_gallery.png")
+        compose.runOnIdle { theme = QuickCutThemeMode.DARK }
+        compose.onNodeWithText("2개 선택").assertIsDisplayed()
+        Ui07aVisualEvidence.capture("ui07a_dark_gallery.png")
         compose.onNodeWithTag("gallery-item-1").performClick()
         compose.onNodeWithText("1개 선택").assertIsDisplayed()
         capture("stage13_gallery_one_selected.png")

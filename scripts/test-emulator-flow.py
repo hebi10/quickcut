@@ -75,8 +75,12 @@ if name == "gradle":
         "com.hebi.quickcut.media.OriginalMediaActionsInstrumentedTest",
         "com.hebi.quickcut.batch.ExactBatchExportInstrumentedTest",
         "com.hebi.quickcut.editor.SingleExportRecoveryInstrumentedTest",
-        "com.hebi.quickcut.export.BackgroundExportInstrumentedTest",
     )
+    # API29 runs BackgroundExportInstrumentedTest in two isolated processes.
+    # The 286-case "remaining" phase must never invent these identities.
+    # API35/36 instead run the complete unfiltered suite in one process.
+    if phase == "full":
+        required += ("com.hebi.quickcut.export.BackgroundExportInstrumentedTest",)
     for i in range(count):
         classname = required[i] if phase in ("full", "remaining") and i < len(required) else phase + ".Suite"
         testname = "case" + str(i)
@@ -354,8 +358,16 @@ class EmulatorFlowTest(unittest.TestCase):
         self.assertIn("Stage 7 screenshot missing or empty", result.stdout + result.stderr)
 
     def test_api29_keeps_full_suite_and_uses_bounded_30m_budget(self):
-        result, _, events, phases = self.run_flow(QUICKCUT_EMULATOR_API="29")
+        result, root, events, phases = self.run_flow(QUICKCUT_EMULATOR_API="29")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        remaining = (root / "app/build/outputs/androidTest-results/connected/debug/"
+                     "TEST-api29-remaining.xml").read_text(encoding="utf-8")
+        self.assertNotIn("com.hebi.quickcut.export.BackgroundExportInstrumentedTest",
+                         remaining)
+        self.assertNotIn("com.hebi.quickcut.export.BackgroundMedia3ExportInstrumentedTest",
+                         remaining)
+        self.assertNotIn("com.hebi.quickcut.media.BatchDateExportInstrumentedTest",
+                         remaining)
         self.assertEqual(phases, ["preflight", "date", "remaining", "offscreen_single", "offscreen_batch", "media3"])
         timed = [e[1:3] for e in events if e[0] == "timeout" and len(e) > 3 and e[3] == "gradle"]
         self.assertEqual(timed, [["--kill-after=30s", "10m"], ["--kill-after=30s", "10m"],

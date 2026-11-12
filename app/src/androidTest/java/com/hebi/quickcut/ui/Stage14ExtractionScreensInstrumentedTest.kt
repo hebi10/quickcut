@@ -61,7 +61,9 @@ class Stage14ExtractionScreensInstrumentedTest {
         compose.setContent {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(360.dp, 640.dp))) {
                 QuickCutTheme(modeOverride = theme) {
-                    ExtractionScreen(model, onSelectVideo = {}, onBack = {})
+                    Ui07aAppSafeSurface {
+                        ExtractionScreen(model, onSelectVideo = {}, onBack = {})
+                    }
                 }
             }
         }
@@ -88,7 +90,9 @@ class Stage14ExtractionScreensInstrumentedTest {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(860.dp, 640.dp))) {
                 DeviceConfigurationOverride(DeviceConfigurationOverride.FontScale(1.6f)) {
                     QuickCutTheme {
-                        ExtractionScreen(model, onSelectVideo = {}, onBack = {})
+                        Ui07aAppSafeSurface {
+                            ExtractionScreen(model, onSelectVideo = {}, onBack = {})
+                        }
                     }
                 }
             }

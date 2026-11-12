@@ -52,8 +52,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -249,6 +251,11 @@ fun TextEditorScreen(
             }
             Text("텍스트 레이어 · ${layers.size}/${TextLayerPolicy.MAX_LAYERS}",
                 color = palette.primaryText, style = MaterialTheme.typography.titleMedium)
+            if (layers.isEmpty()) {
+                Text("문구를 추가한 뒤 표시 위치와 시간을 설정할 수 있습니다.",
+                    color = palette.secondaryText,
+                    style = MaterialTheme.typography.bodySmall)
+            }
             Row(
                 Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -262,7 +269,9 @@ fun TextEditorScreen(
                         },
                         border = BorderStroke(1.dp,
                             if (selectedId == item.id) palette.accent else palette.border),
-                        modifier = Modifier.heightIn(min = 48.dp).testTag("text-layer-${item.id}"),
+                        modifier = Modifier.heightIn(min = 48.dp)
+                            .testTag("text-layer-${item.id}")
+                            .semantics { selected = selectedId == item.id },
                         shape = CutShape,
                     ) {
                         Text(item.text.ifBlank { "새 텍스트" }.take(12),
@@ -293,6 +302,10 @@ fun TextEditorScreen(
                     startDraft, endDraft, clip.durationMs,
                 )
                 HorizontalDivider(color = palette.border)
+                Text("선택한 레이어 · ${layers.indexOf(current) + 1}/${layers.size}",
+                    color = palette.secondaryText,
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.testTag("ui05a-selected-text-layer"))
                 Text("텍스트 내용", color = palette.primaryText,
                     style = MaterialTheme.typography.titleMedium)
                 OutlinedTextField(
@@ -317,7 +330,8 @@ fun TextEditorScreen(
                                 if (current.color == color) palette.accent else palette.border),
                             shape = CutShape,
                             modifier = Modifier.heightIn(min = 48.dp)
-                                .testTag("text-color-${color.name}"),
+                                .testTag("text-color-${color.name}")
+                                .semantics { selected = current.color == color },
                         ) { Text(color.label) }
                     }
                 }
@@ -351,7 +365,8 @@ fun TextEditorScreen(
                             border = BorderStroke(1.dp,
                                 if (current.alignment == option) palette.accent else palette.border),
                             modifier = Modifier.weight(1f).heightIn(min = 48.dp)
-                                .testTag("text-align-${option.name}"),
+                                .testTag("text-align-${option.name}")
+                                .semantics { selected = current.alignment == option },
                             shape = CutShape,
                         ) { Text(option.label) }
                     }
@@ -370,20 +385,23 @@ fun TextEditorScreen(
                     valueRange = 0f..clip.durationMs.toFloat(),
                     modifier = Modifier.testTag("text-layer-timing"),
                 )
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedTextField(
-                        value = startDraft, onValueChange = { startDraft = it.take(14) },
-                        label = { Text("시작(초)") }, singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        modifier = Modifier.weight(1f).testTag("text-start-seconds"),
-                    )
-                    OutlinedTextField(
-                        value = endDraft, onValueChange = { endDraft = it.take(14) },
-                        label = { Text("종료(초)") }, singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        modifier = Modifier.weight(1f).testTag("text-end-seconds"),
-                    )
+                BoxWithConstraints(Modifier.fillMaxWidth().testTag("ui05a-text-timing-fields")) {
+                    val stacked = maxWidth < 400.dp || LocalDensity.current.fontScale >= 1.5f
+                    if (stacked) {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TextTimingInput(startDraft, { startDraft = it.take(14) },
+                                "시작(초)", "text-start-seconds", Modifier.fillMaxWidth())
+                            TextTimingInput(endDraft, { endDraft = it.take(14) },
+                                "종료(초)", "text-end-seconds", Modifier.fillMaxWidth())
+                        }
+                    } else {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TextTimingInput(startDraft, { startDraft = it.take(14) },
+                                "시작(초)", "text-start-seconds", Modifier.weight(1f))
+                            TextTimingInput(endDraft, { endDraft = it.take(14) },
+                                "종료(초)", "text-end-seconds", Modifier.weight(1f))
+                        }
+                    }
                 }
                 OutlinedButton(
                     enabled = enteredRange != null,
@@ -430,4 +448,22 @@ fun TextEditorScreen(
             ) { Text("텍스트 적용") }
         }
     }
+}
+
+@Composable
+private fun TextTimingInput(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    tag: String,
+    modifier: Modifier,
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        label = { Text(label) },
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+        modifier = modifier.heightIn(min = 56.dp).testTag(tag),
+    )
 }

@@ -4,6 +4,10 @@ import android.app.Application
 import android.graphics.Bitmap
 import android.net.Uri
 import androidx.activity.ComponentActivity
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import com.hebi.quickcut.settings.QuickCutThemeMode
 import androidx.compose.ui.test.DeviceConfigurationOverride
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.FontScale
@@ -53,9 +57,10 @@ class Stage14ExtractionScreensInstrumentedTest {
     }
 
     @Test fun singleAndTripleSegmentScreensAreCaptured() {
+        var theme by mutableStateOf(QuickCutThemeMode.LIGHT)
         compose.setContent {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(360.dp, 640.dp))) {
-                QuickCutTheme {
+                QuickCutTheme(modeOverride = theme) {
                     ExtractionScreen(model, onSelectVideo = {}, onBack = {})
                 }
             }
@@ -72,6 +77,10 @@ class Stage14ExtractionScreensInstrumentedTest {
         compose.onNodeWithTag("ui04b-extraction-range-summary").performScrollTo().assertIsDisplayed()
         capture("stage14_extraction_three.png")
         capture("ui04b_extraction_three.png")
+        Ui07aVisualEvidence.capture("ui07a_light_extraction.png")
+        compose.runOnIdle { theme = QuickCutThemeMode.DARK }
+        compose.onNodeWithText("추출할 구간 (3개)").performScrollTo().assertIsDisplayed()
+        Ui07aVisualEvidence.capture("ui07a_dark_extraction.png")
     }
 
     @Test fun tabletAndLargeFontStillShowSegmentControls() {

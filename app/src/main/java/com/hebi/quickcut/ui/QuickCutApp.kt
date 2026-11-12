@@ -969,7 +969,7 @@ internal fun CenterStatus(
 }
 
 @Composable
-private fun CompletedScreen(
+internal fun CompletedScreen(
     videoUri: String?,
     onOpen: () -> Unit,
     onNew: () -> Unit,
@@ -982,79 +982,117 @@ private fun CompletedScreen(
     onRetryOriginalAction: () -> Unit,
 ) {
     val palette = LocalCutPalette.current
+    val actionLabel = if (originalAction == OriginalAction.TRASH) "휴지통 이동" else "영구 삭제"
+    val originalStatusText = when {
+        originalAction == OriginalAction.KEEP -> "원본 유지"
+        originalStatus == OriginalActionStatus.READY ||
+            originalStatus == OriginalActionStatus.CONFIRMING ->
+            "원본 " + originalCount + "개 " + actionLabel + " 확인 대기 중"
+        originalStatus == OriginalActionStatus.SYSTEM_PROMPT ->
+            "Android 원본 처리 승인 대기 중"
+        originalStatus == OriginalActionStatus.COMPLETED ->
+            "원본 " + originalCount + "개 " + actionLabel + " 완료"
+        originalStatus == OriginalActionStatus.SKIPPED ->
+            "원본은 삭제하지 않고 유지했습니다."
+        originalStatus == OriginalActionStatus.UNSUPPORTED ->
+            "원본 처리를 지원하지 않아 파일을 유지했습니다."
+        else -> "원본 유지"
+    }
+
     Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
+        modifier = Modifier.fillMaxSize().background(palette.background)
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = CutSpacing.lg, vertical = CutSpacing.xl),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
+        verticalArrangement = Arrangement.spacedBy(CutSpacing.lg),
     ) {
-        Icon(
-            CutIcons.Success,
-            contentDescription = null,
-            tint = palette.success,
-            modifier = Modifier.size(64.dp),
-        )
-        Spacer(Modifier.height(16.dp))
-        Text("저장 완료", color = palette.primaryText, fontSize = 28.sp, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(10.dp))
-        Text("영상이 갤러리에 저장되었어요.", color = palette.secondaryText,
-            textAlign = TextAlign.Center)
-        Spacer(Modifier.height(8.dp))
-        Text(exportReportText(exportReport),
+        Column(
             modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth(),
-            color = palette.secondaryText,
-            style = MaterialTheme.typography.bodySmall)
-        if (videoUri != null) CompletedExportFacts(videoUri)
-        ExportDiagnosticButton()
-        if (savedDateMode == SaveDateMode.ORIGINAL) {
-            Text("원본 날짜 기준으로 저장했습니다.", color = palette.secondaryText,
-                textAlign = TextAlign.Center)
+            verticalArrangement = Arrangement.spacedBy(CutSpacing.xs),
+        ) {
+            Text("저장 완료", color = palette.primaryText,
+                style = MaterialTheme.typography.headlineMedium)
+            Text("영상이 기기 갤러리에 저장되었습니다.",
+                color = palette.secondaryText,
+                style = MaterialTheme.typography.bodyMedium)
         }
-        Spacer(Modifier.height(28.dp))
+
         if (videoUri != null) {
-            Text("저장된 영상", color = palette.primaryText,
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth())
-            Spacer(Modifier.height(CutSpacing.sm))
-            ClipThumbnail(
-                uri = videoUri,
-                timeMs = 0L,
-                modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth().height(210.dp)
-                    .clip(CutPanelShape).border(1.dp, palette.border, CutPanelShape),
-            )
-        }
-        if (originalAction != OriginalAction.KEEP) {
-            Spacer(Modifier.height(18.dp))
-            val actionLabel = if (originalAction == OriginalAction.TRASH) "휴지통 이동" else "영구 삭제"
-            val statusLabel = when (originalStatus) {
-                OriginalActionStatus.READY,
-                OriginalActionStatus.CONFIRMING -> "원본 " + originalCount + "개 " + actionLabel + " 확인 대기 중"
-                OriginalActionStatus.SYSTEM_PROMPT -> "Android 원본 처리 승인 대기 중"
-                OriginalActionStatus.COMPLETED -> "원본 " + originalCount + "개 " + actionLabel + " 완료"
-                OriginalActionStatus.SKIPPED -> "원본은 삭제하지 않고 유지했습니다."
-                OriginalActionStatus.UNSUPPORTED -> "원본 처리를 지원하지 않아 파일을 유지했습니다."
-                OriginalActionStatus.NONE -> "원본 유지"
+            Column(
+                modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth()
+                    .testTag("ui05b-completed-result"),
+                verticalArrangement = Arrangement.spacedBy(CutSpacing.sm),
+            ) {
+                Text("저장된 영상 미리보기", color = palette.primaryText,
+                    style = MaterialTheme.typography.titleMedium)
+                ClipThumbnail(
+                    uri = videoUri,
+                    timeMs = 0L,
+                    modifier = Modifier.fillMaxWidth().height(196.dp)
+                        .clip(CutShape).border(1.dp, palette.border, CutShape),
+                )
             }
+        }
+
+        Column(
+            modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth()
+                .background(palette.surface, CutPanelShape)
+                .border(1.dp, palette.border, CutPanelShape)
+                .padding(CutSpacing.lg)
+                .testTag("ui05b-completed-facts"),
+            verticalArrangement = Arrangement.spacedBy(CutSpacing.sm),
+        ) {
+            Text("출력 결과", color = palette.primaryText,
+                style = MaterialTheme.typography.titleMedium)
+            Text("저장 위치 · 기기 갤러리",
+                color = palette.secondaryText,
+                style = MaterialTheme.typography.bodyMedium)
             Text(
-                statusLabel,
+                if (savedDateMode == SaveDateMode.ORIGINAL) "저장 날짜 · 원본 날짜 기준"
+                else "저장 날짜 · 현재 날짜 기준",
+                color = palette.secondaryText,
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Text(exportReportText(exportReport),
+                color = palette.secondaryText,
+                style = MaterialTheme.typography.bodySmall)
+            if (videoUri != null) CompletedExportFacts(videoUri)
+            ExportDiagnosticButton()
+        }
+
+        Column(
+            modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth()
+                .background(palette.surface, CutPanelShape)
+                .border(1.dp, palette.border, CutPanelShape)
+                .padding(CutSpacing.lg)
+                .testTag("ui05b-original-status"),
+            verticalArrangement = Arrangement.spacedBy(CutSpacing.sm),
+        ) {
+            Text("원본 영상 처리", color = palette.primaryText,
+                style = MaterialTheme.typography.titleMedium)
+            Text(
+                originalStatusText,
                 color = palette.secondaryText,
                 style = MaterialTheme.typography.bodyMedium,
-                textAlign = TextAlign.Center,
             )
-            if (originalStatus == OriginalActionStatus.SKIPPED) {
+            if (originalAction != OriginalAction.KEEP &&
+                originalStatus == OriginalActionStatus.SKIPPED) {
                 OutlinedButton(
                     onClick = onRetryOriginalAction,
-                    modifier = Modifier.height(48.dp),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = CutSizes.touchTarget),
                     shape = CutShape,
                 ) { Text("원본 " + actionLabel + " 다시 요청") }
             }
         }
-        Spacer(Modifier.height(28.dp))
+
         Column(
-            modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth()
+                .testTag("ui05b-completed-actions"),
+            verticalArrangement = Arrangement.spacedBy(CutSpacing.md),
         ) {
             Button(
-                onClick = onOpen, enabled = videoUri != null,
+                onClick = onOpen,
+                enabled = videoUri != null,
                 modifier = Modifier.fillMaxWidth().heightIn(min = CutSizes.primaryButton),
                 shape = CutShape,
             ) {
@@ -1064,7 +1102,8 @@ private fun CompletedScreen(
                 Text("갤러리에서 열기", fontWeight = FontWeight.SemiBold)
             }
             OutlinedButton(
-                onClick = onShare, enabled = videoUri != null,
+                onClick = onShare,
+                enabled = videoUri != null,
                 modifier = Modifier.fillMaxWidth().heightIn(min = CutSizes.primaryButton),
                 shape = CutShape,
             ) {
@@ -1075,11 +1114,10 @@ private fun CompletedScreen(
             }
             OutlinedButton(
                 onClick = onNew,
-                modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
+                modifier = Modifier.fillMaxWidth().heightIn(min = CutSizes.primaryButton),
                 shape = CutShape,
             ) { Text("새 영상 편집") }
         }
     }
 }
-
 

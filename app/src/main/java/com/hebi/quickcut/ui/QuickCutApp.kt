@@ -933,9 +933,12 @@ internal fun CenterStatus(
                     modifier = Modifier.fillMaxWidth().testTag("ui05b-export-progress"),
                     color = palette.accent,
                 )
-                Text("처리 중 · 진행률 확인 불가",
-                    color = palette.secondaryText,
+                Text("처리 중",
+                    color = palette.primaryText,
                     style = MaterialTheme.typography.bodyMedium)
+                Text("진행률을 확인할 수 없는 단계입니다.",
+                    color = palette.secondaryText,
+                    style = MaterialTheme.typography.bodySmall)
             } else {
                 val actualProgress = progress.coerceIn(0, 100)
                 Text("$actualProgress%",

@@ -131,6 +131,24 @@ if name == "adb":
         destination = root / args[-1]
         destination.mkdir(parents=True, exist_ok=True)
         (destination / "evidence.txt").write_text(args[1])
+        if args[1] == "/data/local/tmp/quickcut-design-review":
+            import struct, zlib
+            def chunk(kind, payload):
+                return (len(payload).to_bytes(4, "big") + kind + payload +
+                    (zlib.crc32(kind + payload) & 0xffffffff).to_bytes(4, "big"))
+            width, height = 360, 640
+            header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+            pixels = (b"\x00" + b"\x00\x00\x00" * width) * height
+            png = (bytes.fromhex("89504e470d0a1a0a") +
+                chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(pixels)) +
+                chunk(b"IEND", b""))
+            for mode in ("quick_trim", "detailed"):
+                for theme in ("light", "dark"):
+                    name = f"editor_design_{mode}_{theme}.png"
+                    data = (b"adb: missing capture" if
+                        os.environ.get("UI04A_CAPTURE_STATUS") == "1" and
+                        mode == "detailed" and theme == "dark" else png)
+                    (destination / name).write_bytes(data)
     sys.exit(0)
 if name == "python3":
     if args and args[0].endswith("verify-android-main10.py"):
@@ -240,6 +258,12 @@ class EmulatorFlowTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Missing/corrupt PNG evidence", result.stdout + result.stderr)
 
+    def test_ui04a_invalid_editor_capture_blocks_release(self):
+        result, _, _, phases = self.run_flow(UI04A_CAPTURE_STATUS=1)
+        self.assertEqual(phases, ["preflight", "full"])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Missing/corrupt PNG evidence", result.stdout + result.stderr)
+
     def test_stage7_capture_failure_remains_a_required_gate(self):
         result, _, _, phases = self.run_flow(STAGE7_CAPTURE_STATUS=1)
         self.assertEqual(phases, ["preflight", "full"])
@@ -334,6 +358,9 @@ class EmulatorFlowTest(unittest.TestCase):
         proof = root / "quickcut-stage20-evidence/verified-screens-and-tests.json"
         self.assertTrue(proof.is_file())
         self.assertEqual(json.loads(proof.read_text())["androidApi"], "35")
+        for name in ("editor_design_quick_trim_light.png", "editor_design_quick_trim_dark.png",
+                     "editor_design_detailed_light.png", "editor_design_detailed_dark.png"):
+            self.assertTrue((root / "quickcut-design-review" / name).is_file())
         for image in ("theme_light_home.png", "theme_dark_home.png",
                        *(f"ui03a_{theme}_{tab}.png"
                          for theme in ("light", "dark")

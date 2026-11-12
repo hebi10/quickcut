@@ -57,6 +57,7 @@ import com.hebi.quickcut.editor.QuickCutPage
 import com.hebi.quickcut.media.MediaReader
 import com.hebi.quickcut.settings.BatchDraftSettings
 import com.hebi.quickcut.settings.QuickCutSettings
+import com.hebi.quickcut.settings.QuickCutThemeMode
 import com.hebi.quickcut.settings.QuickTrimSettings
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
@@ -183,8 +184,9 @@ class EditorDesignInstrumentedTest {
         compose.runOnUiThread { editor.trimSelected(4_000L, 7_400L) }
         checkNotNull(MediaReader.thumbnail(context, Uri.fromFile(source), 4_000L))
         var detailed by mutableStateOf(false)
+        var themeMode by mutableStateOf(QuickCutThemeMode.DARK)
         compose.setContent {
-            QuickCutTheme {
+            QuickCutTheme(modeOverride = themeMode) {
                 Box(Modifier.fillMaxSize().background(LocalCutPalette.current.background).safeDrawingPadding()) {
                     if (detailed) EditorScreen(editor, {}, {})
                     else QuickTrimScreen(editor, settings, {}, {
@@ -196,7 +198,13 @@ class EditorDesignInstrumentedTest {
         }
         waitForPreview(ExoPlayer::class.java)
         capture("editor_design_quick_trim")
-        compose.onNodeWithText("결과 영상").assertIsDisplayed()
+        capture("editor_design_quick_trim_dark")
+        compose.runOnIdle { themeMode = QuickCutThemeMode.LIGHT }
+        capture("editor_design_quick_trim_light")
+        compose.runOnIdle { themeMode = QuickCutThemeMode.DARK }
+        compose.onNodeWithTag("ui04a-quick-result-summary").assertExists()
+        compose.onNodeWithText("결과 영상").performScrollTo().assertIsDisplayed()
+        capture("editor_design_quick_trim_result")
         compose.onNodeWithContentDescription("자르기 구간 조절").assertExists()
         compose.onNodeWithText("영상 저장").assertIsDisplayed().assertIsEnabled()
         compose.runOnIdle {
@@ -207,12 +215,18 @@ class EditorDesignInstrumentedTest {
         waitForPreview(CompositionPlayer::class.java)
         compose.onNodeWithText("상세 편집").assertIsDisplayed()
         compose.onNodeWithText("확대 1배").assertIsDisplayed()
+        compose.onNodeWithTag("ui04a-selected-clip").assertExists()
+        compose.onNodeWithTag("editor-playback-time").assertExists()
         compose.onNodeWithTag("editor-preview-overlay-play").assertIsDisplayed()
         listOf("trim", "split", "delete", "move", "mute").forEach { action ->
             compose.onNodeWithTag("editor-tool-$action")
                 .assertIsDisplayed().assertHeightIsAtLeast(48.dp)
         }
         capture("editor_design_detailed")
+        capture("editor_design_detailed_dark")
+        compose.runOnIdle { themeMode = QuickCutThemeMode.LIGHT }
+        capture("editor_design_detailed_light")
+        compose.runOnIdle { themeMode = QuickCutThemeMode.DARK }
         compose.runOnIdle {
             assertEquals(4_000L, editor.timeline.clips.single().startMs)
             assertEquals(7_400L, editor.timeline.clips.single().endMs)

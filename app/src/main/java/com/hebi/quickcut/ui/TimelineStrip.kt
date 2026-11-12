@@ -38,6 +38,10 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -134,7 +138,7 @@ fun TimelineStrip(
                         .width(tileWidth).height(78.dp)
                         .border(
                             width = if (selected) 2.dp else 1.dp,
-                            color = if (selected) palette.accent else palette.border,
+                            color = if (selected) palette.secondaryAccent else palette.border,
                             shape = CutSmallShape,
                         )
                         .pointerInput(clip.id) {
@@ -161,12 +165,21 @@ fun TimelineStrip(
                         timeMs = clip.startMs + clip.durationMs / 2L,
                         modifier = Modifier.fillMaxWidth().fillMaxHeight().clip(CutSmallShape),
                     )
+                    Text(
+                        "클립 " + (index + 1),
+                        color = Color.White,
+                        fontSize = 11.sp,
+                        modifier = Modifier.align(Alignment.TopStart)
+                            .background(Color.Black.copy(alpha = 0.82f), CutSmallShape)
+                            .padding(horizontal = 5.dp, vertical = 3.dp),
+                    )
                     if (isActive) {
                         val fraction = ((playheadMs - clipStart).toFloat() / clip.durationMs)
                             .coerceIn(0f, 1f)
                         Box(
                             Modifier.offset(x = maxWidth * fraction)
-                                .width(2.dp).fillMaxHeight().background(palette.timelineMarker),
+                                .width(2.dp).fillMaxHeight().background(palette.timelineMarker)
+                                 .testTag("ui04a-playhead-" + clip.id),
                         )
                     }
                     Text(
@@ -174,6 +187,7 @@ fun TimelineStrip(
                         color = Color.White,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Medium,
+                        fontFamily = FontFamily.Monospace,
                         modifier = Modifier.align(Alignment.BottomStart)
                             .background(Color.Black.copy(alpha = 0.82f), CutSmallShape)
                             .padding(horizontal = 5.dp, vertical = 3.dp),
@@ -248,6 +262,10 @@ private fun TrimHandle(
     Box(
         modifier = modifier
             .width(48.dp).fillMaxHeight()
+            .testTag(if (start) "ui04a-trim-start-$clipId" else "ui04a-trim-end-$clipId")
+            .semantics {
+                contentDescription = if (start) "시작 자르기 핸들" else "끝 자르기 핸들"
+            }
             .pointerInput(clipId, start) {
                 detectDragGestures(
                     onDragStart = { updatedStart() },

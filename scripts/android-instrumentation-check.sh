@@ -172,6 +172,23 @@ fi
 if ! timeout --kill-after=2s 10s adb pull /data/local/tmp/quickcut-design-review quickcut-design-review; then
   echo "::warning::Optional design screenshots were unavailable; instrumentation results are unchanged."
 fi
+# UI-04-A captures are written by the existing real-player Android editor test.
+# Capture names are mandatory, and fake/error output never satisfies the PNG gate.
+run_checked "Verify UI-04-A quick and detailed light/dark editor evidence" python3 - "$SCRIPT_DIR/stage20-evidence-verify.py" <<'PYUI04A'
+from pathlib import Path
+import importlib.util
+import sys
+
+spec = importlib.util.spec_from_file_location("stage20_images", sys.argv[1])
+validator = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(validator)
+for mode in ("quick_trim", "detailed"):
+    for theme in ("light", "dark"):
+        name = f"editor_design_{mode}_{theme}.png"
+        path = Path("quickcut-design-review") / name
+        dimensions = validator.verify_png(path)
+        print(f"UI-04-A verified: {name} {dimensions}")
+PYUI04A
 # Stage 7 screenshots are stored in the debuggable app's private files. Pull
 # them with run-as instead of relying on scoped-storage shell access or UIAutomation pipes.
 mkdir -p quickcut-design-review

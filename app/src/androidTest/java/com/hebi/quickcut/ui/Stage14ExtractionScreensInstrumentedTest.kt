@@ -10,6 +10,7 @@ import androidx.compose.ui.test.FontScale
 import androidx.compose.ui.test.ForcedSize
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.DpSize
@@ -68,7 +69,9 @@ class Stage14ExtractionScreensInstrumentedTest {
             model.addSegment(duration * 2 / 3)
         }
         compose.onNodeWithText("추출할 구간 (3개)").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("ui04b-extraction-range-summary").performScrollTo().assertIsDisplayed()
         capture("stage14_extraction_three.png")
+        capture("ui04b_extraction_three.png")
     }
 
     @Test fun tabletAndLargeFontStillShowSegmentControls() {
@@ -83,7 +86,9 @@ class Stage14ExtractionScreensInstrumentedTest {
         }
         waitForImport()
         compose.onNodeWithText("구간 적용").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("ui04b-extraction-range-summary").performScrollTo().assertIsDisplayed()
         capture("stage14_extraction_tablet_largefont.png")
+        capture("ui04b_extraction_largefont.png")
     }
 
     private fun waitForImport() {
@@ -96,6 +101,8 @@ class Stage14ExtractionScreensInstrumentedTest {
             "stage14_extraction_one.png",
             "stage14_extraction_three.png",
             "stage14_extraction_tablet_largefont.png",
+            "ui04b_extraction_three.png",
+            "ui04b_extraction_largefont.png",
         ))
         compose.waitForIdle()
         val context = InstrumentationRegistry.getInstrumentation().targetContext

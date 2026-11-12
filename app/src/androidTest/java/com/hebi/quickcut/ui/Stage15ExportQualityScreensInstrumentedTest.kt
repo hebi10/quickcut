@@ -32,6 +32,7 @@ import com.hebi.quickcut.media.ExportResolution
 import com.hebi.quickcut.media.ExportQualityLevel
 import com.hebi.quickcut.media.MediaReader
 import com.hebi.quickcut.media.SaveDateMode
+import com.hebi.quickcut.settings.QuickCutThemeMode
 import java.io.File
 import org.junit.After
 import org.junit.Before
@@ -66,9 +67,10 @@ class Stage15ExportQualityScreensInstrumentedTest {
         )))
         var selected by mutableStateOf(ExportQualitySettings())
         var showCompleted by mutableStateOf(false)
+        var theme by mutableStateOf(QuickCutThemeMode.LIGHT)
         compose.setContent {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(360.dp, 640.dp))) {
-                QuickCutTheme {
+                QuickCutTheme(modeOverride = theme) {
                     if (showCompleted) {
                         CompletedScreen(
                             videoUri = uri.toString(),
@@ -100,6 +102,11 @@ class Stage15ExportQualityScreensInstrumentedTest {
         compose.onNodeWithTag("ui05b-quality-result").performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("export-quality-resolution-ULTRA_HD_2160").assertIsDisplayed()
         capture("stage15_export_auto.png")
+        Ui07aVisualEvidence.capture("ui07a_light_save_options.png")
+        compose.runOnIdle { theme = QuickCutThemeMode.DARK }
+        compose.onNodeWithTag("ui05b-quality-result").performScrollTo().assertIsDisplayed()
+        Ui07aVisualEvidence.capture("ui07a_dark_save_options.png")
+        compose.runOnIdle { theme = QuickCutThemeMode.LIGHT }
         compose.onNodeWithTag("export-quality-quality-BALANCED").performScrollTo().performClick()
         compose.waitUntil(15_000) {
             selected.quality == ExportQualityLevel.BALANCED &&
@@ -123,6 +130,10 @@ class Stage15ExportQualityScreensInstrumentedTest {
         compose.runOnIdle { showCompleted = true }
         compose.onNodeWithText("저장 완료").assertIsDisplayed()
         capture("ui05b_export_completed.png")
+        Ui07aVisualEvidence.capture("ui07a_light_completed.png")
+        compose.runOnIdle { theme = QuickCutThemeMode.DARK }
+        compose.onNodeWithText("저장 완료").assertIsDisplayed()
+        Ui07aVisualEvidence.capture("ui07a_dark_completed.png")
         compose.onNodeWithTag("ui05b-completed-facts").performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("ui05b-original-status").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("갤러리에서 열기").performScrollTo().assertIsDisplayed()

@@ -71,6 +71,11 @@ if name == "gradle":
         "com.hebi.quickcut.media.Stage19CombinedExportInstrumentedTest",
         "com.hebi.quickcut.media.Stage20RecoveryInstrumentedTest",
         "com.hebi.quickcut.ui.ThemeModeInstrumentedTest",
+        "com.hebi.quickcut.media.ExportIntegrityInstrumentedTest",
+        "com.hebi.quickcut.media.OriginalMediaActionsInstrumentedTest",
+        "com.hebi.quickcut.batch.ExactBatchExportInstrumentedTest",
+        "com.hebi.quickcut.editor.SingleExportRecoveryInstrumentedTest",
+        "com.hebi.quickcut.export.BackgroundExportInstrumentedTest",
     )
     for i in range(count):
         classname = required[i] if phase in ("full", "remaining") and i < len(required) else phase + ".Suite"
@@ -430,6 +435,14 @@ class EmulatorFlowTest(unittest.TestCase):
         matrix = json.loads(matrix_path.read_text(encoding="utf-8"))
         self.assertEqual(matrix["pairs"], 20)
         self.assertEqual(matrix["images"], 40)
+        release_manifest = root / "quickcut-ui08a-evidence/release-qa.json"
+        self.assertTrue(release_manifest.is_file())
+        qa = json.loads(release_manifest.read_text(encoding="utf-8"))
+        self.assertEqual(qa["contract"], "quickcut-ui08a-qa-v1")
+        self.assertEqual(qa["androidApi"], "35")
+        self.assertEqual(qa["pairedThemeScreenshots"], 40)
+        self.assertEqual(qa["requiredMediaClassCount"], 8)
+        self.assertFalse(qa["playDeployed"])
         for image in (
             "dialog_save_settings.png", "dialog_original_delete.png",
             "dialog_export_method.png", "dialog_export_cancel.png",

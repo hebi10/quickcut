@@ -135,8 +135,7 @@ class Stage15ExportQualityScreensInstrumentedTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val dir = File(context.filesDir, "design-review")
         check(dir.isDirectory || dir.mkdirs())
-        val image = InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
-            ?: error("Android 실제 화면 캡처에 실패했습니다.")
+        val image = stableScreenshot(name)
         val output = File(dir, name)
         try {
             output.outputStream().use { check(image.compress(Bitmap.CompressFormat.PNG, 100, it)) }
@@ -145,4 +144,31 @@ class Stage15ExportQualityScreensInstrumentedTest {
         }
         check(output.length() > 0L)
     }
+    private fun stableScreenshot(name: String): Bitmap {
+        val instrument = InstrumentationRegistry.getInstrumentation()
+        var colorsSeen = 0
+        for (attempt in 0 until 8) {
+            compose.waitForIdle()
+            Thread.sleep(if (attempt == 0) 350L else 220L)
+            val screenshot = instrument.uiAutomation.takeScreenshot() ?: continue
+            if (screenshot.width < 200 || screenshot.height < 200) {
+                screenshot.recycle()
+                continue
+            }
+            val visibleColors = HashSet<Int>()
+            for (row in 9..42) for (column in 4..28) {
+                val pixel = screenshot.getPixel(
+                    screenshot.width * column / 32,
+                    screenshot.height * row / 50,
+                ) and 0x00FFFFFF
+                visibleColors.add(pixel)
+            }
+            colorsSeen = visibleColors.size
+            if (colorsSeen >= 3) return screenshot
+            screenshot.recycle()
+        }
+        error("Blank Android export UI screenshot: $name (visibleColors=$colorsSeen)")
+    }
+
+
 }

@@ -534,8 +534,8 @@ class TrimInputInstrumentedTest {
             model.seek(123L)
         }
         showQuick()
-        composeRule.onNodeWithText("결과 " + formatTime(123L) + " / " + formatTime(2_111L))
-            .assertIsDisplayed()
+        composeRule.onNodeWithText("현재 " + formatTime(123L)).assertIsDisplayed()
+        composeRule.onNodeWithText("전체 " + formatTime(2_111L)).assertIsDisplayed()
         composeRule.onNodeWithContentDescription("결과 미리보기 위치").assertIsDisplayed()
         composeRule.onNodeWithContentDescription("재생").assertIsDisplayed()
         composeRule.onNodeWithText("남길 구간").performScrollTo().assertIsDisplayed()

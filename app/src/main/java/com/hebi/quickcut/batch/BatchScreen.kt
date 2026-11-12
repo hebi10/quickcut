@@ -525,11 +525,11 @@ private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
     var pendingOriginalAction by rememberSaveable { mutableStateOf<OriginalAction?>(null) }
     Column(
         modifier = Modifier.fillMaxWidth().background(palette.surface, CutPanelShape)
-            .border(1.dp, palette.accent.copy(alpha = 0.35f), CutPanelShape).padding(16.dp),
+            .border(1.dp, palette.border, CutPanelShape).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("1. 영상 선택", color = palette.secondaryAccent,
+            Text("1. 영상 선택", color = palette.primaryText,
                 style = MaterialTheme.typography.titleMedium)
             val addModifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)
                 .testTag("batch-add-videos")
@@ -672,9 +672,19 @@ private fun PresetEditor(model: BatchViewModel, disabled: Boolean) {
     var showManager by rememberSaveable { mutableStateOf(false) }
     val selected = model.templates.firstOrNull { it.id == model.selectedTemplateId }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("선택 템플릿: " + (selected?.name ?: "직접 설정"), color = palette.primaryText)
-        selected?.let { Text(BatchTimeInput.summary(it), style = MaterialTheme.typography.bodySmall,
-            color = palette.secondaryText) }
+        Column(
+            Modifier.fillMaxWidth().background(palette.panel, CutShape)
+                .border(1.dp, palette.border, CutShape)
+                .padding(12.dp).testTag("ui04b-template-summary"),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text("선택 템플릿", style = MaterialTheme.typography.bodySmall,
+                color = palette.secondaryText)
+            Text(selected?.name ?: "직접 설정",
+                style = MaterialTheme.typography.titleMedium, color = palette.primaryText)
+            Text(selected?.let(BatchTimeInput::summary) ?: "현재 입력한 편집 설정을 사용합니다.",
+                style = MaterialTheme.typography.bodySmall, color = palette.secondaryText)
+        }
         OutlinedButton(onClick = { showManager = true }, enabled = !disabled,
             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("batch-template-manager")) {
             Text("템플릿 관리")
@@ -731,7 +741,7 @@ private fun PresetEditor(model: BatchViewModel, disabled: Boolean) {
                                 Column(Modifier.weight(1f),
                                     verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                     Text(template.name, style = MaterialTheme.typography.titleSmall,
-                                        color = palette.primaryText, maxLines = 1,
+                                        color = palette.primaryText, maxLines = 2,
                                         overflow = TextOverflow.Ellipsis)
                                     Text(BatchTimeInput.summary(template),
                                         style = MaterialTheme.typography.bodySmall,
@@ -740,7 +750,8 @@ private fun PresetEditor(model: BatchViewModel, disabled: Boolean) {
                                 }
                                 if (isSelected) {
                                     Text("선택됨", style = MaterialTheme.typography.labelSmall,
-                                        color = palette.secondaryAccent)
+                                        color = palette.primaryText,
+                                        modifier = Modifier.testTag("ui04b-template-selected"))
                                 }
                             }
                             if (LocalDensity.current.fontScale >= 1.5f) {
@@ -947,18 +958,24 @@ private fun BatchActions(
 @Composable
 private fun BatchFileHeader(model: BatchViewModel) {
     val palette = LocalCutPalette.current
-    Row(
-        Modifier.fillMaxWidth().padding(vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        Icon(CutIcons.Projects, contentDescription = null,
-            tint = palette.secondaryAccent, modifier = Modifier.size(CutSizes.icon))
-        Text(
-            "선택 영상 " + model.files.size + "개 · 원본 길이 → 저장 후 길이",
-            color = palette.primaryText, fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.weight(1f),
-        )
+    Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)
+            .testTag("ui04b-batch-file-header"),
+        verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Icon(CutIcons.Projects, contentDescription = null,
+                tint = palette.secondaryAccent, modifier = Modifier.size(CutSizes.icon))
+            Text("선택 영상", color = palette.primaryText,
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.weight(1f))
+            Text(model.files.size.toString() + "개", color = palette.primaryText,
+                style = MaterialTheme.typography.titleMedium)
+        }
+        Text("원본 길이 → 저장 후 길이",
+            color = palette.secondaryText, style = MaterialTheme.typography.bodySmall)
     }
 }
 
@@ -992,7 +1009,7 @@ private fun BatchFileRow(
             Column(Modifier.weight(1f)) {
                 Text(
                     file.displayName, color = palette.primaryText,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    maxLines = 2, overflow = TextOverflow.Ellipsis,
                     fontWeight = FontWeight.Medium,
                 )
                 Text(subtitle, color = palette.secondaryText, fontSize = 12.sp)
@@ -1028,9 +1045,14 @@ private fun BatchFileRow(
         }
         Text(
             statusText + (file.reason?.let { " · $it" } ?: ""),
-            color = if (file.status == BatchFileStatus.FAILED) MaterialTheme.colorScheme.error
-                else palette.secondaryText,
+            color = when (file.status) {
+                BatchFileStatus.SAVED -> palette.success
+                BatchFileStatus.FAILED -> palette.error
+                BatchFileStatus.SKIPPED -> palette.warning
+                else -> palette.secondaryText
+            },
             fontSize = 12.sp,
+            modifier = Modifier.testTag("ui04b-batch-file-status"),
         )
         if (file.status == BatchFileStatus.SAVED) {
             Text(exportReportText(file.exportReport), color = palette.secondaryText, fontSize = 12.sp)

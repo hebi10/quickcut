@@ -1,5 +1,8 @@
 package com.hebi.quickcut.batch
 
+import android.graphics.Bitmap
+import androidx.test.platform.app.InstrumentationRegistry
+import java.io.File
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -34,7 +37,7 @@ class BatchScreenInstrumentedTest {
         if (composeRule.onAllNodesWithText("도구").fetchSemanticsNodes().isNotEmpty()) {
             composeRule.onNodeWithText("도구").performClick()
         }
-        composeRule.onNodeWithText("일괄 편집").performClick()
+        composeRule.onNodeWithText("일괄 편집").performScrollTo().performClick()
     }
 
     @Test
@@ -74,6 +77,8 @@ class BatchScreenInstrumentedTest {
         openBatchEditor()
         composeRule.onNodeWithText("일괄 편집").assertExists()
         composeRule.onNodeWithTag("batch-mode").assertExists()
+        composeRule.onNodeWithTag("ui04b-template-summary").assertExists()
+        captureUi04b("ui04b_batch_setup.png")
         composeRule.onNodeWithText("템플릿·저장 옵션 펼치기").performScrollTo().performClick()
         choose("batch-date", "현재 날짜로 저장 (최신 파일)")
         choose("batch-date", "원본 날짜 유지")
@@ -127,6 +132,8 @@ class BatchScreenInstrumentedTest {
         openBatchEditor()
         composeRule.onNodeWithText("템플릿·저장 옵션 펼치기").performScrollTo().performClick()
         composeRule.onNodeWithTag("batch-template-manager").performScrollTo().performClick()
+        composeRule.onNodeWithTag("batch-template-dialog").assertExists()
+        captureUi04b("ui04b_batch_templates.png")
         composeRule.onNodeWithTag("batch-template-direct").performClick()
         composeRule.onNodeWithText("새 템플릿으로 저장").performScrollTo().performClick()
         composeRule.onNodeWithText("템플릿을 저장했습니다.").assertExists()
@@ -196,6 +203,28 @@ class BatchScreenInstrumentedTest {
                 model.clearNotification()
             }
         }
+    }
+
+    private fun captureUi04b(name: String) {
+        require(name in setOf("ui04b_batch_setup.png", "ui04b_batch_templates.png"))
+        composeRule.waitForIdle()
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val folder = File(context.filesDir, "design-review")
+        check(folder.isDirectory || folder.mkdirs())
+        val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+        automation.waitForIdle(300L, 5_000L)
+        val bitmap = checkNotNull(automation.takeScreenshot()) {
+            "Android 시스템 화면 캡처에 실패했습니다."
+        }
+        val file = File(folder, name)
+        try {
+            file.outputStream().use {
+                check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it))
+            }
+        } finally {
+            bitmap.recycle()
+        }
+        check(file.length() > 0L) { "UI-04-B 캡처 생성 실패: $name" }
     }
 
     private fun choose(tag: String, label: String) {

@@ -60,6 +60,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.KeyboardType
@@ -155,15 +158,21 @@ fun ExtractionScreen(
                 }
             }
         } else {
-            Text(session.sourceName, color = palette.secondaryText,
-                maxLines = 1, overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.bodyMedium)
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("원본 영상", color = palette.secondaryText,
+                    style = MaterialTheme.typography.labelMedium)
+                Text(session.sourceName, color = palette.primaryText,
+                    maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.titleSmall)
+            }
             BoxWithConstraints {
                 val wide = maxWidth >= 760.dp
                 if (wide) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp),
                         verticalAlignment = Alignment.Top) {
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Text("선택 구간 미리보기", color = palette.primaryText,
+                                style = MaterialTheme.typography.titleSmall)
                             ExtractionPlayer(player)
                             Text("원본 길이: ${formatTime(session.durationMs)}",
                                 color = palette.secondaryText)
@@ -174,6 +183,8 @@ fun ExtractionScreen(
                         }
                     }
                 } else {
+                    Text("선택 구간 미리보기", color = palette.primaryText,
+                        style = MaterialTheme.typography.titleSmall)
                     ExtractionPlayer(player)
                     Text("원본 길이: ${formatTime(session.durationMs)}",
                         color = palette.secondaryText,
@@ -311,9 +322,16 @@ private fun ExtractionRangeEditor(model: ExtractionViewModel, selected: Extracti
         border = BorderStroke(1.dp, palette.border)) {
         Column(Modifier.fillMaxWidth().padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("구간 ${session.items.indexOfFirst { it.range.id == range.id } + 1} · " +
-                formatTime(range.startMs) + " ~ " + formatTime(range.endMs),
-                style = MaterialTheme.typography.titleMedium, color = palette.primaryText)
+            Column(Modifier.fillMaxWidth().testTag("ui04b-extraction-range-summary"),
+                verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("선택한 구간 ${session.items.indexOfFirst { it.range.id == range.id } + 1}",
+                    style = MaterialTheme.typography.titleMedium, color = palette.primaryText)
+                Text(formatTime(range.startMs) + " → " + formatTime(range.endMs),
+                    fontFamily = FontFamily.Monospace,
+                    style = MaterialTheme.typography.bodyMedium, color = palette.secondaryText)
+                Text("저장할 길이 " + formatTime(range.durationMs),
+                    style = MaterialTheme.typography.titleSmall, color = palette.primaryText)
+            }
             Text("타임라인에서 범위를 조정하거나 시작·종료 시간을 직접 입력하세요.",
                 color = palette.secondaryText,
                 style = MaterialTheme.typography.bodySmall)
@@ -328,19 +346,23 @@ private fun ExtractionRangeEditor(model: ExtractionViewModel, selected: Extracti
                 valueRange = 0f..session.durationMs.toFloat(),
                 enabled = canEdit,
             )
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    value = startText, onValueChange = { startText = it.take(14) },
-                    label = { Text("시작(초)") }, modifier = Modifier.weight(1f),
-                    singleLine = true, enabled = canEdit,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                )
-                OutlinedTextField(
-                    value = endText, onValueChange = { endText = it.take(14) },
-                    label = { Text("종료(초)") }, modifier = Modifier.weight(1f),
-                    singleLine = true, enabled = canEdit,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                )
+            BoxWithConstraints(Modifier.fillMaxWidth()) {
+                val compactInputs = maxWidth < 400.dp || LocalDensity.current.fontScale >= 1.5f
+                if (compactInputs) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        ExtractionTimeInput(startText, { startText = it.take(14) },
+                            "시작(초)", canEdit, Modifier.fillMaxWidth())
+                        ExtractionTimeInput(endText, { endText = it.take(14) },
+                            "종료(초)", canEdit, Modifier.fillMaxWidth())
+                    }
+                } else {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        ExtractionTimeInput(startText, { startText = it.take(14) },
+                            "시작(초)", canEdit, Modifier.weight(1f))
+                        ExtractionTimeInput(endText, { endText = it.take(14) },
+                            "종료(초)", canEdit, Modifier.weight(1f))
+                    }
+                }
             }
             if (!valid) {
                 Text("0.1초 이상, 원본 길이 이내의 중복되지 않는 구간을 입력해 주세요.",
@@ -354,6 +376,25 @@ private fun ExtractionRangeEditor(model: ExtractionViewModel, selected: Extracti
             ) { Text("구간 적용") }
         }
     }
+}
+
+@Composable
+private fun ExtractionTimeInput(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    enabled: Boolean,
+    modifier: Modifier,
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        label = { Text(label) },
+        modifier = modifier.heightIn(min = 56.dp),
+        singleLine = true,
+        enabled = enabled,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+    )
 }
 
 @Composable
@@ -384,9 +425,17 @@ private fun ExtractionRows(model: ExtractionViewModel) {
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     ExtractionThumbnail(session.sourceUri, item.range.startMs)
-                    Column(Modifier.weight(1f)) {
-                        Text("구간 ${index + 1} · ${formatTime(item.range.startMs)}–${formatTime(item.range.endMs)}",
+                    Column(Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("구간 ${index + 1}",
                             color = palette.primaryText, fontWeight = FontWeight.SemiBold)
+                        Text(formatTime(item.range.startMs) + " → " +
+                            formatTime(item.range.endMs),
+                            color = palette.secondaryText, fontFamily = FontFamily.Monospace,
+                            style = MaterialTheme.typography.bodySmall, maxLines = 2)
+                        Text("길이 " + formatTime(item.range.durationMs),
+                            color = palette.primaryText,
+                            style = MaterialTheme.typography.bodySmall)
                         Text(
                             when (item.status) {
                                 ExtractionStatus.WAITING -> "저장 대기"
@@ -397,10 +446,12 @@ private fun ExtractionRows(model: ExtractionViewModel) {
                             },
                             color = when (item.status) {
                                 ExtractionStatus.SAVED -> palette.success
-                                ExtractionStatus.FAILED, ExtractionStatus.BLOCKED -> palette.warning
+                                ExtractionStatus.FAILED -> palette.error
+                                ExtractionStatus.BLOCKED -> palette.warning
                                 else -> palette.secondaryText
                             },
                             style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.testTag("ui04b-extraction-status-" + index),
                         )
                     }
                     if (item.status == ExtractionStatus.SAVED && item.outputUri != null) {
@@ -470,7 +521,7 @@ private fun SegmentOverview(session: ExtractionSession, selectedId: Long) {
                 )
             }
         }
-        Text("보라색: 현재 선택 구간 · 다른 구간과 겹쳐도 별도 파일로 저장",
+        Text("진하게 표시된 범위가 현재 선택한 구간입니다. 겹친 구간도 각각 저장합니다.",
             color = palette.secondaryText,
             style = MaterialTheme.typography.bodySmall)
     }

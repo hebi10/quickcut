@@ -329,6 +329,33 @@ for file in stage14_extraction_one.png stage14_extraction_three.png \
     if [[ "$first_failure" -eq 0 ]]; then first_failure=1; fi
   fi
 done
+# UI-04-B: four original Android screen captures for segment and batch/template work.
+for file in ui04b_extraction_three.png ui04b_extraction_largefont.png \
+    ui04b_batch_setup.png ui04b_batch_templates.png; do
+  if timeout --kill-after=2s 20s adb exec-out run-as com.hebi.quickcut cat "files/design-review/$file" > "quickcut-design-review/$file" && [[ -s "quickcut-design-review/$file" ]]; then
+    echo "UI-04-B screenshot preserved: $file"
+  else
+    echo "::error::UI-04-B screenshot missing or empty: $file"
+    if [[ "$first_failure" -eq 0 ]]; then first_failure=1; fi
+  fi
+done
+run_checked "Verify UI-04-B Android extraction and batch/template screenshots" python3 - "$SCRIPT_DIR/stage20-evidence-verify.py" <<'PYUI04B'
+from pathlib import Path
+import importlib.util
+import sys
+
+spec = importlib.util.spec_from_file_location("stage20_images", sys.argv[1])
+validator = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(validator)
+for name in (
+    "ui04b_extraction_three.png",
+    "ui04b_extraction_largefont.png",
+    "ui04b_batch_setup.png",
+    "ui04b_batch_templates.png",
+):
+    dimensions = validator.verify_png(Path("quickcut-design-review") / name)
+    print(f"Verified UI-04-B screenshot: {name} {dimensions}")
+PYUI04B
 # Stage 17 audio controls must be real Android PNG captures, not generated mockups.
 for file in stage17_audio_default.png stage17_audio_fades.png \
     stage17_audio_muted.png stage17_audio_largefont.png; do

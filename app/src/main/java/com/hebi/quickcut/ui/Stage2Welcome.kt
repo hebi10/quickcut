@@ -1,21 +1,19 @@
 package com.hebi.quickcut.ui
 
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.PlayCircleOutline
-import androidx.compose.material.icons.outlined.VideoLibrary
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -27,28 +25,18 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ColorFilter
-import androidx.compose.ui.graphics.ColorMatrix
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.hebi.quickcut.R
 
 private data class WelcomePage(val title: String, val detail: String)
 
-private val filmstripNeutral = ColorFilter.colorMatrix(
-    ColorMatrix().apply { setToSaturation(0f) },
-)
-
 private val welcomePages = listOf(
-    WelcomePage("빠르고 간편한\\n영상 편집", "복잡한 과정 없이\\n원하는 구간만 자르고 간단하게 편집해 보세요."),
-    WelcomePage("필요한 도구만", "빠른 자르기, 상세 편집, 일괄 편집을\\n원하는 작업에 맞게 선택하세요."),
-    WelcomePage("안전하게 저장", "편집 결과를 확인한 뒤 저장하고\\n원본 처리 방식도 직접 선택하세요."),
+    WelcomePage("빠르고 간편한\n영상 편집", "복잡한 과정 없이\n원하는 구간만 자르고 간단하게 편집해 보세요."),
+    WelcomePage("필요한 도구만", "빠른 자르기, 상세 편집, 일괄 편집을\n원하는 작업에 맞게 선택하세요."),
+    WelcomePage("안전하게 저장", "편집 결과를 확인한 뒤 저장하고\n원본 처리 방식도 직접 선택하세요."),
 )
 
 @Composable
@@ -57,63 +45,99 @@ internal fun QuickCutWelcome(onFinish: () -> Unit) {
     var index by rememberSaveable { mutableIntStateOf(0) }
     val page = welcomePages[index]
     val compactArtwork = LocalDensity.current.fontScale >= 1.6f
-    Column(
-        modifier = Modifier.fillMaxSize().background(palette.background)
-            .padding(horizontal = CutSpacing.xl, vertical = CutSpacing.xxl),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.SpaceBetween,
-    ) {
-        Spacer(Modifier.height(20.dp))
-        Column(horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(CutSpacing.xl)) {
-            if (index == 0) {
-                Box(
-                    modifier = Modifier.fillMaxWidth()
-                        .height(if (compactArtwork) 142.dp else 188.dp)
-                        .testTag("quickcut-onboarding-artwork"),
-                    contentAlignment = Alignment.Center,
+
+    Column(Modifier.fillMaxSize().background(palette.background)) {
+        Column(
+            modifier = Modifier.weight(1f).fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = CutSpacing.xl, vertical = CutSpacing.xl),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(CutSpacing.xl),
+        ) {
+            Text(
+                "QUICKCUT · ${index + 1} / ${welcomePages.size}",
+                style = MaterialTheme.typography.labelMedium,
+                color = palette.secondaryText,
+            )
+            Box(
+                modifier = Modifier.fillMaxWidth()
+                    .height(if (compactArtwork) 120.dp else 168.dp)
+                    .background(palette.surface, CutShape)
+                    .border(1.dp, palette.border, CutShape)
+                    .testTag("quickcut-onboarding-artwork"),
+                contentAlignment = Alignment.Center,
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(CutSpacing.md),
                 ) {
-                    Image(
-                        painter = painterResource(R.drawable.quickcut_studio),
-                        contentDescription = null,
-                        colorFilter = filmstripNeutral,
-                        contentScale = ContentScale.Fit,
-                        modifier = Modifier.fillMaxWidth(0.88f)
-                            .height(if (compactArtwork) 122.dp else 166.dp),
-                    )
-                    QuickCutLogo(
-                        size = if (compactArtwork) 44.dp else 56.dp,
-                        modifier = Modifier.align(Alignment.BottomEnd)
-                            .padding(end = CutSpacing.lg, bottom = CutSpacing.sm),
-                    )
-                }
-            } else {
-                Box(
-                    modifier = Modifier.size(if (compactArtwork) 106.dp else 128.dp)
-                        .background(palette.accentMuted, CutPanelShape),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        if (index == 1) CutIcons.Preview else CutIcons.Batch,
-                        contentDescription = null,
-                        tint = palette.secondaryAccent,
-                        modifier = Modifier.size(if (compactArtwork) 68.dp else 80.dp),
-                    )
+                    Box(
+                        modifier = Modifier
+                            .width(if (compactArtwork) 170.dp else 220.dp)
+                            .height(if (compactArtwork) 66.dp else 94.dp)
+                            .background(palette.panel, CutShape)
+                            .border(1.dp, palette.border, CutShape),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = when (index) {
+                                0 -> CutIcons.Trim
+                                1 -> CutIcons.Tools
+                                else -> CutIcons.Save
+                            },
+                            contentDescription = null,
+                            tint = palette.primaryText,
+                            modifier = Modifier.size(if (compactArtwork) 32.dp else 40.dp),
+                        )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(CutSpacing.sm)) {
+                        repeat(welcomePages.size) { step ->
+                            Box(
+                                Modifier.width(if (compactArtwork) 46.dp else 60.dp)
+                                    .height(4.dp)
+                                    .background(
+                                        if (step == index) palette.accent else palette.border,
+                                        CutSmallShape,
+                                    ),
+                            )
+                        }
+                    }
                 }
             }
-            Text(page.title.replace("\\n", "\n"), color = palette.primaryText,
+            Text(
+                page.title,
+                color = palette.primaryText,
                 style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
-            Text(page.detail.replace("\\n", "\n"), color = palette.secondaryText,
-                style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center)
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center,
+            )
+            Text(
+                page.detail,
+                color = palette.secondaryText,
+                style = MaterialTheme.typography.bodyLarge,
+                textAlign = TextAlign.Center,
+            )
         }
-        Column(horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(CutSpacing.xl)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(CutSpacing.sm),
-                verticalAlignment = Alignment.CenterVertically) {
-                repeat(welcomePages.size) { i ->
-                    Box(Modifier.size(if (i == index) 9.dp else 7.dp)
-                        .background(if (i == index) palette.accent else palette.mutedText, CircleShape))
+
+        Column(
+            modifier = Modifier.fillMaxWidth()
+                .padding(horizontal = CutSpacing.xl, vertical = CutSpacing.lg),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(CutSpacing.lg),
+        ) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(CutSpacing.sm),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                repeat(welcomePages.size) { step ->
+                    Box(
+                        Modifier.width(if (step == index) 20.dp else 8.dp)
+                            .height(8.dp)
+                            .background(
+                                if (step == index) palette.accent else palette.mutedText,
+                                CutSmallShape,
+                            ),
+                    )
                 }
             }
             Button(
@@ -121,8 +145,10 @@ internal fun QuickCutWelcome(onFinish: () -> Unit) {
                 modifier = Modifier.fillMaxWidth().height(CutSizes.primaryButton),
                 shape = CutShape,
             ) {
-                Text(if (index == welcomePages.lastIndex) "시작하기" else "다음",
-                    color = palette.onAccent)
+                Text(
+                    if (index == welcomePages.lastIndex) "시작하기" else "다음",
+                    color = palette.onAccent,
+                )
             }
         }
     }

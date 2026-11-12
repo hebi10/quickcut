@@ -44,9 +44,11 @@ class ThemeModeInstrumentedTest {
         }
         compose.onNodeWithText("+ 영상 편집 시작하기").assertIsDisplayed()
         capture("theme_light_home.png", light = true)
+        captureUi03aTabs("light", light = true)
         compose.runOnIdle { mode = QuickCutThemeMode.DARK }
         compose.onNodeWithText("+ 영상 편집 시작하기").assertIsDisplayed()
         capture("theme_dark_home.png", light = false)
+        captureUi03aTabs("dark", light = false)
     }
 
     @Test fun selectorSwitchesFromSystemToExplicitModes() {
@@ -92,6 +94,24 @@ class ThemeModeInstrumentedTest {
         } finally {
             settings.saveThemeMode(previous)
         }
+    }
+
+    private fun captureUi03aTabs(theme: String, light: Boolean) {
+        capture("ui03a_" + theme + "_home.png", light)
+
+        compose.onNodeWithText("프로젝트").performClick()
+        compose.onNodeWithText("프로젝트 없음").assertIsDisplayed()
+        capture("ui03a_" + theme + "_projects.png", light)
+
+        compose.onNodeWithText("도구").performClick()
+        compose.onNodeWithText("편집 도구").assertIsDisplayed()
+        capture("ui03a_" + theme + "_tools.png", light)
+
+        compose.onNodeWithText("설정").performClick()
+        compose.onNodeWithText("마지막 사용 설정").assertExists()
+        capture("ui03a_" + theme + "_settings.png", light)
+
+        compose.onNodeWithText("홈").performClick()
     }
 
     private fun capture(name: String, light: Boolean) {

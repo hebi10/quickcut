@@ -33,13 +33,28 @@ class StudioDesignInstrumentedTest {
     @get:Rule val composeRule = createAndroidComposeRule<ComponentActivity>()
 
     @Test fun smallPhoneHomeAndTabsStayAccessible() {
-        showHome(320, 640, 1f, canRestore = true)
+        val events = mutableListOf<String>()
+        showHome(320, 640, 1f, canRestore = true, events = events)
         composeRule.onNodeWithText("+ 영상 편집 시작하기").assertIsDisplayed()
         composeRule.onNodeWithText("전체 보기 >").assertIsDisplayed()
         composeRule.onNodeWithText("도구").performClick()
         composeRule.onNodeWithText("편집 도구").assertIsDisplayed()
+        listOf("빠른 자르기", "상세 편집", "일괄 편집", "여러 구간 추출").forEach { label ->
+            composeRule.onNode(hasText(label) and hasClickAction())
+                .performScrollTo().assertIsDisplayed().performClick()
+        }
+        composeRule.onNodeWithText("영상 갤러리")
+            .performScrollTo().assertIsDisplayed().performClick()
         composeRule.onNodeWithText("설정").performClick()
         composeRule.onNodeWithText("마지막 사용 설정").assertExists()
+        composeRule.onNodeWithText("설정 변경")
+            .performScrollTo().assertIsDisplayed().performClick()
+        composeRule.runOnIdle {
+            assertEquals(
+                listOf("quick", "detailed", "batch", "segments", "gallery", "preferences"),
+                events,
+            )
+        }
     }
 
     @Test fun largeFontOnSmallPhoneCanReachSettings() {
@@ -76,6 +91,8 @@ class StudioDesignInstrumentedTest {
                                 onQuick = { events += "quick" },
                                 onSelect = { events += "detailed" },
                                 onBatch = { events += "batch" },
+                                onExtraction = { events += "segments" },
+                                onGallery = { events += "gallery" },
                                 canRestore = canRestore,
                                 onRestore = { events += "restore" },
                                 quickSettings = QuickTrimSettings(4_000L, 1_500L, true),

@@ -103,9 +103,10 @@ if name == "adb":
             sys.exit(43)
         if os.environ.get("STAGE7_CAPTURE_STATUS") == "1":
             sys.exit(42)
-        if any(("stage14_" in a or "stage15_" in a or "stage16_" in a or "stage17_" in a or "stage18_" in a or "theme_" in a) for a in args):
+        if any(("stage14_" in a or "stage15_" in a or "stage16_" in a or "stage17_" in a or "stage18_" in a or "theme_" in a or "ui03a_" in a) for a in args):
             if (any(os.environ.get("STAGE"+str(i)+"_CAPTURE_STATUS") == "1" for i in (14, 15, 16, 17, 18)) or
-                    (os.environ.get("STAGE1A_CAPTURE_STATUS") == "1" and any("theme_" in a for a in args))):
+                    (os.environ.get("STAGE1A_CAPTURE_STATUS") == "1" and any("theme_" in a for a in args)) or
+                    (os.environ.get("UI03A_CAPTURE_STATUS") == "1" and any("ui03a_" in a for a in args))):
                 sys.stdout.buffer.write(b"cat: files/design-review/stage15_export_auto.png: No such file")
                 sys.exit(0)
             import struct, zlib
@@ -233,6 +234,12 @@ class EmulatorFlowTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Missing/corrupt PNG evidence", result.stdout + result.stderr)
 
+    def test_ui03a_non_png_screenshots_cannot_satisfy_visual_gate(self):
+        result, _, _, phases = self.run_flow(UI03A_CAPTURE_STATUS=1)
+        self.assertEqual(phases, ["preflight", "full"])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Missing/corrupt PNG evidence", result.stdout + result.stderr)
+
     def test_stage7_capture_failure_remains_a_required_gate(self):
         result, _, _, phases = self.run_flow(STAGE7_CAPTURE_STATUS=1)
         self.assertEqual(phases, ["preflight", "full"])
@@ -328,6 +335,9 @@ class EmulatorFlowTest(unittest.TestCase):
         self.assertTrue(proof.is_file())
         self.assertEqual(json.loads(proof.read_text())["androidApi"], "35")
         for image in ("theme_light_home.png", "theme_dark_home.png",
+                       *(f"ui03a_{theme}_{tab}.png"
+                         for theme in ("light", "dark")
+                         for tab in ("home", "projects", "tools", "settings")),
                       "stage7_home.png", "stage7_projects_empty.png", "stage7_onboarding.png",
                       "stage13_home_populated.png", "stage13_projects_populated.png",
                       "stage13_tools.png", "stage13_settings.png", "stage13_gallery_selected.png",

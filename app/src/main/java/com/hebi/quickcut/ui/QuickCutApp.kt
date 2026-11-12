@@ -923,8 +923,11 @@ internal fun CenterStatus(
                 .padding(CutSpacing.xl),
             verticalArrangement = Arrangement.spacedBy(CutSpacing.lg),
         ) {
-            Text("영상 내보내기", color = palette.secondaryText,
-                style = MaterialTheme.typography.labelLarge)
+            Text(
+                if (title.contains("불러오는")) "영상 불러오기" else "영상 내보내기",
+                color = palette.secondaryText,
+                style = MaterialTheme.typography.labelLarge,
+            )
             Text(title, color = palette.primaryText,
                 style = MaterialTheme.typography.headlineSmall,
                 modifier = Modifier.testTag("ui05b-export-stage"))
@@ -1048,8 +1051,8 @@ internal fun CompletedScreen(
                 color = palette.secondaryText,
                 style = MaterialTheme.typography.bodyMedium)
             Text(
-                if (savedDateMode == SaveDateMode.ORIGINAL) "저장 날짜 · 원본 날짜 기준"
-                else "저장 날짜 · 현재 날짜 기준",
+                if (savedDateMode == SaveDateMode.ORIGINAL) "날짜 설정 · 원본 날짜 유지"
+                else "날짜 설정 · 현재 날짜 저장",
                 color = palette.secondaryText,
                 style = MaterialTheme.typography.bodySmall,
             )

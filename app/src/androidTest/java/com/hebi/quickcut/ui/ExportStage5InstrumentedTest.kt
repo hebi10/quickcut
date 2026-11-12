@@ -1,6 +1,10 @@
 package com.hebi.quickcut.ui
 
 import androidx.activity.ComponentActivity
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import com.hebi.quickcut.settings.QuickCutThemeMode
 import android.graphics.Bitmap
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.test.platform.app.InstrumentationRegistry
@@ -21,8 +25,9 @@ class ExportStage5InstrumentedTest {
 
     @Test fun progressScreenShowsRealStageAndCancelableAction() {
         var cancels = 0
+        var theme by mutableStateOf(QuickCutThemeMode.LIGHT)
         compose.setContent {
-            QuickCutTheme {
+            QuickCutTheme(modeOverride = theme) {
                 CenterStatus(
                     title = "영상 저장 중",
                     subtitle = "원본 처리 단계입니다.",
@@ -35,6 +40,10 @@ class ExportStage5InstrumentedTest {
         compose.onNodeWithTag("ui05b-export-stage").assertIsDisplayed()
         compose.onNodeWithTag("ui05b-export-progress").assertIsDisplayed()
         capture("ui05b_export_progress.png")
+        Ui07aVisualEvidence.capture("ui07a_light_progress.png")
+        compose.runOnIdle { theme = QuickCutThemeMode.DARK }
+        compose.onNodeWithText("45%").assertIsDisplayed()
+        Ui07aVisualEvidence.capture("ui07a_dark_progress.png")
         compose.onNodeWithText("취소").assertIsDisplayed().performClick()
         compose.runOnIdle { assertEquals(1, cancels) }
     }

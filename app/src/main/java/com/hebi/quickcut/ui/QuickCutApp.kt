@@ -35,6 +35,7 @@ import androidx.compose.material.icons.outlined.PlayCircleOutline
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -59,6 +60,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -908,69 +910,57 @@ internal fun CenterStatus(
 ) {
     val palette = LocalCutPalette.current
     Column(
-        modifier = Modifier.fillMaxSize()
+        modifier = Modifier.fillMaxSize().background(palette.background)
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = CutSpacing.xl, vertical = CutSpacing.xxl),
-        verticalArrangement = Arrangement.Center,
+            .padding(horizontal = CutSpacing.lg, vertical = CutSpacing.xl),
         horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
     ) {
-        Text("QuickCut", style = MaterialTheme.typography.titleMedium,
-            color = palette.secondaryAccent)
-        Spacer(Modifier.height(CutSpacing.xxl))
-        Box(
+        Column(
             modifier = Modifier.widthIn(max = 440.dp).fillMaxWidth()
                 .background(palette.surface, CutPanelShape)
                 .border(1.dp, palette.border, CutPanelShape)
                 .padding(CutSpacing.xl),
-            contentAlignment = Alignment.Center,
+            verticalArrangement = Arrangement.spacedBy(CutSpacing.lg),
         ) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(CutSpacing.lg),
-            ) {
-                Text(title, color = palette.primaryText,
-                    style = MaterialTheme.typography.headlineSmall,
-                    textAlign = TextAlign.Center)
-                Box(contentAlignment = Alignment.Center,
-                    modifier = Modifier.size(148.dp)) {
-                    if (progress == null) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(128.dp),
-                            strokeWidth = 7.dp,
-                            color = palette.accent,
-                        )
-                        Text("처리 중", color = palette.primaryText,
-                            style = MaterialTheme.typography.titleMedium)
-                    } else {
-                        CircularProgressIndicator(
-                            progress = { progress.coerceIn(0, 100) / 100f },
-                            modifier = Modifier.size(128.dp),
-                            strokeWidth = 7.dp,
-                            color = palette.accent,
-                        )
-                        Text(progress.coerceIn(0, 100).toString() + "%",
-                            color = palette.primaryText,
-                            style = MaterialTheme.typography.headlineMedium)
-                    }
-                }
-                Text(
-                    if (progress == null) "결과 영상 확인 중"
-                    else "현재 처리 단계 · " + progress.coerceIn(0, 100) + "%",
-                    color = palette.secondaryAccent,
-                    style = MaterialTheme.typography.labelLarge,
+            Text("영상 내보내기", color = palette.secondaryText,
+                style = MaterialTheme.typography.labelLarge)
+            Text(title, color = palette.primaryText,
+                style = MaterialTheme.typography.headlineSmall,
+                modifier = Modifier.testTag("ui05b-export-stage"))
+            if (progress == null) {
+                LinearProgressIndicator(
+                    modifier = Modifier.fillMaxWidth().testTag("ui05b-export-progress"),
+                    color = palette.accent,
                 )
-                Text(subtitle, color = palette.secondaryText,
-                    style = MaterialTheme.typography.bodySmall,
-                    textAlign = TextAlign.Center)
+                Text("처리 중 · 진행률 확인 불가",
+                    color = palette.secondaryText,
+                    style = MaterialTheme.typography.bodyMedium)
+            } else {
+                val actualProgress = progress.coerceIn(0, 100)
+                Text("$actualProgress%",
+                    color = palette.primaryText,
+                    style = MaterialTheme.typography.headlineMedium)
+                LinearProgressIndicator(
+                    progress = { actualProgress / 100f },
+                    modifier = Modifier.fillMaxWidth().testTag("ui05b-export-progress"),
+                    color = palette.accent,
+                )
+                Text("현재 처리 단계의 진행률",
+                    color = palette.secondaryText,
+                    style = MaterialTheme.typography.bodySmall)
             }
+            Text(subtitle, color = palette.secondaryText,
+                style = MaterialTheme.typography.bodySmall)
         }
         if (onCancel != null) {
             Spacer(Modifier.height(CutSpacing.xl))
-            OutlinedButton(onClick = onCancel, shape = CutShape,
+            OutlinedButton(
+                onClick = onCancel,
+                shape = CutShape,
                 modifier = Modifier.widthIn(max = 440.dp).fillMaxWidth()
-                    .heightIn(min = CutSizes.primaryButton)) {
-                Text("취소")
-            }
+                    .heightIn(min = CutSizes.primaryButton),
+            ) { Text("취소") }
         }
     }
 }

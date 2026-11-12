@@ -81,6 +81,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -719,11 +720,22 @@ internal fun PreviewPlaybackControls(
             Icon(if (playing) CutIcons.Pause else CutIcons.Play,
                 contentDescription = if (playing) "일시정지" else "재생")
         }
-        Column(Modifier.weight(1f).padding(end = 8.dp)) {
-            Text("결과 " + formatTime(currentPosition) + " / " + formatTime(timelineDuration),
-                color = palette.primaryText, fontSize = 12.sp,
-                fontWeight = FontWeight.Medium,
-                modifier = Modifier.testTag("editor-playback-time"))
+        Column(Modifier.weight(1f).padding(end = CutSpacing.sm)) {
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text("현재 " + formatTime(currentPosition),
+                    color = palette.primaryText,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontFamily = FontFamily.Monospace,
+                    modifier = Modifier.testTag("editor-playback-time"))
+                Text("전체 " + formatTime(timelineDuration),
+                    color = palette.secondaryText,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontFamily = FontFamily.Monospace)
+            }
             Slider(
                 value = currentPosition.toFloat().coerceIn(0f, timelineDuration.coerceAtLeast(1L).toFloat()),
                 onValueChange = { onSeek(it.roundToLong()) },
@@ -748,6 +760,12 @@ private fun ToolButtons(
             Text("편집 도구", color = palette.primaryText,
                 style = MaterialTheme.typography.titleMedium)
             selected?.let {
+                Text("클립 " + (model.timeline.clips.indexOf(it) + 1) +
+                    " · " + formatTime(it.durationMs),
+                    color = palette.primaryText,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
+                    modifier = Modifier.testTag("ui04a-selected-clip"))
                 Text(if (it.muted) "원본 소리: 음소거" else "원본 소리: 유지",
                     color = palette.secondaryText, fontSize = 12.sp)
             }
@@ -793,8 +811,17 @@ private fun ToolButtons(
                 Text("편집 도구", color = palette.primaryText,
                     style = MaterialTheme.typography.titleSmall)
                 selected?.let {
-                    Text(if (it.muted) "원본 소리: 음소거" else "원본 소리: 유지",
-                        color = palette.secondaryText, fontSize = 11.sp)
+                    Column(horizontalAlignment = Alignment.End) {
+                        Text("클립 " + (model.timeline.clips.indexOf(it) + 1) +
+                            " · " + formatTime(it.durationMs),
+                            color = palette.primaryText,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace,
+                            modifier = Modifier.testTag("ui04a-selected-clip"))
+                        Text(if (it.muted) "원본 소리: 음소거" else "원본 소리: 유지",
+                            color = palette.secondaryText,
+                            style = MaterialTheme.typography.labelSmall)
+                    }
                 }
             }
             BoxWithConstraints(Modifier.fillMaxWidth()) {
@@ -898,7 +925,9 @@ private fun TrimEditor(
     val valid = TrimInput.selectedRange(startText, endText, clip.sourceDurationMs) != null
     SideEffect { onValidityChange(valid) }
     Column(modifier.background(palette.surface, CutPanelShape).padding(vertical = 8.dp)) {
-        Text("자르기 범위", color = palette.secondaryAccent, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        Text("자르기 범위", color = palette.primaryText,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold)
         RangeSlider(
             value = clip.startMs.toFloat()..clip.endMs.toFloat(),
             onValueChange = { range ->
@@ -917,8 +946,10 @@ private fun TrimEditor(
             modifier = Modifier.fillMaxWidth().testTag("detailed-trim-range"),
         )
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("시작 " + formatTime(clip.startMs), color = palette.secondaryText, fontSize = 12.sp)
-            Text("끝 " + formatTime(clip.endMs), color = palette.secondaryText, fontSize = 12.sp)
+            Text("시작 " + formatTime(clip.startMs), color = palette.secondaryText,
+                style = MaterialTheme.typography.labelMedium, fontFamily = FontFamily.Monospace)
+            Text("끝 " + formatTime(clip.endMs), color = palette.secondaryText,
+                style = MaterialTheme.typography.labelMedium, fontFamily = FontFamily.Monospace)
         }
         BoxWithConstraints(Modifier.fillMaxWidth()) {
             val changeStart: (String) -> Unit = {

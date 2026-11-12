@@ -66,8 +66,7 @@ class ExportStage5InstrumentedTest {
         val instrument = InstrumentationRegistry.getInstrumentation()
         val directory = File(instrument.targetContext.filesDir, "design-review")
         check(directory.isDirectory || directory.mkdirs())
-        val bitmap = instrument.uiAutomation.takeScreenshot()
-            ?: error("Android 실제 내보내기 UI 캡처에 실패했습니다.")
+        val bitmap = stableScreenshot(name)
         try {
             File(directory, name).outputStream().use {
                 check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it))
@@ -77,5 +76,32 @@ class ExportStage5InstrumentedTest {
         }
         check(File(directory, name).length() > 0L)
     }
+
+    private fun stableScreenshot(name: String): Bitmap {
+        val instrument = InstrumentationRegistry.getInstrumentation()
+        var colorsSeen = 0
+        for (attempt in 0 until 8) {
+            compose.waitForIdle()
+            Thread.sleep(if (attempt == 0) 350L else 220L)
+            val screenshot = instrument.uiAutomation.takeScreenshot() ?: continue
+            if (screenshot.width < 200 || screenshot.height < 200) {
+                screenshot.recycle()
+                continue
+            }
+            val visibleColors = HashSet<Int>()
+            for (row in 9..42) for (column in 4..28) {
+                val pixel = screenshot.getPixel(
+                    screenshot.width * column / 32,
+                    screenshot.height * row / 50,
+                ) and 0x00FFFFFF
+                visibleColors.add(pixel)
+            }
+            colorsSeen = visibleColors.size
+            if (colorsSeen >= 3) return screenshot
+            screenshot.recycle()
+        }
+        error("Blank Android export UI screenshot: $name (visibleColors=$colorsSeen)")
+    }
+
 
 }

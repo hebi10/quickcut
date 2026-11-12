@@ -162,6 +162,7 @@ if name == "adb":
                 "dialog_edit_recovery.png",
                 "dialog_diagnostics.png",
                 "dialog_task_error.png",
+                "ui06a_preview_recovery.png",
                 "dialog_save_large_font.png",
                 "dialog_export_analysis_large_font.png",
                 "dialog_licenses.png",
@@ -404,7 +405,7 @@ class EmulatorFlowTest(unittest.TestCase):
             "dialog_export_method.png", "dialog_export_cancel.png",
             "dialog_export_finalizing.png", "dialog_edit_recovery.png",
             "dialog_diagnostics.png", "dialog_task_error.png",
-            "dialog_save_large_font.png", "dialog_export_analysis_large_font.png",
+            "ui06a_preview_recovery.png", "dialog_save_large_font.png", "dialog_export_analysis_large_font.png",
             "dialog_licenses.png",
         ):
             self.assertTrue((root / "quickcut-design-review" / image).is_file())

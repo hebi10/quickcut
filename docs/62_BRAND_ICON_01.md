@@ -37,3 +37,12 @@
 - 앱 코드 버전 자동 증가나 트랙 게시 성공을 주장하지 않음.
 
 Google Drive QuickCut 작업 폴더: https://drive.google.com/drive/folders/1V8N0OS1j57eoD0OGDtZfcBtwIWxKjMA5
+
+Google Drive 디자인 검수·배포용 원본 5종: https://drive.google.com/drive/folders/1jLd-3WsaAy5IH2d6F0sikWJQc3Dwd1Ks
+- 1024×1024 브랜드 마스터: https://drive.google.com/file/d/1c3PGS73bznGLlwR0A4CLxkvkrm4KTAOI/view
+- 512×512 Google Play 아이콘: https://drive.google.com/file/d/1WKyxRHxBp0TQXgLBHqq16jGmlOhoc9oZ/view
+- 432×432 Android 적응형 전경: https://drive.google.com/file/d/1KGHjzgZjVX9SNNStxS2q8j0QlV6TZOYX/view
+- 432×432 모노크롬: https://drive.google.com/file/d/1PcVS50iqmtHakqkbweJ8dKts5Hf3t6Lh/view
+- 크기별 48·96px 검수: https://drive.google.com/file/d/1Ekm_CkDmPoiFhNSBfTRnCBXnx9sjNNVv/view
+
+**자료/배포 구분:** Drive에 보관한 마스터·모노크롬 원본은 시안 검수용입니다. 앱·Play 배포에 사용할 실제 파일은 이 브랜치의 버전 관리 자산이며, 커밋된 바이너리의 CI 검증 및 최종 캡처 확인 이후 승인해야 합니다. Drive 업로드는 Google Play 업로드가 아닙니다.

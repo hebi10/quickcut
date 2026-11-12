@@ -203,7 +203,8 @@ class EditorDesignInstrumentedTest {
         capture("editor_design_quick_trim_light")
         compose.runOnIdle { themeMode = QuickCutThemeMode.DARK }
         compose.onNodeWithTag("ui04a-quick-result-summary").assertExists()
-        compose.onNodeWithText("결과 영상").assertIsDisplayed()
+        compose.onNodeWithText("결과 영상").performScrollTo().assertIsDisplayed()
+        capture("editor_design_quick_trim_result")
         compose.onNodeWithContentDescription("자르기 구간 조절").assertExists()
         compose.onNodeWithText("영상 저장").assertIsDisplayed().assertIsEnabled()
         compose.runOnIdle {

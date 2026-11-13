@@ -491,5 +491,53 @@ class MandatoryTriggerAndMainRegressionTests(unittest.TestCase):
         self.assertTrue(any("SOURCE: release-build.yml" in issue for issue in issues), issues)
 
 
+class ReleaseJobBoundaryRegressionTests(unittest.TestCase):
+    def test_default_test_track_publisher_is_automatic_mutation(self):
+        source = publish_on(
+            "on:\n  push:",
+            "python3 scripts/publish-play-test.py --bundle release.aab",
+            job="deliver")
+        self.assertTrue(audit.automatic_mutations("sync.yml", source))
+
+    def test_manual_only_publishing_step_does_not_run_on_push(self):
+        source = ("on:\n  push:\n  workflow_dispatch:\njobs:\n"
+                  "  deliver:\n    runs-on: ubuntu-latest\n    steps:\n"
+                  "      - if: github.event_name == 'workflow_dispatch'\n"
+                  "        run: python3 scripts/play/publisher.py deploy\n")
+        self.assertEqual(audit.automatic_mutations("play-release.yml", source), [])
+        unsafe = source.replace(
+            "github.event_name == 'workflow_dispatch'",
+            "github.event_name == 'workflow_dispatch' || true")
+        self.assertTrue(audit.automatic_mutations("play-release.yml", unsafe))
+
+    def test_unrelated_job_main_gate_cannot_authorize_release_job(self):
+        source = ("on:\n  workflow_dispatch:\njobs:\n"
+                  "  lint:\n    if: github.ref == 'refs/heads/main'\n"
+                  "    runs-on: ubuntu-latest\n"
+                  "    steps:\n      - run: echo lint\n"
+                  "  build:\n    runs-on: ubuntu-latest\n"
+                  "    steps:\n      - run: ./gradlew bundleRelease\n")
+        with patch.object(audit, "read", side_effect=lambda path:
+                          source if path == ".github/workflows/release-build.yml"
+                          else None):
+            issues = audit.findings()
+        self.assertTrue(any("SOURCE: release-build.yml: job build" in issue
+                            for issue in issues), issues)
+
+    def test_release_job_can_depend_on_a_main_gated_preflight(self):
+        source = ("on:\n  workflow_dispatch:\njobs:\n"
+                  "  source:\n    if: github.ref == 'refs/heads/main'\n"
+                  "    runs-on: ubuntu-latest\n"
+                  "    steps:\n      - run: echo checked\n"
+                  "  build:\n    needs: source\n    runs-on: ubuntu-latest\n"
+                  "    steps:\n      - run: ./gradlew bundleRelease\n")
+        with patch.object(audit, "read", side_effect=lambda path:
+                          source if path == ".github/workflows/release-build.yml"
+                          else None):
+            issues = audit.findings()
+        self.assertFalse(any("SOURCE: release-build.yml" in issue
+                             for issue in issues), issues)
+
+
 if __name__ == "__main__":
     unittest.main()

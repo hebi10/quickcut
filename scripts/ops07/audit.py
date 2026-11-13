@@ -335,7 +335,14 @@ def _step_condition(body):
     return " ".join(parts) if parts else "__unparsed_condition__"
 
 
+def _unsafe_shell_template(source):
+    return any("{0}" in value for value in re.findall(
+        r"(?m)^[ \t]+(?:-[ \t]+)?shell:[ \t]*([^\n#]+)", source or ""))
+
+
 def _safe_store_step(guard_step, mutation_steps, body, filename):
+    if _unsafe_shell_template(guard_step) or _unsafe_shell_template(body):
+        return False
     if re.search(r"(?m)^[ \t]+(?:-[ \t]+)?continue-on-error[ \t]*:[ \t]*(?!false[ \t]*(?:#.*)?$)[^\n]+", guard_step):
         return False
     guard_command = r"(?m)^[ \t]*(?:-[ \t]+)?(?:run:[ \t]*)?python(?:3)?\s+scripts/ops06/store_gate\.py\s+apply"
@@ -375,6 +382,8 @@ def store_guard_findings():
         source = read(".github/workflows/" + filename)
         if source is None:
             continue
+        if _unsafe_shell_template(source):
+            problems.append("STORE_SHELL: " + filename + ": unsafe shell template may ignore approval failure")
         for name, body in jobs(source).items():
             if is_disabled(job_condition(body)) or not _store_mutating_command(body):
                 continue
@@ -489,6 +498,8 @@ def findings():
             problems.append("APPROVAL: HomeCrew final release authorization gate missing")
     internal = read(".github/workflows/play-internal-release.yml")
     if internal is not None:
+        if _unsafe_shell_template(internal):
+            problems.append("PROVENANCE_SHELL: OPS-04 internal workflow uses an unsafe shell template")
         for stage in ("verify", "publish"):
             body = jobs(internal).get(stage)
             steps = _workflow_steps(body or "")
@@ -503,6 +514,9 @@ def findings():
                     or re.search(guard_command + r"[^\n]*(?:&&|\|\||;[ \t]*true\b|\|(?!\|))", guard)
                     or re.search(r"(?m)^[ \t]*(?:run:[ \t]*)?set[ \t]+\+e\b", guard)):
                 problems.append("PROVENANCE: OPS-04 " + stage + " guard must run and stop on failure")
+            if (_publishing_command(guard) or any(_publishing_command(step)
+                    for step in steps[:index])):
+                problems.append("PROVENANCE: OPS-04 " + stage + " cannot publish before or within the guard")
             if any("actions/download-artifact@" in step or "google-github-actions/auth@" in step
                    for step in steps[:index]):
                 problems.append("PROVENANCE: OPS-04 " + stage + " guard must precede artifact access")

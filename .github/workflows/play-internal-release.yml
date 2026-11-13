@@ -68,7 +68,7 @@ env:
   ANDROID_RELEASE_CERT_SHA256: ''
 jobs:
   verify:
-    if: github.repository == 'hebi10/QuickCut' && github.ref == 'refs/heads/main'
+    if: github.repository == 'hebi10/quickcut' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     outputs:
       result: ${{ steps.verify.outputs.aab }}

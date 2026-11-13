@@ -242,6 +242,28 @@ def is_manual_only(condition):
     return any(re.fullmatch(r"github\.event_name\s*==\s*'workflow_dispatch'", atom) for atom in atoms)
 
 
+def _job_dependencies(body):
+    lines = body.splitlines()
+    if not lines:
+        return []
+    header_depth = len(lines[0]) - len(lines[0].lstrip())
+    levels = [len(line) - len(line.lstrip()) for line in lines[1:]
+              if line.strip() and not line.lstrip().startswith("#")
+              and len(line) - len(line.lstrip()) > header_depth]
+    depth = min(levels, default=header_depth + 2)
+    values = []
+    for line in lines[1:]:
+        if len(line) - len(line.lstrip()) != depth:
+            continue
+        match = re.match(
+            r"^\s+needs:\s*(?:\[([^\]]+)\]|([A-Za-z][\w-]*))\s*(?:#.*)?$",
+            line)
+        if match:
+            raw = match.group(1).split(",") if match.group(1) else [match.group(2)]
+            values.extend(value.strip().strip("'\"") for value in raw)
+    return values
+
+
 def _publishing_command(body):
     commands = "\n".join(line for line in body.splitlines()
                          if not line.lstrip().startswith(("- name:", "name:", "#")))
@@ -267,7 +289,7 @@ def _publishing_command(body):
         match = re.search(r"\b(?:python(?:3(?:\.\d+)?)?|node|bash|sh)\s+(?:(?:-[uBIESOqv]+|--unbuffered)\s+)*([^\s;|]+)([^\n]*)", line)
         if not match:
             continue
-        script, args = match.group(1).lower(), match.group(2).lower()
+        script, args = match.group(1).lower().strip("'\""), match.group(2).lower()
         # These existing publisher entrypoints mutate by default, even without --publish.
         if re.search(r"(?:^|/)(?:store_icon|images_only|publish-mobile-play|publish_mobile_play|publish-play-test)[.]py$", script):
             return True
@@ -331,7 +353,7 @@ def _store_mutating_command(body):
         match = re.search(r"\b(?:python(?:3(?:\.\d+)?)?|node)\s+(?:(?:-[uBIESOqv]+|--unbuffered)\s+)*([^\s;|]+)([^\n]*)", line)
         if not match:
             continue
-        script, args = match.group(1).lower(), match.group(2).lower()
+        script, args = match.group(1).lower().strip("'\""), match.group(2).lower()
         if script.endswith("/ops06/store_gate.py"):
             continue
         if re.search(r"(?:^|/)(?:store_icon|images_only)[.]py$", script):
@@ -470,10 +492,6 @@ def _safe_store_step(guard_step, mutation_steps, body, filename):
     if (len(alternatives) > 1 and all(_step_condition(step) in alternatives
                                       for step in mutation_steps)):
         return True
-    if (filename == "store-icon-sync.yml" and guard_cond == "inputs.apply == true"
-            and "APPLY_MANUAL:" in body and "inputs.apply" in body
-            and re.search(r'if \[\[ "\$APPLY_MANUAL" == "true" \]\]; then', body)):
-        return True
     return False
 
 
@@ -550,15 +568,10 @@ def findings():
                 return True
             if re.search(r"\b(?:always|failure|cancelled)\s*\(|!\s*success\s*\(", condition):
                 return False
-            dependency = re.search(
-                r"(?m)^[ \t]+needs:[ \t]*(?:\[([^\]]+)\]|([A-Za-z][\w-]*))[ \t]*(?:#.*)?$",
-                body)
-            if not dependency:
+            deps = _job_dependencies(body)
+            if not deps:
                 return False
-            deps = (dependency.group(1).split(",") if dependency.group(1)
-                    else [dependency.group(2)])
-            return any(main_gated(dep.strip().strip("'\""), ancestors + (name,))
-                       for dep in deps)
+            return any(main_gated(dep, ancestors + (name,)) for dep in deps)
         if "__unparsed_jobs__" in workflow_jobs or not workflow_jobs:
             problems.append("SOURCE: " + file + " cannot establish main ref gate")
         else:

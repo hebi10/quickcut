@@ -269,7 +269,7 @@ def automatic_mutations(filename, source):
         if is_disabled(condition) or is_manual_only(condition):
             continue
         need = re.search(r"(?m)^    needs:\s*([A-Za-z][\w-]*)\s*$", body)
-        if need and not re.search(r"\b(?:always|failure|cancelled)\s*\(", condition):
+        if need and not re.search(r"\b(?:always|failure|cancelled)\s*\(|!\s*success\s*\(", condition):
             predecessor = workflow_jobs.get(need.group(1))
             if predecessor is not None and is_disabled(job_condition(predecessor)):
                 continue
@@ -399,7 +399,7 @@ def store_guard_findings():
             for downstream in steps[index + 1:]:
                 if not (_store_mutating_command(downstream) or "google-github-actions/auth@" in downstream):
                     continue
-                if re.search(r"\b(?:always|failure|cancelled)\s*\(", _step_condition(downstream)):
+                if re.search(r"\b(?:always|failure|cancelled)\s*\(|!\s*success\s*\(", _step_condition(downstream)):
                     problems.append("STORE_BYPASS: " + filename + ": publication may continue after rejected approval")
                     break
             if any("google-github-actions/auth@" in step for step in steps[:index]):
@@ -507,7 +507,7 @@ def findings():
                    for step in steps[:index]):
                 problems.append("PROVENANCE: OPS-04 " + stage + " guard must precede artifact access")
             for downstream in steps[index + 1:]:
-                if (re.search(r"\b(?:always|failure|cancelled)\s*\(", _step_condition(downstream))
+                if (re.search(r"\b(?:always|failure|cancelled)\s*\(|!\s*success\s*\(", _step_condition(downstream))
                         and ("google-github-actions/auth@" in downstream
                              or _publishing_command(downstream))):
                     problems.append("PROVENANCE_BYPASS: OPS-04 " + stage + " can publish after a failed guard")

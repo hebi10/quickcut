@@ -539,5 +539,73 @@ class ReleaseJobBoundaryRegressionTests(unittest.TestCase):
                              for issue in issues), issues)
 
 
+class FullYamlPublicationScannerRegressionTests(unittest.TestCase):
+    def test_folded_run_publisher_on_push_is_detected(self):
+        workflow = ("on:\n  push:\njobs:\n  sync:\n"
+                    "    runs-on: ubuntu-latest\n    steps:\n"
+                    "      - run: >-\n"
+                    "          python3 scripts/publish-play-listing-images.py\n"
+                    "          --publish\n")
+        self.assertTrue(audit.automatic_mutations("play.yml", workflow))
+
+    def test_folded_store_publisher_without_approval_is_blocked(self):
+        workflow = store_workflow(guard=False).replace(
+            "      - run: python3 scripts/play/listing_images.py --mode upload\n",
+            "      - run: >-\n"
+            "          python3 scripts/play/listing_images.py\n"
+            "          --mode upload\n")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            folder = root / ".github/workflows"
+            folder.mkdir(parents=True)
+            (folder / "play-listing-images.yml").write_text(workflow, encoding="utf-8")
+            with patch.object(audit, "ROOT", root):
+                issues = audit.store_guard_findings()
+        self.assertTrue(any("STORE_GUARD" in issue for issue in issues), issues)
+
+    def test_inline_flow_step_publisher_is_detected(self):
+        source = ("on:\n  push:\njobs:\n  sync:\n"
+                  "    runs-on: ubuntu-latest\n    steps:\n"
+                  "      - {run: 'python3 scripts/publish-play-listing-images.py --publish'}\n")
+        self.assertTrue(audit.automatic_mutations("play.yml", source))
+
+    def test_inline_flow_step_store_mutation_cannot_skip_approval(self):
+        source = store_workflow(guard=False).replace(
+            "      - run: python3 scripts/play/listing_images.py --mode upload\n",
+            "      - {run: 'python3 scripts/play/listing_images.py --mode upload'}\n")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            folder = root / ".github/workflows"
+            folder.mkdir(parents=True)
+            (folder / "listing.yml").write_text(source, encoding="utf-8")
+            with patch.object(audit, "ROOT", root):
+                issues = audit.store_guard_findings()
+        self.assertTrue(any("STORE_GUARD" in issue for issue in issues), issues)
+
+    def test_build_only_dispatch_comment_cannot_hide_publisher(self):
+        workflow = ("on:\n  workflow_dispatch:\njobs:\n"
+                    "  build:\n    if: github.ref == 'refs/heads/main'\n"
+                    "    runs-on: ubuntu-latest\n    steps:\n"
+                    "      - run: python3 scripts/publish-play-test.py --bundle release.aab # /dispatches\n")
+        with patch.object(audit, "read", side_effect=lambda path:
+                          workflow if path == ".github/workflows/release-build.yml"
+                          else None):
+            issues = audit.findings()
+        self.assertTrue(any("BUILD: build-only workflow" in issue
+                            for issue in issues), issues)
+
+    def test_whitespace_variations_of_main_ref_gate_are_equivalent(self):
+        source = ("on:\n  workflow_dispatch:\njobs:\n"
+                  "  build:\n    if: github.ref=='refs/heads/main'\n"
+                  "    runs-on: ubuntu-latest\n    steps:\n"
+                  "      - run: ./gradlew bundleRelease\n")
+        with patch.object(audit, "read", side_effect=lambda path:
+                          source if path == ".github/workflows/release-build.yml"
+                          else None):
+            issues = audit.findings()
+        self.assertFalse(any("SOURCE: release-build.yml" in issue
+                             for issue in issues), issues)
+
+
 if __name__ == "__main__":
     unittest.main()

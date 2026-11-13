@@ -424,7 +424,31 @@ def _unsafe_shell_template(source):
     return False
 
 
+def _direct_guard_step(step, script, action):
+    """Approval must be the entire run property, not a conditional shell command."""
+    lines = step.splitlines()
+    if not lines:
+        return False
+    root_depth = len(lines[0]) - len(lines[0].lstrip())
+    expected = r"python(?:3)?\\s+" + re.escape(script) + r"\\s+" + re.escape(action)
+    seen = 0
+    for index, line in enumerate(lines):
+        depth = len(line) - len(line.lstrip())
+        content = line.strip()
+        if index == 0:
+            match = re.fullmatch(r"-\\s+run:\\s*" + expected + r"\\s*(?:#.*)?", content)
+        elif depth == root_depth + 2:
+            match = re.fullmatch(r"run:\\s*" + expected + r"\\s*(?:#.*)?", content)
+        else:
+            continue
+        if match:
+            seen += 1
+    return seen == 1
+
+
 def _safe_store_step(guard_step, mutation_steps, body, filename):
+    if not _direct_guard_step(guard_step, "scripts/ops06/store_gate.py", "apply"):
+        return False
     if _unsafe_shell_template(guard_step) or _unsafe_shell_template(body):
         return False
     if re.search(r"(?m)^[ \t]+(?:-[ \t]+)?continue-on-error[ \t]*:[ \t]*(?!false[ \t]*(?:#.*)?$)[^\n]+", guard_step):
@@ -616,7 +640,7 @@ def findings():
             steps = _workflow_steps(body or "")
             guard_command = r"(?m)^[ \t]*(?:-[ \t]+)?(?:run:[ \t]*)?python3\s+scripts/ops04/internal\.py\s+guard\b"
             guards = [(index, step) for index, step in enumerate(steps)
-                      if re.search(guard_command, step)]
+                      if _direct_guard_step(step, "scripts/ops04/internal.py", "guard")]
             if len(guards) != 1:
                 problems.append("PROVENANCE: OPS-04 " + stage + " requires an executable signed-source guard")
                 continue

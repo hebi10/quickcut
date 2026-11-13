@@ -10,6 +10,10 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.ui.Modifier
 import android.net.Uri
 import androidx.activity.ComponentActivity
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import com.hebi.quickcut.settings.QuickCutThemeMode
 import androidx.compose.ui.test.DeviceConfigurationOverride
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.FontScale
@@ -59,10 +63,11 @@ class Stage18TextEditorScreensInstrumentedTest {
 
     @Test fun textEditEmptyEntrySelectedColorAndTimingCapture() {
         val clip = VideoClip(1, Uri.fromFile(source).toString(), 3_000)
+        var theme by mutableStateOf(QuickCutThemeMode.LIGHT)
         // Gesture tests must use the emulator's real visible window. ForcedSize is
         // reserved for the separate layout/large-font screenshot scenario below.
         compose.setContent {
-            QuickCutTheme {
+            QuickCutTheme(modeOverride = theme) {
                 Box(Modifier.fillMaxSize().background(LocalCutPalette.current.background).safeDrawingPadding()) {
                     TextEditorScreen(clip, onApply = {}, onCancel = {})
                 }
@@ -104,6 +109,10 @@ class Stage18TextEditorScreensInstrumentedTest {
         }
         compose.onNodeWithTag("text-apply").assertIsDisplayed().assertIsEnabled()
         capture("stage18_text_styled.png")
+        Ui07aVisualEvidence.capture("ui07a_light_text.png")
+        compose.runOnIdle { theme = QuickCutThemeMode.DARK }
+        compose.onNodeWithTag("text-apply").assertIsDisplayed().assertIsEnabled()
+        Ui07aVisualEvidence.capture("ui07a_dark_text.png")
     }
 
     @Test fun largeFontTabletRendersPinnedApplyAndMultipleLayers() {

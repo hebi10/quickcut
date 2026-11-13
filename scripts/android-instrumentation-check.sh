@@ -274,6 +274,27 @@ for theme in ("light", "dark"):
         dimensions = validator.verify_png(Path("quickcut-design-review") / name)
         print("Verified UI-03-A screenshot: " + name + " " + str(dimensions))
 PYUI03A
+# UI-07-A: every key workflow has a matched light/dark screenshot from the
+# actual Android window. Missing images and identical pairs must fail CI.
+mkdir -p quickcut-design-review
+for screen in onboarding projects gallery batch extraction crop audio text \
+    save_options completed progress original_delete error_dialog export_cancel; do
+  for theme in light dark; do
+    file="ui07a_${theme}_${screen}.png"
+    if timeout --kill-after=2s 20s adb exec-out run-as com.hebi.quickcut cat \
+        "files/design-review/$file" > "quickcut-design-review/$file" && \
+        [[ -s "quickcut-design-review/$file" ]]; then
+      echo "UI-07-A Android screenshot preserved: $file"
+    else
+      echo "::error::UI-07-A Android screenshot missing or empty: $file"
+      if [[ "$first_failure" -eq 0 ]]; then first_failure=1; fi
+    fi
+  done
+done
+run_checked "Verify 20 matched light/dark Android UI screenshots" \
+    python3 "$SCRIPT_DIR/verify-ui07a-visual-matrix.py" \
+        --screenshots quickcut-design-review \
+        --out quickcut-ui07a-evidence/visual-matrix.json
 # Stage 13 reference states are rendered from decoded local video fixtures, not demo placeholders.
 # Keep them as a separate required screenshot set without weakening the Stage 7 evidence.
 for file in stage13_home_populated.png stage13_projects_populated.png stage13_tools.png \

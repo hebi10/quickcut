@@ -18,6 +18,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.hebi.quickcut.settings.QuickCutThemeMode
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.semantics.SemanticsActions
@@ -57,8 +58,9 @@ class DialogDesignInstrumentedTest {
 
     @Test
     fun destructiveOriginalActionDialogShowsWarning() {
+        var theme by mutableStateOf(QuickCutThemeMode.LIGHT)
         compose.setContent {
-            QuickCutTheme {
+            QuickCutTheme(modeOverride = theme) {
                 OriginalActionEnableDialog(OriginalAction.DELETE, {}, {})
             }
         }
@@ -68,6 +70,10 @@ class DialogDesignInstrumentedTest {
             .assertExists()
         compose.onNodeWithText("활성화").assertIsDisplayed().assertHeightIsAtLeast(48.dp)
         capture("dialog_original_delete")
+        Ui07aVisualEvidence.capture("ui07a_light_original_delete.png")
+        compose.runOnIdle { theme = QuickCutThemeMode.DARK }
+        compose.onNodeWithText("원본 영구 삭제").assertExists()
+        Ui07aVisualEvidence.capture("ui07a_dark_original_delete.png")
     }
 
     @Test
@@ -86,21 +92,27 @@ class DialogDesignInstrumentedTest {
 
     @Test
     fun exportCancelDialogDistinguishesFinalizingState() {
+        var theme by mutableStateOf(QuickCutThemeMode.LIGHT)
         compose.setContent {
-            QuickCutTheme {
+            QuickCutTheme(modeOverride = theme) {
                 ExportCancelDialog(canCancel = false, onCancel = {}, onDismiss = {})
             }
         }
         compose.onNodeWithText("계속 저장").assertIsDisplayed().assertHeightIsAtLeast(48.dp)
         compose.onNodeWithText("저장 취소").assertIsNotEnabled()
         capture("dialog_export_finalizing")
+        Ui07aVisualEvidence.capture("ui07a_light_export_cancel.png")
+        compose.runOnIdle { theme = QuickCutThemeMode.DARK }
+        compose.onNodeWithText("저장 취소").assertIsNotEnabled()
+        Ui07aVisualEvidence.capture("ui07a_dark_export_cancel.png")
     }
 
     @Test
     fun diagnosticAndPrivacyDialogsShowScrolledText() {
         var showTaskError by mutableStateOf(false)
+        var theme by mutableStateOf(QuickCutThemeMode.LIGHT)
         compose.setContent {
-            QuickCutTheme {
+            QuickCutTheme(modeOverride = theme) {
                 if (showTaskError) {
                     TaskErrorDialog(
                         message = "원본 영상의 접근 권한을 확인해 주세요.",
@@ -119,6 +131,10 @@ class DialogDesignInstrumentedTest {
         compose.onNodeWithText("오류 내용").assertExists()
         compose.onNodeWithText("확인").assertIsDisplayed().assertHeightIsAtLeast(48.dp)
         capture("dialog_task_error")
+        Ui07aVisualEvidence.capture("ui07a_light_error_dialog.png")
+        compose.runOnIdle { theme = QuickCutThemeMode.DARK }
+        compose.onNodeWithText("작업 오류").assertIsDisplayed()
+        Ui07aVisualEvidence.capture("ui07a_dark_error_dialog.png")
     }
 
     @Test

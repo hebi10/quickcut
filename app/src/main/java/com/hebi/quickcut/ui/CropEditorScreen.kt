@@ -30,6 +30,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
@@ -210,27 +211,38 @@ fun CropEditorScreen(
 
             Text("화면 비율", color = palette.primaryText,
                 style = MaterialTheme.typography.titleMedium)
-            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                CropRatio.entries.forEach { ratio ->
-                    OutlinedButton(
-                        onClick = {
-                            preset = ratio
-                            if (ratio == CropRatio.ORIGINAL) region = CropRegion.FULL
-                            else if (ratio != CropRatio.FREE) {
-                                region = CropGeometry.centerForRatio(active.width, active.height, ratio)
+            Text("선택한 비율 · ${preset.label}", color = palette.secondaryText,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.testTag("ui07a-crop-current-ratio"))
+            val chooseRatio: (CropRatio) -> Unit = { ratio ->
+                if (ratio == CropRatio.ORIGINAL) region = CropRegion.FULL
+                else if (ratio != CropRatio.FREE) {
+                    region = CropGeometry.centerForRatio(active.width, active.height, ratio)
+                }
+                preset = ratio
+            }
+            BoxWithConstraints(Modifier.fillMaxWidth()) {
+                if (maxWidth < 480.dp || LocalDensity.current.fontScale >= 1.5f) {
+                    // All five ratios remain visible on a 320–360dp phone:
+                    // no horizontal scroll gesture can intercept a chip tap.
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            CropRatio.entries.take(3).forEach { ratio ->
+                                CropRatioOption(ratio, preset == ratio) { chooseRatio(ratio) }
                             }
-                        },
-                        modifier = Modifier.width(86.dp).heightIn(min = 48.dp)
-                            .testTag("crop-preset-${ratio.name}")
-                            .semantics { this.selected = preset == ratio },
-                        border = androidx.compose.foundation.BorderStroke(1.dp,
-                            if (preset == ratio) palette.accent else palette.border),
-                        shape = CutShape,
-                    ) {
-                        Text(ratio.label,
-                            color = if (preset == ratio) palette.secondaryAccent
-                                else palette.primaryText)
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            CropRatio.entries.drop(3).forEach { ratio ->
+                                CropRatioOption(ratio, preset == ratio) { chooseRatio(ratio) }
+                            }
+                        }
+                    }
+                } else {
+                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        CropRatio.entries.forEach { ratio ->
+                            CropRatioOption(ratio, preset == ratio) { chooseRatio(ratio) }
+                        }
                     }
                 }
             }
@@ -318,6 +330,29 @@ fun CropEditorScreen(
               shape = CutShape) { Text("크롭 적용") }
       }
     }
+}
+
+@Composable
+private fun CropRatioOption(
+    ratio: CropRatio,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    val palette = LocalCutPalette.current
+    FilterChip(
+        selected = selected,
+        onClick = onClick,
+        modifier = Modifier.width(86.dp).heightIn(min = 48.dp)
+            .testTag("crop-preset-${ratio.name}"),
+        border = androidx.compose.foundation.BorderStroke(
+            1.dp, if (selected) palette.accent else palette.border
+        ),
+        shape = CutShape,
+        label = {
+            Text(ratio.label,
+                color = if (selected) palette.primaryText else palette.secondaryText)
+        },
+    )
 }
 
 @Composable

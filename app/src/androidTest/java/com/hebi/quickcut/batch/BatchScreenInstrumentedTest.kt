@@ -1,6 +1,7 @@
 package com.hebi.quickcut.batch
 
 import android.graphics.Bitmap
+import android.graphics.Color as AndroidColor
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
 import androidx.compose.ui.test.assertIsEnabled
@@ -8,6 +9,9 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
@@ -18,6 +22,9 @@ import androidx.compose.ui.test.performTextReplacement
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.hebi.quickcut.MainActivity
 import com.hebi.quickcut.QuickCutApplication
+import com.hebi.quickcut.settings.QuickCutSettings
+import com.hebi.quickcut.settings.QuickCutThemeMode
+import com.hebi.quickcut.ui.Ui07aVisualEvidence
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -74,14 +81,54 @@ class BatchScreenInstrumentedTest {
 
     @Test
     fun launchBatchEditorAndShowTimestampChoices() {
-        openBatchEditor()
-        composeRule.onNodeWithText("일괄 편집").assertExists()
-        composeRule.onNodeWithTag("batch-mode").assertExists()
-        composeRule.onNodeWithTag("ui04b-template-summary").assertExists()
-        captureUi04b("ui04b_batch_setup.png")
-        composeRule.onNodeWithText("템플릿·저장 옵션 펼치기").performScrollTo().performClick()
-        choose("batch-date", "현재 날짜로 저장 (최신 파일)")
-        choose("batch-date", "원본 날짜 유지")
+        val settings = QuickCutSettings(composeRule.activity)
+        val previousTheme = settings.loadThemeMode()
+        try {
+            settings.saveThemeMode(QuickCutThemeMode.LIGHT)
+            openBatchEditor()
+            composeRule.onNodeWithText("일괄 편집").assertExists()
+            composeRule.onNodeWithTag("batch-mode").assertExists()
+            composeRule.onNodeWithTag("ui04b-template-summary").assertExists()
+            captureUi04b("ui04b_batch_setup.png")
+            waitForTheme(expectLight = true)
+            Ui07aVisualEvidence.capture("ui07a_light_batch.png")
+            settings.saveThemeMode(QuickCutThemeMode.DARK)
+            waitForTheme(expectLight = false)
+            composeRule.onNodeWithTag("ui04b-template-summary").performScrollTo().assertExists()
+            Ui07aVisualEvidence.capture("ui07a_dark_batch.png")
+            composeRule.onNodeWithText("템플릿·저장 옵션 펼치기").performScrollTo().performClick()
+            choose("batch-date", "현재 날짜로 저장 (최신 파일)")
+            choose("batch-date", "원본 날짜 유지")
+        } finally {
+            settings.saveThemeMode(previousTheme)
+        }
+    }
+
+    private fun waitForTheme(expectLight: Boolean) {
+        // Android 15+ can ignore statusBarColor. Use the actual Compose content
+        // but cap screenshots to avoid exhausting emulator graphics memory.
+        var lastBrightness: Int? = null
+        repeat(8) { attempt ->
+            composeRule.waitForIdle()
+            if (attempt > 0) Thread.sleep(250L)
+            val image = composeRule.onRoot().captureToImage().asAndroidBitmap()
+            val brightness = try {
+                val color = image.getPixel(
+                    (image.width / 25).coerceIn(0, image.width - 1),
+                    (image.height / 10).coerceIn(0, image.height - 1),
+                )
+                (AndroidColor.red(color) +
+                    AndroidColor.green(color) + AndroidColor.blue(color)) / 3
+            } finally {
+                image.recycle()
+            }
+            lastBrightness = brightness
+            if (if (expectLight) brightness >= 170 else brightness <= 110) return
+        }
+        throw AssertionError(
+            "Batch theme did not render: expectedLight=$expectLight, " +
+                "lastBrightness=$lastBrightness"
+        )
     }
 
 

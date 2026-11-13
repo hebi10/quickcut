@@ -6,6 +6,7 @@ import androidx.activity.ComponentActivity
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.hebi.quickcut.settings.QuickCutThemeMode
 import androidx.compose.ui.test.DeviceConfigurationOverride
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.FontScale
@@ -52,10 +53,13 @@ class Stage17AudioScreensInstrumentedTest {
     @Test fun defaultFadeAndMutedAudioStatesProduceActualAndroidScreens() {
         val uri = Uri.fromFile(input).toString()
         var clip by mutableStateOf(VideoClip(1, uri, 8_000, hasAudio = true))
+        var theme by mutableStateOf(QuickCutThemeMode.LIGHT)
         compose.setContent {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(360.dp, 640.dp))) {
-                QuickCutTheme {
-                    AudioEditorScreen(clip = clip, onApply = { _, _ -> }, onCancel = {})
+                QuickCutTheme(modeOverride = theme) {
+                    Ui07aAppSafeSurface {
+                        AudioEditorScreen(clip = clip, onApply = { _, _ -> }, onCancel = {})
+                    }
                 }
             }
         }
@@ -74,6 +78,10 @@ class Stage17AudioScreensInstrumentedTest {
         compose.onNodeWithTag("audio-fade-in").assertIsEnabled()
         compose.onNodeWithTag("audio-apply").assertIsDisplayed()
         capture("stage17_audio_fades.png")
+        Ui07aVisualEvidence.capture("ui07a_light_audio.png")
+        compose.runOnIdle { theme = QuickCutThemeMode.DARK }
+        compose.onNodeWithTag("ui05a-audio-summary").performScrollTo().assertIsDisplayed()
+        Ui07aVisualEvidence.capture("ui07a_dark_audio.png")
 
         compose.runOnIdle {
             clip = clip.copy(id = 3L, muted = true)
@@ -97,10 +105,12 @@ class Stage17AudioScreensInstrumentedTest {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(860.dp, 640.dp))) {
                 DeviceConfigurationOverride(DeviceConfigurationOverride.FontScale(1.6f)) {
                     QuickCutTheme {
-                        AudioEditorScreen(
-                            VideoClip(1, uri, 8_000, hasAudio = true),
-                            onApply = { _, _ -> }, onCancel = {},
-                        )
+                        Ui07aAppSafeSurface {
+                            AudioEditorScreen(
+                                VideoClip(1, uri, 8_000, hasAudio = true),
+                                onApply = { _, _ -> }, onCancel = {},
+                            )
+                        }
                     }
                 }
             }

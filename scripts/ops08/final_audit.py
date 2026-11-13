@@ -16,6 +16,7 @@ REQUIRED = (
     "AGENTS.md",
     ".github/workflows/ops07-safety.yml",
     ".github/workflows/ops08-final-policy.yml",
+    ".github/workflows/emulator-smoke.yml",
     ".github/workflows/release-build.yml",
     ".github/workflows/play-internal-release.yml",
     ".github/workflows/play-closed-release.yml",
@@ -77,6 +78,16 @@ def audit():
             issues.append("OPS-08 workflow must never access Play publishing credentials")
         if "  push:" not in text or "branches: [main]" not in text:
             issues.append("OPS-08 must independently verify merged main")
+    emulator = ROOT / ".github/workflows/emulator-smoke.yml"
+    if emulator.is_file():
+        content = emulator.read_text(encoding="utf-8")
+        for path in (".github/workflows/ops07-safety.yml",
+                     ".github/workflows/ops08-final-policy.yml",
+                     "scripts/ops07/**", "scripts/ops08/**"):
+            if content.count('      - "' + path + '"') != 2:
+                issues.append("Exact-main emulator QA not triggered by policy path: " + path)
+        if "  push:\n    branches: [main]" not in content or "api: [29, 35, 36]" not in content:
+            issues.append("Exact-main Android emulator matrix trigger incomplete")
     if os.getenv("GITHUB_REPOSITORY") and os.environ["GITHUB_REPOSITORY"] != REPOSITORY:
         issues.append("Repository identity mismatch")
     if (ROOT / "scripts/ops07/audit.py").is_file():

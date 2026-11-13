@@ -109,7 +109,7 @@ def jobs(source):
     lines = source.splitlines()
     start = next((i for i, line in enumerate(lines) if re.match(r"^(?:jobs|'jobs'|\x22jobs\x22)\s*:\s*(?:#.*)?$", line)), -1)
     if start < 0:
-        return {"__unparsed_jobs__": source} if re.search(r"(?m)^(?:jobs|'jobs'|\x22jobs\x22)\s*:", source) else {}
+        return {"__unparsed_jobs__": source} if re.search(r"(?m)^[ \t]*(?:jobs|'jobs'|\x22jobs\x22)\s*:", source) else {}
     children = []
     for line in lines[start + 1:]:
         if line.strip() and not line[0].isspace() and not line.lstrip().startswith("#"):

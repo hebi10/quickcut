@@ -1,6 +1,8 @@
 name: Google Play test release
 
 on:
+  workflow_dispatch:
+    inputs:
       ops01_release_approved:
         description: 'Explicit approval to publish the final verified release'
         type: boolean

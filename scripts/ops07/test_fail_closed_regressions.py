@@ -467,5 +467,29 @@ class InlineTriggerNestingRegressionTests(unittest.TestCase):
         self.assertTrue(audit.automatic_mutations("play-release.yml", workflow))
 
 
+class MandatoryTriggerAndMainRegressionTests(unittest.TestCase):
+    def test_negated_status_does_not_hide_manual_dispatch_conjunction(self):
+        condition = "$" + "{{ !cancelled() && github.event_name == 'workflow_dispatch' }}"
+        source = ("on:\n  push:\n  workflow_dispatch:\njobs:\n"
+                  "  publish:\n    if: " + condition + "\n"
+                  "    runs-on: ubuntu-latest\n"
+                  "    steps:\n      - run: python3 scripts/play/publisher.py deploy\n")
+        self.assertEqual(audit.automatic_mutations("play.yml", source), [])
+        unsafe = source.replace("&& github.event_name", "|| github.event_name")
+        self.assertTrue(audit.automatic_mutations("play.yml", unsafe))
+
+    def test_main_checkout_ref_without_job_gate_is_insufficient(self):
+        workflow = ("on:\n  workflow_dispatch:\njobs:\n"
+                    "  build:\n    runs-on: ubuntu-latest\n"
+                    "    steps:\n      - uses: actions/checkout@v4\n"
+                    "        with:\n"
+                    "          ref: " + "$" + "{{ github.ref }}" + "\n")
+        with patch.object(audit, "read", side_effect=lambda path:
+                          workflow if path == ".github/workflows/release-build.yml"
+                          else None):
+            issues = audit.findings()
+        self.assertTrue(any("SOURCE: release-build.yml" in issue for issue in issues), issues)
+
+
 if __name__ == "__main__":
     unittest.main()

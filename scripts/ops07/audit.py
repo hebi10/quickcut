@@ -382,21 +382,33 @@ def _workflow_steps(body):
 
 
 def _step_condition(body):
-    match = re.search(r"(?m)^([ \t]+)(-[ \t]+)?if:[ \t]*([^\n]+)", body)
-    if not match:
+    """Read only a step's YAML mapping, never an embedded run script's text."""
+    lines = body.splitlines()
+    if not lines:
         return ""
-    condition = match.group(3).strip().split(" #", 1)[0].strip()
-    if condition not in (">", ">-", ">+", "|", "|-", "|+"):
-        return condition
-    indent = len(match.group(1)) + len(match.group(2) or "")
-    parts = []
-    for line in body[match.end():].splitlines():
-        if not line.strip():
+    root_indent = len(lines[0]) - len(lines[0].lstrip())
+    for index, line in enumerate(lines):
+        depth = len(line) - len(line.lstrip())
+        if index == 0:
+            match = re.match(r"^[ \\t]*-[ \\t]+if[ \\t]*:[ \\t]*(.*)$", line)
+        elif depth == root_indent + 2:
+            match = re.match(r"^[ \\t]*if[ \\t]*:[ \\t]*(.*)$", line)
+        else:
             continue
-        if len(line) - len(line.lstrip()) <= indent:
-            break
-        parts.append(line.strip())
-    return " ".join(parts) if parts else "__unparsed_condition__"
+        if not match:
+            continue
+        condition = match.group(1).strip().split(" #", 1)[0].strip()
+        if condition not in (">", ">-", ">+", "|", "|-", "|+"):
+            return condition
+        parts = []
+        for next_line in lines[index + 1:]:
+            if not next_line.strip():
+                continue
+            if len(next_line) - len(next_line.lstrip()) <= depth:
+                break
+            parts.append(next_line.strip())
+        return " ".join(parts) if parts else "__unparsed_condition__"
+    return ""
 
 
 def _unsafe_shell_template(source):

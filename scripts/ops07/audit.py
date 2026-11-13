@@ -118,7 +118,10 @@ def job_condition(body):
     if not lines:
         return ""
     header_indent = len(lines[0]) - len(lines[0].lstrip())
-    key_indent = header_indent + 2
+    depths = [len(line) - len(line.lstrip()) for line in lines[1:]
+              if line.strip() and not line.lstrip().startswith("#")
+              and len(line) - len(line.lstrip()) > header_indent]
+    key_indent = min(depths, default=header_indent + 2)
     for index, line in enumerate(lines):
         if len(line) - len(line.lstrip()) != key_indent:
             continue
@@ -134,7 +137,10 @@ def job_condition(body):
                 if nxt.strip():
                     parts.append(nxt.strip())
             value = " ".join(parts)
-        return re.sub(r"\s+#.*$", "", value).strip()
+        value = re.sub(r"\s+#.*$", "", value).strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+            value = value[1:-1]
+        return value
     return ""
 
 

@@ -56,6 +56,7 @@ class Stage16CropScreensInstrumentedTest {
         waitPreview()
         compose.onNodeWithTag("crop-preset-VERTICAL").performScrollTo().performClick()
         compose.onNodeWithTag("crop-preset-VERTICAL").assertIsSelected()
+        compose.onNodeWithTag("ui05a-crop-selection").performScrollTo().assertIsDisplayed()
         capture("stage16_crop_vertical.png")
         compose.onNodeWithTag("crop-preset-SQUARE").performScrollTo().performClick()
         compose.onNodeWithTag("crop-preset-SQUARE").assertIsSelected()
@@ -79,6 +80,7 @@ class Stage16CropScreensInstrumentedTest {
         }
         waitPreview()
         compose.onNodeWithTag("crop-apply").assertIsDisplayed()
+        compose.onNodeWithTag("ui05a-crop-controls").performScrollTo().assertIsDisplayed()
         capture("stage16_crop_largefont.png")
         compose.onNodeWithTag("crop-apply").performClick()
         compose.runOnIdle { check(applied) { "Crop Apply was not reachable at 160% font scale" } }

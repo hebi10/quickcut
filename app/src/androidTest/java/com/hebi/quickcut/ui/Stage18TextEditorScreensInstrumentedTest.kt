@@ -82,6 +82,7 @@ class Stage18TextEditorScreensInstrumentedTest {
             compose.onAllNodesWithTag("text-layer-input").fetchSemanticsNodes().isNotEmpty()
         }
         compose.onNodeWithTag("text-layer-input").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("ui05a-selected-text-layer").performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("text-invalid").performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("text-apply").assertIsNotEnabled()
         compose.onNodeWithTag("text-layer-input").performTextInput("테스트 영상 문구")
@@ -124,6 +125,7 @@ class Stage18TextEditorScreensInstrumentedTest {
         compose.onNodeWithTag("text-apply").assertIsDisplayed()
         compose.onNodeWithTag("text-apply").assertIsEnabled()
         capture("stage18_text_largefont.png")
+        compose.onNodeWithTag("ui05a-text-timing-fields").performScrollTo().assertIsDisplayed()
     }
 
     private fun hideImeAndWait() {

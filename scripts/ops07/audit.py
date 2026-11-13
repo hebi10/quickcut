@@ -373,8 +373,16 @@ def store_guard_findings():
             guard = steps[index]
             if not _safe_store_step(guard, [steps[i] for i in mutations], body, filename):
                 problems.append("STORE_OPTIONAL: " + filename + ": approval is optional, ignored or not executable")
+            if index in mutations:
+                problems.append("STORE_ORDER: " + filename + ": approval and publication share one step")
             if any(i < index for i in mutations):
                 problems.append("STORE_ORDER: " + filename + ": publication precedes approval")
+            for downstream in steps[index + 1:]:
+                if not (_store_mutating_command(downstream) or "google-github-actions/auth@" in downstream):
+                    continue
+                if re.search(r"\\b(?:always|failure|cancelled)\\s*\\(", _step_condition(downstream)):
+                    problems.append("STORE_BYPASS: " + filename + ": publication may continue after rejected approval")
+                    break
             if any("google-github-actions/auth@" in step for step in steps[:index]):
                 problems.append("STORE_ORDER: " + filename + ": Play authentication precedes approval")
             if any(_publishing_command(step) and ("androidpublisher.googleapis.com" in step

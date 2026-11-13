@@ -337,5 +337,42 @@ class ApprovalAndListRegressionTests(unittest.TestCase):
         self.assertTrue(any("PROVENANCE:" in issue for issue in issues), issues)
 
 
+class NegatedSuccessBypassTests(unittest.TestCase):
+    def test_store_auth_and_upload_must_not_run_when_approval_failed(self):
+        condition = "$" + "{{ !success() }}"
+        source = store_workflow()
+        source = source.replace(
+            "      - uses: google-github-actions/auth@v3\n",
+            "      - if: " + condition + "\n"
+            "        uses: google-github-actions/auth@v3\n")
+        source = source.replace(
+            "      - run: python3 scripts/play/listing_images.py --mode upload\n",
+            "      - if: " + condition + "\n"
+            "        run: python3 scripts/play/listing_images.py --mode upload\n")
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            folder = root / ".github/workflows"
+            folder.mkdir(parents=True)
+            (folder / "play-listing-images.yml").write_text(source, encoding="utf-8")
+            with patch.object(audit, "ROOT", root):
+                issues = audit.store_guard_findings()
+        self.assertTrue(any("STORE_BYPASS" in issue for issue in issues), issues)
+
+    def test_source_guard_failure_cannot_trigger_authentication(self):
+        condition = "$" + "{{ !success() }}"
+        workflow = ("on:\n  workflow_dispatch:\njobs:\n"
+                    "  verify:\n    steps:\n"
+                    "      - run: python3 scripts/ops04/internal.py guard\n"
+                    "  publish:\n    steps:\n"
+                    "      - run: python3 scripts/ops04/internal.py guard\n"
+                    "      - if: " + condition + "\n"
+                    "        uses: google-github-actions/auth@v3\n")
+        with patch.object(audit, "read", side_effect=lambda path:
+                          workflow if path == ".github/workflows/play-internal-release.yml"
+                          else None):
+            issues = audit.findings()
+        self.assertTrue(any("PROVENANCE_BYPASS" in issue for issue in issues), issues)
+
+
 if __name__ == "__main__":
     unittest.main()

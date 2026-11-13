@@ -47,7 +47,39 @@ def triggers(source):
         if inline.startswith("["):
             values = [v.strip().strip("'\"") for v in inline.strip("[] ").split(",")]
         elif inline.startswith("{"):
-            values = re.findall(r"['\"]?([A-Za-z][\w-]*)['\"]?\s*:", inline)
+            if not inline.endswith("}"):
+                return {"unparsed"}
+            parts, current, depth, quote = [], [], 0, ""
+            for char in inline[1:-1]:
+                if quote:
+                    current.append(char)
+                    if char == quote:
+                        quote = ""
+                elif char in ("'", '"'):
+                    quote = char
+                    current.append(char)
+                elif char in ("{", "["):
+                    depth += 1
+                    current.append(char)
+                elif char in ("}", "]"):
+                    depth -= 1
+                    if depth < 0:
+                        return {"unparsed"}
+                    current.append(char)
+                elif char == "," and depth == 0:
+                    parts.append("".join(current).strip())
+                    current = []
+                else:
+                    current.append(char)
+            if quote or depth != 0:
+                return {"unparsed"}
+            parts.append("".join(current).strip())
+            values = []
+            for part in parts:
+                match = re.match(r"""^\s*(?:(['"])([A-Za-z][\w-]*)\1|([A-Za-z][\w-]*))\s*:""", part)
+                if not match:
+                    return {"unparsed"}
+                values.append(match.group(2) or match.group(3))
         else:
             values = [inline.split("#", 1)[0].strip().strip("'\"")]
         return set(values) if values and all(re.fullmatch(r"[A-Za-z][\w-]*", v) for v in values) else {"unparsed"}

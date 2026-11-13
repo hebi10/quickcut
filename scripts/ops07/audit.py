@@ -400,11 +400,12 @@ def _step_condition(body):
         condition = match.group(1).strip().split(" #", 1)[0].strip()
         if condition not in (">", ">-", ">+", "|", "|-", "|+"):
             return condition
+        property_depth = root_indent + 2 if index == 0 else depth
         parts = []
         for next_line in lines[index + 1:]:
             if not next_line.strip():
                 continue
-            if len(next_line) - len(next_line.lstrip()) <= depth:
+            if len(next_line) - len(next_line.lstrip()) <= property_depth:
                 break
             parts.append(next_line.strip())
         return " ".join(parts) if parts else "__unparsed_condition__"

@@ -245,6 +245,7 @@ def is_manual_only(condition):
 def _publishing_command(body):
     commands = "\n".join(line for line in body.splitlines()
                          if not line.lstrip().startswith(("- name:", "name:", "#")))
+    commands = _folded_run_commands(commands)
     commands = re.sub(r"\\\s*\n\s*", " ", commands)
     commands = re.sub(r"\s*(?:&&|\|\||;|\|)\s*", "\n", commands)
     if re.search(r"(?i)\bgh\s+release\s+create\b|softprops/action-gh-release|upload-google-play@", commands):
@@ -317,7 +318,8 @@ def automatic_mutations(filename, source):
 
 
 def _store_mutating_command(body):
-    normalized = re.sub(r"\\\s*\n\s*", " ", body)
+    normalized = _folded_run_commands(body)
+    normalized = re.sub(r"\\\s*\n\s*", " ", normalized)
     normalized = re.sub(r"\s*(?:&&|\|\||;)\s*", "\n", normalized)
     for line in normalized.splitlines():
         if line.lstrip().startswith(("- name:", "name:", "#")):
@@ -345,8 +347,32 @@ def _store_mutating_command(body):
     return False
 
 
+def _folded_run_commands(body):
+    lines = body.splitlines()
+    output = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        match = re.match(r"^[ \t]*(?:-[ \t]+)?run:[ \t]*>[+-]?[ \t]*(?:#.*)?$", line)
+        if not match:
+            output.append(line)
+            index += 1
+            continue
+        indent = len(line) - len(line.lstrip())
+        items = []
+        index += 1
+        while index < len(lines):
+            child = lines[index]
+            if child.strip() and len(child) - len(child.lstrip()) <= indent:
+                break
+            items.append(child.strip() if child.strip() else "\n")
+            index += 1
+        output.append("run: " + " ".join(items))
+    return "\n".join(output)
+
+
 def _workflow_steps(body):
-    found = list(re.finditer(r"(?m)^( +)- [A-Za-z][\w-]*:", body))
+    found = list(re.finditer(r"""(?m)^([ \t]+)-[ \t]+(?:[A-Za-z][\w-]*:|["'][A-Za-z][\w-]*["']:|\{)""", body))
     if not found:
         return []
     depth = min(len(item.group(1)) for item in found)
@@ -482,7 +508,8 @@ def findings():
                 return False
             body = workflow_jobs[name]
             condition = job_condition(body)
-            if main_condition in _guaranteed_atoms(condition):
+            if any(re.fullmatch(r"github\.ref\s*==\s*'refs/heads/main'", atom)
+                   for atom in _guaranteed_atoms(condition)):
                 return True
             if re.search(r"\b(?:always|failure|cancelled)\s*\(|!\s*success\s*\(", condition):
                 return False
@@ -506,8 +533,9 @@ def findings():
             if re.search(r"(?i)inputs\[(?:mode|deploy)\]\s*=\s*(?:deploy|initialize|publish|promote|apply|upload|true)\b", source):
                 problems.append("BUILD: Play publishing mode is forbidden in build-only dispatch")
             for body in jobs(source).values():
-                local_only = "\n".join(line for line in body.splitlines()
-                                       if "/dispatches" not in line)
+                local_only = "\n".join(
+                    line for line in body.splitlines()
+                    if not re.search(r"^\s*(?:run:\s*)?gh\s+api\b[^\n]*/dispatches", line))
                 if _publishing_command(local_only):
                     problems.append("BUILD: build-only workflow contains a direct Play mutation")
                     break

@@ -430,15 +430,15 @@ def _direct_guard_step(step, script, action):
     if not lines:
         return False
     root_depth = len(lines[0]) - len(lines[0].lstrip())
-    expected = r"python(?:3)?\\s+" + re.escape(script) + r"\\s+" + re.escape(action)
+    expected = r"python(?:3)?\s+" + re.escape(script) + r"\s+" + re.escape(action)
     seen = 0
     for index, line in enumerate(lines):
         depth = len(line) - len(line.lstrip())
         content = line.strip()
         if index == 0:
-            match = re.fullmatch(r"-\\s+run:\\s*" + expected + r"\\s*(?:#.*)?", content)
+            match = re.fullmatch(r"-\s+run:\s*" + expected + r"\s*(?:#.*)?", content)
         elif depth == root_depth + 2:
-            match = re.fullmatch(r"run:\\s*" + expected + r"\\s*(?:#.*)?", content)
+            match = re.fullmatch(r"run:\s*" + expected + r"\s*(?:#.*)?", content)
         else:
             continue
         if match:

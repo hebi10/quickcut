@@ -390,9 +390,9 @@ def _step_condition(body):
     for index, line in enumerate(lines):
         depth = len(line) - len(line.lstrip())
         if index == 0:
-            match = re.match(r"^[ \\t]*-[ \\t]+if[ \\t]*:[ \\t]*(.*)$", line)
+            match = re.match(r"^[ \t]*-[ \t]+if[ \t]*:[ \t]*(.*)$", line)
         elif depth == root_indent + 2:
-            match = re.match(r"^[ \\t]*if[ \\t]*:[ \\t]*(.*)$", line)
+            match = re.match(r"^[ \t]*if[ \t]*:[ \t]*(.*)$", line)
         else:
             continue
         if not match:

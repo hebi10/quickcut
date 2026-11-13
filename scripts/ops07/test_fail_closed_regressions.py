@@ -374,5 +374,51 @@ class NegatedSuccessBypassTests(unittest.TestCase):
         self.assertTrue(any("PROVENANCE_BYPASS" in issue for issue in issues), issues)
 
 
+class ShellAndProvenanceOrderRegressionTests(unittest.TestCase):
+    def test_custom_bash_without_errexit_cannot_hide_store_failure(self):
+        source = store_workflow().replace(
+            "        run: python3 scripts/ops06/store_gate.py apply\n",
+            "        shell: bash {0}\n"
+            "        run: |\n"
+            "          python3 scripts/ops06/store_gate.py apply\n"
+            "          echo finished\n", 1)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            folder = root / ".github/workflows"
+            folder.mkdir(parents=True)
+            (folder / "play-listing-images.yml").write_text(source, encoding="utf-8")
+            with patch.object(audit, "ROOT", root):
+                issues = audit.store_guard_findings()
+        self.assertTrue(any(issue.startswith(("STORE_SHELL:", "STORE_OPTIONAL:"))
+                            for issue in issues), issues)
+
+    def test_custom_bash_source_guard_must_fail_closed(self):
+        workflow = ("on:\n  workflow_dispatch:\njobs:\n"
+                    "  verify:\n    steps:\n"
+                    "      - run: python3 scripts/ops04/internal.py guard\n"
+                    "        shell: bash {0}\n"
+                    "  publish:\n    steps:\n"
+                    "      - run: python3 scripts/ops04/internal.py guard\n")
+        with patch.object(audit, "read", side_effect=lambda path:
+                          workflow if path == ".github/workflows/play-internal-release.yml"
+                          else None):
+            issues = audit.findings()
+        self.assertTrue(any("PROVENANCE_SHELL" in issue for issue in issues), issues)
+
+    def test_publication_must_not_precede_source_guard(self):
+        workflow = ("on:\n  workflow_dispatch:\njobs:\n"
+                    "  verify:\n    steps:\n"
+                    "      - run: python3 scripts/ops04/internal.py guard\n"
+                    "  publish:\n    steps:\n"
+                    "      - run: python3 scripts/play/publisher.py deploy --bundle release.aab\n"
+                    "      - run: python3 scripts/ops04/internal.py guard\n")
+        with patch.object(audit, "read", side_effect=lambda path:
+                          workflow if path == ".github/workflows/play-internal-release.yml"
+                          else None):
+            issues = audit.findings()
+        self.assertTrue(any("PROVENANCE: OPS-04 publish cannot publish before" in issue
+                            for issue in issues), issues)
+
+
 if __name__ == "__main__":
     unittest.main()

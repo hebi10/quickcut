@@ -220,7 +220,7 @@ def _unwrap(expr):
 
 def _guaranteed_atoms(condition):
     expr = _unwrap(condition.replace("$" + "{{", "").replace("}}", "").strip())
-    if not expr or expr.startswith("!") or re.match(r"^not\b", expr):
+    if not expr:
         return set()
     alternatives = _split_boolean(expr, "||")
     if len(alternatives) > 1:
@@ -228,6 +228,8 @@ def _guaranteed_atoms(condition):
     conjuncts = _split_boolean(expr, "&&")
     if len(conjuncts) > 1:
         return set().union(*(_guaranteed_atoms(part) for part in conjuncts))
+    if expr.startswith("!") or re.match(r"^not\b", expr):
+        return set()
     return {expr.replace('"', "'").strip()}
 
 
@@ -469,8 +471,10 @@ def findings():
             continue
         if triggers(source) != {"workflow_dispatch"}:
             problems.append("AUTO_TRIGGER: " + file + " must be workflow_dispatch-only")
-        if "github.ref" not in source and "GITHUB_REF" not in source:
-            problems.append("SOURCE: " + file + " missing main ref gate")
+        main_condition = "github.ref == 'refs/heads/main'"
+        if not any(main_condition in _guaranteed_atoms(job_condition(body))
+                   for body in jobs(source).values()):
+            problems.append("SOURCE: " + file + " missing enforced main ref gate")
         if file == "release-build.yml":
             if re.search(r"(?i)inputs\[(?:mode|deploy)\]\s*=\s*(?:deploy|initialize|publish|promote|apply|upload|true)\b", source):
                 problems.append("BUILD: Play publishing mode is forbidden in build-only dispatch")

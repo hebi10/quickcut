@@ -641,5 +641,36 @@ class FullYamlPublicationScannerRegressionTests(unittest.TestCase):
         self.assertTrue(any("STORE_GUARD" in issue for issue in issues), issues)
 
 
+    def test_conditional_shell_block_cannot_skip_store_approval(self):
+        workflow = store_workflow(
+            guard_run="|\\n"
+                      "          if [ \\"$RUN_APPROVAL\\" = true ]; then\\n"
+                      "            python3 scripts/ops06/store_gate.py apply\\n"
+                      "          fi")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            folder = root / ".github/workflows"
+            folder.mkdir(parents=True)
+            (folder / "play-listing-images.yml").write_text(workflow, encoding="utf-8")
+            with patch.object(audit, "ROOT", root):
+                issues = audit.store_guard_findings()
+        self.assertTrue(any("STORE_OPTIONAL" in issue for issue in issues), issues)
+
+    def test_conditional_shell_block_cannot_skip_internal_provenance(self):
+        workflow = ("on:\\n  workflow_dispatch:\\njobs:\\n"
+                    "  verify:\\n    steps:\\n"
+                    "      - run: |\\n"
+                    "          if [ \\"$CHECK_SOURCE\\" = true ]; then\\n"
+                    "            python3 scripts/ops04/internal.py guard\\n"
+                    "          fi\\n"
+                    "  publish:\\n    steps:\\n"
+                    "      - run: python3 scripts/ops04/internal.py guard\\n")
+        with patch.object(audit, "read", side_effect=lambda path:
+                          workflow if path == ".github/workflows/play-internal-release.yml"
+                          else None):
+            issues = audit.findings()
+        self.assertTrue(any("PROVENANCE: OPS-04 verify" in issue for issue in issues), issues)
+
+
 if __name__ == "__main__":
     unittest.main()

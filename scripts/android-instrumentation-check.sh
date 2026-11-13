@@ -172,6 +172,33 @@ fi
 if ! timeout --kill-after=2s 10s adb pull /data/local/tmp/quickcut-design-review quickcut-design-review; then
   echo "::warning::Optional design screenshots were unavailable; instrumentation results are unchanged."
 fi
+# UI-06-A: screenshots must come from the actual Android dialog windows
+# preserved by DialogDesignInstrumentedTest (not Compose-only offscreen images).
+run_checked "Verify UI-06-A Android dialog, diagnostics and original safety evidence" python3 - "$SCRIPT_DIR/stage20-evidence-verify.py" <<'PYUI06A'
+from pathlib import Path
+import importlib.util
+import sys
+
+spec = importlib.util.spec_from_file_location("stage20_images", sys.argv[1])
+validator = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(validator)
+for name in (
+    "dialog_save_settings.png",
+    "dialog_original_delete.png",
+    "dialog_export_method.png",
+    "dialog_export_cancel.png",
+    "dialog_export_finalizing.png",
+    "dialog_edit_recovery.png",
+    "dialog_diagnostics.png",
+    "dialog_task_error.png",
+    "ui06a_preview_recovery.png",
+    "dialog_save_large_font.png",
+    "dialog_export_analysis_large_font.png",
+    "dialog_licenses.png",
+):
+    dimensions = validator.verify_png(Path("quickcut-design-review") / name)
+    print(f"Verified UI-06-A Android dialog screenshot: {name} {dimensions}")
+PYUI06A
 # UI-04-A captures are written by the existing real-player Android editor test.
 # Capture names are mandatory, and fake/error output never satisfies the PNG gate.
 run_checked "Verify UI-04-A quick and detailed light/dark editor evidence" python3 - "$SCRIPT_DIR/stage20-evidence-verify.py" <<'PYUI04A'
@@ -247,6 +274,27 @@ for theme in ("light", "dark"):
         dimensions = validator.verify_png(Path("quickcut-design-review") / name)
         print("Verified UI-03-A screenshot: " + name + " " + str(dimensions))
 PYUI03A
+# UI-07-A: every key workflow has a matched light/dark screenshot from the
+# actual Android window. Missing images and identical pairs must fail CI.
+mkdir -p quickcut-design-review
+for screen in onboarding projects gallery batch extraction crop audio text \
+    save_options completed progress original_delete error_dialog export_cancel; do
+  for theme in light dark; do
+    file="ui07a_${theme}_${screen}.png"
+    if timeout --kill-after=2s 20s adb exec-out run-as com.hebi.quickcut cat \
+        "files/design-review/$file" > "quickcut-design-review/$file" && \
+        [[ -s "quickcut-design-review/$file" ]]; then
+      echo "UI-07-A Android screenshot preserved: $file"
+    else
+      echo "::error::UI-07-A Android screenshot missing or empty: $file"
+      if [[ "$first_failure" -eq 0 ]]; then first_failure=1; fi
+    fi
+  done
+done
+run_checked "Verify 20 matched light/dark Android UI screenshots" \
+    python3 "$SCRIPT_DIR/verify-ui07a-visual-matrix.py" \
+        --screenshots quickcut-design-review \
+        --out quickcut-ui07a-evidence/visual-matrix.json
 # Stage 13 reference states are rendered from decoded local video fixtures, not demo placeholders.
 # Keep them as a separate required screenshot set without weakening the Stage 7 evidence.
 for file in stage13_home_populated.png stage13_projects_populated.png stage13_tools.png \
@@ -291,6 +339,33 @@ for name in ("stage15_export_auto.png", "stage15_export_quality.png", "stage15_e
         raise SystemExit(f"Corrupted PNG IHDR checksum: {path}")
     print(f"Verified Stage 15 PNG: {name} ({width}x{height})")
 PYVERIFY
+# UI-05-B: state screenshots are actual Android renders. Controlled progress
+# values are UI fixtures; Stage19/20 separately verify real media exports.
+for file in ui05b_export_progress.png ui05b_export_finalizing.png \
+    ui05b_export_completed.png; do
+  if timeout --kill-after=2s 20s adb exec-out run-as com.hebi.quickcut cat "files/design-review/$file" > "quickcut-design-review/$file" && [[ -s "quickcut-design-review/$file" ]]; then
+    echo "UI-05-B screenshot preserved: $file"
+  else
+    echo "::error::UI-05-B screenshot missing or empty: $file"
+    if [[ "$first_failure" -eq 0 ]]; then first_failure=1; fi
+  fi
+done
+run_checked "Verify UI-05-B Android export/progress/completed screenshots" python3 - "$SCRIPT_DIR/stage20-evidence-verify.py" <<'PYUI05B'
+from pathlib import Path
+import importlib.util
+import sys
+
+spec = importlib.util.spec_from_file_location("stage20_images", sys.argv[1])
+validator = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(validator)
+for name in (
+    "ui05b_export_progress.png",
+    "ui05b_export_finalizing.png",
+    "ui05b_export_completed.png",
+):
+    dimensions = validator.verify_png(Path("quickcut-design-review") / name)
+    print(f"Verified UI-05-B screenshot: {name} {dimensions}")
+PYUI05B
 # Stage 16 real crop UI renders must exist on every tested API.
 for file in stage16_crop_vertical.png stage16_crop_square.png \
     stage16_crop_free.png stage16_crop_largefont.png; do
@@ -423,6 +498,20 @@ else
   # Still evaluate all evidence for diagnostics; never issue an approved manifest after an earlier failure.
   run_checked "Stage 20 mandatory test and PNG evidence" python3 "$SCRIPT_DIR/stage20-evidence-verify.py" \
     --xml "$RESULTS" --screenshots quickcut-design-review
+fi
+# UI-08-A: a release readiness report is issued only after all mandatory
+# Android tests, media evidence, and the 40-screen visual matrix succeeded.
+# The generated file is not a Google Play release authorization.
+if [[ "$first_failure" -eq 0 ]]; then
+  run_checked "UI-08-A full regression and release evidence" \
+    python3 "$SCRIPT_DIR/verify-ui08a-release-evidence.py" \
+      --api "${QUICKCUT_EMULATOR_API:-unknown}" \
+      --xml "$RESULTS" \
+      --screenshots quickcut-design-review \
+      --stage20 quickcut-stage20-evidence/verified-screens-and-tests.json \
+      --ui07a quickcut-ui07a-evidence/visual-matrix.json \
+      --png-script "$SCRIPT_DIR/stage20-evidence-verify.py" \
+      --out quickcut-ui08a-evidence/release-qa.json
 fi
 if [[ "$first_failure" -ne 0 ]]; then
   echo "::error::Instrumentation failed; preserving the first failure (exit $first_failure)."

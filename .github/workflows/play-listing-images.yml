@@ -9,16 +9,33 @@ on:
       - ".github/workflows/play-listing-images.yml"
   workflow_dispatch:
     inputs:
+      ops01_release_approved:
+        description: 'OPS-01 explicit final release approval'
+        type: boolean
+        required: true
+        default: false
+      ops06_store_approved:
+        description: 'All planned work/QA complete; separate Play listing approval'
+        type: boolean
+        required: true
+        default: false
+      ops06_confirmation:
+        description: 'For Apply: type APPLY_VERIFIED_PLAY_STORE_ASSETS'
+        type: string
+        required: false
+      ops06_expected_main_sha:
+        description: 'Exact reviewed current main commit SHA'
+        type: string
+        required: false
+      ops06_batch_id:
+        description: 'Approved KST release batch YYYY-MM-DD-quickcut'
+        type: string
+        required: false
       apply:
         description: Upload the approved icon, feature graphic and eight Korean phone screenshots
         required: true
         type: boolean
         default: false
-  workflow_run:
-    workflows: [Android build, Android emulator smoke]
-    branches: [main]
-    types: [completed]
-
 concurrency:
   group: quickcut-play-test-edit
   cancel-in-progress: false
@@ -35,7 +52,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - name: Verify exact assets and PNG dimensions
         run: python3 scripts/publish-play-listing-images.py --check-only
@@ -45,21 +62,15 @@ jobs:
   publish:
     needs: validate
     if: >-
-      (github.event_name == 'workflow_dispatch' &&
-       github.ref == 'refs/heads/main' && inputs.apply == true) ||
-      (github.event_name == 'workflow_run' &&
-       github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.head_branch == 'main' &&
-       github.event.workflow_run.repository.full_name == github.repository &&
-       github.event.workflow_run.head_repository.full_name == github.repository &&
-       (github.event.workflow_run.event == 'push' ||
-        github.event.workflow_run.event == 'workflow_dispatch'))
+      github.event_name == 'workflow_dispatch' &&
+      github.repository == 'hebi10/quickcut' && github.ref == 'refs/heads/main' &&
+      inputs.apply == true && inputs.ops01_release_approved == true && inputs.ops06_store_approved == true
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - name: Require latest exact-main Android and emulator CI to both pass
         env:
@@ -71,6 +82,14 @@ jobs:
             echo "::error::Exact main HEAD is not fully verified; Play images were not edited."
             exit 1
           fi
+      - name: OPS-06 require approved KST batch, source and store-only request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OPS06_STORE_APPROVED: ${{ inputs.ops06_store_approved }}
+          OPS06_CONFIRMATION: ${{ inputs.ops06_confirmation }}
+          OPS06_EXPECTED_MAIN_SHA: ${{ inputs.ops06_expected_main_sha }}
+          OPS06_BATCH_ID: ${{ inputs.ops06_batch_id }}
+        run: python3 scripts/ops06/store_gate.py apply
       - name: Choose existing Google Play credentials
         id: preflight
         env:

@@ -20,6 +20,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
@@ -56,7 +57,7 @@ internal fun SaveOptionsDialog(
                 modifier = Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(CutSpacing.md),
             ) {
-                Text("저장 정보", color = palette.secondaryAccent,
+                Text("저장 정보", color = palette.primaryText,
                     style = MaterialTheme.typography.titleMedium)
                 Text((if (outputQuality.isAutomatic)
                     "원본 영상의 해상도와 프레임 속도를 유지하며, 가능한 경우 고속 저장을 사용합니다."
@@ -78,23 +79,12 @@ internal fun SaveOptionsDialog(
                 Text("기기 갤러리에 저장",
                     color = palette.secondaryText,
                     style = MaterialTheme.typography.bodyMedium)
-                Text("원본 동영상", color = palette.primaryText,
-                    style = MaterialTheme.typography.titleSmall)
-                CutChoiceDropdown(
-                    label = "저장 완료 후 원본 동영상 처리",
-                    selected = originalAction,
-                    options = listOf(
-                        CutChoice(OriginalAction.KEEP, "원본 유지 (기본값)"),
-                        CutChoice(OriginalAction.TRASH, "원본 휴지통으로 이동"),
-                        CutChoice(OriginalAction.DELETE, "원본 영구 삭제"),
-                    ),
-                    onSelected = onOriginalActionChange,
-                )
-                if (originalAction == OriginalAction.DELETE) {
-                    CutInfoSection(
-                        title = "영구 삭제 주의",
-                        message = "영구 삭제는 복구할 수 없습니다. 저장 결과를 확인한 뒤 진행됩니다.",
-                        caution = true,
+                if (!canSave) {
+                    Text(
+                        "편집 결과를 확인한 뒤 저장할 수 있습니다.",
+                        color = palette.secondaryText,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.testTag("ui05b-save-disabled-reason"),
                     )
                 }
                 Text("결과 영상 날짜", color = palette.primaryText,
@@ -122,6 +112,27 @@ internal fun SaveOptionsDialog(
                     color = palette.secondaryText,
                     style = MaterialTheme.typography.bodySmall,
                 )
+                Text("원본 동영상", color = palette.primaryText,
+                    style = MaterialTheme.typography.titleSmall)
+
+                CutChoiceDropdown(
+                    label = "저장 완료 후 원본 동영상 처리",
+                    selected = originalAction,
+                    options = listOf(
+                        CutChoice(OriginalAction.KEEP, "원본 유지 (기본값)"),
+                        CutChoice(OriginalAction.TRASH, "원본 휴지통으로 이동"),
+                        CutChoice(OriginalAction.DELETE, "원본 영구 삭제"),
+                    ),
+                    onSelected = onOriginalActionChange,
+                )
+                if (originalAction == OriginalAction.DELETE) {
+                    CutInfoSection(
+                        title = "영구 삭제 주의",
+                        message = "영구 삭제는 복구할 수 없습니다. 저장 성공을 확인한 뒤 " +
+                            "Android 시스템 승인 화면에서만 원본 삭제를 요청합니다.",
+                        caution = true,
+                    )
+                }
                 Text(
                     "저장 실패·취소 시 원본은 유지됩니다. 원본 처리 설정은 끌 때까지 유지되며, " +
                         "저장에 성공한 뒤 Android 승인을 요청합니다.",
@@ -162,25 +173,36 @@ internal fun OriginalActionEnableDialog(
                 modifier = Modifier.heightIn(max = 400.dp).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Text("저장에 성공한 원본만 " +
-                    (if (permanent) "영구 삭제" else "휴지통으로 이동") +
-                    "하도록 설정합니다.")
-                Text("새 작업·재편집·앱 재시작 후에도 이 설정은 유지되며, " +
-                    "원본 처리는 매번 Android 승인이 필요합니다.",
-                    color = palette.secondaryText, style = MaterialTheme.typography.bodySmall)
-                Text("실패·취소·건너뛴 영상의 원본은 유지됩니다.",
-                    color = palette.secondaryText, style = MaterialTheme.typography.bodySmall)
+                CutInfoSection(
+                    title = if (permanent) "영구 삭제 설정" else "휴지통 이동 설정",
+                    message = "저장에 성공한 원본만 " +
+                        (if (permanent) "영구 삭제" else "휴지통으로 이동") +
+                        "하도록 설정합니다.",
+                )
+                Text(
+                    "이 버튼은 처리 방식만 활성화합니다. 지금 원본을 삭제하지 않으며, " +
+                        "저장 결과를 확인한 후 Android 시스템 승인을 매번 요청합니다.",
+                    color = palette.primaryText,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Text(
+                    "새 작업·재편집·앱 재시작 후에도 선택한 방식은 유지됩니다. " +
+                        "실패·취소·건너뛴 영상의 원본은 유지됩니다.",
+                    color = palette.secondaryText,
+                    style = MaterialTheme.typography.bodySmall,
+                )
                 if (permanent) {
                     CutInfoSection(
                         title = "원본 영구 삭제",
-                        message = "영구 삭제한 원본은 복구할 수 없습니다.",
+                        message = "삭제 승인 후 영구 삭제한 원본은 복구할 수 없습니다. " +
+                            "최종 삭제 여부는 Android 확인 화면에서 결정합니다.",
                         caution = true,
                     )
                 }
             }
         },
         confirmButton = { Button(onClick = onConfirm, shape = CutShape,
-            modifier = Modifier.heightIn(min = CutSizes.touchTarget)) { Text("활성화") } },
+            modifier = Modifier.heightIn(min = CutSizes.primaryButton)) { Text("활성화") } },
         dismissButton = { TextButton(onClick = onDismiss, shape = CutShape,
             modifier = Modifier.heightIn(min = CutSizes.touchTarget)) { Text("취소") } },
         containerColor = palette.panel,
@@ -215,21 +237,25 @@ internal fun ExportModeDialog(
                         caution = true,
                     )
                 }
-                Text(assessment.explanation)
+                CutInfoSection(
+                    title = "저장 방식 분석 결과",
+                    message = assessment.explanation,
+                )
+                Text("정확한 위치로 저장", color = palette.primaryText,
+                    style = MaterialTheme.typography.titleSmall)
                 Text(
-                    "정확한 위치로 저장하면 지정한 시작·끝 시점을 유지합니다. 원본 복사·부분 처리를 " +
-                        "우선 시도하고 필요하면 영상 전체를 변환합니다. 실제 처리 방식은 완료 후 표시합니다.",
+                    "지정한 시작·끝 시점을 유지합니다. 원본 복사·부분 처리를 우선 시도하고 " +
+                        "필요하면 전체 영상을 변환합니다. 실제 처리 방식은 완료 후 표시합니다.",
                     color = palette.secondaryText,
                     style = MaterialTheme.typography.bodySmall,
                 )
                 assessment.suggestion?.let { suggestion ->
                     Text("고속 저장 추천 위치", style = MaterialTheme.typography.titleSmall,
-                        color = palette.secondaryAccent)
+                        color = palette.primaryText)
                     Text(fastCutSuggestionText(suggestion))
                     FastCutPreview(suggestion)
-                    Text("추천 위치는 원본 영상의 키프레임을 기준으로 제안합니다. " +
-                        "선택하면 자르는 시점이 변경되고 영상은 재인코딩 없이 저장됩니다. " +
-                        "소리는 필요하면 변환합니다.",
+                    Text("추천 위치를 선택하면 시작·종료 시점이 변경됩니다. " +
+                        "고속 저장은 재인코딩 없이 영상을 복사하며 소리는 필요할 때 변환합니다.",
                         color = palette.secondaryText, style = MaterialTheme.typography.bodySmall)
                 }
             }
@@ -281,6 +307,42 @@ internal fun exportReportText(report: ExportReport?): String {
         }
     }
     return "처리 방식: " + method + elapsed + if (reasons.isBlank()) "" else "\n" + reasons
+}
+
+@Composable
+internal fun TaskErrorDialog(message: String, onDismiss: () -> Unit) {
+    val palette = LocalCutPalette.current
+    AlertDialog(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = CutSpacing.lg).widthIn(max = 480.dp),
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+        onDismissRequest = onDismiss,
+        title = { QuickCutDialogHeading("작업 오류") },
+        text = {
+            Column(
+                modifier = Modifier.heightIn(max = 400.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(CutSpacing.md),
+            ) {
+                CutInfoSection(
+                    title = "오류 내용",
+                    message = message,
+                    caution = true,
+                )
+                Text(
+                    "문제가 계속되면 아래 진단 기록에서 작업 상태를 확인할 수 있습니다. " +
+                        "진단은 사용자가 직접 복사하기 전에는 외부로 전송하지 않습니다.",
+                    color = palette.secondaryText,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                ExportDiagnosticButton()
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss, shape = CutShape,
+                modifier = Modifier.heightIn(min = CutSizes.touchTarget)) { Text("확인") }
+        },
+        containerColor = palette.panel,
+        shape = CutDialogShape,
+    )
 }
 
 @Composable

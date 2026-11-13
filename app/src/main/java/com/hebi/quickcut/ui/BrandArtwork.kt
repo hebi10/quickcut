@@ -40,10 +40,10 @@ internal fun QuickCutLogo(size: Dp, modifier: Modifier = Modifier) {
         contentAlignment = Alignment.Center,
     ) {
         androidx.compose.foundation.Image(
-            painter = androidx.compose.ui.res.painterResource(com.hebi.quickcut.R.drawable.ic_launcher_foreground),
+            painter = androidx.compose.ui.res.painterResource(com.hebi.quickcut.R.drawable.quickcut_brand_foreground),
             contentDescription = null,
             colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(palette.onAccent),
-            modifier = Modifier.size(size),
+            modifier = Modifier.size(size * 1.35f),
         )
     }
 }

@@ -47,7 +47,39 @@ def triggers(source):
         if inline.startswith("["):
             values = [v.strip().strip("'\"") for v in inline.strip("[] ").split(",")]
         elif inline.startswith("{"):
-            values = re.findall(r"['\"]?([A-Za-z][\w-]*)['\"]?\s*:", inline)
+            if not inline.endswith("}"):
+                return {"unparsed"}
+            parts, current, depth, quote = [], [], 0, ""
+            for char in inline[1:-1]:
+                if quote:
+                    current.append(char)
+                    if char == quote:
+                        quote = ""
+                elif char in ("'", '"'):
+                    quote = char
+                    current.append(char)
+                elif char in ("{", "["):
+                    depth += 1
+                    current.append(char)
+                elif char in ("}", "]"):
+                    depth -= 1
+                    if depth < 0:
+                        return {"unparsed"}
+                    current.append(char)
+                elif char == "," and depth == 0:
+                    parts.append("".join(current).strip())
+                    current = []
+                else:
+                    current.append(char)
+            if quote or depth != 0:
+                return {"unparsed"}
+            parts.append("".join(current).strip())
+            values = []
+            for part in parts:
+                match = re.match(r"""^\s*(?:(['"])([A-Za-z][\w-]*)\1|([A-Za-z][\w-]*))\s*:""", part)
+                if not match:
+                    return {"unparsed"}
+                values.append(match.group(2) or match.group(3))
         else:
             values = [inline.split("#", 1)[0].strip().strip("'\"")]
         return set(values) if values and all(re.fullmatch(r"[A-Za-z][\w-]*", v) for v in values) else {"unparsed"}
@@ -77,7 +109,7 @@ def jobs(source):
     lines = source.splitlines()
     start = next((i for i, line in enumerate(lines) if re.match(r"^(?:jobs|'jobs'|\x22jobs\x22)\s*:\s*(?:#.*)?$", line)), -1)
     if start < 0:
-        return {"__unparsed_jobs__": source} if re.search(r"(?m)^(?:jobs|'jobs'|\x22jobs\x22)\s*:", source) else {}
+        return {"__unparsed_jobs__": source} if re.search(r"(?m)^[ \t]*(?:jobs|'jobs'|\x22jobs\x22)\s*:", source) else {}
     children = []
     for line in lines[start + 1:]:
         if line.strip() and not line[0].isspace() and not line.lstrip().startswith("#"):
@@ -89,6 +121,14 @@ def jobs(source):
     indentation = min((depth for depth, match in candidates if match is not None), default=None)
     if indentation is None:
         return {"__unparsed_jobs__": source}
+    # A flow-style job alongside normal jobs must not inherit another job's if gate.
+    for line in children:
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        depth = len(line) - len(line.lstrip())
+        if depth == indentation and not re.fullmatch(
+                r"""(['"]?)[A-Za-z][\w-]*\1\s*:\s*(?:#.*)?""", line.strip()):
+            return {"__unparsed_jobs__": source}
     result, name, buffer = {}, None, []
     for line in children:
         depth = len(line) - len(line.lstrip())
@@ -110,7 +150,10 @@ def job_condition(body):
     if not lines:
         return ""
     header_indent = len(lines[0]) - len(lines[0].lstrip())
-    key_indent = header_indent + 2
+    depths = [len(line) - len(line.lstrip()) for line in lines[1:]
+              if line.strip() and not line.lstrip().startswith("#")
+              and len(line) - len(line.lstrip()) > header_indent]
+    key_indent = min(depths, default=header_indent + 2)
     for index, line in enumerate(lines):
         if len(line) - len(line.lstrip()) != key_indent:
             continue
@@ -126,7 +169,10 @@ def job_condition(body):
                 if nxt.strip():
                     parts.append(nxt.strip())
             value = " ".join(parts)
-        return re.sub(r"\s+#.*$", "", value).strip()
+        value = re.sub(r"\s+#.*$", "", value).strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+            value = value[1:-1]
+        return value
     return ""
 
 
@@ -174,7 +220,7 @@ def _unwrap(expr):
 
 def _guaranteed_atoms(condition):
     expr = _unwrap(condition.replace("$" + "{{", "").replace("}}", "").strip())
-    if not expr or expr.startswith("!") or re.match(r"^not\b", expr):
+    if not expr:
         return set()
     alternatives = _split_boolean(expr, "||")
     if len(alternatives) > 1:
@@ -182,6 +228,8 @@ def _guaranteed_atoms(condition):
     conjuncts = _split_boolean(expr, "&&")
     if len(conjuncts) > 1:
         return set().union(*(_guaranteed_atoms(part) for part in conjuncts))
+    if expr.startswith("!") or re.match(r"^not\b", expr):
+        return set()
     return {expr.replace('"', "'").strip()}
 
 
@@ -194,10 +242,34 @@ def is_manual_only(condition):
     return any(re.fullmatch(r"github\.event_name\s*==\s*'workflow_dispatch'", atom) for atom in atoms)
 
 
+def _job_dependencies(body):
+    lines = body.splitlines()
+    if not lines:
+        return []
+    header_depth = len(lines[0]) - len(lines[0].lstrip())
+    levels = [len(line) - len(line.lstrip()) for line in lines[1:]
+              if line.strip() and not line.lstrip().startswith("#")
+              and len(line) - len(line.lstrip()) > header_depth]
+    depth = min(levels, default=header_depth + 2)
+    values = []
+    for line in lines[1:]:
+        if len(line) - len(line.lstrip()) != depth:
+            continue
+        match = re.match(
+            r"^\s+needs:\s*(?:\[([^\]]+)\]|([A-Za-z][\w-]*))\s*(?:#.*)?$",
+            line)
+        if match:
+            raw = match.group(1).split(",") if match.group(1) else [match.group(2)]
+            values.extend(value.strip().strip("'\"") for value in raw)
+    return values
+
+
 def _publishing_command(body):
     commands = "\n".join(line for line in body.splitlines()
                          if not line.lstrip().startswith(("- name:", "name:", "#")))
+    commands = _folded_run_commands(commands)
     commands = re.sub(r"\\\s*\n\s*", " ", commands)
+    commands = re.sub(r"\s*(?:&&|\|\||;|\|)\s*", "\n", commands)
     if re.search(r"(?i)\bgh\s+release\s+create\b|softprops/action-gh-release|upload-google-play@", commands):
         return True
     if "androidpublisher.googleapis.com" in commands and re.search(
@@ -214,12 +286,14 @@ def _publishing_command(body):
                     r"|play_internal\.py|play_closed\.py|promote_internal\.py"
                     r"|play_images\.py|store_icon\.py")
     for line in commands.splitlines():
-        match = re.search(r"\b(?:python(?:3(?:\.\d+)?)?|node|bash|sh)\s+([^\s;|]+)([^\n]*)", line)
+        match = re.search(r"\b(?:python(?:3(?:\.\d+)?)?|node|bash|sh)\s+(?:(?:-[uBIESOqv]+|--unbuffered)\s+)*(?:(-m)\s+)?([^\s;|]+)([^\n]*)", line)
         if not match:
             continue
-        script, args = match.group(1).lower(), match.group(2).lower()
+        script, args = match.group(2).lower().strip("'\""), match.group(3).lower()
+        if match.group(1):
+            script = script.replace(".", "/") + ".py"
         # These existing publisher entrypoints mutate by default, even without --publish.
-        if re.search(r"(?:^|/)(?:store_icon|publish-mobile-play|publish_mobile_play)[.]py$", script):
+        if re.search(r"(?:^|/)(?:store_icon|images_only|publish-mobile-play|publish_mobile_play|publish-play-test)[.]py$", script):
             return True
         if not re.search(script_names, script):
             continue
@@ -242,17 +316,23 @@ def automatic_mutations(filename, source):
                                      "public-release.yml", "ui-r09-full-release.yml"})
     issues = []
     workflow_jobs = jobs(source)
+    if "__unparsed_jobs__" in workflow_jobs:
+        return [filename + ": cannot safely parse publishing jobs"]
     for name, body in workflow_jobs.items():
-        explicit = _publishing_command(body)
-        possible = explicit or (relevant_file and MUTATOR.search(name) is not None
-                                and not name.endswith("-smoke"))
-        if not possible:
-            continue
         condition = job_condition(body)
         if is_disabled(condition) or is_manual_only(condition):
             continue
+        publishing_steps = [step for step in _workflow_steps(body)
+                            if _publishing_command(step)]
+        if publishing_steps:
+            if all(is_disabled(_step_condition(step)) or is_manual_only(_step_condition(step))
+                   for step in publishing_steps):
+                continue
+        elif not (relevant_file and MUTATOR.search(name) is not None
+                  and not name.endswith("-smoke")):
+            continue
         need = re.search(r"(?m)^    needs:\s*([A-Za-z][\w-]*)\s*$", body)
-        if need and not re.search(r"\b(?:always|failure|cancelled)\s*\(", condition):
+        if need and not re.search(r"\b(?:always|failure|cancelled)\s*\(|!\s*success\s*\(", condition):
             predecessor = workflow_jobs.get(need.group(1))
             if predecessor is not None and is_disabled(job_condition(predecessor)):
                 continue
@@ -262,7 +342,9 @@ def automatic_mutations(filename, source):
 
 
 def _store_mutating_command(body):
-    normalized = re.sub(r"\\\s*\n\s*", " ", body)
+    normalized = _folded_run_commands(body)
+    normalized = re.sub(r"\\\s*\n\s*", " ", normalized)
+    normalized = re.sub(r"\s*(?:&&|\|\||;)\s*", "\n", normalized)
     for line in normalized.splitlines():
         if line.lstrip().startswith(("- name:", "name:", "#")):
             continue
@@ -270,11 +352,15 @@ def _store_mutating_command(body):
                 r"(?i)(?:/images|/listings/|:commit)\b", line) and re.search(
                 r"(?i)\b(?:POST|PUT|PATCH|DELETE)\b", line):
             return True
-        match = re.search(r"\b(?:python(?:3(?:\.\d+)?)?|node)\s+([^\s;|]+)([^\n]*)", line)
+        match = re.search(r"\b(?:python(?:3(?:\.\d+)?)?|node)\s+(?:(?:-[uBIESOqv]+|--unbuffered)\s+)*(?:(-m)\s+)?([^\s;|]+)([^\n]*)", line)
         if not match:
             continue
-        script, args = match.group(1).lower(), match.group(2).lower()
-        if re.search(r"(?:^|/)store_icon[.]py$", script):
+        script, args = match.group(2).lower().strip("'\""), match.group(3).lower()
+        if match.group(1):
+            script = script.replace(".", "/") + ".py"
+        if script.endswith("/ops06/store_gate.py"):
+            continue
+        if re.search(r"(?:^|/)(?:store_icon|images_only)[.]py$", script):
             return True
         if "publish_play_store_refresh" in script:
             return True
@@ -287,8 +373,32 @@ def _store_mutating_command(body):
     return False
 
 
+def _folded_run_commands(body):
+    lines = body.splitlines()
+    output = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        match = re.match(r"^[ \t]*(?:-[ \t]+)?run:[ \t]*>[+-]?[ \t]*(?:#.*)?$", line)
+        if not match:
+            output.append(line)
+            index += 1
+            continue
+        indent = len(line) - len(line.lstrip())
+        items = []
+        index += 1
+        while index < len(lines):
+            child = lines[index]
+            if child.strip() and len(child) - len(child.lstrip()) <= indent:
+                break
+            items.append(child.strip() if child.strip() else "\n")
+            index += 1
+        output.append("run: " + " ".join(items))
+    return "\n".join(output)
+
+
 def _workflow_steps(body):
-    found = list(re.finditer(r"(?m)^( +)- (?:name|uses|run):", body))
+    found = list(re.finditer(r"""(?m)^([ \t]+)-[ \t]+(?:[A-Za-z][\w-]*:|["'][A-Za-z][\w-]*["']:|\{)""", body))
     if not found:
         return []
     depth = min(len(item.group(1)) for item in found)
@@ -298,20 +408,83 @@ def _workflow_steps(body):
 
 
 def _step_condition(body):
-    match = re.search(r"(?m)^\s+if:\s*([^\n]+)", body)
-    if not match:
+    """Read only a step's YAML mapping, never an embedded run script's text."""
+    lines = body.splitlines()
+    if not lines:
         return ""
-    return match.group(1).strip()
+    root_indent = len(lines[0]) - len(lines[0].lstrip())
+    for index, line in enumerate(lines):
+        depth = len(line) - len(line.lstrip())
+        if index == 0:
+            match = re.match(r"^[ \t]*-[ \t]+if[ \t]*:[ \t]*(.*)$", line)
+        elif depth == root_indent + 2:
+            match = re.match(r"^[ \t]*if[ \t]*:[ \t]*(.*)$", line)
+        else:
+            continue
+        if not match:
+            continue
+        condition = match.group(1).strip().split(" #", 1)[0].strip()
+        if condition not in (">", ">-", ">+", "|", "|-", "|+"):
+            return condition
+        property_depth = root_indent + 2 if index == 0 else depth
+        parts = []
+        for next_line in lines[index + 1:]:
+            if not next_line.strip():
+                continue
+            if len(next_line) - len(next_line.lstrip()) <= property_depth:
+                break
+            parts.append(next_line.strip())
+        return " ".join(parts) if parts else "__unparsed_condition__"
+    return ""
+
+
+def _unsafe_shell_template(source):
+    for value in re.findall(
+            r"(?m)^[ \t]+(?:-[ \t]+)?shell:[ \t]*([^\n#]+)", source or ""):
+        value = value.strip().strip("'\"")
+        if "{0}" not in value:
+            continue
+        fail_fast = re.search(r"(?:^|\s)-[A-Za-z]*e[A-Za-z]*(?=\s|$)|(?:^|\s)-o\s+errexit\b", value)
+        if not fail_fast or re.search(r"(?:^|\s)\+e(?:\s|$)", value):
+            return True
+    return False
+
+
+def _direct_guard_step(step, script, action):
+    """Approval must be the entire run property, not a conditional shell command."""
+    lines = step.splitlines()
+    if not lines:
+        return False
+    root_depth = len(lines[0]) - len(lines[0].lstrip())
+    expected = r"python(?:3)?\s+" + re.escape(script) + r"\s+" + re.escape(action)
+    seen = 0
+    for index, line in enumerate(lines):
+        depth = len(line) - len(line.lstrip())
+        content = line.strip()
+        if index == 0:
+            match = re.fullmatch(r"-\s+run:\s*" + expected + r"\s*(?:#.*)?", content)
+        elif depth == root_depth + 2:
+            match = re.fullmatch(r"run:\s*" + expected + r"\s*(?:#.*)?", content)
+        else:
+            continue
+        if match:
+            seen += 1
+    return seen == 1
 
 
 def _safe_store_step(guard_step, mutation_steps, body, filename):
-    if re.search(r"(?m)^\s+continue-on-error\s*:\s*(?!false\s*$)[^\n]+", guard_step):
+    if not _direct_guard_step(guard_step, "scripts/ops06/store_gate.py", "apply"):
         return False
-    executable = re.search(r"(?m)^\s*(?:run:\s*)?python(?:3)?\s+scripts/ops06/store_gate\.py\s+apply(?:\s|$)",
-                           guard_step)
-    if not executable:
+    if _unsafe_shell_template(guard_step) or _unsafe_shell_template(body):
         return False
-    if re.search(r"(?m)^\s*(?:run:\s*)?python(?:3)?\s+scripts/ops06/store_gate\.py\s+apply[^\n]*(?:\|\||;\s*true\b|\|\s*cat)", guard_step):
+    if re.search(r"(?m)^[ \t]+(?:-[ \t]+)?continue-on-error[ \t]*:[ \t]*(?!false[ \t]*(?:#.*)?$)[^\n]+", guard_step):
+        return False
+    guard_command = r"(?m)^[ \t]*(?:-[ \t]+)?(?:run:[ \t]*)?python(?:3)?\s+scripts/ops06/store_gate\.py\s+apply"
+    if not re.search(guard_command + r"(?:\s|$)", guard_step):
+        return False
+    if re.search(guard_command + r"[^\n]*(?:&&|\|\||;[ \t]*true\b|\|(?!\|))", guard_step):
+        return False
+    if re.search(r"(?m)^[ \t]*(?:run:[ \t]*)?set[ \t]+\+e\b", guard_step):
         return False
     guard_cond = _step_condition(guard_step)
     if not guard_cond:
@@ -322,10 +495,6 @@ def _safe_store_step(guard_step, mutation_steps, body, filename):
     alternatives = _split_boolean(_unwrap(guard_cond), "||")
     if (len(alternatives) > 1 and all(_step_condition(step) in alternatives
                                       for step in mutation_steps)):
-        return True
-    if (filename == "store-icon-sync.yml" and guard_cond == "inputs.apply == true"
-            and "APPLY_MANUAL:" in body and "inputs.apply" in body
-            and re.search(r'if \[\[ "\$APPLY_MANUAL" == "true" \]\]; then', body)):
         return True
     return False
 
@@ -346,6 +515,8 @@ def store_guard_findings():
         for name, body in jobs(source).items():
             if is_disabled(job_condition(body)) or not _store_mutating_command(body):
                 continue
+            if _unsafe_shell_template(source):
+                problems.append("STORE_SHELL: " + filename + ": publisher may ignore approval failure")
             steps = _workflow_steps(body)
             mutations = [i for i, step in enumerate(steps) if _store_mutating_command(step)]
             guards = [i for i, step in enumerate(steps) if "scripts/ops06/store_gate.py apply" in step]
@@ -360,8 +531,16 @@ def store_guard_findings():
             guard = steps[index]
             if not _safe_store_step(guard, [steps[i] for i in mutations], body, filename):
                 problems.append("STORE_OPTIONAL: " + filename + ": approval is optional, ignored or not executable")
+            if index in mutations:
+                problems.append("STORE_ORDER: " + filename + ": approval and publication share one step")
             if any(i < index for i in mutations):
                 problems.append("STORE_ORDER: " + filename + ": publication precedes approval")
+            for downstream in steps[index + 1:]:
+                if not (_store_mutating_command(downstream) or "google-github-actions/auth@" in downstream):
+                    continue
+                if re.search(r"\b(?:always|failure|cancelled)\s*\(|!\s*success\s*\(", _step_condition(downstream)):
+                    problems.append("STORE_BYPASS: " + filename + ": publication may continue after rejected approval")
+                    break
             if any("google-github-actions/auth@" in step for step in steps[:index]):
                 problems.append("STORE_ORDER: " + filename + ": Play authentication precedes approval")
             if any(_publishing_command(step) and ("androidpublisher.googleapis.com" in step
@@ -381,14 +560,36 @@ def findings():
             continue
         if triggers(source) != {"workflow_dispatch"}:
             problems.append("AUTO_TRIGGER: " + file + " must be workflow_dispatch-only")
-        if "github.ref" not in source and "GITHUB_REF" not in source:
-            problems.append("SOURCE: " + file + " missing main ref gate")
+        workflow_jobs = jobs(source)
+        main_condition = "github.ref == 'refs/heads/main'"
+        def main_gated(name, ancestors=()):
+            if name in ancestors or name not in workflow_jobs:
+                return False
+            body = workflow_jobs[name]
+            condition = job_condition(body)
+            if any(re.fullmatch(r"github\.ref\s*==\s*'refs/heads/main'", atom)
+                   for atom in _guaranteed_atoms(condition)):
+                return True
+            if re.search(r"\b(?:always|failure|cancelled)\s*\(|!\s*success\s*\(", condition):
+                return False
+            deps = _job_dependencies(body)
+            if not deps:
+                return False
+            return any(main_gated(dep, ancestors + (name,)) for dep in deps)
+        if "__unparsed_jobs__" in workflow_jobs or not workflow_jobs:
+            problems.append("SOURCE: " + file + " cannot establish main ref gate")
+        else:
+            for job_name in workflow_jobs:
+                if not main_gated(job_name):
+                    problems.append("SOURCE: " + file + ": job " + job_name
+                                    + " lacks enforced main ref gate")
         if file == "release-build.yml":
             if re.search(r"(?i)inputs\[(?:mode|deploy)\]\s*=\s*(?:deploy|initialize|publish|promote|apply|upload|true)\b", source):
                 problems.append("BUILD: Play publishing mode is forbidden in build-only dispatch")
             for body in jobs(source).values():
-                local_only = "\n".join(line for line in body.splitlines()
-                                       if "/dispatches" not in line)
+                local_only = "\n".join(
+                    line for line in body.splitlines()
+                    if not re.search(r"^\s*(?:run:\s*)?gh\s+api\b[^\n]*/dispatches", line))
                 if _publishing_command(local_only):
                     problems.append("BUILD: build-only workflow contains a direct Play mutation")
                     break
@@ -447,10 +648,44 @@ def findings():
         if not release or guard not in release or not re.search(
                 r'if \[\[ "\$FINAL_RELEASE_APPROVAL" != "HOMECREW_FINAL_RELEASE_APPROVED" \]\]; then', release):
             problems.append("APPROVAL: HomeCrew final release authorization gate missing")
+    internal = read(".github/workflows/play-internal-release.yml")
+    if internal is not None:
+        if _unsafe_shell_template(internal):
+            problems.append("PROVENANCE_SHELL: OPS-04 internal workflow uses an unsafe shell template")
+        for stage in ("verify", "publish"):
+            body = jobs(internal).get(stage)
+            steps = _workflow_steps(body or "")
+            guard_command = r"(?m)^[ \t]*(?:-[ \t]+)?(?:run:[ \t]*)?python3\s+scripts/ops04/internal\.py\s+guard\b"
+            guards = [(index, step) for index, step in enumerate(steps)
+                      if _direct_guard_step(step, "scripts/ops04/internal.py", "guard")]
+            if len(guards) != 1:
+                problems.append("PROVENANCE: OPS-04 " + stage + " requires an executable signed-source guard")
+                continue
+            index, guard = guards[0]
+            if (_step_condition(guard) or re.search(r"(?m)^[ \t]+(?:-[ \t]+)?continue-on-error[ \t]*:", guard)
+                    or re.search(guard_command + r"[^\n]*(?:&&|\|\||;[ \t]*true\b|\|(?!\|))", guard)
+                    or re.search(r"(?m)^[ \t]*(?:run:[ \t]*)?set[ \t]+\+e\b", guard)):
+                problems.append("PROVENANCE: OPS-04 " + stage + " guard must run and stop on failure")
+            if (_publishing_command(guard) or any(_publishing_command(step)
+                    for step in steps[:index])):
+                problems.append("PROVENANCE: OPS-04 " + stage + " cannot publish before or within the guard")
+            if any("actions/download-artifact@" in step or "google-github-actions/auth@" in step
+                   for step in steps[:index]):
+                problems.append("PROVENANCE: OPS-04 " + stage + " guard must precede artifact access")
+            for downstream in steps[index + 1:]:
+                if (re.search(r"\b(?:always|failure|cancelled)\s*\(|!\s*success\s*\(", _step_condition(downstream))
+                        and ("google-github-actions/auth@" in downstream
+                             or _publishing_command(downstream))):
+                    problems.append("PROVENANCE_BYPASS: OPS-04 " + stage + " can publish after a failed guard")
+                    break
     if REPOSITORY == "hebi10/TripCanvas":
-        internal = read(".github/workflows/play-internal-release.yml") or ""
-        if internal.count("scripts/ops04/internal.py guard") < 2:
-            problems.append("PROVENANCE: OPS-04 requires guard in both verify and publish jobs")
+        promote = jobs(read(".github/workflows/play-promote.yml")).get("promote")
+        if not promote or "inputs.final_release_confirmed == true" not in _guaranteed_atoms(job_condition(promote)):
+            problems.append("APPROVAL: TripCanvas legacy closed promotion lacks mandatory final approval")
+    if REPOSITORY == "hebi10/PetWorld":
+        closed = read(".github/workflows/play-closed-release.yml") or ""
+        if re.search(r"(?i)publisher[.]py\s+deploy[^\n]*--bundle", closed):
+            problems.append("CLOSED: PetWorld promotion must not upload a new binary")
     return problems
 
 

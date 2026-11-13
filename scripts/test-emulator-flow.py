@@ -71,7 +71,16 @@ if name == "gradle":
         "com.hebi.quickcut.media.Stage19CombinedExportInstrumentedTest",
         "com.hebi.quickcut.media.Stage20RecoveryInstrumentedTest",
         "com.hebi.quickcut.ui.ThemeModeInstrumentedTest",
+        "com.hebi.quickcut.media.ExportIntegrityInstrumentedTest",
+        "com.hebi.quickcut.media.OriginalMediaActionsInstrumentedTest",
+        "com.hebi.quickcut.batch.ExactBatchExportInstrumentedTest",
+        "com.hebi.quickcut.editor.SingleExportRecoveryInstrumentedTest",
     )
+    # API29 runs BackgroundExportInstrumentedTest in two isolated processes.
+    # The 286-case "remaining" phase must never invent these identities.
+    # API35/36 instead run the complete unfiltered suite in one process.
+    if phase == "full":
+        required += ("com.hebi.quickcut.export.BackgroundExportInstrumentedTest",)
     for i in range(count):
         classname = required[i] if phase in ("full", "remaining") and i < len(required) else phase + ".Suite"
         testname = "case" + str(i)
@@ -103,11 +112,13 @@ if name == "adb":
             sys.exit(43)
         if os.environ.get("STAGE7_CAPTURE_STATUS") == "1":
             sys.exit(42)
-        if any(("stage14_" in a or "stage15_" in a or "stage16_" in a or "stage17_" in a or "stage18_" in a or "theme_" in a or "ui03a_" in a or "ui04b_" in a) for a in args):
+        if any(("stage14_" in a or "stage15_" in a or "stage16_" in a or "stage17_" in a or "stage18_" in a or "theme_" in a or "ui03a_" in a or "ui04b_" in a or "ui05b_" in a or "ui07a_" in a) for a in args):
             if (any(os.environ.get("STAGE"+str(i)+"_CAPTURE_STATUS") == "1" for i in (14, 15, 16, 17, 18)) or
                     (os.environ.get("STAGE1A_CAPTURE_STATUS") == "1" and any("theme_" in a for a in args)) or
                     (os.environ.get("UI03A_CAPTURE_STATUS") == "1" and any("ui03a_" in a for a in args)) or
-                    (os.environ.get("UI04B_CAPTURE_STATUS") == "1" and any("ui04b_batch_templates" in a for a in args))):
+                    (os.environ.get("UI04B_CAPTURE_STATUS") == "1" and any("ui04b_batch_templates" in a for a in args)) or
+                    (os.environ.get("UI05B_CAPTURE_STATUS") == "1" and any("ui05b_export_completed" in a for a in args)) or
+                    (os.environ.get("UI07A_CAPTURE_STATUS") == "1" and any("ui07a_dark_error_dialog" in a for a in args))):
                 sys.stdout.buffer.write(b"cat: files/design-review/stage15_export_auto.png: No such file")
                 sys.exit(0)
             import struct, zlib
@@ -116,7 +127,14 @@ if name == "adb":
                     (zlib.crc32(kind + data) & 0xffffffff).to_bytes(4, "big"))
             width, height = 360, 640
             header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
-            pixels = (b"\x00" + b"\x00\x00\x00" * width) * height
+            # Mock each requested palette with an actual valid grayscale PNG.
+            # A deliberately identical pair exercises the release-blocking gate.
+            light = any("_light_" in a for a in args)
+            if (os.environ.get("UI07A_IDENTICAL_STATUS") == "1" and any(
+                    "ui07a_dark_crop" in a for a in args)):
+                light = True
+            shade = 224 if light else 32
+            pixels = (b"\x00" + bytes((shade, shade, shade)) * width) * height
             sys.stdout.buffer.write(
                 bytes.fromhex("89504e470d0a1a0a") +
                 png_chunk(b"IHDR", header) +
@@ -146,10 +164,37 @@ if name == "adb":
             for mode in ("quick_trim", "detailed"):
                 for theme in ("light", "dark"):
                     name = f"editor_design_{mode}_{theme}.png"
+                    themed_pixels = (b"\x00" + bytes((224, 224, 224)) * width) * height if theme == "light" else (
+                        b"\x00" + bytes((32, 32, 32)) * width) * height
+                    themed_png = (bytes.fromhex("89504e470d0a1a0a") +
+                        chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(themed_pixels)) +
+                        chunk(b"IEND", b""))
                     data = (b"adb: missing capture" if
                         os.environ.get("UI04A_CAPTURE_STATUS") == "1" and
-                        mode == "detailed" and theme == "dark" else png)
+                        mode == "detailed" and theme == "dark" else themed_png)
                     (destination / name).write_bytes(data)
+            # Dialog fixtures model only the shell's image-integrity gate;
+            # a real device generates these from DialogDesignInstrumentedTest.
+            for name in (
+                "dialog_save_settings.png",
+                "dialog_original_delete.png",
+                "dialog_export_method.png",
+                "dialog_export_cancel.png",
+                "dialog_export_finalizing.png",
+                "dialog_edit_recovery.png",
+                "dialog_diagnostics.png",
+                "dialog_task_error.png",
+                "ui06a_preview_recovery.png",
+                "dialog_save_large_font.png",
+                "dialog_export_analysis_large_font.png",
+                "dialog_licenses.png",
+            ):
+                contents = (
+                    b"adb: capture missing" if
+                    os.environ.get("UI06A_CAPTURE_STATUS") == "1" and name == "dialog_task_error.png"
+                    else png
+                )
+                (destination / name).write_bytes(contents)
     sys.exit(0)
 if name == "python3":
     if args and args[0].endswith("verify-android-main10.py"):
@@ -158,6 +203,10 @@ if name == "python3":
     os.execv(os.environ["REAL_PYTHON"], [os.environ["REAL_PYTHON"], *args])
 raise SystemExit("Unexpected stub invocation")
 '''
+
+# Validate the entire generated executable before spawning any CI mock jobs.
+# A typo here must fail at its exact syntax line, not as 30 missing events.jsonl errors.
+compile(STUB, "<quickcut-emulator-flow-stub>", "exec")
 
 
 class EmulatorFlowTest(unittest.TestCase):
@@ -179,7 +228,14 @@ class EmulatorFlowTest(unittest.TestCase):
         env.setdefault("QUICKCUT_EMULATOR_API", "35")
         result = subprocess.run(["bash", str(SCRIPT)], cwd=root, env=env,
                                 capture_output=True, text=True, timeout=10)
-        events = [json.loads(line) for line in (root / "events.jsonl").read_text().splitlines()]
+        events_path = root / "events.jsonl"
+        if not events_path.is_file():
+            raise AssertionError(
+                "Emulator tool stub did not start (events.jsonl missing). "
+                f"exit={result.returncode}\nstdout:\n{result.stdout[-2500:]}\n"
+                f"stderr:\n{result.stderr[-2500:]}"
+            )
+        events = [json.loads(line) for line in events_path.read_text().splitlines()]
         def gradle_phase(args):
             if any("NativeSmartCutInstrumentedTest" in a for a in args):
                 return "preflight"
@@ -271,6 +327,30 @@ class EmulatorFlowTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Missing/corrupt PNG evidence", result.stdout + result.stderr)
 
+    def test_ui05b_invalid_completion_capture_blocks_release(self):
+        result, _, _, phases = self.run_flow(UI05B_CAPTURE_STATUS=1)
+        self.assertEqual(phases, ["preflight", "full"])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Missing/corrupt PNG evidence", result.stdout + result.stderr)
+
+    def test_ui06a_invalid_error_dialog_capture_still_fails_gate(self):
+        result, _, _, phases = self.run_flow(UI06A_CAPTURE_STATUS=1)
+        self.assertEqual(phases, ["preflight", "full"])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Missing/corrupt PNG evidence", result.stdout + result.stderr)
+
+    def test_ui07a_bad_png_stops_full_visual_gate(self):
+        result, _, _, phases = self.run_flow(UI07A_CAPTURE_STATUS=1)
+        self.assertEqual(phases, ["preflight", "full"])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Missing/corrupt PNG evidence", result.stdout + result.stderr)
+
+    def test_ui07a_identical_light_dark_images_are_not_accepted(self):
+        result, _, _, phases = self.run_flow(UI07A_IDENTICAL_STATUS=1)
+        self.assertEqual(phases, ["preflight", "full"])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("identical light/dark screenshots: crop", result.stdout + result.stderr)
+
     def test_stage7_capture_failure_remains_a_required_gate(self):
         result, _, _, phases = self.run_flow(STAGE7_CAPTURE_STATUS=1)
         self.assertEqual(phases, ["preflight", "full"])
@@ -278,8 +358,16 @@ class EmulatorFlowTest(unittest.TestCase):
         self.assertIn("Stage 7 screenshot missing or empty", result.stdout + result.stderr)
 
     def test_api29_keeps_full_suite_and_uses_bounded_30m_budget(self):
-        result, _, events, phases = self.run_flow(QUICKCUT_EMULATOR_API="29")
+        result, root, events, phases = self.run_flow(QUICKCUT_EMULATOR_API="29")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        remaining = (root / "app/build/outputs/androidTest-results/connected/debug/"
+                     "TEST-api29-remaining.xml").read_text(encoding="utf-8")
+        self.assertNotIn("com.hebi.quickcut.export.BackgroundExportInstrumentedTest",
+                         remaining)
+        self.assertNotIn("com.hebi.quickcut.export.BackgroundMedia3ExportInstrumentedTest",
+                         remaining)
+        self.assertNotIn("com.hebi.quickcut.media.BatchDateExportInstrumentedTest",
+                         remaining)
         self.assertEqual(phases, ["preflight", "date", "remaining", "offscreen_single", "offscreen_batch", "media3"])
         timed = [e[1:3] for e in events if e[0] == "timeout" and len(e) > 3 and e[3] == "gradle"]
         self.assertEqual(timed, [["--kill-after=30s", "10m"], ["--kill-after=30s", "10m"],
@@ -365,6 +453,31 @@ class EmulatorFlowTest(unittest.TestCase):
         proof = root / "quickcut-stage20-evidence/verified-screens-and-tests.json"
         self.assertTrue(proof.is_file())
         self.assertEqual(json.loads(proof.read_text())["androidApi"], "35")
+        matrix_path = root / "quickcut-ui07a-evidence/visual-matrix.json"
+        self.assertTrue(matrix_path.is_file())
+        matrix = json.loads(matrix_path.read_text(encoding="utf-8"))
+        self.assertEqual(matrix["pairs"], 20)
+        self.assertEqual(matrix["images"], 40)
+        release_manifest = root / "quickcut-ui08a-evidence/release-qa.json"
+        self.assertTrue(release_manifest.is_file())
+        qa = json.loads(release_manifest.read_text(encoding="utf-8"))
+        self.assertEqual(qa["contract"], "quickcut-ui08a-qa-v1")
+        self.assertEqual(qa["androidApi"], "35")
+        self.assertEqual(qa["pairedThemeScreenshots"], 40)
+        self.assertEqual(qa["requiredMediaClassCount"], 8)
+        self.assertFalse(qa["playDeployed"])
+        for image in (
+            "dialog_save_settings.png", "dialog_original_delete.png",
+            "dialog_export_method.png", "dialog_export_cancel.png",
+            "dialog_export_finalizing.png", "dialog_edit_recovery.png",
+            "dialog_diagnostics.png", "dialog_task_error.png",
+            "ui06a_preview_recovery.png", "dialog_save_large_font.png", "dialog_export_analysis_large_font.png",
+            "dialog_licenses.png",
+        ):
+            self.assertTrue((root / "quickcut-design-review" / image).is_file())
+        for image in ("ui05b_export_progress.png", "ui05b_export_finalizing.png",
+                      "ui05b_export_completed.png"):
+            self.assertTrue((root / "quickcut-design-review" / image).is_file())
         for name in ("editor_design_quick_trim_light.png", "editor_design_quick_trim_dark.png",
                      "editor_design_detailed_light.png", "editor_design_detailed_dark.png"):
             self.assertTrue((root / "quickcut-design-review" / name).is_file())

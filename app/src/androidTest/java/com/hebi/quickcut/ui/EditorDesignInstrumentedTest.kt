@@ -17,10 +17,16 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.DeviceConfigurationOverride
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.FontScale
 import androidx.compose.ui.test.ForcedSize
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
@@ -187,7 +193,15 @@ class EditorDesignInstrumentedTest {
         var themeMode by mutableStateOf(QuickCutThemeMode.DARK)
         compose.setContent {
             QuickCutTheme(modeOverride = themeMode) {
-                Box(Modifier.fillMaxSize().background(LocalCutPalette.current.background).safeDrawingPadding()) {
+                val renderedTheme = if (LocalCutPalette.current.background ==
+                    CutPalettes.Light.background) "light" else "dark"
+                Box(
+                    Modifier.fillMaxSize()
+                        .background(LocalCutPalette.current.background)
+                        .safeDrawingPadding()
+                        .testTag("ui07a-editor-theme-host")
+                        .semantics { stateDescription = renderedTheme }
+                ) {
                     if (detailed) EditorScreen(editor, {}, {})
                     else QuickTrimScreen(editor, settings, {}, {
                         editor.changeQuickMode(false)
@@ -198,10 +212,13 @@ class EditorDesignInstrumentedTest {
         }
         waitForPreview(ExoPlayer::class.java)
         capture("editor_design_quick_trim")
+        awaitRenderedPalette(expectLight = false)
         capture("editor_design_quick_trim_dark")
         compose.runOnIdle { themeMode = QuickCutThemeMode.LIGHT }
+        awaitRenderedPalette(expectLight = true)
         capture("editor_design_quick_trim_light")
         compose.runOnIdle { themeMode = QuickCutThemeMode.DARK }
+        awaitRenderedPalette(expectLight = false)
         compose.onNodeWithTag("ui04a-quick-result-summary").assertExists()
         compose.onNodeWithText("결과 영상").performScrollTo().assertIsDisplayed()
         capture("editor_design_quick_trim_result")
@@ -223,10 +240,13 @@ class EditorDesignInstrumentedTest {
                 .assertIsDisplayed().assertHeightIsAtLeast(48.dp)
         }
         capture("editor_design_detailed")
+        awaitRenderedPalette(expectLight = false)
         capture("editor_design_detailed_dark")
         compose.runOnIdle { themeMode = QuickCutThemeMode.LIGHT }
+        awaitRenderedPalette(expectLight = true)
         capture("editor_design_detailed_light")
         compose.runOnIdle { themeMode = QuickCutThemeMode.DARK }
+        awaitRenderedPalette(expectLight = false)
         compose.runOnIdle {
             assertEquals(4_000L, editor.timeline.clips.single().startMs)
             assertEquals(7_400L, editor.timeline.clips.single().endMs)
@@ -377,6 +397,19 @@ class EditorDesignInstrumentedTest {
             }
             colored >= 5
         } finally { bitmap.recycle() }
+    }
+
+    private fun awaitRenderedPalette(expectLight: Boolean) {
+        // Inspect the actual Compose palette before the Android full-window
+        // capture. Avoid repeated UiAutomation screenshots while decoding
+        // video on API29: these previously exhausted the emulator connection.
+        compose.waitForIdle()
+        compose.onNodeWithTag("ui07a-editor-theme-host").assert(
+            SemanticsMatcher.expectValue(
+                SemanticsProperties.StateDescription,
+                if (expectLight) "light" else "dark",
+            )
+        )
     }
 
     private fun capture(name: String) {

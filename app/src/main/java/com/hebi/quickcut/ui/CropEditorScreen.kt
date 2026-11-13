@@ -30,6 +30,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
@@ -54,6 +55,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
@@ -145,6 +147,8 @@ fun CropEditorScreen(
             OutlinedButton(onClick = onCancel) { Text("편집 화면으로") }
         } else {
             val active = requireNotNull(source)
+            Text("크롭 영역 미리보기", color = palette.primaryText,
+                style = MaterialTheme.typography.titleMedium)
             BoxWithConstraints(Modifier.fillMaxWidth().height(320.dp),
                 contentAlignment = Alignment.Center) {
                 val aspect = active.width.toFloat() / active.height
@@ -207,41 +211,83 @@ fun CropEditorScreen(
 
             Text("화면 비율", color = palette.primaryText,
                 style = MaterialTheme.typography.titleMedium)
-            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                CropRatio.entries.forEach { ratio ->
-                    OutlinedButton(
-                        onClick = {
-                            preset = ratio
-                            if (ratio == CropRatio.ORIGINAL) region = CropRegion.FULL
-                            else if (ratio != CropRatio.FREE) {
-                                region = CropGeometry.centerForRatio(active.width, active.height, ratio)
+            Text("선택한 비율 · ${preset.label}", color = palette.secondaryText,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.testTag("ui07a-crop-current-ratio"))
+            val chooseRatio: (CropRatio) -> Unit = { ratio ->
+                if (ratio == CropRatio.ORIGINAL) region = CropRegion.FULL
+                else if (ratio != CropRatio.FREE) {
+                    region = CropGeometry.centerForRatio(active.width, active.height, ratio)
+                }
+                preset = ratio
+            }
+            BoxWithConstraints(Modifier.fillMaxWidth()) {
+                if (maxWidth < 480.dp || LocalDensity.current.fontScale >= 1.5f) {
+                    // All five ratios remain visible on a 320–360dp phone:
+                    // no horizontal scroll gesture can intercept a chip tap.
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            CropRatio.entries.take(3).forEach { ratio ->
+                                CropRatioOption(ratio, preset == ratio) { chooseRatio(ratio) }
                             }
-                        },
-                        modifier = Modifier.heightIn(min = 48.dp)
-                            .testTag("crop-preset-${ratio.name}")
-                            .semantics { this.selected = preset == ratio },
-                        border = androidx.compose.foundation.BorderStroke(1.dp,
-                            if (preset == ratio) palette.accent else palette.border),
-                        shape = CutShape,
-                    ) {
-                        Text(ratio.label,
-                            color = if (preset == ratio) palette.secondaryAccent
-                                else palette.primaryText)
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            CropRatio.entries.drop(3).forEach { ratio ->
+                                CropRatioOption(ratio, preset == ratio) { chooseRatio(ratio) }
+                            }
+                        }
+                    }
+                } else {
+                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        CropRatio.entries.forEach { ratio ->
+                            CropRatioOption(ratio, preset == ratio) { chooseRatio(ratio) }
+                        }
                     }
                 }
             }
             Text("위치 및 확대", color = palette.primaryText,
                 style = MaterialTheme.typography.titleSmall)
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { region = region.zoom(1f / 1.15f) },
-                    modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text("축소") }
-                OutlinedButton(onClick = { region = region.move(-0.05f, 0f) },
-                    modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text("왼쪽") }
-                OutlinedButton(onClick = { region = region.move(0.05f, 0f) },
-                    modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text("오른쪽") }
-                OutlinedButton(onClick = { region = region.zoom(1.15f) },
-                    modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text("확대") }
+            Text("선택 범위 · 가로 ${(region.width * 100f).toInt()}% · 세로 ${(region.height * 100f).toInt()}%",
+                color = palette.secondaryText,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.testTag("ui05a-crop-selection"))
+            BoxWithConstraints(Modifier.fillMaxWidth().testTag("ui05a-crop-controls")) {
+                if (maxWidth < 400.dp || LocalDensity.current.fontScale >= 1.5f) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            CropNudgeButton("축소", Modifier.weight(1f)) {
+                                region = region.zoom(1f / 1.15f)
+                            }
+                            CropNudgeButton("확대", Modifier.weight(1f)) {
+                                region = region.zoom(1.15f)
+                            }
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            CropNudgeButton("왼쪽", Modifier.weight(1f)) {
+                                region = region.move(-0.05f, 0f)
+                            }
+                            CropNudgeButton("오른쪽", Modifier.weight(1f)) {
+                                region = region.move(0.05f, 0f)
+                            }
+                        }
+                    }
+                } else {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        CropNudgeButton("축소", Modifier.weight(1f)) {
+                            region = region.zoom(1f / 1.15f)
+                        }
+                        CropNudgeButton("왼쪽", Modifier.weight(1f)) {
+                            region = region.move(-0.05f, 0f)
+                        }
+                        CropNudgeButton("오른쪽", Modifier.weight(1f)) {
+                            region = region.move(0.05f, 0f)
+                        }
+                        CropNudgeButton("확대", Modifier.weight(1f)) {
+                            region = region.zoom(1.15f)
+                        }
+                    }
+                }
             }
             if (preset == CropRatio.FREE) {
                 Text("자유 비율 크기", color = palette.primaryText,
@@ -283,5 +329,43 @@ fun CropEditorScreen(
               modifier = Modifier.weight(1f).heightIn(min = 52.dp).testTag("crop-apply"),
               shape = CutShape) { Text("크롭 적용") }
       }
+    }
+}
+
+@Composable
+private fun CropRatioOption(
+    ratio: CropRatio,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    val palette = LocalCutPalette.current
+    FilterChip(
+        selected = selected,
+        onClick = onClick,
+        modifier = Modifier.width(86.dp).heightIn(min = 48.dp)
+            .testTag("crop-preset-${ratio.name}"),
+        border = androidx.compose.foundation.BorderStroke(
+            1.dp, if (selected) palette.accent else palette.border
+        ),
+        shape = CutShape,
+        label = {
+            Text(ratio.label,
+                color = if (selected) palette.primaryText else palette.secondaryText)
+        },
+    )
+}
+
+@Composable
+private fun CropNudgeButton(
+    label: String,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    OutlinedButton(
+        onClick = onClick,
+        modifier = modifier.heightIn(min = 48.dp),
+        shape = CutShape,
+    ) {
+        Text(label)
     }
 }

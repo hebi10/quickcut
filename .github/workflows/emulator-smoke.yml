@@ -36,6 +36,7 @@ on:
       - "scripts/test-emulator-startup.py"
       - "scripts/test-emulator-failure.py"
       - "scripts/test-emulator-flow.py"
+      - "scripts/verify-ui08a-release-evidence.py"
       - "scripts/android-instrumentation-check.sh"
       - "scripts/android-dialog-geometry-check.sh"
       - "scripts/test-dialog-geometry.py"
@@ -87,6 +88,7 @@ on:
       - "scripts/test-emulator-startup.py"
       - "scripts/test-emulator-failure.py"
       - "scripts/test-emulator-flow.py"
+      - "scripts/verify-ui08a-release-evidence.py"
       - "scripts/android-instrumentation-check.sh"
       - "scripts/android-dialog-geometry-check.sh"
       - "scripts/test-dialog-geometry.py"
@@ -354,6 +356,20 @@ jobs:
             quickcut-fast-review.png
             quickcut-design-review/
           if-no-files-found: ignore
+      - name: Upload UI-07-A paired theme comparison manifest
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quickcut-ui07a-visual-matrix-api-${{ matrix.api }}
+          path: quickcut-ui07a-evidence/visual-matrix.json
+          if-no-files-found: warn
+      - name: Upload UI-08-A exact-source full regression evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quickcut-ui08a-release-qa-api-${{ matrix.api }}
+          path: quickcut-ui08a-evidence/release-qa.json
+          if-no-files-found: warn
       - name: Upload Stage 20 verified screen and test manifest
         if: always()
         uses: actions/upload-artifact@v4

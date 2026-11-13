@@ -3,6 +3,10 @@ package com.hebi.quickcut.ui
 import android.graphics.Bitmap
 import android.net.Uri
 import androidx.activity.ComponentActivity
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import com.hebi.quickcut.settings.QuickCutThemeMode
 import androidx.compose.ui.test.DeviceConfigurationOverride
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.FontScale
@@ -11,6 +15,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -46,24 +51,39 @@ class Stage16CropScreensInstrumentedTest {
     private fun clip(): VideoClip = VideoClip(1, Uri.fromFile(source).toString(), 8_000)
 
     @Test fun verticalSquareAndFreeformHaveRealVideoCapture() {
+        // Retain the same clip object across preview loads, click dispatch and
+        // theme recomposition; only the Compose theme should be switched.
+        val stableClip = clip()
+        var theme by mutableStateOf(QuickCutThemeMode.LIGHT)
         compose.setContent {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(360.dp, 640.dp))) {
-                QuickCutTheme {
-                    CropEditorScreen(clip(), onApply = {}, onCancel = {})
+                QuickCutTheme(modeOverride = theme) {
+                    Ui07aAppSafeSurface {
+                        CropEditorScreen(stableClip, onApply = {}, onCancel = {})
+                    }
                 }
             }
         }
         waitPreview()
         compose.onNodeWithTag("crop-preset-VERTICAL").performScrollTo().performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("선택한 비율 · 9:16").assertIsDisplayed()
         compose.onNodeWithTag("crop-preset-VERTICAL").assertIsSelected()
+        compose.onNodeWithTag("ui05a-crop-selection").performScrollTo().assertIsDisplayed()
         capture("stage16_crop_vertical.png")
         compose.onNodeWithTag("crop-preset-SQUARE").performScrollTo().performClick()
+        compose.onNodeWithText("선택한 비율 · 1:1").assertIsDisplayed()
         compose.onNodeWithTag("crop-preset-SQUARE").assertIsSelected()
         capture("stage16_crop_square.png")
         compose.onNodeWithTag("crop-preset-FREE").performScrollTo().performClick()
+        compose.onNodeWithText("선택한 비율 · 자유").assertIsDisplayed()
         compose.onNodeWithTag("crop-preset-FREE").assertIsSelected()
         compose.onNodeWithTag("crop-free-width").performScrollTo().assertIsDisplayed()
         capture("stage16_crop_free.png")
+        Ui07aVisualEvidence.capture("ui07a_light_crop.png")
+        compose.runOnIdle { theme = QuickCutThemeMode.DARK }
+        compose.onNodeWithTag("crop-preset-FREE").assertIsSelected()
+        Ui07aVisualEvidence.capture("ui07a_dark_crop.png")
     }
 
     @Test fun largeFontTabletCanReachApplyAction() {
@@ -72,13 +92,16 @@ class Stage16CropScreensInstrumentedTest {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(860.dp, 640.dp))) {
                 DeviceConfigurationOverride(DeviceConfigurationOverride.FontScale(1.6f)) {
                     QuickCutTheme {
-                        CropEditorScreen(clip(), onApply = { applied = true }, onCancel = {})
+                        Ui07aAppSafeSurface {
+                            CropEditorScreen(clip(), onApply = { applied = true }, onCancel = {})
+                        }
                     }
                 }
             }
         }
         waitPreview()
         compose.onNodeWithTag("crop-apply").assertIsDisplayed()
+        compose.onNodeWithTag("ui05a-crop-controls").performScrollTo().assertIsDisplayed()
         capture("stage16_crop_largefont.png")
         compose.onNodeWithTag("crop-apply").performClick()
         compose.runOnIdle { check(applied) { "Crop Apply was not reachable at 160% font scale" } }

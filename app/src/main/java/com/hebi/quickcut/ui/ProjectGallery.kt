@@ -103,8 +103,22 @@ internal fun ProjectCard(
     if (confirmDelete) {
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
-            title = { Text("프로젝트 삭제") },
-            text = { Text("편집 기록만 삭제합니다. 원본 영상은 삭제하지 않습니다.") },
+            title = { QuickCutDialogHeading("프로젝트 삭제") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(CutSpacing.sm)) {
+                    CutInfoSection(
+                        title = "편집 기록 삭제",
+                        message = "선택한 프로젝트의 저장된 편집 기록만 삭제합니다. " +
+                            "원본 영상은 삭제하지 않습니다.",
+                        caution = true,
+                    )
+                    Text(
+                        "삭제한 편집 기록은 되돌릴 수 없습니다.",
+                        color = palette.secondaryText,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            },
             confirmButton = { TextButton(onClick = {
                 onDelete(item.id)
                 confirmDelete = false

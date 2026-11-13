@@ -25,12 +25,14 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.hebi.quickcut.editor.EditTimeline
 import com.hebi.quickcut.editor.OriginalAction
+import com.hebi.quickcut.editor.OriginalActionStatus
 import com.hebi.quickcut.editor.VideoClip
 import com.hebi.quickcut.media.ExportQualitySettings
 import com.hebi.quickcut.media.ExportResolution
 import com.hebi.quickcut.media.ExportQualityLevel
 import com.hebi.quickcut.media.MediaReader
 import com.hebi.quickcut.media.SaveDateMode
+import com.hebi.quickcut.settings.QuickCutThemeMode
 import java.io.File
 import org.junit.After
 import org.junit.Before
@@ -64,24 +66,49 @@ class Stage15ExportQualityScreensInstrumentedTest {
             hasAudio = metadata.hasAudio,
         )))
         var selected by mutableStateOf(ExportQualitySettings())
+        var showCompleted by mutableStateOf(false)
+        var theme by mutableStateOf(QuickCutThemeMode.LIGHT)
         compose.setContent {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(360.dp, 640.dp))) {
-                QuickCutTheme {
-                    SaveOptionsDialog(
-                        originalAction = OriginalAction.KEEP,
-                        onOriginalActionChange = {},
-                        dateMode = SaveDateMode.CURRENT,
-                        onDateModeChange = {},
-                        canSave = true, onSave = {}, onDismiss = {},
-                        timeline = timeline, outputQuality = selected,
-                        onOutputQualityChange = { selected = it },
-                    )
+                QuickCutTheme(modeOverride = theme) {
+                    if (showCompleted) {
+                        Ui07aAppSafeSurface {
+                        CompletedScreen(
+                            videoUri = uri.toString(),
+                            onOpen = {},
+                            onNew = {},
+                            onShare = {},
+                            originalAction = OriginalAction.KEEP,
+                            savedDateMode = SaveDateMode.CURRENT,
+                            exportReport = null,
+                            originalStatus = OriginalActionStatus.NONE,
+                            originalCount = 1,
+                            onRetryOriginalAction = {},
+                        )
+                        }
+                    } else {
+                        SaveOptionsDialog(
+                            originalAction = OriginalAction.KEEP,
+                            onOriginalActionChange = {},
+                            dateMode = SaveDateMode.CURRENT,
+                            onDateModeChange = {},
+                            canSave = true, onSave = {}, onDismiss = {},
+                            timeline = timeline, outputQuality = selected,
+                            onOutputQualityChange = { selected = it },
+                        )
+                    }
                 }
             }
         }
         compose.onNodeWithTag("export-quality-resolution-AUTO").performScrollTo().assertIsSelected()
+        compose.onNodeWithTag("ui05b-quality-result").performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("export-quality-resolution-ULTRA_HD_2160").assertIsDisplayed()
         capture("stage15_export_auto.png")
+        Ui07aVisualEvidence.capture("ui07a_light_save_options.png")
+        compose.runOnIdle { theme = QuickCutThemeMode.DARK }
+        compose.onNodeWithTag("ui05b-quality-result").performScrollTo().assertIsDisplayed()
+        Ui07aVisualEvidence.capture("ui07a_dark_save_options.png")
+        compose.runOnIdle { theme = QuickCutThemeMode.LIGHT }
         compose.onNodeWithTag("export-quality-quality-BALANCED").performScrollTo().performClick()
         compose.waitUntil(15_000) {
             selected.quality == ExportQualityLevel.BALANCED &&
@@ -99,17 +126,29 @@ class Stage15ExportQualityScreensInstrumentedTest {
         compose.onNodeWithTag("export-quality-unavailable").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("저장 시작").assertIsNotEnabled()
         capture("stage15_export_unsupported.png")
+
+        // Real Android UI screenshot using an on-device MP4 fixture; this is a
+        // layout check, not a claim that the fixture was exported by the app.
+        compose.runOnIdle { showCompleted = true }
+        compose.onNodeWithText("저장 완료").assertIsDisplayed()
+        capture("ui05b_export_completed.png")
+        Ui07aVisualEvidence.capture("ui07a_light_completed.png")
+        compose.runOnIdle { theme = QuickCutThemeMode.DARK }
+        compose.onNodeWithText("저장 완료").assertIsDisplayed()
+        Ui07aVisualEvidence.capture("ui07a_dark_completed.png")
+        compose.onNodeWithTag("ui05b-completed-facts").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("ui05b-original-status").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("갤러리에서 열기").performScrollTo().assertIsDisplayed()
     }
 
     private fun capture(name: String) {
         check(name in setOf("stage15_export_auto.png", "stage15_export_quality.png",
-            "stage15_export_unsupported.png"))
+            "stage15_export_unsupported.png", "ui05b_export_completed.png"))
         compose.waitForIdle()
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val dir = File(context.filesDir, "design-review")
         check(dir.isDirectory || dir.mkdirs())
-        val image = InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
-            ?: error("Android 실제 화면 캡처에 실패했습니다.")
+        val image = stableScreenshot(name)
         val output = File(dir, name)
         try {
             output.outputStream().use { check(image.compress(Bitmap.CompressFormat.PNG, 100, it)) }
@@ -118,4 +157,31 @@ class Stage15ExportQualityScreensInstrumentedTest {
         }
         check(output.length() > 0L)
     }
+    private fun stableScreenshot(name: String): Bitmap {
+        val instrument = InstrumentationRegistry.getInstrumentation()
+        var colorsSeen = 0
+        for (attempt in 0 until 8) {
+            compose.waitForIdle()
+            Thread.sleep(if (attempt == 0) 350L else 220L)
+            val screenshot = instrument.uiAutomation.takeScreenshot() ?: continue
+            if (screenshot.width < 200 || screenshot.height < 200) {
+                screenshot.recycle()
+                continue
+            }
+            val visibleColors = HashSet<Int>()
+            for (row in 9..42) for (column in 4..28) {
+                val pixel = screenshot.getPixel(
+                    screenshot.width * column / 32,
+                    screenshot.height * row / 50,
+                ) and 0x00FFFFFF
+                visibleColors.add(pixel)
+            }
+            colorsSeen = visibleColors.size
+            if (colorsSeen >= 3) return screenshot
+            screenshot.recycle()
+        }
+        error("Blank Android export UI screenshot: $name (visibleColors=$colorsSeen)")
+    }
+
+
 }

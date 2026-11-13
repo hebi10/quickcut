@@ -69,14 +69,15 @@ internal fun ExportQualitySection(
 ) {
     val palette = LocalCutPalette.current
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(CutSpacing.md)) {
-        ExportQualityThumbnail(timeline)
-        Text("내보내기 화질", color = palette.secondaryAccent,
+        Text("내보내기 품질", color = palette.primaryText,
             style = MaterialTheme.typography.titleMedium)
         Text(
-            "자동은 기존 고속 저장 방식을 유지합니다. 옵션을 변경하면 재인코딩 승인을 요청합니다.",
+            "자동 설정은 원본 화질을 유지하며 가능한 경우 고속 저장을 사용합니다. " +
+                "품질을 직접 지정하면 재인코딩을 승인해야 합니다.",
             color = palette.secondaryText,
             style = MaterialTheme.typography.bodySmall,
         )
+        ExportQualityThumbnail(timeline)
         Text("해상도", style = MaterialTheme.typography.titleSmall,
             color = palette.primaryText)
         ExportOptionRow(
@@ -107,17 +108,21 @@ internal fun ExportQualitySection(
             steps = 2,
             modifier = Modifier.testTag("export-quality-bitrate"),
         )
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(CutSpacing.sm),
+        ) {
             ExportQualityLevel.entries.forEach { option ->
                 androidx.compose.material3.TextButton(
                     onClick = { onChange(settings.copy(quality = option)) },
                     modifier = Modifier.testTag("export-quality-quality-${option.name}")
-                        .heightIn(min = 44.dp),
+                        .semantics { selected = settings.quality == option }
+                        .heightIn(min = CutSizes.touchTarget).widthIn(min = 68.dp),
                 ) {
                     Text(option.label,
-                        color = if (settings.quality == option) palette.secondaryAccent
+                        color = if (settings.quality == option) palette.primaryText
                             else palette.secondaryText,
-                        style = MaterialTheme.typography.labelSmall)
+                        style = MaterialTheme.typography.labelMedium)
                 }
             }
         }
@@ -125,12 +130,17 @@ internal fun ExportQualitySection(
             shape = CutShape, color = palette.surface,
             border = androidx.compose.foundation.BorderStroke(1.dp, palette.border),
         ) {
-            Column(Modifier.fillMaxWidth().padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Column(
+                Modifier.fillMaxWidth().padding(CutSpacing.md)
+                    .testTag("ui05b-quality-result"),
+                verticalArrangement = Arrangement.spacedBy(CutSpacing.sm),
+            ) {
+                Text("예상 출력 결과", color = palette.primaryText,
+                    style = MaterialTheme.typography.titleSmall)
                 when {
                     settings.isAutomatic -> Text(
-                        "자동 · 원본 품질 및 기존 빠른 저장 유지",
-                        color = palette.primaryText,
+                        "원본 해상도·FPS 유지 · 고속 저장 가능 여부는 저장 전에 분석합니다.",
+                        color = palette.secondaryText,
                         style = MaterialTheme.typography.bodySmall,
                     )
                     evaluation == null -> Text(
@@ -138,22 +148,30 @@ internal fun ExportQualitySection(
                         color = palette.secondaryText,
                         style = MaterialTheme.typography.bodySmall,
                     )
-                    evaluation.error != null -> Text(
-                        evaluation.error,
-                        color = palette.error,
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.testTag("export-quality-unavailable"),
-                    )
+                    evaluation.error != null -> {
+                        Text("현재 선택한 설정으로는 저장할 수 없습니다.",
+                            color = palette.error,
+                            style = MaterialTheme.typography.bodySmall)
+                        Text(
+                            evaluation.error,
+                            color = palette.error,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.testTag("export-quality-unavailable"),
+                        )
+                    }
                     evaluation.plan != null -> {
                         Text(
-                            "예상 출력 · ${evaluation.plan.detail}",
+                            evaluation.plan.detail,
                             style = MaterialTheme.typography.bodyMedium,
                             color = palette.primaryText,
                             modifier = Modifier.testTag("export-quality-estimate"),
                         )
-                        Text("예상 용량은 추정치이며 실제 결과와 차이가 날 수 있습니다.",
+                        Text(
+                            "예상 용량은 추정치이며 실제 결과와 차이가 날 수 있습니다. " +
+                                "선택한 품질을 적용하려면 재인코딩 승인이 필요합니다.",
                             style = MaterialTheme.typography.bodySmall,
-                            color = palette.secondaryText)
+                            color = palette.secondaryText,
+                        )
                     }
                 }
             }

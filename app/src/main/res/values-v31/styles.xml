@@ -8,6 +8,6 @@
         <item name="android:navigationBarColor">@color/app_window_background</item>
         <item name="android:windowBackground">@color/app_window_background</item>
         <item name="android:windowSplashScreenBackground">@color/ic_launcher_background</item>
-        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/quickcut_brand_foreground_safe</item>
     </style>
 </resources>

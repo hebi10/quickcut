@@ -643,9 +643,9 @@ class FullYamlPublicationScannerRegressionTests(unittest.TestCase):
 
     def test_conditional_shell_block_cannot_skip_store_approval(self):
         workflow = store_workflow(
-            guard_run="|\\n"
-                      "          if [ \\"$RUN_APPROVAL\\" = true ]; then\\n"
-                      "            python3 scripts/ops06/store_gate.py apply\\n"
+            guard_run="|\n"
+                      "          if [ \"$RUN_APPROVAL\" = true ]; then\n"
+                      "            python3 scripts/ops06/store_gate.py apply\n"
                       "          fi")
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -657,14 +657,14 @@ class FullYamlPublicationScannerRegressionTests(unittest.TestCase):
         self.assertTrue(any("STORE_OPTIONAL" in issue for issue in issues), issues)
 
     def test_conditional_shell_block_cannot_skip_internal_provenance(self):
-        workflow = ("on:\\n  workflow_dispatch:\\njobs:\\n"
-                    "  verify:\\n    steps:\\n"
-                    "      - run: |\\n"
-                    "          if [ \\"$CHECK_SOURCE\\" = true ]; then\\n"
-                    "            python3 scripts/ops04/internal.py guard\\n"
-                    "          fi\\n"
-                    "  publish:\\n    steps:\\n"
-                    "      - run: python3 scripts/ops04/internal.py guard\\n")
+        workflow = ("on:\n  workflow_dispatch:\njobs:\n"
+                    "  verify:\n    steps:\n"
+                    "      - run: |\n"
+                    "          if [ \"$CHECK_SOURCE\" = true ]; then\n"
+                    "            python3 scripts/ops04/internal.py guard\n"
+                    "          fi\n"
+                    "  publish:\n    steps:\n"
+                    "      - run: python3 scripts/ops04/internal.py guard\n")
         with patch.object(audit, "read", side_effect=lambda path:
                           workflow if path == ".github/workflows/play-internal-release.yml"
                           else None):

@@ -336,8 +336,15 @@ def _step_condition(body):
 
 
 def _unsafe_shell_template(source):
-    return any("{0}" in value for value in re.findall(
-        r"(?m)^[ \t]+(?:-[ \t]+)?shell:[ \t]*([^\n#]+)", source or ""))
+    for value in re.findall(
+            r"(?m)^[ \t]+(?:-[ \t]+)?shell:[ \t]*([^\n#]+)", source or ""):
+        value = value.strip().strip("'\"")
+        if "{0}" not in value:
+            continue
+        fail_fast = re.search(r"(?:^|\s)-[A-Za-z]*e[A-Za-z]*(?=\s|$)|(?:^|\s)-o\s+errexit\b", value)
+        if not fail_fast or re.search(r"(?:^|\s)\+e(?:\s|$)", value):
+            return True
+    return False
 
 
 def _safe_store_step(guard_step, mutation_steps, body, filename):
@@ -382,11 +389,11 @@ def store_guard_findings():
         source = read(".github/workflows/" + filename)
         if source is None:
             continue
-        if _unsafe_shell_template(source):
-            problems.append("STORE_SHELL: " + filename + ": unsafe shell template may ignore approval failure")
         for name, body in jobs(source).items():
             if is_disabled(job_condition(body)) or not _store_mutating_command(body):
                 continue
+            if _unsafe_shell_template(source):
+                problems.append("STORE_SHELL: " + filename + ": publisher may ignore approval failure")
             steps = _workflow_steps(body)
             mutations = [i for i, step in enumerate(steps) if _store_mutating_command(step)]
             guards = [i for i, step in enumerate(steps) if "scripts/ops06/store_gate.py apply" in step]

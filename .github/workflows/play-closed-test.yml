@@ -1,19 +1,17 @@
 name: Google Play test release
 
 on:
-  workflow_dispatch:
-    inputs:
+      ops01_release_approved:
+        description: 'Explicit approval to publish the final verified release'
+        type: boolean
+        required: true
+        default: false
       target:
         description: Existing test tracks to update
         required: true
         default: internal
         type: choice
         options: [internal, closed]
-  workflow_run:
-    workflows: [Android build, Android emulator smoke]
-    branches: [main]
-    types: [completed]
-
 concurrency:
   group: quickcut-play-test-edit
   cancel-in-progress: false
@@ -65,7 +63,9 @@ jobs:
 
   publish:
     needs: gate
-    if: needs.gate.outputs.ready == 'true'
+    if: >-
+      github.event_name == 'workflow_dispatch' && inputs.ops01_release_approved == true &&
+      (needs.gate.outputs.ready == 'true')
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     permissions:

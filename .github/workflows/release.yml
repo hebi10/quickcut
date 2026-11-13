@@ -2,13 +2,12 @@ name: Signed release APK
 
 on:
   workflow_dispatch:
-  workflow_run:
-    workflows: [Android build, Android emulator smoke]
-    branches: [main]
-    types: [completed]
-
-# Serialize both completion events and manual retries. Never cancel signing or
-# publication in progress; the second event observes the existing version tag.
+    inputs:
+      ops01_release_approved:
+        description: 'Explicit approval to publish the final verified release'
+        type: boolean
+        required: true
+        default: false
 concurrency:
   group: quickcut-publish-main
   cancel-in-progress: false
@@ -59,7 +58,9 @@ jobs:
 
   release:
     needs: gate
-    if: needs.gate.outputs.ready == 'true'
+    if: >-
+      github.event_name == 'workflow_dispatch' && inputs.ops01_release_approved == true &&
+      (needs.gate.outputs.ready == 'true')
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     permissions:

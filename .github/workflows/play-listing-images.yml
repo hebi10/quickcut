@@ -7,18 +7,16 @@ on:
       - "scripts/publish-play-listing-images.py"
       - "scripts/test-play-listing-images.py"
       - ".github/workflows/play-listing-images.yml"
-  workflow_dispatch:
-    inputs:
+      ops01_release_approved:
+        description: 'Explicit approval to publish the final verified release'
+        type: boolean
+        required: true
+        default: false
       apply:
         description: Upload the approved icon, feature graphic and eight Korean phone screenshots
         required: true
         type: boolean
         default: false
-  workflow_run:
-    workflows: [Android build, Android emulator smoke]
-    branches: [main]
-    types: [completed]
-
 concurrency:
   group: quickcut-play-test-edit
   cancel-in-progress: false
@@ -45,6 +43,8 @@ jobs:
   publish:
     needs: validate
     if: >-
+      github.event_name == 'workflow_dispatch' && inputs.ops01_release_approved == true &&
+      (
       (github.event_name == 'workflow_dispatch' &&
        github.ref == 'refs/heads/main' && inputs.apply == true) ||
       (github.event_name == 'workflow_run' &&
@@ -54,6 +54,7 @@ jobs:
        github.event.workflow_run.head_repository.full_name == github.repository &&
        (github.event.workflow_run.event == 'push' ||
         github.event.workflow_run.event == 'workflow_dispatch'))
+      )
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:

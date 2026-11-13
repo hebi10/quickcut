@@ -420,5 +420,34 @@ class ShellAndProvenanceOrderRegressionTests(unittest.TestCase):
                             for issue in issues), issues)
 
 
+class EffectiveShellScopeRegressionTests(unittest.TestCase):
+    def test_unrelated_successful_lint_shell_does_not_require_store_approval(self):
+        workflow = ("on:\n  push:\njobs:\n  lint:\n"
+                    "    runs-on: ubuntu-latest\n"
+                    "    steps:\n"
+                    "      - run: echo lint\n"
+                    "        shell: bash --noprofile --norc -e -o pipefail {0}\n")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            folder = root / ".github/workflows"
+            folder.mkdir(parents=True)
+            (folder / "lint-only.yml").write_text(workflow, encoding="utf-8")
+            with patch.object(audit, "ROOT", root):
+                self.assertEqual(audit.store_guard_findings(), [])
+
+    def test_fail_fast_custom_bash_shell_is_allowed_for_standalone_approval(self):
+        source = store_workflow().replace(
+            "        run: python3 scripts/ops06/store_gate.py apply\n",
+            "        shell: bash --noprofile --norc -e -o pipefail {0}\n"
+            "        run: python3 scripts/ops06/store_gate.py apply\n", 1)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            folder = root / ".github/workflows"
+            folder.mkdir(parents=True)
+            (folder / "play-listing-images.yml").write_text(source, encoding="utf-8")
+            with patch.object(audit, "ROOT", root):
+                self.assertEqual(audit.store_guard_findings(), [])
+
+
 if __name__ == "__main__":
     unittest.main()

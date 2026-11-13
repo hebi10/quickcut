@@ -52,6 +52,13 @@ def verified_head():
     supplied = os.getenv("GITHUB_SHA")
     if supplied and supplied != sha:
         raise RuntimeError("GitHub Actions source SHA differs from checkout")
+    inspected = subprocess.run(
+        ["git", "status", "--porcelain=v1", "--untracked-files=all", "--",
+         "AGENTS.md", ".github/workflows", "scripts/ops04", "scripts/ops05",
+         "scripts/ops06", "scripts/ops07", "scripts/ops08"],
+        cwd=ROOT, check=False, capture_output=True, text=True, timeout=20)
+    if inspected.returncode != 0 or inspected.stdout.strip():
+        raise RuntimeError("Audited policy inputs differ from the committed source SHA")
     return sha
 
 

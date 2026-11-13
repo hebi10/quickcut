@@ -24,12 +24,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Run OPS-07 regression tests without Google Play credentials
-        run: python3 -m unittest discover -s scripts/ops07 -p 'test_*.py' -v
-      - name: Run OPS-08 final main inventory tests
-        run: python3 -m unittest discover -s scripts/ops08 -p 'test_*.py' -v
       - name: Verify exact checked-out source and all release safeguards
         run: python3 scripts/ops08/final_audit.py --report ops08-output/report.json
+      - name: Run OPS-07 regression tests without Google Play credentials
+        if: always()
+        run: python3 -m unittest discover -s scripts/ops07 -p 'test_*.py' -v
+      - name: Run OPS-08 final main inventory tests
+        if: always()
+        run: python3 -m unittest discover -s scripts/ops08 -p 'test_*.py' -v
       - name: Preserve sanitized final audit evidence
         if: always()
         uses: actions/upload-artifact@v4

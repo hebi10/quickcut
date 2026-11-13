@@ -286,10 +286,12 @@ def _publishing_command(body):
                     r"|play_internal\.py|play_closed\.py|promote_internal\.py"
                     r"|play_images\.py|store_icon\.py")
     for line in commands.splitlines():
-        match = re.search(r"\b(?:python(?:3(?:\.\d+)?)?|node|bash|sh)\s+(?:(?:-[uBIESOqv]+|--unbuffered)\s+)*([^\s;|]+)([^\n]*)", line)
+        match = re.search(r"\b(?:python(?:3(?:\.\d+)?)?|node|bash|sh)\s+(?:(?:-[uBIESOqv]+|--unbuffered)\s+)*(?:(-m)\s+)?([^\s;|]+)([^\n]*)", line)
         if not match:
             continue
-        script, args = match.group(1).lower().strip("'\""), match.group(2).lower()
+        script, args = match.group(2).lower().strip("'\""), match.group(3).lower()
+        if match.group(1):
+            script = script.replace(".", "/") + ".py"
         # These existing publisher entrypoints mutate by default, even without --publish.
         if re.search(r"(?:^|/)(?:store_icon|images_only|publish-mobile-play|publish_mobile_play|publish-play-test)[.]py$", script):
             return True
@@ -350,10 +352,12 @@ def _store_mutating_command(body):
                 r"(?i)(?:/images|/listings/|:commit)\b", line) and re.search(
                 r"(?i)\b(?:POST|PUT|PATCH|DELETE)\b", line):
             return True
-        match = re.search(r"\b(?:python(?:3(?:\.\d+)?)?|node)\s+(?:(?:-[uBIESOqv]+|--unbuffered)\s+)*([^\s;|]+)([^\n]*)", line)
+        match = re.search(r"\b(?:python(?:3(?:\.\d+)?)?|node)\s+(?:(?:-[uBIESOqv]+|--unbuffered)\s+)*(?:(-m)\s+)?([^\s;|]+)([^\n]*)", line)
         if not match:
             continue
-        script, args = match.group(1).lower().strip("'\""), match.group(2).lower()
+        script, args = match.group(2).lower().strip("'\""), match.group(3).lower()
+        if match.group(1):
+            script = script.replace(".", "/") + ".py"
         if script.endswith("/ops06/store_gate.py"):
             continue
         if re.search(r"(?:^|/)(?:store_icon|images_only)[.]py$", script):

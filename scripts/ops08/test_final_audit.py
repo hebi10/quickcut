@@ -31,6 +31,16 @@ class FinalPolicyTests(unittest.TestCase):
                 self.assertNotIn(forbidden, source)
         self.assertIn("permissions:\n  contents: read", source)
 
+    def test_policy_changes_retrigger_exact_main_android_matrix(self):
+        source = (ROOT / ".github/workflows/emulator-smoke.yml").read_text(encoding="utf-8")
+        for path in (".github/workflows/ops07-safety.yml",
+                     ".github/workflows/ops08-final-policy.yml",
+                     "scripts/ops07/**", "scripts/ops08/**"):
+            with self.subTest(path=path):
+                self.assertEqual(source.count('      - "' + path + '"'), 2)
+        self.assertIn("  push:\n    branches: [main]", source)
+        self.assertIn("api: [29, 35, 36]", source)
+
     def test_required_policy_files_include_all_release_stages(self):
         files = set(audit.REQUIRED)
         for value in ("AGENTS.md", "scripts/ops07/audit.py",

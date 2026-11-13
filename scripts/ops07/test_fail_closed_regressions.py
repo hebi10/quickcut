@@ -449,5 +449,23 @@ class EffectiveShellScopeRegressionTests(unittest.TestCase):
                 self.assertEqual(audit.store_guard_findings(), [])
 
 
+class InlineTriggerNestingRegressionTests(unittest.TestCase):
+    def test_nested_manual_dispatch_inputs_are_not_events(self):
+        workflow = (
+            "on: {workflow_dispatch: {inputs: {apply: {type: boolean, default: false}}}}\n"
+            "jobs:\n  publish:\n    runs-on: ubuntu-latest\n"
+            "    steps:\n      - run: python3 scripts/play/publisher.py deploy\n")
+        self.assertEqual(audit.triggers(workflow), {"workflow_dispatch"})
+        self.assertEqual(audit.automatic_mutations("play-release.yml", workflow), [])
+
+    def test_mixed_outer_inline_events_are_detected(self):
+        workflow = (
+            "on: {workflow_dispatch: {inputs: {apply: {type: boolean}}}, push: {branches: [main]}}\n"
+            "jobs:\n  publish:\n    runs-on: ubuntu-latest\n"
+            "    steps:\n      - run: python3 scripts/play/publisher.py deploy\n")
+        self.assertEqual(audit.triggers(workflow), {"workflow_dispatch", "push"})
+        self.assertTrue(audit.automatic_mutations("play-release.yml", workflow))
+
+
 if __name__ == "__main__":
     unittest.main()

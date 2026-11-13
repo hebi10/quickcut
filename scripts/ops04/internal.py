@@ -61,7 +61,7 @@ def guard():
             and env.get("GITHUB_REF") == "refs/heads/main", "Manual main-only dispatch required")
     require(full_sha(source) and source == env.get("GITHUB_SHA"), "Approved source SHA differs from workflow SHA")
     require(bool(re.fullmatch(r"20\d{2}-\d{2}-\d{2}-[a-z0-9-]{2,48}", batch)), "Invalid release batch")
-    require(bool(re.fullmatch("[1-9][0-9]{0,9}", run_id)), "Invalid source run ID")
+    require(bool(re.fullmatch("[1-9][0-9]{0,19}", run_id)), "Invalid source run ID")
     require(bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{1,160}", artifact)), "Invalid artifact name")
     require(bool(re.fullmatch(r"[1-9][0-9]{0,9}", version)) and int(version) <= 2100000000, "Invalid version code")
     require(bool(re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:[-.][A-Za-z0-9]+)*", release_name)), "Invalid version name")

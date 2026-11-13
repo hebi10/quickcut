@@ -268,7 +268,7 @@ def _publishing_command(body):
             continue
         script, args = match.group(1).lower(), match.group(2).lower()
         # These existing publisher entrypoints mutate by default, even without --publish.
-        if re.search(r"(?:^|/)(?:store_icon|images_only|publish-mobile-play|publish_mobile_play)[.]py$", script):
+        if re.search(r"(?:^|/)(?:store_icon|images_only|publish-mobile-play|publish_mobile_play|publish-play-test)[.]py$", script):
             return True
         if not re.search(script_names, script):
             continue
@@ -294,13 +294,17 @@ def automatic_mutations(filename, source):
     if "__unparsed_jobs__" in workflow_jobs:
         return [filename + ": cannot safely parse publishing jobs"]
     for name, body in workflow_jobs.items():
-        explicit = _publishing_command(body)
-        possible = explicit or (relevant_file and MUTATOR.search(name) is not None
-                                and not name.endswith("-smoke"))
-        if not possible:
-            continue
         condition = job_condition(body)
         if is_disabled(condition) or is_manual_only(condition):
+            continue
+        publishing_steps = [step for step in _workflow_steps(body)
+                            if _publishing_command(step)]
+        if publishing_steps:
+            if all(is_disabled(_step_condition(step)) or is_manual_only(_step_condition(step))
+                   for step in publishing_steps):
+                continue
+        elif not (relevant_file and MUTATOR.search(name) is not None
+                  and not name.endswith("-smoke")):
             continue
         need = re.search(r"(?m)^    needs:\s*([A-Za-z][\w-]*)\s*$", body)
         if need and not re.search(r"\b(?:always|failure|cancelled)\s*\(|!\s*success\s*\(", condition):
@@ -471,10 +475,33 @@ def findings():
             continue
         if triggers(source) != {"workflow_dispatch"}:
             problems.append("AUTO_TRIGGER: " + file + " must be workflow_dispatch-only")
+        workflow_jobs = jobs(source)
         main_condition = "github.ref == 'refs/heads/main'"
-        if not any(main_condition in _guaranteed_atoms(job_condition(body))
-                   for body in jobs(source).values()):
-            problems.append("SOURCE: " + file + " missing enforced main ref gate")
+        def main_gated(name, ancestors=()):
+            if name in ancestors or name not in workflow_jobs:
+                return False
+            body = workflow_jobs[name]
+            condition = job_condition(body)
+            if main_condition in _guaranteed_atoms(condition):
+                return True
+            if re.search(r"\b(?:always|failure|cancelled)\s*\(|!\s*success\s*\(", condition):
+                return False
+            dependency = re.search(
+                r"(?m)^[ \t]+needs:[ \t]*(?:\[([^\]]+)\]|([A-Za-z][\w-]*))[ \t]*(?:#.*)?$",
+                body)
+            if not dependency:
+                return False
+            deps = (dependency.group(1).split(",") if dependency.group(1)
+                    else [dependency.group(2)])
+            return any(main_gated(dep.strip().strip("'\""), ancestors + (name,))
+                       for dep in deps)
+        if "__unparsed_jobs__" in workflow_jobs or not workflow_jobs:
+            problems.append("SOURCE: " + file + " cannot establish main ref gate")
+        else:
+            for job_name in workflow_jobs:
+                if not main_gated(job_name):
+                    problems.append("SOURCE: " + file + ": job " + job_name
+                                    + " lacks enforced main ref gate")
         if file == "release-build.yml":
             if re.search(r"(?i)inputs\[(?:mode|deploy)\]\s*=\s*(?:deploy|initialize|publish|promote|apply|upload|true)\b", source):
                 problems.append("BUILD: Play publishing mode is forbidden in build-only dispatch")

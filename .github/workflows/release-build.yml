@@ -65,6 +65,16 @@ jobs:
           assert re.fullmatch(r"[1-9][0-9]{0,9}",code) and int(code)<=2100000000, "Invalid versionCode"
           print("Exact main and approved release batch:",sha,batch,code)
           PY
+      - name: Require OPS-01 automatic Play freeze before any release build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(gh api "repos/$GITHUB_REPOSITORY/pulls/64" --jq .merged)" = true || {
+            echo "::error::OPS-01 PR #64 must be safely merged before QuickCut release builds."
+            exit 1
+          }
       - name: Verify completed exact-main Android build and API29/35/36 instrumentation
         id: ci
         env:

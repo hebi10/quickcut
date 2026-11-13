@@ -41,6 +41,27 @@ class FinalPolicyTests(unittest.TestCase):
         self.assertIn("  push:\n    branches: [main]", source)
         self.assertIn("api: [29, 35, 36]", source)
 
+    def test_dirty_audited_worktree_is_not_attributed_to_head_sha(self):
+        fixed_sha = "a" * 40
+        def fake_run(command, **kwargs):
+            if command[:3] == ["git", "rev-parse", "HEAD"]:
+                return audit.subprocess.CompletedProcess(command, 0, fixed_sha + "\n")
+            if command[:3] == ["git", "status", "--porcelain=v1"]:
+                return audit.subprocess.CompletedProcess(
+                    command, 0, " M .github/workflows/play-listing-images.yml\n")
+            raise AssertionError("Unexpected git command")
+        with patch.object(audit.subprocess, "run", side_effect=fake_run):
+            with patch.dict(os.environ, {"GITHUB_SHA": fixed_sha}):
+                with self.assertRaisesRegex(RuntimeError, "Audited policy inputs differ"):
+                    audit.verified_head()
+
+    def test_audit_report_precedes_tests_and_preserves_failure_evidence(self):
+        source = (ROOT / ".github/workflows/ops08-final-policy.yml").read_text(encoding="utf-8")
+        self.assertLess(source.index("Verify exact checked-out source"),
+                        source.index("Run OPS-07 regression tests"))
+        self.assertIn("if: always()", source)
+        self.assertIn("ops08-output/report.json", source)
+
     def test_required_policy_files_include_all_release_stages(self):
         files = set(audit.REQUIRED)
         for value in ("AGENTS.md", "scripts/ops07/audit.py",

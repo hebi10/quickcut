@@ -672,5 +672,45 @@ class FullYamlPublicationScannerRegressionTests(unittest.TestCase):
         self.assertTrue(any("PROVENANCE: OPS-04 verify" in issue for issue in issues), issues)
 
 
+
+class LatestReviewRegressionTests(unittest.TestCase):
+    def test_nested_environment_needs_is_not_a_job_dependency(self):
+        workflow = ("on:\n  workflow_dispatch:\njobs:\n"
+                    "  source:\n    if: github.ref == 'refs/heads/main'\n"
+                    "    runs-on: ubuntu-latest\n"
+                    "    steps:\n      - run: echo checked\n"
+                    "  build:\n    runs-on: ubuntu-latest\n"
+                    "    env:\n      needs: source\n"
+                    "    steps:\n      - run: ./gradlew bundleRelease\n")
+        with patch.object(audit, "read", side_effect=lambda path:
+                          workflow if path == ".github/workflows/release-build.yml"
+                          else None):
+            findings = audit.findings()
+        self.assertTrue(any("SOURCE: release-build.yml: job build" in issue
+                            for issue in findings), findings)
+
+    def test_unrelated_icon_sync_apply_conditional_cannot_authorize_upload(self):
+        workflow = store_workflow(
+            guard_if="inputs.apply == true",
+            pre_auth=("      - run: |\n"
+                      "          if [[ \"$APPLY_MANUAL\" == \"true\" ]]; then\n"
+                      "            echo checked\n"
+                      "          fi\n"))
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            folder = root / ".github/workflows"
+            folder.mkdir(parents=True)
+            (folder / "store-icon-sync.yml").write_text(workflow, encoding="utf-8")
+            with patch.object(audit, "ROOT", root):
+                issues = audit.store_guard_findings()
+        self.assertTrue(any("STORE_OPTIONAL" in issue for issue in issues), issues)
+
+    def test_quoted_python_script_path_is_still_auto_publisher(self):
+        workflow = publish_on("on:\n  push:",
+                              'python3 "scripts/publish-play-test.py" --bundle release.aab',
+                              job="deliver")
+        self.assertTrue(audit.automatic_mutations("misc.yml", workflow))
+
+
 if __name__ == "__main__":
     unittest.main()

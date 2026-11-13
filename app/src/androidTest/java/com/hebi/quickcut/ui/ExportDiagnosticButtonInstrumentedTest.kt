@@ -3,6 +3,7 @@ package com.hebi.quickcut.ui
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -25,6 +26,7 @@ class ExportDiagnosticButtonInstrumentedTest {
         compose.setContent { QuickCutTheme { ExportDiagnosticButton() } }
         compose.onNodeWithText("최근 작업 진단").performClick()
         compose.onNodeWithText("편집·저장 진단 기록").assertIsDisplayed()
+        check(compose.onAllNodesWithTag("ui06a-diagnostic-record").fetchSemanticsNodes().isNotEmpty())
         compose.onNodeWithText("작업 ${failed.operationId.take(8)}", substring = true)
             .performScrollTo().performClick()
         compose.onNodeWithText("작업 ID: ${failed.operationId}", substring = true).assertIsDisplayed()

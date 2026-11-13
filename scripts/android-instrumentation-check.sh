@@ -172,6 +172,33 @@ fi
 if ! timeout --kill-after=2s 10s adb pull /data/local/tmp/quickcut-design-review quickcut-design-review; then
   echo "::warning::Optional design screenshots were unavailable; instrumentation results are unchanged."
 fi
+# UI-06-A: screenshots must come from the actual Android dialog windows
+# preserved by DialogDesignInstrumentedTest (not Compose-only offscreen images).
+run_checked "Verify UI-06-A Android dialog, diagnostics and original safety evidence" python3 - "$SCRIPT_DIR/stage20-evidence-verify.py" <<'PYUI06A'
+from pathlib import Path
+import importlib.util
+import sys
+
+spec = importlib.util.spec_from_file_location("stage20_images", sys.argv[1])
+validator = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(validator)
+for name in (
+    "dialog_save_settings.png",
+    "dialog_original_delete.png",
+    "dialog_export_method.png",
+    "dialog_export_cancel.png",
+    "dialog_export_finalizing.png",
+    "dialog_edit_recovery.png",
+    "dialog_diagnostics.png",
+    "dialog_task_error.png",
+    "ui06a_preview_recovery.png",
+    "dialog_save_large_font.png",
+    "dialog_export_analysis_large_font.png",
+    "dialog_licenses.png",
+):
+    dimensions = validator.verify_png(Path("quickcut-design-review") / name)
+    print(f"Verified UI-06-A Android dialog screenshot: {name} {dimensions}")
+PYUI06A
 # UI-04-A captures are written by the existing real-player Android editor test.
 # Capture names are mandatory, and fake/error output never satisfies the PNG gate.
 run_checked "Verify UI-04-A quick and detailed light/dark editor evidence" python3 - "$SCRIPT_DIR/stage20-evidence-verify.py" <<'PYUI04A'

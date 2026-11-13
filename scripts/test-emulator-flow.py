@@ -151,6 +151,28 @@ if name == "adb":
                         os.environ.get("UI04A_CAPTURE_STATUS") == "1" and
                         mode == "detailed" and theme == "dark" else png)
                     (destination / name).write_bytes(data)
+            # Dialog fixtures model only the shell's image-integrity gate;
+            # a real device generates these from DialogDesignInstrumentedTest.
+            for name in (
+                "dialog_save_settings.png",
+                "dialog_original_delete.png",
+                "dialog_export_method.png",
+                "dialog_export_cancel.png",
+                "dialog_export_finalizing.png",
+                "dialog_edit_recovery.png",
+                "dialog_diagnostics.png",
+                "dialog_task_error.png",
+                "ui06a_preview_recovery.png",
+                "dialog_save_large_font.png",
+                "dialog_export_analysis_large_font.png",
+                "dialog_licenses.png",
+            ):
+                contents = (
+                    b"adb: capture missing" if
+                    os.environ.get("UI06A_CAPTURE_STATUS") == "1" and name == "dialog_task_error.png"
+                    else png
+                )
+                (destination / name).write_bytes(contents)
     sys.exit(0)
 if name == "python3":
     if args and args[0].endswith("verify-android-main10.py"):
@@ -278,6 +300,12 @@ class EmulatorFlowTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Missing/corrupt PNG evidence", result.stdout + result.stderr)
 
+    def test_ui06a_invalid_error_dialog_capture_still_fails_gate(self):
+        result, _, _, phases = self.run_flow(UI06A_CAPTURE_STATUS=1)
+        self.assertEqual(phases, ["preflight", "full"])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Missing/corrupt PNG evidence", result.stdout + result.stderr)
+
     def test_stage7_capture_failure_remains_a_required_gate(self):
         result, _, _, phases = self.run_flow(STAGE7_CAPTURE_STATUS=1)
         self.assertEqual(phases, ["preflight", "full"])
@@ -372,6 +400,15 @@ class EmulatorFlowTest(unittest.TestCase):
         proof = root / "quickcut-stage20-evidence/verified-screens-and-tests.json"
         self.assertTrue(proof.is_file())
         self.assertEqual(json.loads(proof.read_text())["androidApi"], "35")
+        for image in (
+            "dialog_save_settings.png", "dialog_original_delete.png",
+            "dialog_export_method.png", "dialog_export_cancel.png",
+            "dialog_export_finalizing.png", "dialog_edit_recovery.png",
+            "dialog_diagnostics.png", "dialog_task_error.png",
+            "ui06a_preview_recovery.png", "dialog_save_large_font.png", "dialog_export_analysis_large_font.png",
+            "dialog_licenses.png",
+        ):
+            self.assertTrue((root / "quickcut-design-review" / image).is_file())
         for image in ("ui05b_export_progress.png", "ui05b_export_finalizing.png",
                       "ui05b_export_completed.png"):
             self.assertTrue((root / "quickcut-design-review" / image).is_file())

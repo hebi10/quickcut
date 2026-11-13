@@ -15,6 +15,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.semantics.SemanticsActions
@@ -61,6 +64,8 @@ class DialogDesignInstrumentedTest {
         }
         compose.onNodeWithText("원본 자동 처리 활성화").assertIsDisplayed()
         compose.onNodeWithText("원본 영구 삭제").assertExists()
+        compose.onNodeWithText("이 버튼은 처리 방식만 활성화합니다.", substring = true)
+            .assertExists()
         compose.onNodeWithText("활성화").assertIsDisplayed().assertHeightIsAtLeast(48.dp)
         capture("dialog_original_delete")
     }
@@ -93,12 +98,27 @@ class DialogDesignInstrumentedTest {
 
     @Test
     fun diagnosticAndPrivacyDialogsShowScrolledText() {
+        var showTaskError by mutableStateOf(false)
         compose.setContent {
-            QuickCutTheme { PrivacyPolicyButton() }
+            QuickCutTheme {
+                if (showTaskError) {
+                    TaskErrorDialog(
+                        message = "원본 영상의 접근 권한을 확인해 주세요.",
+                        onDismiss = {},
+                    )
+                } else {
+                    PrivacyPolicyButton()
+                }
+            }
         }
         compose.onNodeWithText("개인정보처리방침").performClick()
         compose.onNodeWithText("닫기").assertIsDisplayed()
         capture("dialog_privacy_policy")
+        compose.runOnIdle { showTaskError = true }
+        compose.onNodeWithText("작업 오류").assertIsDisplayed()
+        compose.onNodeWithText("오류 내용").assertExists()
+        compose.onNodeWithText("확인").assertIsDisplayed().assertHeightIsAtLeast(48.dp)
+        capture("dialog_task_error")
     }
 
     @Test
@@ -112,16 +132,29 @@ class DialogDesignInstrumentedTest {
 
     @Test
     fun previousEditRecoveryDialogOffersReconnect() {
+        var showPreviewRecovery by mutableStateOf(false)
         compose.setContent {
             QuickCutTheme {
-                RestoreRecoveryDialog(
-                    notice = "원본 영상 접근을 확인해 주세요.",
-                    canReconnect = true, onRetry = {}, onReconnect = {}, onDismiss = {},
-                )
+                if (showPreviewRecovery) {
+                    PreviewRecoveryNotice(
+                        message = "재생할 수 없는 영상 프레임입니다.",
+                        onRetry = {},
+                    )
+                } else {
+                    RestoreRecoveryDialog(
+                        notice = "원본 영상 접근을 확인해 주세요.",
+                        canReconnect = true, onRetry = {}, onReconnect = {}, onDismiss = {},
+                    )
+                }
             }
         }
         compose.onNodeWithText("원본 영상 다시 연결").assertIsDisplayed()
+        compose.onNodeWithText("복원 방법").assertExists()
         capture("dialog_edit_recovery")
+        compose.runOnIdle { showPreviewRecovery = true }
+        compose.onNodeWithText("미리보기 확인 필요").assertIsDisplayed()
+        compose.onNodeWithText("미리보기 다시 시도").assertIsDisplayed()
+        capture("ui06a_preview_recovery")
     }
 
     @Test
@@ -198,7 +231,7 @@ class DialogDesignInstrumentedTest {
     }
 
     private fun capture(name: String) {
-        require(name.matches(Regex("dialog_[a-z_]+")))
+        require(name.matches(Regex("(dialog|ui06a)_[a-z_]+")))
         compose.waitForIdle()
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         instrumentation.uiAutomation.waitForIdle(300L, 5_000L)

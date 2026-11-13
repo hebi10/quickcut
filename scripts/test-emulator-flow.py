@@ -71,7 +71,16 @@ if name == "gradle":
         "com.hebi.quickcut.media.Stage19CombinedExportInstrumentedTest",
         "com.hebi.quickcut.media.Stage20RecoveryInstrumentedTest",
         "com.hebi.quickcut.ui.ThemeModeInstrumentedTest",
+        "com.hebi.quickcut.media.ExportIntegrityInstrumentedTest",
+        "com.hebi.quickcut.media.OriginalMediaActionsInstrumentedTest",
+        "com.hebi.quickcut.batch.ExactBatchExportInstrumentedTest",
+        "com.hebi.quickcut.editor.SingleExportRecoveryInstrumentedTest",
     )
+    # API29 runs BackgroundExportInstrumentedTest in two isolated processes.
+    # The 286-case "remaining" phase must never invent these identities.
+    # API35/36 instead run the complete unfiltered suite in one process.
+    if phase == "full":
+        required += ("com.hebi.quickcut.export.BackgroundExportInstrumentedTest",)
     for i in range(count):
         classname = required[i] if phase in ("full", "remaining") and i < len(required) else phase + ".Suite"
         testname = "case" + str(i)
@@ -195,8 +204,8 @@ if name == "python3":
 raise SystemExit("Unexpected stub invocation")
 '''
 
-# Compile the generated executable before test cases to report syntax errors
-# at the real source line, not as a cascade of missing events.jsonl files.
+# Validate the entire generated executable before spawning any CI mock jobs.
+# A typo here must fail at its exact syntax line, not as 30 missing events.jsonl errors.
 compile(STUB, "<quickcut-emulator-flow-stub>", "exec")
 
 
@@ -349,8 +358,16 @@ class EmulatorFlowTest(unittest.TestCase):
         self.assertIn("Stage 7 screenshot missing or empty", result.stdout + result.stderr)
 
     def test_api29_keeps_full_suite_and_uses_bounded_30m_budget(self):
-        result, _, events, phases = self.run_flow(QUICKCUT_EMULATOR_API="29")
+        result, root, events, phases = self.run_flow(QUICKCUT_EMULATOR_API="29")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        remaining = (root / "app/build/outputs/androidTest-results/connected/debug/"
+                     "TEST-api29-remaining.xml").read_text(encoding="utf-8")
+        self.assertNotIn("com.hebi.quickcut.export.BackgroundExportInstrumentedTest",
+                         remaining)
+        self.assertNotIn("com.hebi.quickcut.export.BackgroundMedia3ExportInstrumentedTest",
+                         remaining)
+        self.assertNotIn("com.hebi.quickcut.media.BatchDateExportInstrumentedTest",
+                         remaining)
         self.assertEqual(phases, ["preflight", "date", "remaining", "offscreen_single", "offscreen_batch", "media3"])
         timed = [e[1:3] for e in events if e[0] == "timeout" and len(e) > 3 and e[3] == "gradle"]
         self.assertEqual(timed, [["--kill-after=30s", "10m"], ["--kill-after=30s", "10m"],
@@ -441,6 +458,14 @@ class EmulatorFlowTest(unittest.TestCase):
         matrix = json.loads(matrix_path.read_text(encoding="utf-8"))
         self.assertEqual(matrix["pairs"], 20)
         self.assertEqual(matrix["images"], 40)
+        release_manifest = root / "quickcut-ui08a-evidence/release-qa.json"
+        self.assertTrue(release_manifest.is_file())
+        qa = json.loads(release_manifest.read_text(encoding="utf-8"))
+        self.assertEqual(qa["contract"], "quickcut-ui08a-qa-v1")
+        self.assertEqual(qa["androidApi"], "35")
+        self.assertEqual(qa["pairedThemeScreenshots"], 40)
+        self.assertEqual(qa["requiredMediaClassCount"], 8)
+        self.assertFalse(qa["playDeployed"])
         for image in (
             "dialog_save_settings.png", "dialog_original_delete.png",
             "dialog_export_method.png", "dialog_export_cancel.png",

@@ -1,0 +1,198 @@
+name: OPS-03 QuickCut signed AAB build only
+on:
+  workflow_dispatch:
+    inputs:
+      expected_main_sha:
+        description: 'Exact reviewed current main commit SHA'
+        type: string
+        required: true
+      batch_id:
+        description: 'Approved KST batch ID (YYYY-MM-DD-quickcut)'
+        type: string
+        required: true
+      version_code:
+        description: 'Unused Play versionCode to embed in AAB; verified again before later Play upload'
+        type: string
+        required: true
+      final_batch_approved:
+        description: 'All planned features and API29/35/36 tests passed'
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: ops03-quickcut-build
+  cancel-in-progress: false
+
+jobs:
+  source:
+    if: github.repository == 'hebi10/quickcut' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    outputs:
+      sha: ${{ steps.ci.outputs.sha }}
+      tag: ${{ steps.ci.outputs.tag }}
+      version: ${{ steps.ci.outputs.version }}
+      source_version_code: ${{ steps.ci.outputs.version_code }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Require manual batch approval, exact SHA and versionCode
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_main_sha }}
+          BATCH_ID: ${{ inputs.batch_id }}
+          VERSION_CODE: ${{ inputs.version_code }}
+          APPROVED: ${{ inputs.final_batch_approved }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, re, subprocess
+          from pathlib import Path
+          sha=os.environ["EXPECTED_SHA"]
+          code=os.environ["VERSION_CODE"]
+          batch=os.environ["BATCH_ID"]
+          assert os.environ["APPROVED"]=="true", "Release batch and final QA are not approved"
+          assert re.fullmatch("[a-f0-9]{40}", sha) and sha==os.environ["GITHUB_SHA"], "Incorrect current main SHA"
+          assert subprocess.check_output(["git","rev-parse","HEAD"],text=True).strip()==sha, "Checkout mismatch"
+          assert re.fullmatch(r"20\d{2}-\d{2}-\d{2}-quickcut",batch), "Invalid KST batch ID"
+          assert re.fullmatch(r"[1-9][0-9]{0,9}",code) and int(code)<=2100000000, "Invalid versionCode"
+          print("Exact main and approved release batch:",sha,batch,code)
+          PY
+      - name: Require OPS-01 automatic Play freeze before any release build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(gh api "repos/$GITHUB_REPOSITORY/pulls/64" --jq .merged)" = true || {
+            echo "::error::OPS-01 PR #64 must be safely merged before QuickCut release builds."
+            exit 1
+          }
+      - name: Verify completed exact-main Android build and API29/35/36 instrumentation
+        id: ci
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/verify-release-gate.py --mode play
+      - name: Reject missing or incomplete release gate
+        env:
+          CI_READY: ${{ steps.ci.outputs.ready }}
+        run: test "$CI_READY" = true
+
+  signed-aab:
+    needs: source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      RELEASE_SHA: ${{ needs.source.outputs.sha }}
+      RELEASE_TAG: ${{ needs.source.outputs.tag }}
+      RELEASE_VERSION: ${{ needs.source.outputs.version }}
+      RELEASE_VERSION_CODE: ${{ inputs.version_code }}
+      BATCH_ID: ${{ inputs.batch_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.source.outputs.sha }}
+          persist-credentials: false
+      - name: Refuse stale source and incomplete signing credentials
+        env:
+          GH_TOKEN: ${{ github.token }}
+          QUICKCUT_KEYSTORE_BASE64: ${{ secrets.QUICKCUT_KEYSTORE_BASE64 }}
+          QUICKCUT_KEYSTORE_PASSWORD: ${{ secrets.QUICKCUT_KEYSTORE_PASSWORD }}
+          QUICKCUT_KEY_ALIAS: ${{ secrets.QUICKCUT_KEY_ALIAS }}
+          QUICKCUT_KEY_PASSWORD: ${{ secrets.QUICKCUT_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)" = "$RELEASE_SHA"
+          for key in QUICKCUT_KEYSTORE_BASE64 QUICKCUT_KEYSTORE_PASSWORD QUICKCUT_KEY_ALIAS QUICKCUT_KEY_PASSWORD; do
+            test -n "${!key}" || { echo "::error::Missing required signing setting: $key"; exit 1; }
+          done
+          test -s "docs/releases/$RELEASE_VERSION.md"
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+      - name: Install the existing build SDK and NDK
+        run: sdkmanager --install 'platforms;android-36' 'build-tools;36.0.0' 'ndk;27.3.13750724'
+      - name: Install native toolchain
+        run: |
+          set -euo pipefail
+          sudo apt-get -o Acquire::Retries=3 update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 install -y --no-install-recommends cmake nasm pkg-config
+      - name: Restore verified native build dependency cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            build/native-smartcut
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: native-smartcut-${{ runner.os }}-${{ hashFiles('scripts/build-native-smartcut.sh', 'scripts/native-smartcut-sources.json') }}-${{ hashFiles('native/**') }}
+      - name: Build native smart-cut engine from trusted sources
+        run: bash scripts/build-native-smartcut.sh
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.4.1'
+          cache-disabled: true
+      - name: Test and build signed APK and AAB with existing upload certificate
+        env:
+          QUICKCUT_KEYSTORE_BASE64: ${{ secrets.QUICKCUT_KEYSTORE_BASE64 }}
+          QUICKCUT_KEYSTORE_PASSWORD: ${{ secrets.QUICKCUT_KEYSTORE_PASSWORD }}
+          QUICKCUT_KEY_ALIAS: ${{ secrets.QUICKCUT_KEY_ALIAS }}
+          QUICKCUT_KEY_PASSWORD: ${{ secrets.QUICKCUT_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          export QUICKCUT_KEYSTORE_PATH="$RUNNER_TEMP/quickcut-ops03-release.p12"
+          trap 'rm -f "$QUICKCUT_KEYSTORE_PATH"' EXIT
+          printf '%s' "$QUICKCUT_KEYSTORE_BASE64" | base64 --decode > "$QUICKCUT_KEYSTORE_PATH"
+          gradle --no-daemon -PquickcutTestVersionCode="$RELEASE_VERSION_CODE" :app:testDebugUnitTest :app:lintRelease :app:assembleRelease :app:bundleRelease
+          bash scripts/verify-release-apk.sh app/build/outputs/apk/release/app-release.apk
+          "$ANDROID_HOME/build-tools/36.0.0/aapt2" dump badging app/build/outputs/apk/release/app-release.apk > "$RUNNER_TEMP/ops03-badging.txt"
+          grep -F "package: name='com.hebi.quickcut' versionCode='$RELEASE_VERSION_CODE' versionName='$RELEASE_VERSION'" "$RUNNER_TEMP/ops03-badging.txt"
+      - name: Verify signed AAB with pinned bundletool, source version and native ABIs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/test-play-bundle.py
+          tool="$RUNNER_TEMP/bundletool-all-1.18.2.jar"
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 'https://github.com/google/bundletool/releases/download/1.18.2/bundletool-all-1.18.2.jar' -o "$tool"
+          python3 scripts/verify-play-bundle.py --bundle app/build/outputs/bundle/release/app-release.aab --bundletool "$tool" --version "$RELEASE_VERSION" --version-code "$RELEASE_VERSION_CODE"
+      - name: Package source and create immutable, nonsecret artifact manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/package-smartcut-source.sh
+          mkdir -p ops03-build
+          cp app/build/outputs/bundle/release/app-release.aab "ops03-build/QuickCut-$RELEASE_TAG-code$RELEASE_VERSION_CODE.aab"
+          cp app/build/outputs/apk/release/app-release.apk "ops03-build/QuickCut-$RELEASE_TAG-code$RELEASE_VERSION_CODE.apk"
+          cp "build/source-delivery/quickcut-corresponding-source-${RELEASE_SHA:0:12}.tar.gz" ops03-build/
+          python3 - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          root=Path("ops03-build")
+          files={p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in root.iterdir() if p.is_file()}
+          data={"schema":"ops03-signed-build-v1","package_id":"com.hebi.quickcut","source_sha":os.environ["RELEASE_SHA"],"batch_id":os.environ["BATCH_ID"],"version_name":os.environ["RELEASE_VERSION"],"version_code":int(os.environ["RELEASE_VERSION_CODE"]),"certificate_sha256":Path("config/release-certificate.sha256").read_text().strip(),"artifact_sha256":files,"play_uploaded":False,"build_run_url":"https://github.com/"+os.environ["GITHUB_REPOSITORY"]+"/actions/runs/"+os.environ["GITHUB_RUN_ID"]}
+          (root/"manifest.json").write_text(json.dumps(data,indent=2)+"\n",encoding="utf-8")
+          PY
+          (cd ops03-build && sha256sum -- * > SHA256SUMS && sha256sum --check SHA256SUMS)
+      - name: Preserve verified signed AAB, APK, source and checksums
+        uses: actions/upload-artifact@v4
+        with:
+          name: quickcut-ops03-signed-aab-${{ inputs.version_code }}-${{ github.run_id }}
+          path: ops03-build/
+          retention-days: 30
+          if-no-files-found: error
+      - name: Report build only — Play untouched
+        run: |
+          echo 'Verified signed AAB artifact recorded. No Google Play API access, version allocation or upload occurred in this workflow.' >> "$GITHUB_STEP_SUMMARY"

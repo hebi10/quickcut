@@ -696,6 +696,9 @@ class LatestReviewRegressionTests(unittest.TestCase):
                       "          if [[ \"$APPLY_MANUAL\" == \"true\" ]]; then\n"
                       "            echo checked\n"
                       "          fi\n"))
+        workflow = workflow.replace(
+            "    steps:\n",
+            "    env:\n      APPLY_MANUAL: '${{ inputs.apply }}'\n    steps:\n")
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             folder = root / ".github/workflows"

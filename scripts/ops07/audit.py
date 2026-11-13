@@ -89,17 +89,19 @@ def job_condition(body):
 
 
 def is_disabled(condition):
-    return re.match(r"^false(?:\s*&&|\s*$)", condition.strip()) is not None
+    cond = condition.strip()
+    return bool(re.fullmatch(r"false(?:\\s*&&\\s*[^|]+)?", cond)) and "||" not in cond and not re.search(r"\\bor\\b", cond)
 
 
 def is_manual_only(condition):
     cond = condition.replace('"', "'").strip()
-    # A leading conjunctive manual gate dominates nested legacy push/dispatch ORs.
-    if cond.startswith("github.event_name == 'workflow_dispatch' &&"):
-        return True
-    return ("github.event_name == 'workflow_dispatch'" in cond
-            and not re.search(r"(\|\||\bor\b)\s*\(?\s*github\.event_name", cond)
-            and not re.search(r"github\.event_name == '(push|workflow_run|issue_comment|pull_request)'", cond))
+    # Fail closed on OR: any alternate branch can bypass the dispatch gate.
+    if "||" in cond or re.search(r"\\bor\\b", cond):
+        return False
+    # Require the manual event check as a mandatory AND predicate.
+    if not re.search(r"(?:^|&&\\s*\\(?\\s*)github\\.event_name\\s*==\\s*'workflow_dispatch'(?:\\s*&&|\\s*\\)|$)", cond):
+        return False
+    return not re.search(r"github\\.event_name\\s*==\\s*'(?:push|workflow_run|issue_comment|pull_request|schedule)'", cond)
 
 
 def automatic_mutations(filename, source):

@@ -300,7 +300,7 @@ def _store_mutating_command(body):
 
 
 def _workflow_steps(body):
-    found = list(re.finditer(r"(?m)^( +)- [A-Za-z][\\w-]*:", body))
+    found = list(re.finditer(r"(?m)^( +)- [A-Za-z][\w-]*:", body))
     if not found:
         return []
     depth = min(len(item.group(1)) for item in found)

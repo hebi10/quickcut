@@ -607,5 +607,39 @@ class FullYamlPublicationScannerRegressionTests(unittest.TestCase):
                              for issue in issues), issues)
 
 
+    def test_run_heredoc_if_false_cannot_hide_automatic_publisher(self):
+        source = ("on:\n  push:\njobs:\n  sync:\n"
+                  "    runs-on: ubuntu-latest\n    steps:\n"
+                  "      - run: |\n"
+                  "          python3 scripts/publish-play-test.py --bundle release.aab\n"
+                  "          cat <<'EOF'\n"
+                  "          if: false\n"
+                  "          EOF\n")
+        self.assertTrue(audit.automatic_mutations("play.yml", source))
+
+    def test_step_level_if_false_still_blocks_disabled_publisher(self):
+        source = ("on:\n  push:\njobs:\n  sync:\n"
+                  "    runs-on: ubuntu-latest\n    steps:\n"
+                  "      - run: python3 scripts/publish-play-test.py --bundle release.aab\n"
+                  "        if: false\n")
+        self.assertFalse(audit.automatic_mutations("play.yml", source))
+
+    def test_heredoc_fake_if_does_not_skip_store_approval(self):
+        workflow = store_workflow(guard=False).replace(
+            "      - run: python3 scripts/play/listing_images.py --mode upload\n",
+            "      - run: |\n"
+            "          python3 scripts/play/listing_images.py --mode upload\n"
+            "          cat <<'EOF'\n"
+            "          if: false\n"
+            "          EOF\n")
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary) / ".github/workflows"
+            folder.mkdir(parents=True)
+            (folder / "play-listing-images.yml").write_text(workflow, encoding="utf-8")
+            with patch.object(audit, "ROOT", Path(temporary)):
+                issues = audit.store_guard_findings()
+        self.assertTrue(any("STORE_GUARD" in issue for issue in issues), issues)
+
+
 if __name__ == "__main__":
     unittest.main()

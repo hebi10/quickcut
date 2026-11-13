@@ -1,8 +1,7 @@
 name: QuickCut explicitly approved closed test request
 
 on:
-  issue_comment:
-    types: [created]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -11,11 +10,14 @@ permissions:
 jobs:
   request-closed:
     if: >-
+      false &&
+      (
       github.repository == 'hebi10/quickcut' &&
       github.event.issue.number == 48 &&
       github.event.issue.pull_request != null &&
       github.event.comment.user.login == 'hebi10' &&
       github.event.comment.body == '/deploy-quickcut-closed-20261111'
+      )
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

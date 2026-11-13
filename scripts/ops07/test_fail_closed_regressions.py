@@ -715,5 +715,44 @@ class LatestReviewRegressionTests(unittest.TestCase):
         self.assertTrue(audit.automatic_mutations("misc.yml", workflow))
 
 
+
+class RootAndModuleInvocationRegressions(unittest.TestCase):
+    def test_indented_workflow_root_is_rejected_not_silently_skipped(self):
+        source = ("  on:\n    push:\n"
+                  "  jobs:\n    sync:\n      runs-on: ubuntu-latest\n"
+                  "      steps:\n"
+                  "        - run: python3 scripts/publish-play-listing-images.py --publish\n")
+        self.assertIn("__unparsed_jobs__", audit.jobs(source))
+        self.assertTrue(audit.automatic_mutations("assets.yml", source))
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            folder = root / ".github/workflows"
+            folder.mkdir(parents=True)
+            (folder / "assets.yml").write_text(source, encoding="utf-8")
+            with patch.object(audit, "ROOT", root):
+                issues = audit.store_guard_findings()
+        self.assertTrue(any("STORE_GUARD" in issue for issue in issues), issues)
+
+    def test_python_module_invocation_is_detected_as_play_mutation(self):
+        source = publish_on("on:\n  push:",
+                            "python3 -m scripts.publish-play-listing-images --publish",
+                            job="sync")
+        self.assertTrue(audit.automatic_mutations("assets.yml", source))
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            folder = root / ".github/workflows"
+            folder.mkdir(parents=True)
+            (folder / "assets.yml").write_text(source, encoding="utf-8")
+            with patch.object(audit, "ROOT", root):
+                issues = audit.store_guard_findings()
+        self.assertTrue(any("STORE_GUARD" in issue for issue in issues), issues)
+
+    def test_python_module_check_only_does_not_mutate_play(self):
+        source = publish_on("on:\n  push:",
+                            "python3 -m scripts.publish-play-listing-images --check-only",
+                            job="verify")
+        self.assertEqual(audit.automatic_mutations("assets.yml", source), [])
+
+
 if __name__ == "__main__":
     unittest.main()

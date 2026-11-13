@@ -286,5 +286,26 @@ class InterpreterOptionsRegressionTests(unittest.TestCase):
         self.assertTrue(any("STORE_GUARD" in item for item in issues), issues)
 
 
+
+class FlexibleJobConditionRegressionTests(unittest.TestCase):
+    def test_four_space_yaml_nesting_respects_manual_gate(self):
+        workflow = ("on:\n  push:\n  workflow_dispatch:\njobs:\n"
+                    "    sync:\n        runs-on: ubuntu-latest\n"
+                    "        if: github.event_name == 'workflow_dispatch'\n"
+                    "        steps:\n          - run: python3 scripts/play/publisher.py deploy\n")
+        self.assertEqual(audit.automatic_mutations("play.yml", workflow), [])
+
+    def test_quoted_job_conditions_are_unwrapped(self):
+        workflow = ("on:\n  push:\n  workflow_dispatch:\njobs:\n"
+                    "  sync:\n    runs-on: ubuntu-latest\n"
+                    "    if: \"github.event_name == 'workflow_dispatch'\"\n"
+                    "    steps:\n      - run: python3 scripts/play/publisher.py deploy\n")
+        self.assertEqual(audit.automatic_mutations("play.yml", workflow), [])
+        unsafe = workflow.replace(
+            "github.event_name == 'workflow_dispatch'",
+            "github.event_name == 'workflow_dispatch' || true")
+        self.assertTrue(audit.automatic_mutations("play.yml", unsafe))
+
+
 if __name__ == "__main__":
     unittest.main()

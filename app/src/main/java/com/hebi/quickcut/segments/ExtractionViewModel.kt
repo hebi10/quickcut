@@ -44,6 +44,7 @@ class ExtractionViewModel(
     private var job: Job? = null
     private var reviewedFast: Map<Long, Boolean>? = null
     private var reviewedRanges: List<ExtractionItem>? = null
+    private var unjournaledOutput: Pair<Long, String>? = null
 
     var session by mutableStateOf<ExtractionSession?>(null)
         private set
@@ -73,7 +74,7 @@ class ExtractionViewModel(
 
     val busy: Boolean get() = importing || recovering || inspecting || exporting
     val selected: ExtractionItem? get() = session?.items?.firstOrNull { it.range.id == selectedId }
-    val blocked: Boolean get() = journalUnreadable ||
+    val blocked: Boolean get() = journalUnreadable || unjournaledOutput != null ||
         (session?.items?.any { it.status == ExtractionStatus.BLOCKED } == true)
 
     init {
@@ -328,6 +329,7 @@ class ExtractionViewModel(
                                     )
                                 }
                             }.onFailure {
+                                unjournaledOutput = id to uncertainUri
                                 journalUnreadable = true
                                 notice = "미완성 출력의 기록을 보관하지 못했습니다. 추가 저장을 중단합니다."
                             }
@@ -351,6 +353,9 @@ class ExtractionViewModel(
                                 )
                             }
                         }.onFailure {
+                            if (uncertainUri != null && recordedUri == null) {
+                                unjournaledOutput = id to uncertainUri
+                            }
                             journalUnreadable = true
                             notice = "저장 결과 기록에 실패했습니다. 추가 저장을 중단합니다."
                         }
@@ -388,12 +393,22 @@ class ExtractionViewModel(
     fun recoverOutputs() {
         val current = session ?: return
         if (recovering || exporting || inspecting) return
+        val missing = unjournaledOutput
+        val candidate = if (missing == null) current else current.copy(
+            items = current.items.map { item ->
+                if (item.range.id == missing.first) item.copy(
+                    status = ExtractionStatus.BLOCKED,
+                    outputUri = item.outputUri ?: missing.second,
+                    message = "이전 출력의 완료 상태를 다시 확인해야 합니다.",
+                ) else item
+            },
+        )
         recovering = true
         viewModelScope.launch {
             try {
                 val access = MediaStoreSingleExportAccess(app)
                 val updated = withContext(Dispatchers.IO) {
-                    current.items.map { item ->
+                    candidate.items.map { item ->
                         val uri = item.outputUri
                         if (uri == null) {
                             if (item.status == ExtractionStatus.SAVING)
@@ -424,7 +439,9 @@ class ExtractionViewModel(
                         }
                     }
                 }
-                persist(current.copy(items = updated))
+                persist(candidate.copy(items = updated))
+                unjournaledOutput = null
+                journalUnreadable = false
                 if (blocked) notice = "확인되지 않은 결과가 있습니다. 중복 저장을 방지하기 위해 재시도를 제한합니다."
             } catch (_: Exception) {
                 journalUnreadable = true

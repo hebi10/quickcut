@@ -40,6 +40,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.hebi.quickcut.ads.QuickCutHomeBanner
 import com.hebi.quickcut.editor.SavedProject
 import com.hebi.quickcut.media.SaveDateMode
 import com.hebi.quickcut.settings.QuickCutThemeMode

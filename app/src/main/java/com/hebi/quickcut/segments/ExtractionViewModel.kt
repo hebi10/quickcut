@@ -76,6 +76,18 @@ class ExtractionViewModel(
     val selected: ExtractionItem? get() = session?.items?.firstOrNull { it.range.id == selectedId }
     val blocked: Boolean get() = journalUnreadable || unjournaledOutput != null ||
         (session?.items?.any { it.status == ExtractionStatus.BLOCKED } == true)
+    val canDiscardInterruptedInitialRecord: Boolean get() =
+        journalUnreadable && session == null && store.hasInterruptedInitialRecord()
+
+    fun discardInterruptedInitialRecord() {
+        if (busy || !canDiscardInterruptedInitialRecord) return
+        runCatching { store.discardInterruptedInitialRecord() }.onSuccess {
+            journalUnreadable = false
+            notice = null
+        }.onFailure {
+            notice = "중단된 구간 기록을 정리하지 못했습니다. 기존 기록은 유지됩니다."
+        }
+    }
 
     init {
         val restored = runCatching { store.load() }

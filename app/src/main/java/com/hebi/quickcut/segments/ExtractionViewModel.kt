@@ -18,6 +18,7 @@ import com.hebi.quickcut.media.ExportMode
 import com.hebi.quickcut.media.ExportPlanner
 import com.hebi.quickcut.media.ExportStage
 import com.hebi.quickcut.media.MediaReader
+import com.hebi.quickcut.media.OutputCleanupException
 import com.hebi.quickcut.media.ReencodeRequiredException
 import com.hebi.quickcut.media.SaveDateMode
 import com.hebi.quickcut.media.VideoExporter
@@ -28,6 +29,12 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
+/** A failed MediaStore cleanup must retain its URI even when the original callback failed. */
+internal fun uncertainCleanupOutputUri(error: Throwable): String? =
+    (error as? OutputCleanupException)?.outputUri?.toString()
+        ?: error.suppressed.filterIsInstance<OutputCleanupException>()
+            .firstOrNull()?.outputUri?.toString()
 
 class ExtractionViewModel(
     application: Application,
@@ -311,20 +318,43 @@ class ExtractionViewModel(
                             status = ExtractionStatus.SAVED, outputUri = output.toString(), message = null
                         ) }
                     } catch (error: CancellationException) {
+                        uncertainCleanupOutputUri(error)?.let { uncertainUri ->
+                            runCatching {
+                                replaceItem(id) {
+                                    if (it.status == ExtractionStatus.SAVED) it else it.copy(
+                                        status = ExtractionStatus.BLOCKED,
+                                        outputUri = it.outputUri ?: uncertainUri,
+                                        message = "미완성 출력 정리를 확인하지 못했습니다. 복구 확인이 필요합니다.",
+                                    )
+                                }
+                            }.onFailure {
+                                journalUnreadable = true
+                                notice = "미완성 출력의 기록을 보관하지 못했습니다. 추가 저장을 중단합니다."
+                            }
+                        }
                         throw error
                     } catch (error: Exception) {
-                        val hasOutput = session?.items?.firstOrNull { it.range.id == id }?.outputUri != null
+                        val recordedUri = session?.items?.firstOrNull { it.range.id == id }?.outputUri
+                        val uncertainUri = recordedUri ?: uncertainCleanupOutputUri(error)
                         runCatching {
-                            replaceItem(id) { it.copy(
-                                status = if (hasOutput) ExtractionStatus.BLOCKED else ExtractionStatus.FAILED,
-                                reencodeNeeded = it.reencodeNeeded || error is ReencodeRequiredException,
-                                message = if (hasOutput) "저장 상태가 불확실합니다. 복구 확인이 필요합니다."
-                                    else if (error is ReencodeRequiredException)
-                                        "고속 처리 실패 · 재인코딩 승인 후 재시도할 수 있습니다."
-                                    else (error.localizedMessage ?: "저장 실패"),
-                            ) }
-                        }.onFailure { notice = "저장 결과 기록에 실패했습니다. 추가 저장을 중단합니다." }
-                        if (hasOutput || blocked) break
+                            replaceItem(id) {
+                                if (it.status == ExtractionStatus.SAVED) it else it.copy(
+                                    status = if (uncertainUri != null) ExtractionStatus.BLOCKED
+                                        else ExtractionStatus.FAILED,
+                                    outputUri = uncertainUri,
+                                    reencodeNeeded = it.reencodeNeeded || error is ReencodeRequiredException,
+                                    message = if (uncertainUri != null)
+                                        "저장 상태가 불확실합니다. 복구 확인이 필요합니다."
+                                        else if (error is ReencodeRequiredException)
+                                            "고속 처리 실패 · 재인코딩 승인 후 재시도할 수 있습니다."
+                                        else (error.localizedMessage ?: "저장 실패"),
+                                )
+                            }
+                        }.onFailure {
+                            journalUnreadable = true
+                            notice = "저장 결과 기록에 실패했습니다. 추가 저장을 중단합니다."
+                        }
+                        if (uncertainUri != null || blocked) break
                     }
                 }
                 notice = when {
@@ -334,7 +364,8 @@ class ExtractionViewModel(
                     else -> "여러 구간을 각각 MP4로 저장했습니다."
                 }
             } catch (cancelled: CancellationException) {
-                notice = "저장을 중단했습니다. 완료된 파일은 유지됩니다. 남은 구간을 확인해 주세요."
+                notice = if (blocked) "저장 상태를 확인하지 못했습니다. 복구 확인 전에는 추가 저장할 수 없습니다."
+                    else "저장을 중단했습니다. 완료된 파일은 유지됩니다. 남은 구간을 확인해 주세요."
             } catch (error: Exception) {
                 notice = error.localizedMessage ?: "저장 중 오류가 발생했습니다."
             } finally {
@@ -396,6 +427,7 @@ class ExtractionViewModel(
                 persist(current.copy(items = updated))
                 if (blocked) notice = "확인되지 않은 결과가 있습니다. 중복 저장을 방지하기 위해 재시도를 제한합니다."
             } catch (_: Exception) {
+                journalUnreadable = true
                 notice = "출력 복구 기록에 실패했습니다. 추가 저장을 중단합니다."
             } finally {
                 recovering = false

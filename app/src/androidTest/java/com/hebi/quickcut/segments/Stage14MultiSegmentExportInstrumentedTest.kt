@@ -5,6 +5,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.hebi.quickcut.media.ExportMode
 import com.hebi.quickcut.media.MediaReader
+import com.hebi.quickcut.media.OutputCleanupException
 import com.hebi.quickcut.media.VideoExporter
 import java.io.File
 import java.io.IOException
@@ -88,6 +89,14 @@ class Stage14MultiSegmentExportInstrumentedTest {
             assertEquals(source, store.load())
             store.clear()
             assertNull(store.load())
+
+            val outputUri = Uri.parse("content://media/external/video/media/123")
+            val incompleteCleanup = OutputCleanupException(outputUri, IOException("delete failed"))
+            assertEquals(outputUri.toString(), uncertainCleanupOutputUri(incompleteCleanup))
+            val cancelled = java.util.concurrent.CancellationException("cancel")
+            cancelled.addSuppressed(incompleteCleanup)
+            assertEquals(outputUri.toString(), uncertainCleanupOutputUri(cancelled))
+            assertNull(uncertainCleanupOutputUri(IOException("cleanup succeeded")))
 
             val interrupted = File(context.filesDir, "stage14_recovery_test.json.new")
             interrupted.writeText("partial write")

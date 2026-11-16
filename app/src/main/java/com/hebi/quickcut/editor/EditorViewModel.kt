@@ -232,6 +232,9 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             hasSourceReconnect = false
             reconnectSourceUri = null
             restoreRecoveryNotice = null
+            // The verified export may have left only in-memory completed state.
+            // Discard it after the user has explicitly confirmed the reset.
+            if (completedUri != null) discardEditing()
         }.onFailure {
             restoreRecoveryNotice = "편집 기록을 정리하지 못했습니다. 다시 확인해 주세요. 기존 기록은 유지됩니다."
         }
@@ -950,8 +953,16 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         // Publication was already verified. Keep the completed URI and recovery
         // handle visible even when recording completion fails.
         try {
-            sessionStore.clear()
-            hasRestorableSession = false
+            try {
+                sessionStore.clear()
+                hasRestorableSession = false
+            } catch (_: EditorSessionReadException) {
+                // This published output is verified; keep the corrupt draft intact
+                // but do not strand the independent export recovery journal.
+                unreadableSession = true
+                hasRestorableSession = true
+                restoreRecoveryNotice = SESSION_RECORD_PROTECTED
+            }
             exportStore.clear()
             activeExportRecord = null
             hasUnresolvedExport = false
@@ -1019,6 +1030,13 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     fun discardEditing() {
         if (isRecoveringExport || hasUnresolvedExport || page == QuickCutPage.EXPORTING) {
             reportError("이전 저장 파일 확인을 먼저 완료해 주세요.")
+            return
+        }
+        if (unreadableSession) {
+            // Never discard a corrupt record implicitly. The picker provides
+            // an explicit confirmation path after a verified export completes.
+            if (page == QuickCutPage.COMPLETED) page = QuickCutPage.PICKER
+            restoreRecoveryNotice = SESSION_RECORD_PROTECTED
             return
         }
         cancelImport()

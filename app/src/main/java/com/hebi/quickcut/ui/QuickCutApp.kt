@@ -139,6 +139,7 @@ fun QuickCutApp(
     var inspectingExport by remember { mutableStateOf(false) }
     var inspectionProgress by remember { mutableStateOf<Int?>(null) }
     var dismissedRecoveryNotice by remember { mutableStateOf<String?>(null) }
+    var confirmUnreadableSessionReset by rememberSaveable { mutableStateOf(false) }
     var inspectionJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     var showExportCancelConfirmation by rememberSaveable { mutableStateOf(false) }
     var showSaveOptions by rememberSaveable { mutableStateOf(false) }
@@ -589,7 +590,8 @@ fun QuickCutApp(
     }
 
     model.restoreRecoveryNotice?.takeIf {
-        !showBatch && model.page == QuickCutPage.PICKER && !model.isRecoveringExport && !model.hasUnresolvedExport
+        !showBatch && !confirmUnreadableSessionReset && model.page == QuickCutPage.PICKER &&
+            !model.isRecoveringExport && !model.hasUnresolvedExport
     }?.let { notice ->
         RestoreRecoveryDialog(
             notice = notice,
@@ -597,6 +599,40 @@ fun QuickCutApp(
             onRetry = { model.restoreSavedSession(context) },
             onReconnect = { reconnectPicker.launch(arrayOf("video/*")) },
             onDismiss = model::dismissRestoreNotice,
+            onResetUnreadable = if (model.unreadableSession) {
+                { confirmUnreadableSessionReset = true }
+            } else null,
+        )
+    }
+    if (confirmUnreadableSessionReset) {
+        AlertDialog(
+            onDismissRequest = { confirmUnreadableSessionReset = false },
+            title = { QuickCutDialogHeading("손상된 편집 기록 삭제") },
+            text = {
+                CutInfoSection(
+                    title = "편집 기록만 삭제",
+                    message = "읽을 수 없는 이전 편집 기록을 영구 삭제합니다. " +
+                        "원본 영상과 이름이 있는 프로젝트는 삭제하지 않습니다. " +
+                        "삭제한 편집 기록은 되돌릴 수 없습니다.",
+                    caution = true,
+                )
+            },
+            confirmButton = {
+                Button(onClick = {
+                    model.resetUnreadableSession()
+                    confirmUnreadableSessionReset = false
+                }, modifier = Modifier.heightIn(min = 48.dp), shape = CutShape) {
+                    Text("편집 기록 삭제")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmUnreadableSessionReset = false },
+                    modifier = Modifier.heightIn(min = 48.dp), shape = CutShape) {
+                    Text("취소")
+                }
+            },
+            containerColor = palette.panel,
+            shape = CutDialogShape,
         )
     }
 
@@ -857,6 +893,7 @@ internal fun RestoreRecoveryDialog(
     onRetry: () -> Unit,
     onReconnect: () -> Unit,
     onDismiss: () -> Unit,
+    onResetUnreadable: (() -> Unit)? = null,
 ) {
     val palette = LocalCutPalette.current
     AlertDialog(
@@ -882,6 +919,12 @@ internal fun RestoreRecoveryDialog(
                     OutlinedButton(onClick = onReconnect, shape = CutShape,
                         modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
                         Text("원본 영상 다시 연결")
+                    }
+                }
+                if (onResetUnreadable != null) {
+                    OutlinedButton(onClick = onResetUnreadable, shape = CutShape,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+                        Text("손상된 편집 기록 삭제")
                     }
                 }
                 ExportDiagnosticButton()

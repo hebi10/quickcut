@@ -20,7 +20,10 @@ class StartupError(RuntimeError):
 
 def resumed_component(report):
     components = set(re.findall(
-        r'(?:mResumedActivity\s*:|topResumedActivity\s*=)\s*ActivityRecord\{[^\n}]*?\bu[0-9]+\s+([A-Za-z0-9_.$]+/[A-Za-z0-9_.$]+)', report))
+        r'^[ \t]*(?:m?ResumedActivity[ \t]*:|topResumedActivity[ \t]*=)'
+        r'[ \t]*ActivityRecord\{[^\n}]*?\bu[0-9]+[ \t]+([A-Za-z0-9_.$]+/[A-Za-z0-9_.$]+)',
+        report, flags=re.MULTILINE,
+    ))
     if len(components) != 1:
         raise StartupError('Missing or ambiguous actual resumed activity; refusing startup recovery')
     return components.pop()

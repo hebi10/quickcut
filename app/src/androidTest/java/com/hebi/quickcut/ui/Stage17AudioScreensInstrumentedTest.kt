@@ -72,8 +72,6 @@ class Stage17AudioScreensInstrumentedTest {
             clip = clip.copy(id = 2L, audio = AudioAdjustment(45, 1_000, 1_000))
         }
         compose.waitForIdle()
-        // On API 29 the remeasured scroll position can settle one frame after
-        // the clip ID changes. Require the actual updated value to become visible.
         assertTextVisibleAfterScroll("원본 음량 · 45%")
         compose.onNodeWithTag("ui05a-audio-summary").performScrollTo().assertIsDisplayed()
         assertTextVisibleAfterScroll("페이드 인 · 00:01.0")
@@ -122,8 +120,7 @@ class Stage17AudioScreensInstrumentedTest {
     }
 
     private fun assertTextVisibleAfterScroll(text: String) {
-        // The 360dp emulator layout can deliver a scroll frame after Compose
-        // finishes applying a new clip ID. Retain the real visibility check.
+        // Scroll and check visibility together while the layout is settling.
         compose.waitUntil(10_000L) {
             try {
                 compose.onNodeWithText(text).performScrollTo().assertIsDisplayed()
@@ -132,7 +129,6 @@ class Stage17AudioScreensInstrumentedTest {
                 false
             }
         }
-        compose.onNodeWithText(text).assertIsDisplayed()
     }
 
     private fun capture(name: String) {

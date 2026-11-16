@@ -158,6 +158,17 @@ class PublicationMetadataTest(unittest.TestCase):
         self.network.assert_called_once_with(
             'https://dl.google.com/dl/android/maven2/androidx/test/example/3.0/example-3.0.pom', timeout=60)
 
+    def test_google_admob_and_ump_coordinates_use_google_maven(self):
+        google = 'https://dl.google.com/dl/android/maven2/'
+        self.assertEqual(
+            self.module.publication_url('com.google.android.gms:play-services-ads:25.5.0', 'pom'),
+            google + 'com/google/android/gms/play-services-ads/25.5.0/play-services-ads-25.5.0.pom',
+        )
+        self.assertEqual(
+            self.module.publication_url('com.google.android.ump:user-messaging-platform:4.0.0', 'pom'),
+            google + 'com/google/android/ump/user-messaging-platform/4.0.0/user-messaging-platform-4.0.0.pom',
+        )
+
     def test_committed_cache_serves_every_record_without_network(self):
         manifest = SCRIPT.parent.parent / 'third_party/runtime-publication-metadata/manifest.json'
         self.assertTrue(manifest.is_file(), 'Pinned publication cache is required')

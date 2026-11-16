@@ -20,6 +20,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -43,7 +44,7 @@ internal fun QuickCutHomeBanner() {
     val context = LocalContext.current
     val owner = LocalLifecycleOwner.current
     val palette = LocalCutPalette.current
-    val unitId = context.getString(R.string.quickcut_admob_banner_unit_id)
+    val unitId = stringResource(R.string.quickcut_admob_banner_unit_id)
 
     BoxWithConstraints(Modifier.fillMaxWidth().testTag("quickcut-home-ad-slot")) {
         val widthDp = maxWidth.value.toInt()

@@ -94,8 +94,10 @@ class Stage15OutputQualityInstrumentedTest {
                         android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)!!.toInt()
                     val height = retriever.extractMetadata(
                         android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)!!.toInt()
-                    assertTrue("Unexpected output short side: ${width}x${height}",
-                        kotlin.math.abs(minOf(width, height) - plan.shortSide) <= 16)
+                    val rotation = retriever.extractMetadata(
+                        android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)
+                        ?.toIntOrNull() ?: 0
+                    ExportQualityVerification.requireGeometry(plan, width, height, rotation)
                 } finally {
                     retriever.release()
                 }

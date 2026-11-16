@@ -12,7 +12,6 @@ import java.io.IOException
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlin.math.abs
 
 /** Read-only preflight. No original file is copied or modified. */
 object ExportQualityInspector {
@@ -50,25 +49,22 @@ object ExportQualityInspector {
 
     fun verifyEncodedFile(file: File, plan: ResolvedExportQuality) {
         val retriever = MediaMetadataRetriever()
-        val shortSide = try {
+        try {
             retriever.setDataSource(file.absolutePath)
             val width = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)
                 ?.toIntOrNull() ?: throw IOException("출력 영상의 가로 크기를 확인하지 못했습니다.")
             val height = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)
                 ?.toIntOrNull() ?: throw IOException("출력 영상의 세로 크기를 확인하지 못했습니다.")
-            minOf(width, height)
+            val rawRotation = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)
+            val rotation = rawRotation?.toIntOrNull()
+                ?: if (rawRotation == null) 0
+                else throw IOException("출력 영상의 회전 정보를 확인하지 못했습니다.")
+            ExportQualityVerification.requireGeometry(plan, width, height, rotation)
         } finally {
             retriever.release()
         }
-        if (abs(shortSide - plan.shortSide) > 16) {
-            throw IOException("요청한 출력 해상도가 실제 영상과 다릅니다. 갤러리에 공개하지 않았습니다.")
-        }
-        if (plan.targetFps != null) {
-            val actual = sampleFrameRate(file.absolutePath)
-                ?: throw IOException("출력 프레임 속도를 검증할 수 없습니다. 갤러리에 공개하지 않았습니다.")
-            if (abs(actual - plan.targetFps) > 2.0f) {
-                throw IOException("요청한 FPS와 실제 출력 FPS가 달라 결과를 저장하지 않았습니다.")
-            }
+        plan.targetFps?.let { expectedFps ->
+            ExportQualityVerification.requireFrameRate(expectedFps, sampleFrameRate(file.absolutePath))
         }
     }
 
@@ -141,19 +137,14 @@ object ExportQualityInspector {
                     ?.startsWith("video/") == true
             } ?: return null
             extractor.selectTrack(track)
-            var first = -1L
-            var last = -1L
-            var count = 0
-            while (count < 180) {
+            val timestamps = ArrayList<Long>(180)
+            while (timestamps.size < 180) {
                 val time = extractor.sampleTime
                 if (time < 0L) break
-                if (first < 0L) first = time
-                last = time
-                count++
+                timestamps.add(time)
                 if (!extractor.advance()) break
             }
-            if (count < 4 || last <= first) return null
-            return ((count - 1) * 1_000_000.0 / (last - first)).toFloat()
+            return ExportQualityVerification.frameRateFromTimestamps(timestamps)
         } finally {
             extractor.release()
         }

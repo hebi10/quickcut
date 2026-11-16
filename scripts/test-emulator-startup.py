@@ -96,6 +96,30 @@ class StartupTest(unittest.TestCase):
         self.assertTrue(all('-W' not in call for call in device.launches()))
         self.assertGreaterEqual(device.probes, 2)
 
+    def test_api29_display_and_global_resumed_records_verify_startup(self):
+        report = (
+            '    mLastPausedActivity: ActivityRecord{babe u0 foreign.app/.Activity t5}\n'
+            ' ResumedActivity:ActivityRecord{cafe u0 com.hebi.quickcut/.MainActivity t6}\n'
+            '  ResumedActivity: ActivityRecord{cafe u0 com.hebi.quickcut/.MainActivity t6}\n'
+        )
+        device = Device([report])
+        with patch.dict(os.environ, {'QUICKCUT_EMULATOR_API': '29'}):
+            self.check(device)
+        self.assertEqual(device.launches(), [['shell', 'am', 'start', '-n', APP]])
+        self.assertEqual(device.probes, 2)
+
+    def test_missing_or_conflicting_resumed_records_fail_before_ui_probe(self):
+        for report in (
+            '    mLastPausedActivity: ActivityRecord{cafe u0 com.hebi.quickcut/.MainActivity t6}',
+            ' ResumedActivity:ActivityRecord{cafe u0 com.hebi.quickcut/.MainActivity t6}\n'
+            '  topResumedActivity=ActivityRecord{babe u0 foreign.app/.Activity t5}\n',
+        ):
+            device = Device([report])
+            with self.subTest(report=report), self.assertRaises(s.StartupError):
+                self.check(device)
+            self.assertEqual(len(device.launches()), 1)
+            self.assertFalse(any(call[:3] == ['shell', 'uiautomator', 'dump'] for call in device.calls))
+
     def test_ui_dump_first_missing_xml_retries_without_relaunch(self):
         device = Device([APP], missing_ui_xml=1)
         self.check(device)

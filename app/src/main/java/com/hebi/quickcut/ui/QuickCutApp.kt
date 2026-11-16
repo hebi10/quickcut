@@ -173,12 +173,12 @@ fun QuickCutApp(
     LaunchedEffect(selectedSaveDateMode) {
         settings.saveSaveDate(selectedSaveDateMode)
     }
-    LaunchedEffect(adsConsent, onboardingComplete) {
-        if (onboardingComplete) adsConsent?.requestOnLaunch()
+    LaunchedEffect(adsConsent, onboardingComplete, hasVerifiedAdFreeEntitlement) {
+        if (onboardingComplete && !hasVerifiedAdFreeEntitlement) adsConsent?.requestOnLaunch()
     }
-    LaunchedEffect(adsConsent?.canRequestAds) {
-        if (adsConsent?.adsConfigured == true && adsConsent.canRequestAds &&
-            !mobileAdsInitialized) {
+    LaunchedEffect(adsConsent?.canRequestAds, hasVerifiedAdFreeEntitlement) {
+        if (!hasVerifiedAdFreeEntitlement && adsConsent?.adsConfigured == true &&
+            adsConsent.canRequestAds && !mobileAdsInitialized) {
             try {
                 withContext(Dispatchers.IO) { MobileAds.initialize(context.applicationContext) }
                 mobileAdsInitialized = true

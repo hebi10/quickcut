@@ -149,6 +149,8 @@ jobs:
           QUICKCUT_KEYSTORE_PASSWORD: ${{ secrets.QUICKCUT_KEYSTORE_PASSWORD }}
           QUICKCUT_KEY_ALIAS: ${{ secrets.QUICKCUT_KEY_ALIAS }}
           QUICKCUT_KEY_PASSWORD: ${{ secrets.QUICKCUT_KEY_PASSWORD }}
+          QUICKCUT_ADMOB_APP_ID: ${{ secrets.QUICKCUT_ADMOB_APP_ID }}
+          QUICKCUT_ADMOB_BANNER_UNIT_ID: ${{ secrets.QUICKCUT_ADMOB_BANNER_UNIT_ID }}
         shell: bash
         run: |
           set -euo pipefail

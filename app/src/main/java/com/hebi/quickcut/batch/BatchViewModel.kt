@@ -416,6 +416,9 @@ class BatchViewModel internal constructor(
                 notification = "이전 작업 확인에 실패했습니다. " + (error.localizedMessage ?: "파일을 다시 선택해 주세요.")
             } finally {
                 isRecovering = false
+                // A settings change during the recovery I/O was intentionally
+                // deferred; now persist the latest draft rather than a stale copy.
+                schedulePassivePersist()
             }
         }
         viewModelScope.launch {
@@ -653,6 +656,9 @@ class BatchViewModel internal constructor(
                 notification = MediaOperationDiagnostics.message(ExportStage.IMPORTING, error)
             } finally {
                 isImporting = false
+                // Settings remain editable while an import commits on IO.
+                // Flush the latest values once the durable row update finishes.
+                schedulePassivePersist()
             }
         }
     }
@@ -678,7 +684,10 @@ class BatchViewModel internal constructor(
                 completedCount = files.count { it.status != BatchFileStatus.WAITING && it.status != BatchFileStatus.RUNNING }
             } catch (error: Exception) {
                 notification = "선택 영상을 제거하지 못했습니다. " + (error.localizedMessage ?: "저장 공간을 확인해 주세요.")
-            } finally { isImporting = false }
+            } finally {
+                isImporting = false
+                schedulePassivePersist()
+            }
         }
     }
 

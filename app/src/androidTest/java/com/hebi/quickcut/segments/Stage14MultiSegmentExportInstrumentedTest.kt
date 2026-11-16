@@ -102,6 +102,16 @@ class Stage14MultiSegmentExportInstrumentedTest {
             interrupted.writeText("partial write")
             assertThrows(IOException::class.java) { store.load() }
             assertTrue("Uncommitted record must not be silently deleted", interrupted.exists())
+            assertTrue(store.hasInterruptedInitialRecord())
+            store.discardInterruptedInitialRecord()
+            assertFalse(interrupted.exists())
+            assertNull(store.load())
+            assertFalse(store.hasInterruptedInitialRecord())
+            store.save(source)
+            assertThrows(IllegalStateException::class.java) {
+                store.discardInterruptedInitialRecord()
+            }
+            assertEquals(source, store.load())
         } finally {
             store.clear()
         }

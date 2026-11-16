@@ -12,15 +12,40 @@ data class EditorSessionSnapshot(
     val quickMode: Boolean,
 )
 
+class EditorSessionReadException(cause: Throwable? = null) : IOException(
+    "이전 편집 기록을 읽지 못했습니다. 기존 기록을 보호하고 있습니다.", cause,
+)
+
 /** Crash/force-stop recovery for local selections with still-readable source URIs. */
 class EditorSessionStore(context: Context, preferencesName: String = "quickcut_editor_session_v1") {
     private val preferences = context.applicationContext.getSharedPreferences(
         preferencesName, Context.MODE_PRIVATE,
     )
+    private var lastVerifiedRaw: String? = null
+
+    private fun requireReadableRecord() {
+        val raw = try {
+            preferences.getString("session", null)
+        } catch (error: Exception) {
+            throw EditorSessionReadException(error)
+        }
+        if ((raw != null && raw != lastVerifiedRaw) ||
+            (raw == null && preferences.contains("session"))
+        ) load()
+    }
 
     fun load(): EditorSessionSnapshot? {
-        val raw = preferences.getString("session", null) ?: return null
-        return runCatching {
+        val raw = try {
+            preferences.getString("session", null)
+        } catch (error: Exception) {
+            throw EditorSessionReadException(error)
+        }
+        if (raw == null) {
+            if (preferences.contains("session")) throw EditorSessionReadException()
+            lastVerifiedRaw = null
+            return null
+        }
+        val snapshot = try {
             val data = JSONObject(raw)
             val savedClips = data.getJSONArray("clips")
             require(savedClips.length() > 0)
@@ -76,10 +101,15 @@ class EditorSessionStore(context: Context, preferencesName: String = "quickcut_e
                 playPositionMs = data.optLong("positionMs", 0L),
                 quickMode = data.optBoolean("quickMode", false),
             )
-        }.getOrNull()
+        } catch (error: Exception) {
+            throw EditorSessionReadException(error)
+        }
+        lastVerifiedRaw = raw
+        return snapshot
     }
 
     fun save(snapshot: EditorSessionSnapshot) {
+        requireReadableRecord()
         val clips = snapshot.timeline.clips
         if (clips.isEmpty()) {
             clear()
@@ -133,13 +163,31 @@ class EditorSessionStore(context: Context, preferencesName: String = "quickcut_e
             put("positionMs", snapshot.playPositionMs)
             put("quickMode", snapshot.quickMode)
         }
-        if (!preferences.edit().putString("session", data.toString()).commit())
+        val encoded = data.toString()
+        if (!preferences.edit().putString("session", encoded).commit())
             throw IOException("편집 내용을 기록하지 못했습니다. 저장 공간을 확인해 주세요.")
+        lastVerifiedRaw = encoded
     }
 
     fun clear() {
+        requireReadableRecord()
         if (!preferences.edit().remove("session").commit())
             throw IOException("완료된 편집 기록을 정리하지 못했습니다.")
+        lastVerifiedRaw = null
+    }
+
+    /** The user must explicitly confirm this irreversible action in the recovery UI. */
+    fun resetUnreadableRecord() {
+        val unreadable = try {
+            load()
+            false
+        } catch (_: EditorSessionReadException) {
+            true
+        }
+        check(unreadable) { "정상 편집 기록은 손상 기록 초기화로 삭제할 수 없습니다." }
+        if (!preferences.edit().remove("session").commit())
+            throw IOException("손상된 편집 기록을 정리하지 못했습니다.")
+        lastVerifiedRaw = null
     }
 }
 

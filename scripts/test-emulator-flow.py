@@ -27,8 +27,12 @@ if name == "timeout":
 if name == "gradle":
     if any("NativeSmartCutInstrumentedTest" in a for a in args):
         phase = "preflight"
-    elif any("android.testInstrumentationRunnerArguments.notClass=" in a for a in args):
-        phase = "remaining"
+    elif any("android.testInstrumentationRunnerArguments.notClass=" in a for a in args) and any(
+            "android.testInstrumentationRunnerArguments.package=com.hebi.quickcut.ui" in a for a in args):
+        phase = "remaining_ui"
+    elif any("android.testInstrumentationRunnerArguments.notClass=" in a for a in args) and any(
+            "android.testInstrumentationRunnerArguments.notPackage=com.hebi.quickcut.ui" in a for a in args):
+        phase = "remaining_other"
     elif any("android.testInstrumentationRunnerArguments.class=com.hebi.quickcut.media.BatchDateExportInstrumentedTest" in a for a in args):
         phase = "date"
     elif any("android.testInstrumentationRunnerArguments.class=com.hebi.quickcut.export.BackgroundExportInstrumentedTest#actualExportFinishesOffscreenAndItsResultSurvivesActivityRecreation" in a for a in args):
@@ -40,10 +44,10 @@ if name == "gradle":
     else:
         phase = "full"
     status = int(os.environ.get(phase.upper() + "_STATUS", os.environ.get("FULL_STATUS", "0")))
-    count = {"preflight": 1, "date": 2, "remaining": 286, "offscreen_single": 1,
+    count = {"preflight": 1, "date": 2, "remaining_ui": 140, "remaining_other": 146, "offscreen_single": 1,
              "offscreen_batch": 1, "media3": 2}.get(
         phase, int(os.environ.get("FULL_COUNT", "152")))
-    failed = status != 0 or (phase in ("full", "remaining") and os.environ.get("FULL_XML_FAILED") == "1")
+    failed = status != 0 or (phase in ("full", "remaining_ui", "remaining_other") and os.environ.get("FULL_XML_FAILED") == "1")
     results = root / "app/build/outputs/androidTest-results/connected"
     results.mkdir(parents=True, exist_ok=True)
     # Detect stale preflight XML if shell forgot to clear it before full tests.
@@ -51,12 +55,12 @@ if name == "gradle":
         (root / "stale-preflight-observed").write_text("stale")
     document = Element("testsuites", tests=str(count),
                        failures=str(int(failed)), errors="0", skipped="0")
-    half = count // 2 if phase == "remaining" else count
+    half = count // 2 if phase in ("remaining_ui", "remaining_other") else count
     suite = SubElement(document, "testsuite", tests=str(half),
                        failures=str(int(failed)), errors="0", skipped="0")
     other_suite = (SubElement(document, "testsuite", tests=str(count - half),
                               failures="0", errors="0", skipped="0")
-                   if phase == "remaining" else None)
+                   if phase in ("remaining_ui", "remaining_other") else None)
     required = (
         "com.hebi.quickcut.segments.Stage14MultiSegmentExportInstrumentedTest",
         "com.hebi.quickcut.ui.Stage14ExtractionScreensInstrumentedTest",
@@ -81,8 +85,13 @@ if name == "gradle":
     # API35/36 instead run the complete unfiltered suite in one process.
     if phase == "full":
         required += ("com.hebi.quickcut.export.BackgroundExportInstrumentedTest",)
+    elif phase == "remaining_ui":
+        required = tuple(cls for cls in required if cls.startswith("com.hebi.quickcut.ui."))
+    elif phase == "remaining_other":
+        required = tuple(cls for cls in required if not cls.startswith("com.hebi.quickcut.ui."))
     for i in range(count):
-        classname = required[i] if phase in ("full", "remaining") and i < len(required) else phase + ".Suite"
+        prefix = "com.hebi.quickcut.ui." if phase == "remaining_ui" else phase + "."
+        classname = required[i] if phase in ("full", "remaining_ui", "remaining_other") and i < len(required) else prefix + "Suite"
         testname = "case" + str(i)
         if phase == "date":
             classname = "com.hebi.quickcut.media.BatchDateExportInstrumentedTest"
@@ -240,7 +249,10 @@ class EmulatorFlowTest(unittest.TestCase):
             if any("NativeSmartCutInstrumentedTest" in a for a in args):
                 return "preflight"
             if any("android.testInstrumentationRunnerArguments.notClass=" in a for a in args):
-                return "remaining"
+                if any("android.testInstrumentationRunnerArguments.package=com.hebi.quickcut.ui" in a for a in args):
+                    return "remaining_ui"
+                if any("android.testInstrumentationRunnerArguments.notPackage=com.hebi.quickcut.ui" in a for a in args):
+                    return "remaining_other"
             if any("android.testInstrumentationRunnerArguments.class=com.hebi.quickcut.media.BatchDateExportInstrumentedTest" in a for a in args):
                 return "date"
             if any("android.testInstrumentationRunnerArguments.class=com.hebi.quickcut.export.BackgroundExportInstrumentedTest#actualExportFinishesOffscreenAndItsResultSurvivesActivityRecreation" in a for a in args):
@@ -357,34 +369,35 @@ class EmulatorFlowTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Stage 7 screenshot missing or empty", result.stdout + result.stderr)
 
-    def test_api29_keeps_full_suite_and_uses_bounded_30m_budget(self):
+    def test_api29_keeps_all_292_tests_and_separates_ui_from_non_ui(self):
         result, root, events, phases = self.run_flow(QUICKCUT_EMULATOR_API="29")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        remaining = (root / "app/build/outputs/androidTest-results/connected/debug/"
-                     "TEST-api29-remaining.xml").read_text(encoding="utf-8")
-        self.assertNotIn("com.hebi.quickcut.export.BackgroundExportInstrumentedTest",
-                         remaining)
-        self.assertNotIn("com.hebi.quickcut.export.BackgroundMedia3ExportInstrumentedTest",
-                         remaining)
-        self.assertNotIn("com.hebi.quickcut.media.BatchDateExportInstrumentedTest",
-                         remaining)
-        self.assertEqual(phases, ["preflight", "date", "remaining", "offscreen_single", "offscreen_batch", "media3"])
+        folder = root / "app/build/outputs/androidTest-results/connected/debug"
+        for phase in ("remaining_ui", "remaining_other"):
+            document = (folder / f"TEST-api29-{phase}.xml").read_text(encoding="utf-8")
+            for excluded in ("com.hebi.quickcut.export.BackgroundExportInstrumentedTest",
+                             "com.hebi.quickcut.export.BackgroundMedia3ExportInstrumentedTest",
+                             "com.hebi.quickcut.media.BatchDateExportInstrumentedTest"):
+                self.assertNotIn(excluded, document)
+        self.assertEqual(phases, ["preflight", "date", "remaining_ui", "remaining_other",
+                                  "offscreen_single", "offscreen_batch", "media3"])
         timed = [e[1:3] for e in events if e[0] == "timeout" and len(e) > 3 and e[3] == "gradle"]
         self.assertEqual(timed, [["--kill-after=30s", "10m"], ["--kill-after=30s", "10m"],
-                                 ["--kill-after=30s", "25m"], ["--kill-after=30s", "10m"],
-                                 ["--kill-after=30s", "10m"], ["--kill-after=30s", "15m"]])
+                                 ["--kill-after=30s", "15m"], ["--kill-after=30s", "20m"],
+                                 ["--kill-after=30s", "10m"], ["--kill-after=30s", "10m"],
+                                 ["--kill-after=30s", "15m"]])
         self.assertIn("All 292 distinct API29 tests passed", result.stdout)
 
     def test_api29_failed_media3_phase_stays_failed_after_coverage_check(self):
         result, root, _, phases = self.run_flow(QUICKCUT_EMULATOR_API="29", MEDIA3_STATUS=44)
-        self.assertEqual(phases, ["preflight", "date", "remaining", "offscreen_single", "offscreen_batch", "media3"])
+        self.assertEqual(phases, ["preflight", "date", "remaining_ui", "remaining_other", "offscreen_single", "offscreen_batch", "media3"])
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse((root / "quickcut-stage20-evidence/verified-screens-and-tests.json").exists())
 
     def test_api29_failed_offscreen_single_fails_closed_with_no_approved_manifest(self):
         result, root, _, phases = self.run_flow(
             QUICKCUT_EMULATOR_API="29", OFFSCREEN_SINGLE_STATUS=46)
-        self.assertEqual(phases, ["preflight", "date", "remaining", "offscreen_single",
+        self.assertEqual(phases, ["preflight", "date", "remaining_ui", "remaining_other", "offscreen_single",
                                   "offscreen_batch", "media3"])
         self.assertEqual(result.returncode, 46)
         self.assertIn("offscreen_single: failing or skipped tests", result.stdout + result.stderr)
@@ -393,10 +406,19 @@ class EmulatorFlowTest(unittest.TestCase):
     def test_api29_failed_offscreen_batch_fails_closed_with_no_approved_manifest(self):
         result, root, _, phases = self.run_flow(
             QUICKCUT_EMULATOR_API="29", OFFSCREEN_BATCH_STATUS=47)
-        self.assertEqual(phases, ["preflight", "date", "remaining", "offscreen_single",
+        self.assertEqual(phases, ["preflight", "date", "remaining_ui", "remaining_other", "offscreen_single",
                                   "offscreen_batch", "media3"])
         self.assertEqual(result.returncode, 47)
         self.assertIn("offscreen_batch: failing or skipped tests", result.stdout + result.stderr)
+        self.assertFalse((root / "quickcut-stage20-evidence/verified-screens-and-tests.json").exists())
+
+    def test_api29_missing_non_ui_phase_cannot_pass_original_292_test_gate(self):
+        result, root, _, phases = self.run_flow(
+            QUICKCUT_EMULATOR_API="29", REMAINING_OTHER_STATUS=48)
+        self.assertEqual(phases, ["preflight", "date", "remaining_ui", "remaining_other",
+                                  "offscreen_single", "offscreen_batch", "media3"])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("remaining_other: failing or skipped tests", result.stdout + result.stderr)
         self.assertFalse((root / "quickcut-stage20-evidence/verified-screens-and-tests.json").exists())
 
     def test_stage16_non_png_error_text_does_not_pass_image_integrity_gate(self):

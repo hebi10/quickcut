@@ -5,6 +5,7 @@ Never acknowledge a QuickCut ANR, a generic error, or an unknown popup.
 This runs only in the disposable GitHub Actions emulator, not the app.
 """
 import argparse
+from pathlib import Path
 import re
 import signal
 import subprocess
@@ -19,6 +20,11 @@ PROCESS_TITLES = {
 FOCUS_RE = re.compile(r"(?m)^\s*mCurrentFocus=([^\r\n]*)")
 BOUNDS_RE = re.compile(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]")
 STOP = False
+INSTRUMENTATION_MARKER = Path("quickcut-host-diagnostics/android-instrumentation-running")
+
+
+def instrumentation_active(marker=INSTRUMENTATION_MARKER):
+    return marker.is_file()
 
 
 def focus_has_allowed_anr(dumpsys: str) -> bool:
@@ -71,7 +77,10 @@ def monitor(duration: int, interval: float):
     while not STOP and time.monotonic() < stop_at:
         try:
             focus = command(["adb", "shell", "dumpsys", "window"])
-            if focus_has_allowed_anr(focus):
+            # AndroidJUnitRunner and adb uiautomator must not own UiAutomation
+            # concurrently. A real system ANR during tests still fails tests;
+            # the watchdog may inspect and acknowledge it only afterwards.
+            if focus_has_allowed_anr(focus) and not instrumentation_active():
                 command(["adb", "shell", "uiautomator", "dump",
                          "/sdcard/quickcut-ci-system-error.xml"], timeout=12)
                 xml = command(["adb", "shell", "cat",

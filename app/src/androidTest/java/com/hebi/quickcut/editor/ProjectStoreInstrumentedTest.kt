@@ -1,11 +1,14 @@
 package com.hebi.quickcut.editor
 
+import android.content.Context
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -75,5 +78,56 @@ class ProjectStoreInstrumentedTest {
         assertFalse(projects.list().any { it.id == created.id })
         assertNull(projects.load(created.id))
         assertNull(projects.activeId())
+        verifyCorruptIndexCannotHideOrReplaceExistingProject(context)
+        verifyCorruptNamedProjectCannotBeOverwritten(context)
+    }
+
+    private fun verifyCorruptIndexCannotHideOrReplaceExistingProject(context: Context) {
+        val preferencesName = "quickcut_index_guard_test_" + System.nanoTime()
+        val preferences = context.getSharedPreferences(preferencesName, Context.MODE_PRIVATE)
+        val store = ProjectStore(context, preferencesName)
+        val clip = VideoClip(1L, "content://fixture/index-guard", 3_000L)
+        val snapshot = EditorSessionSnapshot(EditTimeline(listOf(clip)), clip.id, 0L, false)
+        val project = store.save(snapshot, "기록 보호 확인")
+        val originalIndex = checkNotNull(preferences.getString("index", null))
+        try {
+            assertTrue(preferences.edit().putString("index", "{broken").commit())
+            assertThrows(ProjectIndexReadException::class.java) { store.list() }
+            assertThrows(ProjectIndexReadException::class.java) { store.save(snapshot, "덮어쓰기 차단") }
+            assertThrows(ProjectIndexReadException::class.java) { store.delete(project.id) }
+            assertEquals("{broken", preferences.getString("index", null))
+            assertTrue(preferences.edit().putString("index", originalIndex).commit())
+            assertEquals(snapshot, store.load(project.id))
+        } finally {
+            preferences.edit().putString("index", originalIndex).commit()
+            store.delete(project.id)
+            preferences.edit().clear().commit()
+        }
+    }
+
+    private fun verifyCorruptNamedProjectCannotBeOverwritten(context: Context) {
+        val preferencesName = "quickcut_named_guard_test_" + System.nanoTime()
+        val preferences = context.getSharedPreferences(preferencesName, Context.MODE_PRIVATE)
+        val store = ProjectStore(context, preferencesName)
+        val clip = VideoClip(2L, "content://fixture/session-guard", 3_000L)
+        val snapshot = EditorSessionSnapshot(EditTimeline(listOf(clip)), clip.id, 300L, false)
+        val project = store.save(snapshot, "저장 데이터 보호")
+        val projectPrefs = context.getSharedPreferences("quickcut_project_" + project.id, Context.MODE_PRIVATE)
+        val originalRaw = checkNotNull(projectPrefs.getString("session", null))
+        val originalIndex = preferences.getString("index", null)
+        try {
+            assertTrue(projectPrefs.edit().putString("session", "{broken").commit())
+            assertThrows(EditorSessionReadException::class.java) { store.load(project.id) }
+            assertThrows(EditorSessionReadException::class.java) {
+                store.save(snapshot.copy(playPositionMs = 800L), "저장 데이터 보호", project.id)
+            }
+            assertThrows(EditorSessionReadException::class.java) { store.delete(project.id) }
+            assertEquals("{broken", projectPrefs.getString("session", null))
+            assertEquals(originalIndex, preferences.getString("index", null))
+        } finally {
+            projectPrefs.edit().putString("session", originalRaw).commit()
+            store.delete(project.id)
+            preferences.edit().clear().commit()
+        }
     }
 }

@@ -2,6 +2,7 @@
 """Guard against accidentally dismissing app failures or arbitrary dialogs."""
 import importlib.util
 from pathlib import Path
+import tempfile
 import unittest
 
 spec = importlib.util.spec_from_file_location(
@@ -19,6 +20,15 @@ DIALOG = ('<hierarchy><node package="android" resource-id="android:id/alertTitle
 
 
 class SystemAnrGuardTests(unittest.TestCase):
+    def test_instrumentation_marker_suspends_competing_uiautomator_probe(self):
+        with tempfile.TemporaryDirectory() as directory:
+            marker = Path(directory) / "instrumentation-running"
+            self.assertFalse(watchdog.instrumentation_active(marker))
+            marker.touch()
+            self.assertTrue(watchdog.instrumentation_active(marker))
+            marker.unlink()
+            self.assertFalse(watchdog.instrumentation_active(marker))
+
     def test_only_verified_launcher_focus_can_trigger_inspection(self):
         self.assertTrue(watchdog.focus_has_allowed_anr(FOCUS))
         self.assertFalse(watchdog.focus_has_allowed_anr(

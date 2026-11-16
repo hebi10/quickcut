@@ -11,6 +11,8 @@ import androidx.activity.result.ActivityResultRegistryOwner
 import androidx.activity.result.contract.ActivityResultContract
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.DeviceConfigurationOverride
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.FontScale
@@ -71,10 +73,24 @@ class EditorRecoveryUiInstrumentedTest {
     }
 
     @Test fun restoreWithoutReconnectStillOffersRetryAndDismiss() {
-        compose.setContent { QuickCutTheme { RestoreRecoveryDialog("기록을 확인해 주세요.", false, {}, {}, {}) } }
+        var showReset by mutableStateOf(false)
+        var askedToReset = false
+        compose.setContent {
+            QuickCutTheme {
+                RestoreRecoveryDialog("기록을 확인해 주세요.", false, {}, {}, {},
+                    onResetUnreadable = if (showReset) {
+                        { askedToReset = true }
+                    } else null)
+            }
+        }
         compose.onNodeWithText("원본 영상 다시 연결").assertDoesNotExist()
+        compose.onNodeWithText("손상된 편집 기록 삭제").assertDoesNotExist()
         compose.onNodeWithText("다시 시도").assertIsEnabled()
         compose.onNodeWithText("닫기").assertIsEnabled()
+        compose.runOnIdle { showReset = true }
+        compose.onNodeWithText("손상된 편집 기록 삭제").performScrollTo()
+            .assertIsDisplayed().assertIsEnabled().performClick()
+        compose.runOnIdle { assertTrue(askedToReset) }
     }
 
     @Test fun importingCancelIsReachableWithLargeFont() {

@@ -1,6 +1,7 @@
 package com.hebi.quickcut.editor
 
 import android.app.Application
+import android.content.Context
 import android.net.Uri
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -11,6 +12,8 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -32,6 +35,30 @@ class EditorSessionInstrumentedTest {
             assertEquals(1_666_667L, store.load()!!.timeline.clips.single().endUs)
         } finally {
             previous?.let(store::save) ?: store.clear()
+        }
+        verifyUnreadableRecordRequiresExplicitReset(context)
+    }
+
+    private fun verifyUnreadableRecordRequiresExplicitReset(context: Context) {
+        val preferencesName = "quickcut_unreadable_session_test_" + System.nanoTime()
+        val preferences = context.getSharedPreferences(preferencesName, Context.MODE_PRIVATE)
+        val store = EditorSessionStore(context, preferencesName)
+        val clip = VideoClip(3L, "content://fixture/corrupted-session", 2_000L)
+        val snapshot = EditorSessionSnapshot(EditTimeline(listOf(clip)), clip.id, 100L, false)
+        try {
+            assertTrue(preferences.edit().putString("session", "{broken").commit())
+            assertThrows(EditorSessionReadException::class.java) { store.load() }
+            assertThrows(EditorSessionReadException::class.java) { store.save(snapshot) }
+            assertThrows(EditorSessionReadException::class.java) { store.clear() }
+            assertEquals("{broken", preferences.getString("session", null))
+            store.resetUnreadableRecord()
+            assertNull(store.load())
+            store.save(snapshot)
+            assertEquals(snapshot, store.load())
+            assertThrows(IllegalStateException::class.java) { store.resetUnreadableRecord() }
+            assertEquals(snapshot, store.load())
+        } finally {
+            preferences.edit().clear().commit()
         }
     }
 

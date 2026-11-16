@@ -67,6 +67,24 @@ class ExtractionSessionStore(context: Context, fileName: String = "quickcut_extr
         )
     }
 
+    /** Only an interrupted first write has no committed base or backup. */
+    @Synchronized
+    fun hasInterruptedInitialRecord(): Boolean =
+        !target.exists() && !File(target.path + ".bak").exists() &&
+            File(target.path + ".new").exists()
+
+    /** Called only after the user explicitly confirms loss of this draft journal. */
+    @Synchronized
+    fun discardInterruptedInitialRecord() {
+        check(hasInterruptedInitialRecord()) {
+            "기존 구간 저장 기록은 확인 없이 삭제할 수 없습니다."
+        }
+        val incomplete = File(target.path + ".new")
+        if (!incomplete.delete() || incomplete.exists()) {
+            throw IOException("중단된 구간 기록을 정리하지 못했습니다.")
+        }
+    }
+
     @Synchronized
     fun clear() {
         file.delete()

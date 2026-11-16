@@ -160,6 +160,36 @@ class SingleExportRecoveryInstrumentedTest {
         assertNull(journal.load())
         assertTrue(exists(uri))
         assertTrue(source.exists())
+
+        // A corrupt draft must not indefinitely hold an already-verified
+        // published export hostage. The user can still explicitly reset it.
+        val nextUri = createOutput(published = true)
+        journal.save(record(nextUri))
+        val preferences = context.getSharedPreferences("quickcut_editor_session_v1", Context.MODE_PRIVATE)
+        assertTrue(preferences.edit().putString("session", "{broken").commit())
+        try {
+            val recovered = restartedModel()
+            assertEquals(QuickCutPage.COMPLETED, recovered.page)
+            assertEquals(nextUri, recovered.completedUri)
+            assertFalse(recovered.hasUnresolvedExport)
+            assertNull(journal.load())
+            assertTrue(recovered.unreadableSession)
+            assertEquals("{broken", preferences.getString("session", null))
+            withContext(Dispatchers.Main) { recovered.startNew() }
+            assertEquals(QuickCutPage.PICKER, recovered.page)
+            assertTrue(recovered.unreadableSession)
+            assertEquals("{broken", preferences.getString("session", null))
+            withContext(Dispatchers.Main) { recovered.resetUnreadableSession() }
+            assertFalse(recovered.unreadableSession)
+            assertFalse(recovered.hasRestorableSession)
+            assertNull(session.load())
+            assertTrue(exists(nextUri))
+            assertTrue(source.exists())
+        } finally {
+            if (preferences.getString("session", null) == "{broken") {
+                assertTrue(preferences.edit().remove("session").commit())
+            }
+        }
     }
 
     @Test fun invalidPublishedOutputIsRetainedAndBlocksAnotherExport() = runBlocking {

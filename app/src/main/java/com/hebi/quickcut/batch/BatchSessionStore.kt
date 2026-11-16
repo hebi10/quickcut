@@ -78,6 +78,17 @@ class BatchSessionStore internal constructor(
             BatchRunState.valueOf(data.getString("runState")))
     }
 
+    /**
+     * UI draft writes are optional and must never overwrite a newer durable export
+     * record. Check the generation while holding the same lock as the actual write.
+     */
+    @Synchronized
+    fun saveIfCurrent(snapshot: BatchSessionSnapshot, isCurrent: () -> Boolean): Boolean {
+        if (!isCurrent()) return false
+        save(snapshot)
+        return true
+    }
+
     @Synchronized
     fun save(snapshot: BatchSessionSnapshot) {
         if (snapshot.files.isEmpty()) {

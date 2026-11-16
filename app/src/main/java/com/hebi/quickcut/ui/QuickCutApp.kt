@@ -70,6 +70,12 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.hebi.quickcut.QuickCutApplication
+import com.hebi.quickcut.R
+import com.hebi.quickcut.ads.AdDisplayPolicy
+import com.hebi.quickcut.ads.QuickCutAdsConsent
+import com.google.android.gms.ads.MobileAds
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import com.hebi.quickcut.batch.BatchScreen
 import com.hebi.quickcut.batch.BatchViewModel
 import com.hebi.quickcut.segments.ExtractionScreen
@@ -114,6 +120,7 @@ fun QuickCutApp(
         (LocalContext.current.applicationContext as QuickCutApplication).batchModel,
     extractionModel: ExtractionViewModel =
         (LocalContext.current.applicationContext as QuickCutApplication).extractionModel,
+    hasVerifiedAdFreeEntitlement: Boolean = false,
 ) {
     val palette = LocalCutPalette.current
     val context = LocalContext.current
@@ -130,6 +137,9 @@ fun QuickCutApp(
     var showBatch by rememberSaveable { mutableStateOf(false) }
     var showExtraction by rememberSaveable { mutableStateOf(false) }
     var selectedGalleryUris by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
+    val activity = context as? Activity
+    val adsConsent = remember(activity) { activity?.let(::QuickCutAdsConsent) }
+    var mobileAdsInitialized by remember(activity) { mutableStateOf(false) }
     var showProjectSave by rememberSaveable { mutableStateOf(false) }
     var projectName by rememberSaveable { mutableStateOf("") }
 
@@ -163,6 +173,28 @@ fun QuickCutApp(
     LaunchedEffect(selectedSaveDateMode) {
         settings.saveSaveDate(selectedSaveDateMode)
     }
+    LaunchedEffect(adsConsent, onboardingComplete) {
+        if (onboardingComplete) adsConsent?.requestOnLaunch()
+    }
+    LaunchedEffect(adsConsent?.canRequestAds) {
+        if (adsConsent?.adsConfigured == true && adsConsent.canRequestAds &&
+            !mobileAdsInitialized) {
+            try {
+                withContext(Dispatchers.IO) { MobileAds.initialize(context.applicationContext) }
+                mobileAdsInitialized = true
+            } catch (_: Exception) {
+                mobileAdsInitialized = false
+            }
+        }
+    }
+    val showHomeAd = AdDisplayPolicy.showHomeBanner(
+        adsConfigured = adsConsent?.adsConfigured == true,
+        consentAllowsAds = adsConsent?.canRequestAds == true,
+        sdkInitialized = mobileAdsInitialized,
+        isHomeVisible = onboardingComplete && !showBatch && !showExtraction &&
+            selectedGalleryUris.isEmpty() && model.page == QuickCutPage.PICKER,
+        hasVerifiedAdFreeEntitlement = hasVerifiedAdFreeEntitlement,
+    )
     DisposableEffect(model, lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_STOP) model.saveSessionOnStop()
@@ -457,6 +489,9 @@ fun QuickCutApp(
                         )
                     )
                 },
+                showHomeBanner = showHomeAd,
+                privacyOptionsRequired = adsConsent?.privacyOptionsRequired == true,
+                onPrivacyOptionsClick = { adsConsent?.openPrivacyOptions() },
             )
             QuickCutPage.IMPORTING -> ImportingStatus(onCancel = model::cancelImport)
             QuickCutPage.EDITOR -> {
@@ -742,6 +777,9 @@ private fun StartScreen(
     onOpenProject: (String) -> Unit,
     onDeleteProject: (String) -> Unit,
     onGallery: () -> Unit,
+    showHomeBanner: Boolean,
+    privacyOptionsRequired: Boolean,
+    onPrivacyOptionsClick: () -> Unit,
 ) {
     StudioStartScreen(
         onQuick = onQuick, onSelect = onSelect, onBatch = onBatch,
@@ -754,6 +792,9 @@ private fun StartScreen(
         onOpenProject = onOpenProject,
         onDeleteProject = onDeleteProject,
         onGallery = onGallery,
+        showHomeBanner = showHomeBanner,
+        privacyOptionsRequired = privacyOptionsRequired,
+        onPrivacyOptionsClick = onPrivacyOptionsClick,
     )
 }
 

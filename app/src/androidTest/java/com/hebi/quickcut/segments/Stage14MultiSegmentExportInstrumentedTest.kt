@@ -5,11 +5,15 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.hebi.quickcut.media.ExportMode
 import com.hebi.quickcut.media.MediaReader
+import com.hebi.quickcut.media.OutputCleanupException
 import com.hebi.quickcut.media.VideoExporter
 import java.io.File
+import java.io.IOException
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -83,8 +87,46 @@ class Stage14MultiSegmentExportInstrumentedTest {
             )
             store.save(source)
             assertEquals(source, store.load())
+            store.clear()
+            assertNull(store.load())
+
+            val outputUri = Uri.parse("content://media/external/video/media/123")
+            val incompleteCleanup = OutputCleanupException(outputUri, IOException("delete failed"))
+            assertEquals(outputUri.toString(), uncertainCleanupOutputUri(incompleteCleanup))
+            val cancelled = java.util.concurrent.CancellationException("cancel")
+            cancelled.addSuppressed(incompleteCleanup)
+            assertEquals(outputUri.toString(), uncertainCleanupOutputUri(cancelled))
+            assertNull(uncertainCleanupOutputUri(IOException("cleanup succeeded")))
+
+            val interrupted = File(context.filesDir, "stage14_recovery_test.json.new")
+            interrupted.writeText("partial write")
+            assertThrows(IOException::class.java) { store.load() }
+            assertTrue("Uncommitted record must not be silently deleted", interrupted.exists())
+            assertTrue(store.hasInterruptedInitialRecord())
+            store.discardInterruptedInitialRecord()
+            assertFalse(interrupted.exists())
+            assertNull(store.load())
+            assertFalse(store.hasInterruptedInitialRecord())
+            store.save(source)
+            assertThrows(IllegalStateException::class.java) {
+                store.discardInterruptedInitialRecord()
+            }
+            assertEquals(source, store.load())
         } finally {
             store.clear()
+        }
+
+        val directoryName = "stage14_clear_failure_" + System.nanoTime()
+        val directory = File(context.filesDir, directoryName)
+        assertTrue(directory.mkdirs())
+        val keep = File(directory, "unreadable.txt").apply { writeText("keep") }
+        try {
+            assertThrows(IOException::class.java) {
+                ExtractionSessionStore(context, directoryName).clear()
+            }
+            assertTrue(keep.exists())
+        } finally {
+            directory.deleteRecursively()
         }
     }
 }

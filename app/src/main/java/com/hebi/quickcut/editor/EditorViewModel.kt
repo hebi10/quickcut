@@ -85,7 +85,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     fun openProject(context: Context, id: String) {
         if (unreadableSession) {
-            reportError(SESSION_RECORD_PROTECTED)
+            restoreRecoveryNotice = SESSION_RECORD_PROTECTED
             return
         }
         if (page != QuickCutPage.PICKER || isRecoveringExport || hasUnresolvedExport) return
@@ -557,7 +557,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         quickDefaults: QuickTrimSettings? = null,
     ) {
         if (unreadableSession) {
-            reportError(SESSION_RECORD_PROTECTED)
+            restoreRecoveryNotice = SESSION_RECORD_PROTECTED
             return
         }
         if (uris.isEmpty() || page == QuickCutPage.EXPORTING || page == QuickCutPage.IMPORTING ||

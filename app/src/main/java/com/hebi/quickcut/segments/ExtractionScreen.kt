@@ -93,6 +93,7 @@ fun ExtractionScreen(
     val context = LocalContext.current
     val session = model.session
     val selected = model.selected
+    var confirmInterruptedJournalReset by remember { mutableStateOf(false) }
     val player = remember(context) { ExoPlayer.Builder(context.applicationContext).build() }
 
     DisposableEffect(player) { onDispose { player.release() } }
@@ -154,6 +155,14 @@ fun ExtractionScreen(
                         style = MaterialTheme.typography.bodySmall)
                     Button(onClick = onSelectVideo, enabled = !model.importing && !model.blocked) {
                         Text("영상 선택")
+                    }
+                    if (model.canDiscardInterruptedInitialRecord) {
+                        Text("첫 구간 기록 작성이 중단되었습니다. 자동 삭제하지 않고 직접 확인을 받습니다.",
+                            color = palette.secondaryText,
+                            style = MaterialTheme.typography.bodySmall)
+                        OutlinedButton(onClick = { confirmInterruptedJournalReset = true }) {
+                            Text("중단된 구간 기록 정리")
+                        }
                     }
                 }
             }
@@ -258,6 +267,26 @@ fun ExtractionScreen(
             },
             dismissButton = {
                 TextButton(onClick = model::declineReencode) { Text("취소") }
+            },
+            containerColor = palette.panel,
+        )
+    }
+
+    if (confirmInterruptedJournalReset) {
+        AlertDialog(
+            onDismissRequest = { confirmInterruptedJournalReset = false },
+            title = { Text("중단된 구간 기록 정리") },
+            text = { Text("이전 구간 기록의 첫 저장이 중단되어 읽을 수 없습니다. " +
+                "확인되지 않은 편집 구간 정보만 삭제합니다. 원본 영상과 갤러리의 결과물은 삭제하지 않습니다. " +
+                "갤러리에 저장 중이었던 파일이 있다면 직접 확인한 뒤 진행해 주세요.") },
+            confirmButton = {
+                Button(onClick = {
+                    model.discardInterruptedInitialRecord()
+                    confirmInterruptedJournalReset = false
+                }) { Text("기록 정리") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmInterruptedJournalReset = false }) { Text("취소") }
             },
             containerColor = palette.panel,
         )

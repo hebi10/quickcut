@@ -77,6 +77,7 @@ android {
 
     buildFeatures {
         compose = true
+        resValues = true
     }
 
     sourceSets.getByName("main") {

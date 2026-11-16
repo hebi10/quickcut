@@ -406,6 +406,8 @@ class ExtractionViewModel(
         recovering = true
         viewModelScope.launch {
             try {
+                // Recover the missing URI durably before querying or removing its MediaStore row.
+                if (missing != null) persist(candidate)
                 val access = MediaStoreSingleExportAccess(app)
                 val updated = withContext(Dispatchers.IO) {
                     candidate.items.map { item ->

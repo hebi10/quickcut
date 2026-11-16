@@ -38,7 +38,12 @@ class ExtractionSessionStore(context: Context, fileName: String = "quickcut_extr
 
     @Synchronized
     fun load(): ExtractionSession? {
-        if (!target.exists() && !File(target.path + ".bak").exists()) return null
+        if (!target.exists() && !File(target.path + ".bak").exists()) {
+            if (File(target.path + ".new").exists()) {
+                throw IOException("중단된 구간 저장 기록이 있습니다. 기존 기록을 확인하기 전에는 새 저장을 시작하지 않습니다.")
+            }
+            return null
+        }
         val data = file.openRead().bufferedReader(Charsets.UTF_8).use { JSONObject(it.readText()) }
         require(data.getInt("schemaVersion") == 1) { "지원하지 않는 구간 저장 기록입니다." }
         val raw = data.getJSONArray("items")
@@ -65,8 +70,11 @@ class ExtractionSessionStore(context: Context, fileName: String = "quickcut_extr
     @Synchronized
     fun clear() {
         file.delete()
-        File(target.path + ".bak").delete()
-        File(target.path + ".new").delete()
+        val companions = listOf(File(target.path + ".bak"), File(target.path + ".new"))
+        companions.forEach(File::delete)
+        if (target.exists() || companions.any(File::exists)) {
+            throw IOException("이전 구간 기록을 정리하지 못했습니다. 저장 공간과 파일 접근을 확인해 주세요.")
+        }
     }
 
     @Synchronized

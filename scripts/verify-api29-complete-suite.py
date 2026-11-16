@@ -25,7 +25,9 @@ ISOLATED = {
 }
 TOTAL_COUNT = 292
 REST_COUNT = 286
-PHASES = ("date", "remaining", "offscreen_single", "offscreen_batch", "media3")
+REST_PHASES = ("remaining_ui", "remaining_other")
+UI_PACKAGE = "com.hebi.quickcut.ui."
+PHASES = ("date", *REST_PHASES, "offscreen_single", "offscreen_batch", "media3")
 
 
 def verify(directory: Path):
@@ -36,6 +38,7 @@ def verify(directory: Path):
     }:
         raise ValueError("Missing, extra or stale API29 suite XML files")
     covered = set()
+    remaining_count = 0
     for phase in phases:
         file = directory / f"TEST-api29-{phase}.xml"
         document = ET.parse(file).getroot()
@@ -45,7 +48,11 @@ def verify(directory: Path):
         if not suites:
             raise ValueError(f"{phase}: no JUnit testsuite elements")
         cases = list(document.iter("testcase"))
-        expected = len(ISOLATED[phase]) if phase in ISOLATED else REST_COUNT
+        expected = len(ISOLATED[phase]) if phase in ISOLATED else len(cases)
+        if phase in REST_PHASES:
+            if expected <= 0:
+                raise ValueError(f"{phase}: no tests executed")
+            remaining_count += expected
         if len(cases) != expected or int(document.get("tests", "-1")) != expected:
             raise ValueError(f"{phase}: expected {expected} cases, got {len(cases)}")
         if any(int(document.get(key, "-1")) for key in ("errors", "failures", "skipped")):
@@ -72,9 +79,15 @@ def verify(directory: Path):
             covered.add(ident)
         if phase in ISOLATED and found != ISOLATED[phase]:
             raise ValueError(f"{phase}: required original tests were not executed")
-        if phase == "remaining" and any(cls in (DATE, OFFSCREEN, MEDIA3) for cls, _ in found):
-            raise ValueError("remaining: an isolated background/export test was executed twice")
+        if phase in REST_PHASES and any(cls in (DATE, OFFSCREEN, MEDIA3) for cls, _ in found):
+            raise ValueError(f"{phase}: an isolated background/export test was executed twice")
+        if phase == "remaining_ui" and any(not cls.startswith(UI_PACKAGE) for cls, _ in found):
+            raise ValueError("remaining_ui: non-UI test in UI instrumentation")
+        if phase == "remaining_other" and any(cls.startswith(UI_PACKAGE) for cls, _ in found):
+            raise ValueError("remaining_other: UI test in non-UI instrumentation")
         print(f"API29 {phase}: verified {len(found)} passing tests")
+    if remaining_count != REST_COUNT:
+        raise ValueError(f"API29 missing ordinary tests: {remaining_count} of {REST_COUNT}")
     if len(covered) != TOTAL_COUNT:
         raise ValueError(f"API29 coverage missing: {len(covered)} of {TOTAL_COUNT}")
     print(f"All {TOTAL_COUNT} distinct API29 tests passed with no failures, skips or duplicates")

@@ -179,6 +179,12 @@ class SingleExportRecoveryInstrumentedTest {
             assertEquals(QuickCutPage.PICKER, recovered.page)
             assertTrue(recovered.unreadableSession)
             assertEquals("{broken", preferences.getString("session", null))
+            withContext(Dispatchers.Main) {
+                recovered.dismissRestoreNotice()
+                recovered.importVideos(context, listOf(Uri.fromFile(source)))
+            }
+            assertNotNull(recovered.restoreRecoveryNotice)
+            assertEquals("{broken", preferences.getString("session", null))
             withContext(Dispatchers.Main) { recovered.resetUnreadableSession() }
             assertFalse(recovered.unreadableSession)
             assertFalse(recovered.hasRestorableSession)

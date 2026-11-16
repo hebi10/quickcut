@@ -17,7 +17,10 @@ val testBannerUnitId = "ca-app-pub-3940256099942544/9214589741"
 val releaseAdMobAppId = providers.environmentVariable("QUICKCUT_ADMOB_APP_ID").orNull?.trim().orEmpty()
 val releaseBannerUnitId = providers.environmentVariable("QUICKCUT_ADMOB_BANNER_UNIT_ID").orNull?.trim().orEmpty()
 val realAdsConfigured = releaseAdMobAppId.matches(Regex("ca-app-pub-[0-9]{16}~[0-9]{10}")) &&
-    releaseBannerUnitId.matches(Regex("ca-app-pub-[0-9]{16}/[0-9]{10}"))
+    releaseBannerUnitId.matches(Regex("ca-app-pub-[0-9]{16}/[0-9]{10}")) &&
+    releaseAdMobAppId.substringAfter("ca-app-pub-").substringBefore("~") ==
+        releaseBannerUnitId.substringAfter("ca-app-pub-").substringBefore("/") &&
+    !releaseAdMobAppId.startsWith("ca-app-pub-3940256099942544~")
 check((releaseAdMobAppId.isEmpty() && releaseBannerUnitId.isEmpty()) || realAdsConfigured) {
     "QuickCut release ads require both valid AdMob app and banner unit IDs. No partial configuration."
 }

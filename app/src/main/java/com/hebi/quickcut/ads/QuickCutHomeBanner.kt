@@ -13,6 +13,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -73,6 +74,9 @@ internal fun QuickCutHomeBanner() {
                 }
             }
             owner.lifecycle.addObserver(observer)
+            if (owner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+                adView.resume()
+            }
             onDispose {
                 owner.lifecycle.removeObserver(observer)
                 adView.destroy()
@@ -89,10 +93,12 @@ internal fun QuickCutHomeBanner() {
             ) {
                 Text("광고", style = MaterialTheme.typography.labelSmall,
                     color = palette.mutedText)
-                AndroidView(
-                    factory = { adView },
-                    modifier = Modifier.fillMaxWidth().height(adSize.height.dp),
-                )
+                key(adView) {
+                    AndroidView(
+                        factory = { adView },
+                        modifier = Modifier.fillMaxWidth().height(adSize.height.dp),
+                    )
+                }
             }
         }
     }

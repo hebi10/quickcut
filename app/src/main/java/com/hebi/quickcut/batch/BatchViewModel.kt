@@ -635,9 +635,11 @@ class BatchViewModel internal constructor(
                         diagnosticId = fresh.diagnosticId ?: previous.diagnosticId) } ?: previous
                 } + refreshed.values
                 val nextState = if (runState == BatchRunState.FINISHED) BatchRunState.SETUP else runState
-                persistSessionOffMain(journalSnapshot(nextFiles, nextState))
+                // Match the existing UI contract on storage failure: keep imported
+                // rows visible while persistenceFailed blocks export/retry.
                 files = nextFiles
                 runState = nextState
+                persistSessionOffMain()
                 if (newRows.isEmpty()) notification = "이미 선택된 영상입니다."
             } catch (cancelled: CancellationException) {
                 // Cancellation must not be classified as an unreadable source.
@@ -1000,6 +1002,13 @@ class BatchViewModel internal constructor(
         if (journalUnreadable || persistenceFailed || completionJournal.requiresRecovery) { recoveryNotice(); return }
         invalidateReview()
         val tracked = files.filter { it.status != BatchFileStatus.SAVED && it.savedOutputUri != null }
+        // An already-empty journal can reset immediately without I/O. Keep the
+        // former synchronous semantics so a subsequent import isn't lost.
+        if (tracked.isEmpty() && !sessionStore.hasRecord()) {
+            invalidatePassivePersist()
+            resetBatchState()
+            return
+        }
         isImporting = true
         viewModelScope.launch {
             try {
@@ -1025,6 +1034,10 @@ class BatchViewModel internal constructor(
         // are not cleared until the journal removal has succeeded on IO.
         invalidatePassivePersist()
         withContext(Dispatchers.IO) { sessionStore.clear() }
+        resetBatchState()
+    }
+
+    private fun resetBatchState() {
         files = emptyList()
         sourceUrisSavedThisRun = emptyList()
         completedCount = 0

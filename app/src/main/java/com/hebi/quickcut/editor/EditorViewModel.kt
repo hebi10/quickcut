@@ -40,33 +40,61 @@ enum class QuickCutPage {
     PICKER, IMPORTING, EDITOR, EXPORTING, COMPLETED,
 }
 
+private const val PROJECT_INDEX_PROTECTED =
+    "프로젝트 목록을 읽지 못했습니다. 기존 기록은 유지되며 목록 확인 전에는 저장·삭제하지 않습니다."
+private const val SESSION_RECORD_PROTECTED =
+    "이전 편집 기록을 읽지 못했습니다. 기존 데이터를 보호하기 위해 새 편집을 중단했습니다. " +
+        "다시 시도하거나 기록 삭제를 직접 확인해 주세요."
+
 class EditorViewModel(application: Application) : AndroidViewModel(application) {
     private val settings = QuickCutSettings(application)
     private val sessionStore = EditorSessionStore(application)
+    private val initialSessionRead = runCatching { sessionStore.load() }
     private val projectStore = ProjectStore(application)
-    var savedProjects by mutableStateOf(projectStore.list())
+    private val initialProjectList = runCatching { projectStore.list() }
+    var savedProjects by mutableStateOf(initialProjectList.getOrDefault(emptyList()))
         private set
-    var activeProjectId by mutableStateOf(projectStore.activeId())
+    var activeProjectId by mutableStateOf(
+        if (initialProjectList.isSuccess) runCatching { projectStore.activeId() }.getOrNull() else null
+    )
         private set
 
-    fun refreshProjects() { savedProjects = projectStore.list() }
+    fun refreshProjects() {
+        runCatching { projectStore.list() }.onSuccess {
+            savedProjects = it
+        }.onFailure {
+            reportError(PROJECT_INDEX_PROTECTED)
+        }
+    }
 
     fun saveCurrentProject(title: String) {
         if (page != QuickCutPage.EDITOR || timeline.isEmpty) return
-        runCatching {
+        val saved = try {
             projectStore.save(snapshotSession(), title, activeProjectId)
-        }.onSuccess {
-            activeProjectId = it.id
-            projectStore.setActiveId(it.id)
-            refreshProjects()
-        }.onFailure {
-            reportError(it.localizedMessage ?: "프로젝트를 저장하지 못했습니다.")
+        } catch (error: Exception) {
+            reportError(error.localizedMessage ?: "프로젝트를 저장하지 못했습니다.")
+            return
+        }
+        activeProjectId = saved.id
+        val selection = runCatching { projectStore.setActiveId(saved.id) }
+        refreshProjects()
+        if (selection.isFailure) {
+            reportError("프로젝트는 저장했지만 마지막 선택 상태를 기록하지 못했습니다.")
         }
     }
 
     fun openProject(context: Context, id: String) {
+        if (unreadableSession) {
+            restoreRecoveryNotice = SESSION_RECORD_PROTECTED
+            return
+        }
         if (page != QuickCutPage.PICKER || isRecoveringExport || hasUnresolvedExport) return
-        val snapshot = projectStore.load(id)
+        val snapshot = try {
+            projectStore.load(id)
+        } catch (error: Exception) {
+            reportError(error.localizedMessage ?: "프로젝트 기록을 읽지 못했습니다. 기존 데이터는 유지됩니다.")
+            return
+        }
         if (snapshot == null) {
             reportError("프로젝트를 불러올 수 없습니다.")
             return
@@ -104,7 +132,11 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     var quickMode by mutableStateOf(false)
         private set
-    var hasRestorableSession by mutableStateOf(sessionStore.load() != null)
+    var unreadableSession by mutableStateOf(initialSessionRead.isFailure)
+        private set
+    var hasRestorableSession by mutableStateOf(
+        initialSessionRead.isFailure || initialSessionRead.getOrNull() != null
+    )
         private set
     var needsReencodeConsent by mutableStateOf(false)
         private set
@@ -116,27 +148,37 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         quickMode = quickMode,
     )
 
+    private fun markSessionWriteFailure(error: Throwable) {
+        if (error is EditorSessionReadException) {
+            unreadableSession = true
+            hasRestorableSession = true
+            restoreRecoveryNotice = SESSION_RECORD_PROTECTED
+        }
+        reportError(error.localizedMessage ?: "편집 내용을 기록하지 못했습니다.")
+    }
+
     private fun saveSessionSoon() {
         sessionSaveJob?.cancel()
-        if (isRecoveringExport || hasUnresolvedExport) return
+        if (isRecoveringExport || hasUnresolvedExport || unreadableSession) return
         if (timeline.isEmpty) {
             runCatching { sessionStore.clear() }.onSuccess { hasRestorableSession = false }
-                .onFailure { reportError("편집 기록을 정리하지 못했습니다. 저장 공간을 확인해 주세요.") }
+                .onFailure(::markSessionWriteFailure)
             return
         }
         val snapshot = snapshotSession()
         sessionSaveJob = viewModelScope.launch {
             delay(300L)
             runCatching { sessionStore.save(snapshot) }.onSuccess { hasRestorableSession = true }
-                .onFailure { reportError("편집 내용을 기록하지 못했습니다. 저장 공간을 확인해 주세요.") }
+                .onFailure(::markSessionWriteFailure)
         }
     }
 
     fun saveSessionOnStop() {
-        if (page != QuickCutPage.EDITOR || timeline.isEmpty || isRecoveringExport || hasUnresolvedExport) return
+        if (page != QuickCutPage.EDITOR || timeline.isEmpty || isRecoveringExport ||
+            hasUnresolvedExport || unreadableSession) return
         sessionSaveJob?.cancel()
         runCatching { sessionStore.save(snapshotSession()) }.onSuccess { hasRestorableSession = true }
-            .onFailure { reportError("편집 내용을 기록하지 못했습니다. 저장 공간을 확인해 주세요.") }
+            .onFailure(::markSessionWriteFailure)
     }
 
     fun changeQuickMode(enabled: Boolean) {
@@ -145,7 +187,9 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         if (page == QuickCutPage.EDITOR) saveSessionSoon()
     }
 
-    var restoreRecoveryNotice by mutableStateOf<String?>(null)
+    var restoreRecoveryNotice by mutableStateOf<String?>(
+        if (unreadableSession) SESSION_RECORD_PROTECTED else null
+    )
         private set
     var hasSourceReconnect by mutableStateOf(false)
         private set
@@ -160,21 +204,51 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
 
     fun restoreSavedSession(context: Context) {
         if (page != QuickCutPage.PICKER || isRecoveringExport || hasUnresolvedExport) return
-        val old = sessionStore.load() ?: run {
+        val old = try {
+            sessionStore.load()
+        } catch (_: EditorSessionReadException) {
+            unreadableSession = true
+            hasRestorableSession = true
+            restoreRecoveryNotice = SESSION_RECORD_PROTECTED
+            return
+        } ?: run {
+            unreadableSession = false
             hasRestorableSession = false
             hasSourceReconnect = false
             reconnectSourceUri = null
             restoreRecoveryNotice = "복원 가능한 편집 내용이 없습니다."
             return
         }
+        unreadableSession = false
         loadSavedSession(context, old)
+    }
+
+    fun resetUnreadableSession() {
+        if (!unreadableSession || page != QuickCutPage.PICKER ||
+            isRecoveringExport || hasUnresolvedExport) return
+        runCatching { sessionStore.resetUnreadableRecord() }.onSuccess {
+            unreadableSession = false
+            hasRestorableSession = false
+            hasSourceReconnect = false
+            reconnectSourceUri = null
+            restoreRecoveryNotice = null
+            // The verified export may have left only in-memory completed state.
+            // Discard it after the user has explicitly confirmed the reset.
+            if (completedUri != null) discardEditing()
+        }.onFailure {
+            restoreRecoveryNotice = "편집 기록을 정리하지 못했습니다. 다시 확인해 주세요. 기존 기록은 유지됩니다."
+        }
     }
 
     fun reconnectSavedSource(context: Context, replacement: Uri) {
         if (page != QuickCutPage.PICKER || isRecoveringExport || hasUnresolvedExport) return
         val source = reconnectSourceUri ?: return
-        val old = activeProjectId?.let { projectStore.load(it) }
-            ?: sessionStore.load() ?: return
+        val old = try {
+            activeProjectId?.let { projectStore.load(it) } ?: sessionStore.load()
+        } catch (error: Exception) {
+            reportError(error.localizedMessage ?: "편집 기록을 읽지 못했습니다.")
+            return
+        } ?: return
         loadSavedSession(context, old, source to replacement)
     }
 
@@ -322,7 +396,9 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         private set
     var exportDiagnostics by mutableStateOf(ExportDiagnostics())
         private set
-    var errorMessage by mutableStateOf<String?>(null)
+    var errorMessage by mutableStateOf<String?>(
+        if (initialProjectList.isFailure) PROJECT_INDEX_PROTECTED else null
+    )
         private set
     var showExitConfirmation by mutableStateOf(false)
         private set
@@ -395,7 +471,10 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
             SingleExportRecoveryResult.NothingToRecover, SingleExportRecoveryResult.RetryAllowed -> {
                 activeExportRecord = null
                 hasUnresolvedExport = false
-                hasRestorableSession = sessionStore.load() != null
+                val sessionRead = runCatching { sessionStore.load() }
+                unreadableSession = sessionRead.isFailure
+                hasRestorableSession = sessionRead.isFailure || sessionRead.getOrNull() != null
+                if (unreadableSession) restoreRecoveryNotice = SESSION_RECORD_PROTECTED
                 if (showSuccessNotice && result == SingleExportRecoveryResult.RetryAllowed) exportRecoveryNotice =
                     "중단된 저장을 정리했습니다. 이전 편집 내용을 복원하거나 확인한 뒤 다시 저장해 주세요. 원본은 그대로 유지됩니다."
             }
@@ -477,6 +556,10 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         append: Boolean = false,
         quickDefaults: QuickTrimSettings? = null,
     ) {
+        if (unreadableSession) {
+            restoreRecoveryNotice = SESSION_RECORD_PROTECTED
+            return
+        }
         if (uris.isEmpty() || page == QuickCutPage.EXPORTING || page == QuickCutPage.IMPORTING ||
             isRecoveringExport || hasUnresolvedExport) return
         val previousPage = if (page == QuickCutPage.EDITOR) QuickCutPage.EDITOR else QuickCutPage.PICKER
@@ -870,8 +953,16 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         // Publication was already verified. Keep the completed URI and recovery
         // handle visible even when recording completion fails.
         try {
-            sessionStore.clear()
-            hasRestorableSession = false
+            try {
+                sessionStore.clear()
+                hasRestorableSession = false
+            } catch (_: EditorSessionReadException) {
+                // This published output is verified; keep the corrupt draft intact
+                // but do not strand the independent export recovery journal.
+                unreadableSession = true
+                hasRestorableSession = true
+                restoreRecoveryNotice = SESSION_RECORD_PROTECTED
+            }
             exportStore.clear()
             activeExportRecord = null
             hasUnresolvedExport = false
@@ -939,6 +1030,13 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
     fun discardEditing() {
         if (isRecoveringExport || hasUnresolvedExport || page == QuickCutPage.EXPORTING) {
             reportError("이전 저장 파일 확인을 먼저 완료해 주세요.")
+            return
+        }
+        if (unreadableSession) {
+            // Never discard a corrupt record implicitly. The picker provides
+            // an explicit confirmation path after a verified export completes.
+            if (page == QuickCutPage.COMPLETED) page = QuickCutPage.PICKER
+            restoreRecoveryNotice = SESSION_RECORD_PROTECTED
             return
         }
         cancelImport()

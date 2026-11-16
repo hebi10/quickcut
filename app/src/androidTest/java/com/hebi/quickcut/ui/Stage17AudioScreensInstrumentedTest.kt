@@ -72,7 +72,9 @@ class Stage17AudioScreensInstrumentedTest {
             clip = clip.copy(id = 2L, audio = AudioAdjustment(45, 1_000, 1_000))
         }
         compose.waitForIdle()
-        compose.onNodeWithText("원본 음량 · 45%").performScrollTo().assertIsDisplayed()
+        // On API 29 the remeasured scroll position can settle one frame after
+        // the clip ID changes. Require the actual updated value to become visible.
+        assertTextVisibleAfterScroll("원본 음량 · 45%")
         compose.onNodeWithTag("ui05a-audio-summary").performScrollTo().assertIsDisplayed()
         assertTextVisibleAfterScroll("페이드 인 · 00:01.0")
         compose.onNodeWithTag("audio-fade-in").assertIsEnabled()

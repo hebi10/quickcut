@@ -118,6 +118,13 @@ class BatchSessionStoreInstrumentedTest {
         try {
             val previous = snapshot("content://media/external/video/media/123")
             store.save(previous)
+            val stale = snapshot("content://media/external/video/media/987")
+            assertFalse("Stale UI draft must not replace the verified journal",
+                store.saveIfCurrent(stale) { false })
+            assertEquals(previous, store.load())
+            assertTrue(store.saveIfCurrent(stale) { true })
+            assertEquals(stale, store.load())
+            store.save(previous)
             File(base.path + ".new").writeText("{incomplete")
             assertEquals(previous, store.load())
         } finally { store.clear() }

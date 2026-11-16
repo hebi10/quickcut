@@ -15,16 +15,25 @@ data class SavedProject(
     val thumbnailTimeMs: Long,
 )
 
+/** Preserve the index verbatim if its contents cannot be read safely. */
+class ProjectIndexReadException(cause: Throwable) : IOException(
+    "프로젝트 목록을 읽지 못했습니다. 기존 프로젝트를 보호하기 위해 저장·삭제를 중단했습니다.", cause,
+)
+
 /** Separate durable snapshot per project; never overwrites the crash-recovery session. */
-class ProjectStore(context: Context) {
+class ProjectStore(context: Context, preferencesName: String = "quickcut_named_projects_v1") {
     private val appContext = context.applicationContext
     private val preferences = appContext.getSharedPreferences(
-        "quickcut_named_projects_v1", Context.MODE_PRIVATE,
+        preferencesName, Context.MODE_PRIVATE,
     )
 
-    fun list(): List<SavedProject> = runCatching {
-        val array = JSONArray(preferences.getString("index", "[]"))
-        (0 until array.length()).map { i ->
+    fun list(): List<SavedProject> = try {
+        val raw = preferences.getString("index", null)
+        if (raw == null && preferences.contains("index")) {
+            throw IOException("프로젝트 목록 값이 유효하지 않습니다.")
+        }
+        val array = JSONArray(raw ?: "[]")
+        val items = (0 until array.length()).map { i ->
             val row = array.getJSONObject(i)
             SavedProject(
                 id = row.getString("id"),
@@ -34,8 +43,12 @@ class ProjectStore(context: Context) {
                 thumbnailUri = row.getString("thumbnailUri"),
                 thumbnailTimeMs = row.optLong("thumbnailTimeMs", 0L),
             )
-        }.sortedByDescending { it.modifiedAt }
-    }.getOrDefault(emptyList())
+        }
+        require(items.map { it.id }.distinct().size == items.size) { "중복된 프로젝트 ID입니다." }
+        items.sortedByDescending { it.modifiedAt }
+    } catch (error: Exception) {
+        throw ProjectIndexReadException(error)
+    }
 
     fun activeId(): String? =
         preferences.getString("activeId", null)?.takeIf { id -> list().any { it.id == id } }
@@ -80,9 +93,11 @@ class ProjectStore(context: Context) {
     fun delete(id: String) {
         val items = list()
         if (items.none { it.id == id }) return
+        val savedSession = EditorSessionStore(appContext, preferenceKey(id))
+        savedSession.load()
         writeIndex(items.filterNot { it.id == id })
         if (preferences.getString("activeId", null) == id) setActiveId(null)
-        runCatching { EditorSessionStore(appContext, preferenceKey(id)).clear() }
+        runCatching { savedSession.clear() }
     }
 
     private fun preferenceKey(id: String): String {

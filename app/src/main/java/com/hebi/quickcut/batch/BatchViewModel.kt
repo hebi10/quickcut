@@ -31,7 +31,10 @@ import com.hebi.quickcut.media.exportFailureMessage
 import com.hebi.quickcut.settings.QuickCutSettings
 import com.hebi.quickcut.settings.BatchDraftSettings
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Dispatchers
@@ -98,6 +101,8 @@ class BatchViewModel internal constructor(
     internal var reviewGeneration by mutableLongStateOf(0L)
         private set
     private var pendingReview: ExportReview? = null
+    private val journalGeneration = AtomicLong(0L)
+    private var passivePersistJob: Job? = null
 
     private data class ReviewState(
         val name: String,
@@ -405,12 +410,15 @@ class BatchViewModel internal constructor(
             try {
                 files = withContext(Dispatchers.IO) { restored.files.map { recoverFile(application, it) } }
                 completedCount = files.count { it.status != BatchFileStatus.WAITING && it.status != BatchFileStatus.RUNNING }
-                persistSession()
+                persistSessionOffMain()
                 notification = "이전 일괄 작업을 복구했습니다. 완료 파일은 유지되며 남은 작업은 설정을 확인한 뒤 다시 시작해 주세요. 복구된 이전 출력의 원본은 처리하지 않습니다."
             } catch (error: Exception) {
                 notification = "이전 작업 확인에 실패했습니다. " + (error.localizedMessage ?: "파일을 다시 선택해 주세요.")
             } finally {
                 isRecovering = false
+                // A settings change during the recovery I/O was intentionally
+                // deferred; now persist the latest draft rather than a stale copy.
+                schedulePassivePersist()
             }
         }
         viewModelScope.launch {
@@ -425,14 +433,13 @@ class BatchViewModel internal constructor(
                 )
             }.distinctUntilChanged().collect {
                 settings.saveBatch(it)
-                if (!isRunning && !isRecovering && !journalUnreadable && !persistenceFailed) runCatching { persistSession() }
-                    .onFailure { notification = "작업 목록을 기록하지 못했습니다. 저장 공간을 확인해 주세요." }
+                schedulePassivePersist()
             }
         }
         viewModelScope.launch {
             snapshotFlow { saveDateMode }.distinctUntilChanged().collect {
                 settings.saveSaveDate(it)
-                if (!isRunning && !isRecovering && !journalUnreadable && !persistenceFailed) runCatching { persistSession() }
+                schedulePassivePersist()
             }
         }
     }
@@ -620,7 +627,7 @@ class BatchViewModel internal constructor(
                         }
                 }
                 val refreshed = newRows.associateBy { it.uri }.toMutableMap()
-                files = files.map { previous ->
+                val nextFiles = files.map { previous ->
                     refreshed.remove(previous.uri)?.let { fresh -> fresh.copy(
                         status = if (previous.hasUnresolvedOutput()) BatchFileStatus.SKIPPED else fresh.status,
                         reason = if (previous.hasUnresolvedOutput()) previous.reason else fresh.reason,
@@ -630,8 +637,12 @@ class BatchViewModel internal constructor(
                         outputExpectedDateMs = previous.outputExpectedDateMs,
                         diagnosticId = fresh.diagnosticId ?: previous.diagnosticId) } ?: previous
                 } + refreshed.values
-                persistSession()
-                if (runState == BatchRunState.FINISHED) runState = BatchRunState.SETUP
+                val nextState = if (runState == BatchRunState.FINISHED) BatchRunState.SETUP else runState
+                // Match the existing UI contract on storage failure: keep imported
+                // rows visible while persistenceFailed blocks export/retry.
+                files = nextFiles
+                runState = nextState
+                persistSessionOffMain()
                 if (newRows.isEmpty()) notification = "이미 선택된 영상입니다."
             } catch (cancelled: CancellationException) {
                 // Cancellation must not be classified as an unreadable source.
@@ -645,6 +656,9 @@ class BatchViewModel internal constructor(
                 notification = MediaOperationDiagnostics.message(ExportStage.IMPORTING, error)
             } finally {
                 isImporting = false
+                // Settings remain editable while an import commits on IO.
+                // Flush the latest values once the durable row update finishes.
+                schedulePassivePersist()
             }
         }
     }
@@ -664,14 +678,16 @@ class BatchViewModel internal constructor(
                     }
                 }
                 val remaining = files.filterNot { it.uri == uri }
-                sessionStore.save(BatchSessionSnapshot(remaining, previewTemplate() ?: activeTemplate,
-                    saveDateMode, BatchRunState.SETUP))
+                persistSessionOffMain(journalSnapshot(remaining, BatchRunState.SETUP))
                 files = remaining
                 runState = BatchRunState.SETUP
                 completedCount = files.count { it.status != BatchFileStatus.WAITING && it.status != BatchFileStatus.RUNNING }
             } catch (error: Exception) {
                 notification = "선택 영상을 제거하지 못했습니다. " + (error.localizedMessage ?: "저장 공간을 확인해 주세요.")
-            } finally { isImporting = false }
+            } finally {
+                isImporting = false
+                schedulePassivePersist()
+            }
         }
     }
 
@@ -995,29 +1011,42 @@ class BatchViewModel internal constructor(
         if (journalUnreadable || persistenceFailed || completionJournal.requiresRecovery) { recoveryNotice(); return }
         invalidateReview()
         val tracked = files.filter { it.status != BatchFileStatus.SAVED && it.savedOutputUri != null }
-        if (tracked.isEmpty()) {
-            runCatching { clearBatch() }.onFailure {
-                notification = "이전 작업 기록을 정리하지 못했습니다. 저장 공간을 확인한 뒤 다시 시도해 주세요."
-            }
+        // An already-empty journal can reset immediately without I/O. Keep the
+        // former synchronous semantics so a subsequent import isn't lost.
+        if (tracked.isEmpty() && !sessionStore.hasRecord()) {
+            invalidatePassivePersist()
+            resetBatchState()
             return
         }
         isImporting = true
         viewModelScope.launch {
             try {
-                val checked = withContext(Dispatchers.IO) { tracked.map { recoverFile(getApplication(), it) } }
-                check(checked.none { it.savedOutputUri != null && it.status != BatchFileStatus.SAVED }) {
-                    "미완성 출력 파일을 정리하지 못했습니다. 파일 접근을 확인하고 다시 시도해 주세요."
+                if (tracked.isNotEmpty()) {
+                    val checked = withContext(Dispatchers.IO) {
+                        tracked.map { recoverFile(getApplication(), it) }
+                    }
+                    check(checked.none { it.savedOutputUri != null && it.status != BatchFileStatus.SAVED }) {
+                        "미완성 출력 파일을 정리하지 못했습니다. 파일 접근을 확인하고 다시 시도해 주세요."
+                    }
                 }
                 clearBatch()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (error: Exception) {
                 notification = error.localizedMessage ?: "이전 작업을 정리하지 못했습니다."
             } finally { isImporting = false }
         }
     }
 
-    private fun clearBatch() {
-        // Do not discard the in-memory retry handles if clearing the journal fails.
-        sessionStore.clear()
+    private suspend fun clearBatch() = withContext(NonCancellable) {
+        // Keep the cleanup atomic from the UI's point of view; in-memory handles
+        // are not cleared until the journal removal has succeeded on IO.
+        invalidatePassivePersist()
+        withContext(Dispatchers.IO) { sessionStore.clear() }
+        resetBatchState()
+    }
+
+    private fun resetBatchState() {
         files = emptyList()
         sourceUrisSavedThisRun = emptyList()
         completedCount = 0
@@ -1027,12 +1056,65 @@ class BatchViewModel internal constructor(
         notification = null
     }
 
+    private fun journalSnapshot(
+        rows: List<BatchFile> = files,
+        state: BatchRunState = runState,
+    ) = BatchSessionSnapshot(
+        rows,
+        if (isRunning) activeTemplate else previewTemplate() ?: activeTemplate,
+        if (isRunning) activeDateMode else saveDateMode,
+        state,
+    )
+
+    private fun invalidatePassivePersist() {
+        journalGeneration.incrementAndGet()
+        passivePersistJob?.cancel()
+    }
+
+    private fun schedulePassivePersist() {
+        if (isRunning || isRecovering || isImporting || journalUnreadable ||
+            persistenceFailed || completionJournal.requiresRecovery) return
+        val generation = journalGeneration.incrementAndGet()
+        passivePersistJob?.cancel()
+        val snapshot = journalSnapshot()
+        passivePersistJob = viewModelScope.launch {
+            delay(250L)
+            try {
+                val saved = withContext(Dispatchers.IO) {
+                    sessionStore.saveIfCurrent(snapshot) { journalGeneration.get() == generation }
+                }
+                if (saved && journalGeneration.get() == generation) persistenceFailed = false
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                if (journalGeneration.get() == generation) {
+                    persistenceFailed = true
+                    notification = "작업 목록을 기록하지 못했습니다. 저장 공간을 확인해 주세요."
+                }
+            }
+        }
+    }
+
+    private suspend fun persistSessionOffMain(snapshot: BatchSessionSnapshot = journalSnapshot()) {
+        check(!journalUnreadable) { "이전 일괄 작업 기록을 읽을 수 없습니다." }
+        invalidatePassivePersist()
+        try {
+            withContext(Dispatchers.IO) { sessionStore.save(snapshot) }
+            persistenceFailed = false
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            persistenceFailed = true
+            throw error
+        }
+    }
+
+    /** Output-URI and completion records still commit synchronously before publication. */
     private fun persistSession() {
         check(!journalUnreadable) { "이전 일괄 작업 기록을 읽을 수 없습니다." }
+        invalidatePassivePersist()
         try {
-            sessionStore.save(BatchSessionSnapshot(files,
-                if (isRunning) activeTemplate else previewTemplate() ?: activeTemplate,
-                if (isRunning) activeDateMode else saveDateMode, runState))
+            sessionStore.save(journalSnapshot())
             persistenceFailed = false
         } catch (error: Exception) {
             persistenceFailed = true
@@ -1059,7 +1141,7 @@ class BatchViewModel internal constructor(
                     journalUnreadable = false
                 }
                 files = withContext(Dispatchers.IO) { files.map { recoverFile(getApplication(), it) } }
-                persistSession()
+                persistSessionOffMain()
                 if (completionJournal.requiresRecovery && files.none { it.hasUnresolvedOutput() }) {
                     // Recovery never retroactively grants deletion consent to outputs
                     // from the interrupted run, including earlier successful rows.

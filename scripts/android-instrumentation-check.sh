@@ -55,11 +55,15 @@ rm -rf "$RESULTS" "$REPORTS" quickcut-main10-full
 # crashes, arbitrary popups, or a failed instrumented test.
 if [[ "${QUICKCUT_EMULATOR_API:-}" == "35" ]]; then
   mkdir -p quickcut-host-diagnostics
+  # A concurrent uiautomator dump can register another UiAutomationService
+  # while AndroidJUnitRunner owns it, causing widespread false test failures.
+  : > quickcut-host-diagnostics/android-instrumentation-running
   python3 -u "$SCRIPT_DIR/android-system-anr-watchdog.py" \
     --max-seconds 3600 --poll-seconds 2 \
     > quickcut-host-diagnostics/system-anr-watchdog.log 2>&1 &
   system_anr_watchdog_pid=$!
   stop_system_anr_watchdog() {
+    rm -f quickcut-host-diagnostics/android-instrumentation-running
     if kill -0 "$system_anr_watchdog_pid" 2>/dev/null; then
       kill "$system_anr_watchdog_pid" 2>/dev/null || true
       wait "$system_anr_watchdog_pid" || true
@@ -77,13 +81,15 @@ if [[ "${QUICKCUT_EMULATOR_API:-}" == 29 ]]; then
   mkdir -p "$phase_dir" quickcut-host-diagnostics
 
   run_api29_phase() {
-    local phase="$1" selector="$2" budget="$3"
+    local phase="$1" budget="$2"
+    shift 2
+    local selectors=("$@")
     local phase_status
     local xmls=()
     rm -rf "$RESULTS" "$REPORTS"
     run_checked "API29 full-suite phase $phase" timeout --kill-after=30s "$budget" gradle --no-daemon \
       -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true :app:connectedDebugAndroidTest \
-      "$selector"
+      "${selectors[@]}"
     phase_status="$last_status"
     if [[ "$phase_status" -ne 0 ]]; then
       timeout --kill-after=2s 15s adb logcat -d -v threadtime \
@@ -105,20 +111,25 @@ if [[ "${QUICKCUT_EMULATOR_API:-}" == 29 ]]; then
   # Execute every original test exactly once, but isolate the two high-risk
   # methods in separate instrumentation processes after the 286 regular tests.
   # Keep the existing Media3 screen-off stress process last.
-  run_api29_phase date \
-    "-Pandroid.testInstrumentationRunnerArguments.class=com.hebi.quickcut.media.BatchDateExportInstrumentedTest" 10m
-  run_api29_phase remaining \
-    "-Pandroid.testInstrumentationRunnerArguments.notClass=com.hebi.quickcut.media.BatchDateExportInstrumentedTest,com.hebi.quickcut.export.BackgroundExportInstrumentedTest,com.hebi.quickcut.export.BackgroundMedia3ExportInstrumentedTest" 25m
-  run_api29_phase offscreen_single \
-    "-Pandroid.testInstrumentationRunnerArguments.class=com.hebi.quickcut.export.BackgroundExportInstrumentedTest#actualExportFinishesOffscreenAndItsResultSurvivesActivityRecreation" 10m
-  run_api29_phase offscreen_batch \
-    "-Pandroid.testInstrumentationRunnerArguments.class=com.hebi.quickcut.export.BackgroundExportInstrumentedTest#batchContinuesToTheSecondFileAndPublishesBothWhileScreenIsOff" 10m
-  run_api29_phase media3 \
-    "-Pandroid.testInstrumentationRunnerArguments.class=com.hebi.quickcut.export.BackgroundMedia3ExportInstrumentedTest" 15m
+  api29_exclusions="-Pandroid.testInstrumentationRunnerArguments.notClass=com.hebi.quickcut.media.BatchDateExportInstrumentedTest,com.hebi.quickcut.export.BackgroundExportInstrumentedTest,com.hebi.quickcut.export.BackgroundMedia3ExportInstrumentedTest"
+  run_api29_phase date 10m \
+    "-Pandroid.testInstrumentationRunnerArguments.class=com.hebi.quickcut.media.BatchDateExportInstrumentedTest"
+  # Split the 286-case instrumentation process that repeatedly lost adb after
+  # finishing its last test. Both groups still require exact unique-case coverage.
+  run_api29_phase remaining_ui 15m "$api29_exclusions" \
+    "-Pandroid.testInstrumentationRunnerArguments.package=com.hebi.quickcut.ui"
+  run_api29_phase remaining_other 20m "$api29_exclusions" \
+    "-Pandroid.testInstrumentationRunnerArguments.notPackage=com.hebi.quickcut.ui"
+  run_api29_phase offscreen_single 10m \
+    "-Pandroid.testInstrumentationRunnerArguments.class=com.hebi.quickcut.export.BackgroundExportInstrumentedTest#actualExportFinishesOffscreenAndItsResultSurvivesActivityRecreation"
+  run_api29_phase offscreen_batch 10m \
+    "-Pandroid.testInstrumentationRunnerArguments.class=com.hebi.quickcut.export.BackgroundExportInstrumentedTest#batchContinuesToTheSecondFileAndPublishesBothWhileScreenIsOff"
+  run_api29_phase media3 15m \
+    "-Pandroid.testInstrumentationRunnerArguments.class=com.hebi.quickcut.export.BackgroundMedia3ExportInstrumentedTest"
 
   rm -rf "$RESULTS"
   mkdir -p "$RESULTS/debug"
-  for phase in date remaining offscreen_single offscreen_batch media3; do
+  for phase in date remaining_ui remaining_other offscreen_single offscreen_batch media3; do
     if [[ -f "$phase_dir/TEST-api29-$phase.xml" ]]; then
       run_checked "Restore API29 $phase XML" \
         cp -- "$phase_dir/TEST-api29-$phase.xml" "$RESULTS/debug/"
@@ -129,6 +140,9 @@ if [[ "${QUICKCUT_EMULATOR_API:-}" == 29 ]]; then
 else
   run_checked "Full instrumentation suite" timeout --kill-after=30s 20m gradle --no-daemon \
     -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true :app:connectedDebugAndroidTest
+  if [[ "${QUICKCUT_EMULATOR_API:-}" == "35" ]]; then
+    rm -f quickcut-host-diagnostics/android-instrumentation-running
+  fi
 fi
 run_checked "Pull full-suite Main10 evidence" timeout --kill-after=2s 10s adb pull /data/local/tmp/quickcut-main10 quickcut-main10-full
 run_checked "Verify full-suite Main10 evidence" python3 "$SCRIPT_DIR/verify-android-main10.py" quickcut-main10-full

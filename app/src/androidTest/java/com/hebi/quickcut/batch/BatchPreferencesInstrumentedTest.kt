@@ -71,6 +71,25 @@ class BatchPreferencesInstrumentedTest {
             assertEquals("3", model.draftLeadingSeconds)
             assertEquals(listOf(selected), TemplateStore(context).load())
         }
+
+        // A settings change during import I/O must eventually reach the
+        // journal, not only the separate preference store.
+        val source = File(context.filesDir, "batch_settings_import.mp4")
+        InstrumentationRegistry.getInstrumentation().context.assets.open("quickcut_keyframes.mp4")
+            .use { input -> source.outputStream().use { input.copyTo(it) } }
+        try {
+            compose.runOnIdle {
+                model.addVideos(application, listOf(Uri.fromFile(source)))
+                model.draftLeadingSeconds = "4"
+            }
+            compose.waitUntil(30_000L) { !model.isImporting && model.files.isNotEmpty() }
+            compose.waitUntil(15_000L) {
+                BatchSessionStore(application).load()?.template?.leadingMs == 4_000L
+            }
+            assertEquals(4_000L, BatchSessionStore(application).load()!!.template!!.leadingMs)
+        } finally {
+            source.delete()
+        }
     }
 
     @After fun tearDown() = runBlocking {

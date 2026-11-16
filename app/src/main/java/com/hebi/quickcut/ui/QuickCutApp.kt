@@ -192,7 +192,10 @@ fun QuickCutApp(
         consentAllowsAds = adsConsent?.canRequestAds == true,
         sdkInitialized = mobileAdsInitialized,
         isHomeVisible = onboardingComplete && !showBatch && !showExtraction &&
-            selectedGalleryUris.isEmpty() && model.page == QuickCutPage.PICKER,
+            selectedGalleryUris.isEmpty() && model.page == QuickCutPage.PICKER &&
+            !model.isRecoveringExport && !model.hasUnresolvedExport &&
+            (model.exportRecoveryNotice == null || model.exportRecoveryNotice == dismissedRecoveryNotice) &&
+            model.restoreRecoveryNotice == null,
         hasVerifiedAdFreeEntitlement = hasVerifiedAdFreeEntitlement,
     )
     DisposableEffect(model, lifecycleOwner) {

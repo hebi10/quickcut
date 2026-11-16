@@ -55,11 +55,15 @@ rm -rf "$RESULTS" "$REPORTS" quickcut-main10-full
 # crashes, arbitrary popups, or a failed instrumented test.
 if [[ "${QUICKCUT_EMULATOR_API:-}" == "35" ]]; then
   mkdir -p quickcut-host-diagnostics
+  # A concurrent uiautomator dump can register another UiAutomationService
+  # while AndroidJUnitRunner owns it, causing widespread false test failures.
+  : > quickcut-host-diagnostics/android-instrumentation-running
   python3 -u "$SCRIPT_DIR/android-system-anr-watchdog.py" \
     --max-seconds 3600 --poll-seconds 2 \
     > quickcut-host-diagnostics/system-anr-watchdog.log 2>&1 &
   system_anr_watchdog_pid=$!
   stop_system_anr_watchdog() {
+    rm -f quickcut-host-diagnostics/android-instrumentation-running
     if kill -0 "$system_anr_watchdog_pid" 2>/dev/null; then
       kill "$system_anr_watchdog_pid" 2>/dev/null || true
       wait "$system_anr_watchdog_pid" || true
@@ -136,6 +140,9 @@ if [[ "${QUICKCUT_EMULATOR_API:-}" == 29 ]]; then
 else
   run_checked "Full instrumentation suite" timeout --kill-after=30s 20m gradle --no-daemon \
     -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true :app:connectedDebugAndroidTest
+  if [[ "${QUICKCUT_EMULATOR_API:-}" == "35" ]]; then
+    rm -f quickcut-host-diagnostics/android-instrumentation-running
+  fi
 fi
 run_checked "Pull full-suite Main10 evidence" timeout --kill-after=2s 10s adb pull /data/local/tmp/quickcut-main10 quickcut-main10-full
 run_checked "Verify full-suite Main10 evidence" python3 "$SCRIPT_DIR/verify-android-main10.py" quickcut-main10-full

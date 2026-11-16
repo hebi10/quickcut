@@ -73,8 +73,23 @@ class EditorRecoveryUiInstrumentedTest {
     @Test fun restoreWithoutReconnectStillOffersRetryAndDismiss() {
         compose.setContent { QuickCutTheme { RestoreRecoveryDialog("기록을 확인해 주세요.", false, {}, {}, {}) } }
         compose.onNodeWithText("원본 영상 다시 연결").assertDoesNotExist()
+        compose.onNodeWithText("손상된 편집 기록 삭제").assertDoesNotExist()
         compose.onNodeWithText("다시 시도").assertIsEnabled()
         compose.onNodeWithText("닫기").assertIsEnabled()
+        verifyCorruptResetChoiceInExistingDialog()
+    }
+
+    private fun verifyCorruptResetChoiceInExistingDialog() {
+        var askedToReset = false
+        compose.setContent {
+            QuickCutTheme {
+                RestoreRecoveryDialog("읽을 수 없는 편집 기록입니다.", false, {}, {}, {},
+                    onResetUnreadable = { askedToReset = true })
+            }
+        }
+        compose.onNodeWithText("손상된 편집 기록 삭제").performScrollTo()
+            .assertIsDisplayed().assertIsEnabled().performClick()
+        compose.runOnIdle { assertTrue(askedToReset) }
     }
 
     @Test fun importingCancelIsReachableWithLargeFont() {

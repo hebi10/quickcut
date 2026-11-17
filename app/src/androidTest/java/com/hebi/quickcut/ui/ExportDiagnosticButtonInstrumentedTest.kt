@@ -1,5 +1,8 @@
 package com.hebi.quickcut.ui
 
+import android.content.ActivityNotFoundException
+import android.content.ContextWrapper
+import android.content.Intent
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -10,6 +13,10 @@ import androidx.compose.ui.test.performScrollTo
 import com.hebi.quickcut.editor.EditTimeline
 import com.hebi.quickcut.media.ExportDiagnosticHistory
 import com.hebi.quickcut.media.ExportDiagnosticStore
+import com.hebi.quickcut.media.ExportErrorMailComposer
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 
@@ -30,6 +37,10 @@ class ExportDiagnosticButtonInstrumentedTest {
         compose.onNodeWithText("작업 ${failed.operationId.take(8)}", substring = true)
             .performScrollTo().performClick()
         compose.onNodeWithText("작업 ID: ${failed.operationId}", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("오류 제보").performClick()
+        compose.onNodeWithText("오류 제보 내용 확인").assertIsDisplayed()
+        compose.onNodeWithText("메일 앱 열기").assertIsDisplayed()
+        compose.onNodeWithText("취소").performClick()
         compose.onNodeWithText("진단 복사").performClick()
         compose.onNodeWithText("복사됨").assertIsDisplayed()
     }
@@ -43,5 +54,20 @@ class ExportDiagnosticButtonInstrumentedTest {
         compose.onNodeWithText("작업 진단").performClick()
         compose.onNodeWithText("저장 작업 진단").assertIsDisplayed()
         compose.onNodeWithText("작업 ID: ${failed.operationId}", substring = true).assertIsDisplayed()
+        val record = checkNotNull(ExportDiagnosticStore.record(context, failed.operationId))
+        val mail = checkNotNull(ExportErrorMailComposer.forFailure(record))
+        var captured: Intent? = null
+        val fakeMailApp = object : ContextWrapper(context) {
+            override fun startActivity(intent: Intent) { captured = intent }
+        }
+        assertTrue(openErrorReportMail(fakeMailApp, mail))
+        assertEquals(Intent.ACTION_SENDTO, captured?.action)
+        assertEquals("mailto", captured?.data?.scheme)
+        assertEquals(mail.subject, captured?.getStringExtra(Intent.EXTRA_SUBJECT))
+        assertEquals(mail.body, captured?.getStringExtra(Intent.EXTRA_TEXT))
+        val noMailApp = object : ContextWrapper(context) {
+            override fun startActivity(intent: Intent) { throw ActivityNotFoundException() }
+        }
+        assertFalse(openErrorReportMail(noMailApp, mail))
     }
 }

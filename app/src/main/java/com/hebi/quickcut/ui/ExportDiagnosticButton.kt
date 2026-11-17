@@ -1,10 +1,14 @@
 package com.hebi.quickcut.ui
 
+import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.rememberScrollState
@@ -26,6 +30,9 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.hebi.quickcut.media.ExportDiagnosticHistory
+import com.hebi.quickcut.media.ExportDiagnosticStatus
+import com.hebi.quickcut.media.ExportErrorMail
+import com.hebi.quickcut.media.ExportErrorMailComposer
 import com.hebi.quickcut.media.ExportDiagnosticRecord
 import com.hebi.quickcut.media.ExportDiagnosticStore
 
@@ -37,16 +44,20 @@ internal fun ExportDiagnosticButton(operationId: String? = null, label: String =
     var selected by remember { mutableStateOf<ExportDiagnosticRecord?>(null) }
     var missing by remember { mutableStateOf(false) }
     var copied by remember { mutableStateOf(false) }
+    var mailPreview by remember { mutableStateOf<ExportErrorMail?>(null) }
+    var mailUnavailable by remember { mutableStateOf(false) }
     TextButton(onClick = {
         val loaded = ExportDiagnosticStore.history(context)
         history = loaded
         selected = operationId?.let(loaded::record)
         missing = operationId != null && selected == null
         copied = false
+        mailPreview = null
+        mailUnavailable = false
     }, shape = CutShape, modifier = Modifier.heightIn(min = 48.dp)) { Text(label) }
     history?.let { records ->
         AlertDialog(
-            onDismissRequest = { history = null },
+            onDismissRequest = { history = null; mailPreview = null },
             title = { QuickCutDialogHeading(if (selected == null) "편집·저장 진단 기록" else "저장 작업 진단") },
             text = {
                 Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
@@ -83,18 +94,84 @@ internal fun ExportDiagnosticButton(operationId: String? = null, label: String =
             },
             confirmButton = {
                 selected?.let { record ->
-                    TextButton(onClick = {
-                        (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
-                            .setPrimaryClip(ClipData.newPlainText("QuickCut 편집·저장 진단", record.text))
-                        copied = true
-                    }, modifier = Modifier.heightIn(min = 48.dp)) {
-                        Text(if (copied) "복사됨" else "진단 복사")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (record.status == ExportDiagnosticStatus.FAILED) {
+                            TextButton(onClick = {
+                                mailPreview = ExportErrorMailComposer.forFailure(record)
+                                mailUnavailable = false
+                            }, modifier = Modifier.heightIn(min = 48.dp).testTag("error-report-open")) {
+                                Text("오류 제보")
+                            }
+                        }
+                        TextButton(onClick = {
+                            (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
+                                .setPrimaryClip(ClipData.newPlainText("QuickCut 편집·저장 진단", record.text))
+                            copied = true
+                        }, modifier = Modifier.heightIn(min = 48.dp)) {
+                            Text(if (copied) "복사됨" else "진단 복사")
+                        }
                     }
                 }
             },
-            dismissButton = { TextButton(onClick = { history = null }, modifier = Modifier.heightIn(min = 48.dp)) { Text("닫기") } },
+            dismissButton = { TextButton(onClick = { history = null; mailPreview = null },
+                modifier = Modifier.heightIn(min = 48.dp)) { Text("닫기") } },
             containerColor = palette.panel, shape = CutDialogShape,
         )
+    }
+    mailPreview?.let { mail ->
+        AlertDialog(
+            onDismissRequest = { mailPreview = null; mailUnavailable = false },
+            title = { QuickCutDialogHeading("오류 제보 내용 확인") },
+            text = {
+                Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("아래 진단을 이메일 앱으로 전달할 수 있습니다. 이메일은 직접 확인 후 발송합니다.",
+                        style = MaterialTheme.typography.bodySmall, color = palette.secondaryText)
+                    Text("받는 사람: " + mail.recipient)
+                    Text("제목: " + mail.subject)
+                    SelectionContainer { Text(mail.body) }
+                    if (mailUnavailable) {
+                        Text("메일 앱을 열 수 없습니다. 취소한 뒤 진단 복사로 공유해 주세요.",
+                            color = palette.error, style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.testTag("error-report-no-mail-app"))
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (openErrorReportMail(context, mail)) {
+                        mailPreview = null
+                        mailUnavailable = false
+                    } else {
+                        mailUnavailable = true
+                    }
+                }, modifier = Modifier.heightIn(min = 48.dp).testTag("error-report-email-app")) {
+                    Text("메일 앱 열기")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { mailPreview = null; mailUnavailable = false },
+                    modifier = Modifier.heightIn(min = 48.dp)) { Text("취소") }
+            },
+            containerColor = palette.panel, shape = CutDialogShape,
+        )
+    }
+}
+
+internal fun openErrorReportMail(context: Context, mail: ExportErrorMail): Boolean {
+    val intent = Intent(Intent.ACTION_SENDTO).apply {
+        data = Uri.parse("mailto:" + mail.recipient)
+        putExtra(Intent.EXTRA_EMAIL, arrayOf(mail.recipient))
+        putExtra(Intent.EXTRA_SUBJECT, mail.subject)
+        putExtra(Intent.EXTRA_TEXT, mail.body)
+    }
+    return try {
+        context.startActivity(intent)
+        true
+    } catch (_: ActivityNotFoundException) {
+        false
+    } catch (_: SecurityException) {
+        false
     }
 }
 

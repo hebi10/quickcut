@@ -98,6 +98,7 @@ class Stage14ExtractionScreensInstrumentedTest {
             }
         }
         waitForImport()
+        compose.onNodeWithTag("extraction-manual-time-toggle").performScrollTo().performClick()
         compose.onNodeWithText("구간 적용").performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("ui04b-extraction-range-summary").performScrollTo().assertIsDisplayed()
         capture("stage14_extraction_tablet_largefont.png")

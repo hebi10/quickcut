@@ -405,8 +405,7 @@ private fun ExtractionRangeEditor(model: ExtractionViewModel, selected: Extracti
                     }
                 }
             }
-            }
-            if (!valid && showManualInputs) {
+            if (!valid) {
                 Text("0.1초 이상, 원본 길이 이내의 중복되지 않는 구간을 입력해 주세요.",
                     color = palette.error, style = MaterialTheme.typography.bodySmall)
             }
@@ -416,6 +415,7 @@ private fun ExtractionRangeEditor(model: ExtractionViewModel, selected: Extracti
                 enabled = canEdit && valid,
                 modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
             ) { Text("구간 적용") }
+            }
         }
     }
 }

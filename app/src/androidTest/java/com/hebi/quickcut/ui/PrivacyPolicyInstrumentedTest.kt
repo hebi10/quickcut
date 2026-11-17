@@ -9,6 +9,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.test.platform.app.InstrumentationRegistry
+import com.hebi.quickcut.R
 import com.hebi.quickcut.media.SaveDateMode
 import com.hebi.quickcut.settings.QuickTrimSettings
 import org.junit.Assert.assertEquals
@@ -20,7 +21,11 @@ class PrivacyPolicyInstrumentedTest {
 
     @Test fun privacyCanBeReadOfflineAndClosedFromHome() {
         val arguments = InstrumentationRegistry.getArguments()
-        val configuration = compose.activity.resources.configuration
+        val resources = compose.activity.resources
+        val effectiveDate = resources.openRawResource(R.raw.privacy_policy).bufferedReader().useLines { lines ->
+            lines.first { it.startsWith("시행일: ") }
+        }
+        val configuration = resources.configuration
         val expectedWidth = arguments.getString("quickcutExpectedWidthDp")
         val expectedFont = arguments.getString("quickcutExpectedFontScale")
         if (expectedWidth != null || expectedFont != null) {
@@ -45,14 +50,14 @@ class PrivacyPolicyInstrumentedTest {
 
         compose.onNodeWithText("설정").performClick()
         compose.onNodeWithText("개인정보처리방침").performScrollTo().performClick()
-        compose.onNodeWithText("시행일: 2026년 11월 2일", substring = true).assertIsDisplayed()
+        compose.onNodeWithText(effectiveDate, substring = true).assertIsDisplayed()
         compose.onNodeWithText("asdlkj0104@gmail.com", substring = true)
             .performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("https://github.com/hebi10/quickcut/releases", substring = true)
             .performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("닫기").assertIsDisplayed().assertIsEnabled().performClick()
 
-        compose.onNodeWithText("시행일: 2026년 11월 2일", substring = true).assertDoesNotExist()
+        compose.onNodeWithText(effectiveDate, substring = true).assertDoesNotExist()
         compose.onNodeWithText("개인정보처리방침").assertIsDisplayed().assertIsEnabled()
         compose.onNodeWithText("오픈소스 라이선스").performScrollTo().assertIsDisplayed()
     }

@@ -100,6 +100,7 @@ class Stage15ExportQualityScreensInstrumentedTest {
                 }
             }
         }
+        compose.onNodeWithTag("export-quality-toggle").performScrollTo().performClick()
         compose.onNodeWithTag("export-quality-resolution-AUTO").performScrollTo().assertIsSelected()
         compose.onNodeWithTag("ui05b-quality-result").performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("export-quality-resolution-ULTRA_HD_2160").assertIsDisplayed()

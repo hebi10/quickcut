@@ -504,6 +504,13 @@ fun EditorScreen(
             onTrimEnd = model::finishTrim,
                             modifier = Modifier.fillMaxWidth().heightIn(min = 148.dp),
                         )
+                        ToolButtons(
+                            selected = selected,
+                            model = model,
+                            onAction = onAction,
+                            vertical = false,
+                            showTrim = showTrim,
+                        )
                         if (showTrim && selected != null) {
                             TrimEditor(
                                 selected,
@@ -519,13 +526,6 @@ fun EditorScreen(
                                     .padding(horizontal = 14.dp),
                             )
                         }
-                        ToolButtons(
-                            selected = selected,
-                            model = model,
-                            onAction = onAction,
-                            vertical = false,
-                            showTrim = showTrim,
-                        )
                     }
                 }
             }

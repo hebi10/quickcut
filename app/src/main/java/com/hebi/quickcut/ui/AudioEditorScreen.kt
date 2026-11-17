@@ -27,6 +27,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -74,6 +75,9 @@ fun AudioEditorScreen(
     var fadeIn by rememberSaveable(clip.id) { mutableStateOf(clip.audio.fadeInMs) }
     var fadeOut by rememberSaveable(clip.id) { mutableStateOf(clip.audio.fadeOutMs) }
     var muted by rememberSaveable(clip.id) { mutableStateOf(clip.muted) }
+    var showFadeDetails by rememberSaveable(clip.id) {
+        mutableStateOf(clip.audio.fadeInMs > 0L || clip.audio.fadeOutMs > 0L)
+    }
     val draft = AudioAdjustment(volume, fadeIn, fadeOut).bounded(clip.durationMs)
     var previewAdjustment by remember(clip.id) { mutableStateOf(draft) }
     var previewMuted by remember(clip.id) { mutableStateOf(muted) }
@@ -236,6 +240,12 @@ fun AudioEditorScreen(
                     modifier = Modifier.testTag("audio-mute-toggle"),
                 )
             }
+            TextButton(onClick = { showFadeDetails = !showFadeDetails },
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                    .testTag("audio-fade-toggle")) {
+                Text(if (showFadeDetails) "페이드 세부 설정 접기" else "페이드 세부 설정 펼치기")
+            }
+            if (showFadeDetails) {
             Text("페이드 인 · ${formatTime(fadeIn)}", color = palette.primaryText,
                 style = MaterialTheme.typography.titleSmall)
             Slider(
@@ -256,6 +266,7 @@ fun AudioEditorScreen(
             )
             Text("0.5초 간격으로 설정합니다. 원본을 변경하지 않으며 저장 시 오디오 변환이 필요할 수 있습니다.",
                 color = palette.secondaryText, style = MaterialTheme.typography.bodySmall)
+            }
             OutlinedButton(
                 onClick = { volume = 100; fadeIn = 0L; fadeOut = 0L },
                 enabled = editable, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)

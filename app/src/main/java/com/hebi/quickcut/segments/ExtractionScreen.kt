@@ -53,6 +53,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -173,6 +174,11 @@ fun ExtractionScreen(
                 Text(session.sourceName, color = palette.primaryText,
                     maxLines = 2, overflow = TextOverflow.Ellipsis,
                     style = MaterialTheme.typography.titleSmall)
+                Text("원본 " + formatTime(session.durationMs) + " · 추출 구간 " +
+                    session.items.size + "개 · 총 " +
+                    formatTime(session.items.sumOf { it.range.durationMs }),
+                    color = palette.secondaryText, style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.testTag("extraction-session-summary"))
             }
             BoxWithConstraints {
                 val wide = maxWidth >= 760.dp
@@ -183,8 +189,6 @@ fun ExtractionScreen(
                             Text("선택 구간 미리보기", color = palette.primaryText,
                                 style = MaterialTheme.typography.titleSmall)
                             ExtractionPlayer(player)
-                            Text("원본 길이: ${formatTime(session.durationMs)}",
-                                color = palette.secondaryText)
                         }
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                             ExtractionRangeEditor(model, selected)
@@ -195,9 +199,6 @@ fun ExtractionScreen(
                     Text("선택 구간 미리보기", color = palette.primaryText,
                         style = MaterialTheme.typography.titleSmall)
                     ExtractionPlayer(player)
-                    Text("원본 길이: ${formatTime(session.durationMs)}",
-                        color = palette.secondaryText,
-                        style = MaterialTheme.typography.bodySmall)
                     ExtractionRangeEditor(model, selected)
                     ExtractionRows(model)
                 }
@@ -331,6 +332,7 @@ private fun ExtractionRangeEditor(model: ExtractionViewModel, selected: Extracti
     val range = selected.range
     val canEdit = !model.busy && !model.blocked &&
         selected.status != ExtractionStatus.SAVED && selected.outputUri == null
+    var showManualInputs by rememberSaveable(range.id) { mutableStateOf(false) }
     var startText by remember(range.id, range.startMs) {
         mutableStateOf(TrimInput.secondsText(range.startMs))
     }
@@ -353,17 +355,17 @@ private fun ExtractionRangeEditor(model: ExtractionViewModel, selected: Extracti
             verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Column(Modifier.fillMaxWidth().testTag("ui04b-extraction-range-summary"),
                 verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("선택한 구간 ${session.items.indexOfFirst { it.range.id == range.id } + 1}",
-                    style = MaterialTheme.typography.titleMedium, color = palette.primaryText)
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("선택한 구간 ${session.items.indexOfFirst { it.range.id == range.id } + 1}",
+                        style = MaterialTheme.typography.titleMedium, color = palette.primaryText)
+                    Text("길이 " + formatTime(range.durationMs),
+                        style = MaterialTheme.typography.titleSmall, color = palette.primaryText)
+                }
                 Text(formatTime(range.startMs) + " → " + formatTime(range.endMs),
                     fontFamily = FontFamily.Monospace,
                     style = MaterialTheme.typography.bodyMedium, color = palette.secondaryText)
-                Text("저장할 길이 " + formatTime(range.durationMs),
-                    style = MaterialTheme.typography.titleSmall, color = palette.primaryText)
             }
-            Text("타임라인에서 범위를 조정하거나 시작·종료 시간을 직접 입력하세요.",
-                color = palette.secondaryText,
-                style = MaterialTheme.typography.bodySmall)
             SegmentOverview(session, range.id)
             RangeSlider(
                 value = selectedSlider,
@@ -375,6 +377,16 @@ private fun ExtractionRangeEditor(model: ExtractionViewModel, selected: Extracti
                 valueRange = 0f..session.durationMs.toFloat(),
                 enabled = canEdit,
             )
+            TextButton(
+                onClick = { showManualInputs = !showManualInputs },
+                enabled = canEdit,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                    .testTag("extraction-manual-time-toggle"),
+            ) {
+                Text(if (showManualInputs) "시작·종료 시간 직접 입력 접기"
+                    else "시작·종료 시간 직접 입력 펼치기")
+            }
+            if (showManualInputs) {
             BoxWithConstraints(Modifier.fillMaxWidth()) {
                 val compactInputs = maxWidth < 400.dp || LocalDensity.current.fontScale >= 1.5f
                 if (compactInputs) {
@@ -393,7 +405,8 @@ private fun ExtractionRangeEditor(model: ExtractionViewModel, selected: Extracti
                     }
                 }
             }
-            if (!valid) {
+            }
+            if (!valid && showManualInputs) {
                 Text("0.1초 이상, 원본 길이 이내의 중복되지 않는 구간을 입력해 주세요.",
                     color = palette.error, style = MaterialTheme.typography.bodySmall)
             }

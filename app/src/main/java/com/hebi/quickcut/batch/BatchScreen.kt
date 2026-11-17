@@ -358,32 +358,30 @@ internal fun BatchReviewDialog(
         ) {
             BoxWithConstraints(Modifier.fillMaxSize()) {
                 val footerMaxHeight = maxHeight * 0.45f
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("자동 저장 확인", style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.SemiBold)
+                        Text("정확한 위치 $exactCount · 추천 위치 $recommendedCount · 제외 $skippedCount",
+                            style = MaterialTheme.typography.bodySmall, color = palette.secondaryAccent)
+                    }
                     LazyColumn(
                         modifier = Modifier.weight(1f).fillMaxWidth().testTag("batch-review-list"),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         item {
-                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                Text("자동 저장 확인", style = MaterialTheme.typography.titleLarge,
-                                    fontWeight = FontWeight.SemiBold)
-                                Text("정확한 위치 $exactCount · 추천 위치 $recommendedCount · 제외 $skippedCount",
+                            Column(Modifier.fillMaxWidth().background(palette.surface, CutShape)
+                                    .padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text("저장 방식 확인", style = MaterialTheme.typography.titleSmall)
+                                templateSummary?.let {
+                                    Text(it, style = MaterialTheme.typography.bodyMedium)
+                                }
+                                Text("정확한 위치는 요청 구간을 유지하며, 필요하면 영상을 변환합니다.",
+                                    style = MaterialTheme.typography.bodySmall, color = palette.secondaryText)
+                                Text("추천 위치는 구간을 바꿔 변환을 줄입니다.",
+                                    style = MaterialTheme.typography.bodySmall, color = palette.secondaryText)
+                                Text("저장 가능 ${overview.ready}개 · 저장 불가 ${overview.skipped}개",
                                     style = MaterialTheme.typography.bodySmall, color = palette.secondaryAccent)
-                            }
-                        }
-                        item {
-                            Column(
-                                Modifier.fillMaxWidth().background(palette.surface, CutShape).padding(14.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp),
-                            ) {
-                                templateSummary?.let { Text(it) }
-                                CutInfoSection(
-                                    title = "저장 방식 확인",
-                                    message = "정확한 위치는 요청한 구간을 유지하고 필요하면 변환합니다. " +
-                                        "추천 위치는 구간을 조정해 영상 변환을 피합니다.",
-                                )
-                                Text("저장 가능한 영상 ${overview.ready}개 · 저장할 수 없는 영상 ${overview.skipped}개",
-                                    style = MaterialTheme.typography.bodySmall)
                             }
                         }
                         items(overview.reviewedFiles, key = { it.uri }) { file ->
@@ -395,7 +393,7 @@ internal fun BatchReviewDialog(
                         }
                         item {
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text("전체 자동 저장은 위 선택과 관계없이 저장 가능한 모든 영상을 정확한 위치로 저장합니다.",
+                                Text("전체 자동 저장: 파일별 선택과 관계없이 저장 가능한 영상을 정확한 구간으로 처리합니다.",
                                     color = palette.secondaryText, style = MaterialTheme.typography.bodySmall)
                                 OutlinedButton(onClick = onAutomatic, enabled = overview.ready > 0,
                                     modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp), shape = CutShape) {
@@ -465,9 +463,10 @@ private fun BatchReviewFile(
     val palette = LocalCutPalette.current
     Column(Modifier.fillMaxWidth()
         .background(palette.surface, CutPanelShape)
-        .border(1.dp, palette.border, CutPanelShape).padding(14.dp),
+        .border(1.dp, palette.border, CutPanelShape).padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(file.displayName, fontWeight = FontWeight.SemiBold)
+        Text(file.displayName, fontWeight = FontWeight.SemiBold,
+            maxLines = 2, overflow = TextOverflow.Ellipsis)
         file.requested?.let { requested ->
             Text("요청 구간 · " + requested.clips.joinToString(" + ") {
                 "${formatTime(it.startMs)}–${formatTime(it.endMs)}"
@@ -488,7 +487,7 @@ private fun BatchReviewFile(
                 FastCutPreview(suggestion)
             }
         } else if (file.requested != null && !file.fastAvailable) {
-            Text("검증된 추천 위치 없음 · 정확한 위치로 자동 저장할 수 있습니다.",
+            Text("추천 위치 없음 · 정확한 위치로 저장 가능합니다.",
                 color = palette.secondaryText, style = MaterialTheme.typography.bodySmall)
         }
         if (file.reencodeRequired) {
@@ -750,7 +749,7 @@ private fun PresetEditor(model: BatchViewModel, disabled: Boolean) {
                     Text("${model.templates.size}개 저장됨",
                         style = MaterialTheme.typography.bodySmall, color = palette.secondaryAccent)
                 }
-                Text("템플릿에는 자르기·음소거 설정만 저장합니다. 저장 날짜와 원본 처리 설정은 변경되지 않습니다.",
+                Text("템플릿에는 자르기·음소거만 저장합니다. 날짜와 원본 처리 설정은 유지됩니다.",
                     style = MaterialTheme.typography.bodySmall, color = palette.secondaryText)
                 LazyColumn(Modifier.weight(1f, fill = false).fillMaxWidth().testTag("batch-template-list"),
                     verticalArrangement = Arrangement.spacedBy(8.dp)) {

@@ -42,6 +42,14 @@ jobs:
       version_code: ${{ steps.gate.outputs.version_code }}
       target: ${{ steps.gate.outputs.target }}
     steps:
+      - name: RU-02 reject legacy Play publishing before any credentials
+        env:
+          LEGACY_TARGET: ${{ inputs.target }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::error::Legacy direct Play publishing disabled; use OPS-03 then OPS-04/05."
+          exit 1
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}

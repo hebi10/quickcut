@@ -37,7 +37,7 @@ on:
         type: string
         required: true
       final_release_approved:
-        description: 'Approve this separate Play internal upload only after all QA'
+        description: 'Approve internal upload after development and automated QA. Device QA follows internal testing.'
         type: boolean
         default: false
         required: true

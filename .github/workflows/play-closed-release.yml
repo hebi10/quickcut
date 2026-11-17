@@ -37,7 +37,7 @@ on:
         type: string
         default: alpha
       final_batch_approved:
-        description: 'Every planned task and release QA finished; separate closed promotion approved'
+        description: 'Approve closed promotion after internal device QA, fixes and final verification.'
         required: true
         type: boolean
         default: false

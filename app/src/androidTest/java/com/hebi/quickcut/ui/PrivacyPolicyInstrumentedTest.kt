@@ -45,14 +45,16 @@ class PrivacyPolicyInstrumentedTest {
 
         compose.onNodeWithText("설정").performClick()
         compose.onNodeWithText("개인정보처리방침").performScrollTo().performClick()
-        compose.onNodeWithText("시행일: 2026년 11월 2일", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("시행일: 2026년 11월 16일", substring = true).assertIsDisplayed()
         compose.onNodeWithText("asdlkj0104@gmail.com", substring = true)
             .performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("https://github.com/hebi10/quickcut/releases", substring = true)
             .performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("7. 광고 SDK 및 제3자 데이터 처리", substring = true)
+            .performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("닫기").assertIsDisplayed().assertIsEnabled().performClick()
 
-        compose.onNodeWithText("시행일: 2026년 11월 2일", substring = true).assertDoesNotExist()
+        compose.onNodeWithText("시행일: 2026년 11월 16일", substring = true).assertDoesNotExist()
         compose.onNodeWithText("개인정보처리방침").assertIsDisplayed().assertIsEnabled()
         compose.onNodeWithText("오픈소스 라이선스").performScrollTo().assertIsDisplayed()
     }

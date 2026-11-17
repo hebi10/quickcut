@@ -40,6 +40,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.hebi.quickcut.ads.QuickCutHomeBanner
 import com.hebi.quickcut.editor.SavedProject
 import com.hebi.quickcut.media.SaveDateMode
 import com.hebi.quickcut.settings.QuickCutThemeMode
@@ -88,6 +89,9 @@ internal fun StudioStartScreen(
     onGallery: () -> Unit = {},
     themeMode: QuickCutThemeMode = QuickCutThemeMode.SYSTEM,
     onThemeModeChange: (QuickCutThemeMode) -> Unit = {},
+    showHomeBanner: Boolean = false,
+    privacyOptionsRequired: Boolean = false,
+    onPrivacyOptionsClick: () -> Unit = {},
 ) {
     val palette = LocalCutPalette.current
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
@@ -278,6 +282,12 @@ internal fun StudioStartScreen(
                     StudioSettingsPanel("진단 및 정보") {
                         ExportDiagnosticButton()
                         PrivacyPolicyButton()
+                        if (privacyOptionsRequired) {
+                            TextButton(
+                                onClick = onPrivacyOptionsClick,
+                                modifier = Modifier.heightIn(min = CutSizes.touchTarget),
+                            ) { Text("광고 개인정보 선택 변경") }
+                        }
                         TextButton(
                             onClick = onLicenses,
                             modifier = Modifier.heightIn(min = CutSizes.touchTarget),
@@ -287,6 +297,9 @@ internal fun StudioStartScreen(
             }
         }
 
+        if (showHomeBanner && selectedTab == 0) {
+            QuickCutHomeBanner()
+        }
         NavigationBar(
             modifier = Modifier.fillMaxWidth().heightIn(min = 72.dp),
             containerColor = palette.surface,

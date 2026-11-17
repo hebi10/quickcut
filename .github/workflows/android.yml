@@ -106,10 +106,24 @@ jobs:
           python3 scripts/test-play-publisher.py
           python3 scripts/test-play-bundle.py
           python3 scripts/test-runtime-publication-metadata.py
+          python3 scripts/test-runtime-source-audit.py
       - name: Unit tests, lint, and builds
         run: gradle --no-daemon :app:testDebugUnitTest :app:lintDebug :app:lintRelease :app:assembleDebug :app:assembleDebugAndroidTest :app:assembleRelease :app:bundleRelease
       - name: Package corresponding source
         run: bash scripts/package-smartcut-source.sh
+      - name: Validate runtime source audit
+        if: always()
+        run: |
+          if [[ -s build/runtime-source-audit/dependencies.json ]]; then
+            python3 scripts/validate-runtime-source-audit.py build/runtime-source-audit/dependencies.json
+          fi
+      - name: Upload runtime source audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quickcut-runtime-source-audit
+          path: build/runtime-source-audit/dependencies.json
+          if-no-files-found: ignore
       - name: Upload corresponding source
         if: success()
         uses: actions/upload-artifact@v4

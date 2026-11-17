@@ -12,6 +12,20 @@ check(releaseCredentials.all { it.isNullOrBlank() } || releaseCredentials.all { 
     "Release signing requires all four QUICKCUT signing environment variables."
 }
 
+val testAdMobAppId = "ca-app-pub-3940256099942544~3347511713"
+val testBannerUnitId = "ca-app-pub-3940256099942544/9214589741"
+val releaseAdMobAppId = providers.environmentVariable("QUICKCUT_ADMOB_APP_ID").orNull?.trim().orEmpty()
+val releaseBannerUnitId = providers.environmentVariable("QUICKCUT_ADMOB_BANNER_UNIT_ID").orNull?.trim().orEmpty()
+val realAdsConfigured = releaseAdMobAppId.matches(Regex("ca-app-pub-[0-9]{16}~[0-9]{10}")) &&
+    releaseBannerUnitId.matches(Regex("ca-app-pub-[0-9]{16}/[0-9]{10}")) &&
+    releaseAdMobAppId.substringAfter("ca-app-pub-").substringBefore("~") ==
+        releaseBannerUnitId.substringAfter("ca-app-pub-").substringBefore("/") &&
+    !releaseAdMobAppId.startsWith("ca-app-pub-3940256099942544~")
+check((releaseAdMobAppId.isEmpty() && releaseBannerUnitId.isEmpty()) || realAdsConfigured) {
+    "QuickCut release ads require both valid AdMob app and banner unit IDs. No partial configuration."
+}
+val debugTestAdsEnabled = providers.gradleProperty("quickcutTestAds").orNull == "true"
+
 android {
     namespace = "com.hebi.quickcut"
     compileSdk = 36
@@ -25,6 +39,10 @@ android {
         versionCode = providers.gradleProperty("quickcutTestVersionCode").orNull?.toInt() ?: 28
         versionName = "0.4.21"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        // No live requests are made unless both release IDs are configured.
+        resValue("string", "quickcut_admob_app_id", testAdMobAppId)
+        resValue("string", "quickcut_admob_banner_unit_id", testBannerUnitId)
+        resValue("bool", "quickcut_ads_enabled", "false")
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
     }
 
@@ -39,7 +57,17 @@ android {
         }
     }
     buildTypes {
+        getByName("debug") {
+            // Explicit opt-in only; the 292-test UI/screenshot matrix stays unchanged.
+            resValue("bool", "quickcut_ads_enabled", debugTestAdsEnabled.toString())
+        }
         release {
+            // A release without real AdMob IDs never contacts the ad network.
+            if (realAdsConfigured) {
+                resValue("string", "quickcut_admob_app_id", releaseAdMobAppId)
+                resValue("string", "quickcut_admob_banner_unit_id", releaseBannerUnitId)
+                resValue("bool", "quickcut_ads_enabled", "true")
+            }
             // Without credentials this is deliberately unsigned, never debug-signed.
             if (!releaseStore.isNullOrBlank()) {
                 signingConfig = signingConfigs.getByName("stableRelease")
@@ -49,6 +77,7 @@ android {
 
     buildFeatures {
         compose = true
+        resValues = true
     }
 
     sourceSets.getByName("main") {
@@ -108,6 +137,8 @@ dependencies {
     implementation("androidx.media3:media3-transformer:$media3Version")
     implementation("androidx.media3:media3-effect:$media3Version")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+    implementation("com.google.android.gms:play-services-ads:25.5.0")
+    implementation("com.google.android.ump:user-messaging-platform:4.0.0")
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
     androidTestImplementation("androidx.test:runner:1.7.0")

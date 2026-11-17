@@ -17,7 +17,8 @@ def publication_base(component):
             for part in parts):
         raise ValueError('Invalid resolved Maven component: ' + component)
     group, artifact, version = parts
-    repository = ('https://dl.google.com/dl/android/maven2/' if group.startswith('androidx.')
+    google_group = group.startswith(('androidx.', 'com.google.android.gms', 'com.google.android.ump'))
+    repository = ('https://dl.google.com/dl/android/maven2/' if google_group
                   else 'https://repo.maven.apache.org/maven2/')
     return repository + group.replace('.', '/') + '/' + artifact + '/' + version + '/'
 

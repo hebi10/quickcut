@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -35,6 +36,7 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ContentCut
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
@@ -356,32 +358,30 @@ internal fun BatchReviewDialog(
         ) {
             BoxWithConstraints(Modifier.fillMaxSize()) {
                 val footerMaxHeight = maxHeight * 0.45f
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("자동 저장 확인", style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.SemiBold)
+                        Text("정확한 위치 $exactCount · 추천 위치 $recommendedCount · 제외 $skippedCount",
+                            style = MaterialTheme.typography.bodySmall, color = palette.secondaryAccent)
+                    }
                     LazyColumn(
                         modifier = Modifier.weight(1f).fillMaxWidth().testTag("batch-review-list"),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         item {
-                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                Text("자동 저장 확인", style = MaterialTheme.typography.titleLarge,
-                                    fontWeight = FontWeight.SemiBold)
-                                Text("정확한 위치 $exactCount · 추천 위치 $recommendedCount · 제외 $skippedCount",
+                            Column(Modifier.fillMaxWidth().background(palette.surface, CutShape)
+                                    .padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text("저장 방식 확인", style = MaterialTheme.typography.titleSmall)
+                                templateSummary?.let {
+                                    Text(it, style = MaterialTheme.typography.bodyMedium)
+                                }
+                                Text("정확한 위치는 요청 구간을 유지하며, 필요하면 영상을 변환합니다.",
+                                    style = MaterialTheme.typography.bodySmall, color = palette.secondaryText)
+                                Text("추천 위치는 구간을 바꿔 변환을 줄입니다.",
+                                    style = MaterialTheme.typography.bodySmall, color = palette.secondaryText)
+                                Text("저장 가능 ${overview.ready}개 · 저장 불가 ${overview.skipped}개",
                                     style = MaterialTheme.typography.bodySmall, color = palette.secondaryAccent)
-                            }
-                        }
-                        item {
-                            Column(
-                                Modifier.fillMaxWidth().background(palette.surface, CutShape).padding(14.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp),
-                            ) {
-                                templateSummary?.let { Text(it) }
-                                CutInfoSection(
-                                    title = "저장 방식 확인",
-                                    message = "정확한 위치는 요청한 구간을 유지하고 필요하면 변환합니다. " +
-                                        "추천 위치는 구간을 조정해 영상 변환을 피합니다.",
-                                )
-                                Text("저장 가능한 영상 ${overview.ready}개 · 저장할 수 없는 영상 ${overview.skipped}개",
-                                    style = MaterialTheme.typography.bodySmall)
                             }
                         }
                         items(overview.reviewedFiles, key = { it.uri }) { file ->
@@ -393,7 +393,7 @@ internal fun BatchReviewDialog(
                         }
                         item {
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text("전체 자동 저장은 위 선택과 관계없이 저장 가능한 모든 영상을 정확한 위치로 저장합니다.",
+                                Text("전체 자동 저장: 파일별 선택과 관계없이 저장 가능한 영상을 정확한 구간으로 처리합니다.",
                                     color = palette.secondaryText, style = MaterialTheme.typography.bodySmall)
                                 OutlinedButton(onClick = onAutomatic, enabled = overview.ready > 0,
                                     modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp), shape = CutShape) {
@@ -463,9 +463,10 @@ private fun BatchReviewFile(
     val palette = LocalCutPalette.current
     Column(Modifier.fillMaxWidth()
         .background(palette.surface, CutPanelShape)
-        .border(1.dp, palette.border, CutPanelShape).padding(14.dp),
+        .border(1.dp, palette.border, CutPanelShape).padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(file.displayName, fontWeight = FontWeight.SemiBold)
+        Text(file.displayName, fontWeight = FontWeight.SemiBold,
+            maxLines = 2, overflow = TextOverflow.Ellipsis)
         file.requested?.let { requested ->
             Text("요청 구간 · " + requested.clips.joinToString(" + ") {
                 "${formatTime(it.startMs)}–${formatTime(it.endMs)}"
@@ -486,7 +487,7 @@ private fun BatchReviewFile(
                 FastCutPreview(suggestion)
             }
         } else if (file.requested != null && !file.fastAvailable) {
-            Text("검증된 추천 위치 없음 · 정확한 위치로 자동 저장할 수 있습니다.",
+            Text("추천 위치 없음 · 정확한 위치로 저장 가능합니다.",
                 color = palette.secondaryText, style = MaterialTheme.typography.bodySmall)
         }
         if (file.reencodeRequired) {
@@ -526,6 +527,7 @@ private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
     val palette = LocalCutPalette.current
     val disabled = model.isRunning || model.isRecovering
     var showAdvanced by rememberSaveable { mutableStateOf(false) }
+    var showPreciseInput by rememberSaveable { mutableStateOf(false) }
     var pendingOriginalAction by rememberSaveable { mutableStateOf<OriginalAction?>(null) }
     Column(
         modifier = Modifier.fillMaxWidth().background(palette.surface, CutPanelShape)
@@ -553,13 +555,14 @@ private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
                 style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.testTag("batch-selection-count"))
         }
+        HorizontalDivider(color = palette.border)
         PresetEditor(model, disabled)
         Text(
             "2. 자르기 설정",
             color = palette.primaryText,
             fontWeight = FontWeight.SemiBold,
         )
-        Text("마지막 사용값은 자동으로 복원됩니다.",
+        Text("각 영상에 같은 편집 시간을 적용합니다.",
             style = MaterialTheme.typography.bodySmall, color = palette.secondaryText)
         CutChoiceDropdown("편집 방식", model.draftMode, listOf(
             CutChoice(BatchClipMode.REMOVE_EDGES, "앞뒤 구간 자르기"),
@@ -567,11 +570,40 @@ private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
             CutChoice(BatchClipMode.KEEP_LAST, "마지막 구간만 남기기"),
             CutChoice(BatchClipMode.JOIN_EDGES, "처음 + 마지막 구간 연결"),
         ), enabled = !disabled, modifier = Modifier.testTag("batch-mode")) { model.draftMode = it }
-        Text("분·초 입력 · 예: 1분 5.5초 · 소수점 셋째 자리까지 입력 가능",
-            style = MaterialTheme.typography.bodySmall, color = palette.secondaryText)
         val useLeading = model.draftMode.usesLeading
         val useTrailing = model.draftMode.usesTrailing
         val removing = model.draftMode == BatchClipMode.REMOVE_EDGES
+        Text("빠른 시간 설정", color = palette.primaryText,
+            fontWeight = FontWeight.Medium)
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            BatchTimeQuickControls.presets.forEach { seconds ->
+                val selected = BatchTimeQuickControls.selected(model.draftMode,
+                    model.draftLeadingSeconds, model.draftTrailingSeconds, seconds)
+                val modifier = Modifier.heightIn(min = 48.dp)
+                    .testTag("batch-time-preset-" + seconds)
+                val choosePreset = {
+                    val updated = BatchTimeQuickControls.preset(model.draftMode,
+                        model.draftLeadingSeconds, model.draftTrailingSeconds, seconds)
+                    if (useLeading) model.draftLeadingSeconds = updated.leading
+                    if (useTrailing) model.draftTrailingSeconds = updated.trailing
+                }
+                if (selected) {
+                    Button(onClick = choosePreset, enabled = !disabled,
+                        modifier = modifier, shape = CutShape) {
+                        Text(seconds.toString() + "초")
+                    }
+                } else {
+                    OutlinedButton(onClick = choosePreset, enabled = !disabled,
+                        modifier = modifier, shape = CutShape) {
+                        Text(seconds.toString() + "초")
+                    }
+                }
+            }
+        }
         BatchDurationField(
             title = if (removing) "앞에서 자를 시간" else "처음부터 남길 시간",
             value = model.draftLeadingSeconds,
@@ -579,6 +611,7 @@ private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
             enabled = !disabled && useLeading,
             used = useLeading,
             tag = "batch-leading",
+            showPreciseInput = showPreciseInput,
         )
         BatchDurationField(
             title = if (removing) "뒤에서 자를 시간" else "끝에서 남길 시간",
@@ -587,7 +620,18 @@ private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
             enabled = !disabled && useTrailing,
             used = useTrailing,
             tag = "batch-trailing",
+            showPreciseInput = showPreciseInput,
         )
+        TextButton(onClick = { showPreciseInput = !showPreciseInput },
+            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                .testTag("batch-precise-input-toggle"),
+            enabled = !disabled) {
+            Text(if (showPreciseInput) "분·초 직접 입력 접기" else "분·초 직접 입력 펼치기")
+        }
+        if (showPreciseInput) {
+            Text("분·초를 직접 입력하면 0.001초 단위까지 지정할 수 있습니다.",
+                style = MaterialTheme.typography.bodySmall, color = palette.secondaryText)
+        }
         val template = model.previewTemplate()
         Text(
             template?.let(BatchTimeInput::summary) ?: model.draftError().orEmpty(),
@@ -611,6 +655,7 @@ private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
             Text(if (model.draftMute) "원본 소리: 음소거" else "원본 소리: 유지", color = palette.primaryText,
                 modifier = Modifier.weight(1f).padding(vertical = 10.dp))
         }
+        HorizontalDivider(color = palette.border)
         TextButton(
             onClick = { showAdvanced = !showAdvanced },
             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
@@ -623,7 +668,7 @@ private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
                     OriginalAction.TRASH -> "휴지통"
                     OriginalAction.DELETE -> "영구 삭제"
                 },
-            color = palette.secondaryText,
+            color = if (model.originalAction == OriginalAction.KEEP) palette.secondaryText else palette.warning,
             style = MaterialTheme.typography.bodyMedium,
         )
         if (showAdvanced) {
@@ -675,24 +720,19 @@ private fun PresetEditor(model: BatchViewModel, disabled: Boolean) {
     val context = LocalContext.current
     var showManager by rememberSaveable { mutableStateOf(false) }
     val selected = model.templates.firstOrNull { it.id == model.selectedTemplateId }
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Column(
-            Modifier.fillMaxWidth().background(palette.panel, CutShape)
-                .border(1.dp, palette.border, CutShape)
-                .padding(12.dp).testTag("ui04b-template-summary"),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
+    Row(Modifier.fillMaxWidth().testTag("ui04b-template-summary"),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text("선택 템플릿", style = MaterialTheme.typography.bodySmall,
                 color = palette.secondaryText)
             Text(selected?.name ?: "직접 설정",
-                style = MaterialTheme.typography.titleMedium, color = palette.primaryText)
-            Text(selected?.let(BatchTimeInput::summary) ?: "현재 입력한 편집 설정을 사용합니다.",
-                style = MaterialTheme.typography.bodySmall, color = palette.secondaryText)
+                style = MaterialTheme.typography.titleMedium, color = palette.primaryText,
+                maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
         OutlinedButton(onClick = { showManager = true }, enabled = !disabled,
-            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("batch-template-manager")) {
-            Text("템플릿 관리")
-        }
+            modifier = Modifier.heightIn(min = 48.dp).testTag("batch-template-manager"),
+            shape = CutShape) { Text("템플릿 관리") }
     }
     if (showManager) Dialog(
         onDismissRequest = { showManager = false },
@@ -709,7 +749,7 @@ private fun PresetEditor(model: BatchViewModel, disabled: Boolean) {
                     Text("${model.templates.size}개 저장됨",
                         style = MaterialTheme.typography.bodySmall, color = palette.secondaryAccent)
                 }
-                Text("템플릿에는 자르기·음소거 설정만 저장합니다. 저장 날짜와 원본 처리 설정은 변경되지 않습니다.",
+                Text("템플릿에는 자르기·음소거만 저장합니다. 날짜와 원본 처리 설정은 유지됩니다.",
                     style = MaterialTheme.typography.bodySmall, color = palette.secondaryText)
                 LazyColumn(Modifier.weight(1f, fill = false).fillMaxWidth().testTag("batch-template-list"),
                     verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -828,47 +868,72 @@ private fun BatchDurationField(
     enabled: Boolean,
     used: Boolean,
     tag: String,
+    showPreciseInput: Boolean,
 ) {
     val palette = LocalCutPalette.current
     val parts = BatchTimeInput.parts(value)
     val error = if (used) BatchTimeInput.error(parts) else null
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(title, color = if (used) palette.primaryText else palette.secondaryText,
-            fontWeight = FontWeight.Medium)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedTextField(
-                value = if (used) parts.minutes else "",
-                onValueChange = { onValueChange(it.take(16) + ":" + parts.seconds) },
-                enabled = enabled,
-                label = { Text("분") },
-                placeholder = { Text("0") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                isError = error != null,
-                modifier = Modifier.weight(1f).heightIn(min = 56.dp).testTag("$tag-minutes")
-                    .semantics { contentDescription = "$title, 분" },
-                singleLine = true,
-                shape = CutShape,
-            )
-            OutlinedTextField(
-                value = if (used) parts.seconds else "",
-                onValueChange = { onValueChange(parts.minutes + ":" + it.take(16)) },
-                enabled = enabled,
-                label = { Text("초") },
-                placeholder = { Text("0") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                isError = error != null,
-                modifier = Modifier.weight(1f).heightIn(min = 56.dp).testTag("$tag-seconds")
-                    .semantics { contentDescription = "$title, 초" },
-                singleLine = true,
-                shape = CutShape,
-            )
+    val milliseconds = BatchTimeInput.parse(value)
+    val minus = BatchTimeQuickControls.step(value, -1)
+    val plus = BatchTimeQuickControls.step(value, 1)
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(title, color = if (used) palette.primaryText else palette.secondaryText,
+                fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+            Text(if (!used) "미사용" else milliseconds?.let(BatchTimeInput::durationText) ?: "입력 확인",
+                color = if (error == null) palette.secondaryAccent else MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.testTag(tag + "-summary"))
+        }
+        if (used) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { minus?.let(onValueChange) },
+                    enabled = enabled && minus != null,
+                    modifier = Modifier.weight(1f).heightIn(min = 48.dp)
+                        .testTag(tag + "-step-minus")
+                        .semantics { contentDescription = title + ", 1초 감소" },
+                    shape = CutShape) { Text("−1초") }
+                OutlinedButton(onClick = { plus?.let(onValueChange) },
+                    enabled = enabled && plus != null,
+                    modifier = Modifier.weight(1f).heightIn(min = 48.dp)
+                        .testTag(tag + "-step-plus")
+                        .semantics { contentDescription = title + ", 1초 증가" },
+                    shape = CutShape) { Text("+1초") }
+            }
+        }
+        if (showPreciseInput) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = if (used) parts.minutes else "",
+                    onValueChange = { onValueChange(it.take(16) + ":" + parts.seconds) },
+                    enabled = enabled,
+                    label = { Text("분") },
+                    placeholder = { Text("0") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    isError = error != null,
+                    modifier = Modifier.weight(1f).heightIn(min = 56.dp).testTag("$tag-minutes")
+                        .semantics { contentDescription = "$title, 분" },
+                    singleLine = true, shape = CutShape,
+                )
+                OutlinedTextField(
+                    value = if (used) parts.seconds else "",
+                    onValueChange = { onValueChange(parts.minutes + ":" + it.take(16)) },
+                    enabled = enabled,
+                    label = { Text("초") },
+                    placeholder = { Text("0") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    isError = error != null,
+                    modifier = Modifier.weight(1f).heightIn(min = 56.dp).testTag("$tag-seconds")
+                        .semantics { contentDescription = "$title, 초" },
+                    singleLine = true, shape = CutShape,
+                )
+            }
         }
         if (!used || error != null) {
-            Text(
-                if (!used) "이 편집 방식에서는 사용하지 않습니다." else error.orEmpty(),
+            Text(if (!used) "현재 편집 방식에서 사용하지 않습니다." else error.orEmpty(),
                 color = if (error != null) MaterialTheme.colorScheme.error else palette.secondaryText,
-                style = MaterialTheme.typography.bodySmall,
-            )
+                style = MaterialTheme.typography.bodySmall)
         }
     }
 }
@@ -968,6 +1033,7 @@ private fun BatchActions(
 @Composable
 private fun BatchFileHeader(model: BatchViewModel) {
     val palette = LocalCutPalette.current
+    val preview = BatchPreviewEstimate.counts(model.files, model.previewTemplate(), model.saveDateMode)
     Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)
             .testTag("ui04b-batch-file-header"),
         verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -984,8 +1050,14 @@ private fun BatchFileHeader(model: BatchViewModel) {
             Text(model.files.size.toString() + "개", color = palette.primaryText,
                 style = MaterialTheme.typography.titleMedium)
         }
-        Text("원본 길이 → 저장 후 길이",
+        Text("영상별 예상 결과 · 원본 길이 → 편집 후 길이",
             color = palette.secondaryText, style = MaterialTheme.typography.bodySmall)
+        if (preview != null && preview.ready + preview.unavailable > 0) {
+            Text("시간·날짜 기준 예상 저장 " + preview.ready + "개 · 제외 " +
+                preview.unavailable + "개",
+                color = palette.secondaryText, style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.testTag("batch-preview-counts"))
+        }
     }
 }
 
@@ -999,17 +1071,7 @@ private fun BatchFileRow(
     onRemove: (String) -> Unit,
 ) {
     val palette = LocalCutPalette.current
-    val expected = template?.plan(file.uri, file.durationMs, file.hasAudio)
-    val subtitle = when {
-        file.status == BatchFileStatus.SAVED && file.outputExpectedDurationMs != null ->
-            formatTime(file.durationMs) + " → " + formatTime(file.outputExpectedDurationMs)
-        file.durationMs < 100 -> file.reason ?: "읽을 수 없는 영상"
-        expected is BatchPlan.Skip -> expected.reason
-        dateMode == SaveDateMode.ORIGINAL && file.originalDate == null -> "원본 날짜를 확인할 수 없습니다."
-        expected is BatchPlan.Ready ->
-            formatTime(file.durationMs) + " → " + formatTime(expected.timeline.totalDurationMs)
-        else -> ""
-    }
+    val subtitle = BatchPreviewEstimate.fileLabel(file, template, dateMode)
     Column(
         modifier = Modifier.fillMaxWidth().background(palette.surface, CutPanelShape)
             .border(1.dp, palette.border, CutPanelShape).padding(14.dp),

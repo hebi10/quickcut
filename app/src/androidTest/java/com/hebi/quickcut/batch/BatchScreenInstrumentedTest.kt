@@ -56,6 +56,12 @@ class BatchScreenInstrumentedTest {
         try {
             openBatchEditor()
             choose("batch-mode", "앞뒤 구간 자르기")
+            composeRule.onNodeWithTag("batch-time-preset-5").performScrollTo().performClick()
+            composeRule.onNodeWithText("각 영상의 앞 5초와 뒤 5초를 자릅니다.")
+                .performScrollTo().assertExists()
+            composeRule.onNodeWithTag("batch-leading-step-plus").performScrollTo().performClick()
+            composeRule.onNodeWithText("각 영상의 앞 6초와 뒤 5초를 자릅니다.")
+                .performScrollTo().assertExists()
             composeRule.onNodeWithTag("batch-leading-minutes").performScrollTo()
                 .performTextReplacement("1")
             composeRule.onNodeWithTag("batch-leading-seconds").performScrollTo()

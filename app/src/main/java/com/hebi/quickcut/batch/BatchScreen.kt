@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -572,6 +573,39 @@ private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
         val useLeading = model.draftMode.usesLeading
         val useTrailing = model.draftMode.usesTrailing
         val removing = model.draftMode == BatchClipMode.REMOVE_EDGES
+        Text("빠른 시간 설정", color = palette.primaryText,
+            fontWeight = FontWeight.Medium)
+        Text("사용 중인 시간에 빠르게 적용합니다. 직접 입력도 계속 사용할 수 있습니다.",
+            color = palette.secondaryText, style = MaterialTheme.typography.bodySmall)
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            BatchTimeQuickControls.presets.forEach { seconds ->
+                val selected = BatchTimeQuickControls.selected(model.draftMode,
+                    model.draftLeadingSeconds, model.draftTrailingSeconds, seconds)
+                val modifier = Modifier.heightIn(min = 48.dp)
+                    .testTag("batch-time-preset-" + seconds)
+                val choosePreset = {
+                    val updated = BatchTimeQuickControls.preset(model.draftMode,
+                        model.draftLeadingSeconds, model.draftTrailingSeconds, seconds)
+                    if (useLeading) model.draftLeadingSeconds = updated.leading
+                    if (useTrailing) model.draftTrailingSeconds = updated.trailing
+                }
+                if (selected) {
+                    Button(onClick = choosePreset, enabled = !disabled,
+                        modifier = modifier, shape = CutShape) {
+                        Text(seconds.toString() + "초")
+                    }
+                } else {
+                    OutlinedButton(onClick = choosePreset, enabled = !disabled,
+                        modifier = modifier, shape = CutShape) {
+                        Text(seconds.toString() + "초")
+                    }
+                }
+            }
+        }
         BatchDurationField(
             title = if (removing) "앞에서 자를 시간" else "처음부터 남길 시간",
             value = model.draftLeadingSeconds,
@@ -863,6 +897,24 @@ private fun BatchDurationField(
                 shape = CutShape,
             )
         }
+        val minus = BatchTimeQuickControls.step(value, -1)
+        val plus = BatchTimeQuickControls.step(value, 1)
+        if (used) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { minus?.let(onValueChange) },
+                    enabled = enabled && minus != null,
+                    modifier = Modifier.weight(1f).heightIn(min = 48.dp)
+                        .testTag(tag + "-step-minus")
+                        .semantics { contentDescription = title + ", 1초 감소" },
+                    shape = CutShape) { Text("−1초") }
+                OutlinedButton(onClick = { plus?.let(onValueChange) },
+                    enabled = enabled && plus != null,
+                    modifier = Modifier.weight(1f).heightIn(min = 48.dp)
+                        .testTag(tag + "-step-plus")
+                        .semantics { contentDescription = title + ", 1초 증가" },
+                    shape = CutShape) { Text("+1초") }
+            }
+        }
         if (!used || error != null) {
             Text(
                 if (!used) "이 편집 방식에서는 사용하지 않습니다." else error.orEmpty(),
@@ -968,6 +1020,7 @@ private fun BatchActions(
 @Composable
 private fun BatchFileHeader(model: BatchViewModel) {
     val palette = LocalCutPalette.current
+    val preview = BatchPreviewEstimate.counts(model.files, model.previewTemplate(), model.saveDateMode)
     Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)
             .testTag("ui04b-batch-file-header"),
         verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -984,8 +1037,14 @@ private fun BatchFileHeader(model: BatchViewModel) {
             Text(model.files.size.toString() + "개", color = palette.primaryText,
                 style = MaterialTheme.typography.titleMedium)
         }
-        Text("원본 길이 → 저장 후 길이",
+        Text("영상별 예상 결과 · 원본 길이 → 편집 후 길이",
             color = palette.secondaryText, style = MaterialTheme.typography.bodySmall)
+        if (preview != null && preview.ready + preview.unavailable > 0) {
+            Text("시간·날짜 기준 예상 저장 " + preview.ready + "개 · 제외 " +
+                preview.unavailable + "개",
+                color = palette.secondaryText, style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.testTag("batch-preview-counts"))
+        }
     }
 }
 
@@ -999,17 +1058,7 @@ private fun BatchFileRow(
     onRemove: (String) -> Unit,
 ) {
     val palette = LocalCutPalette.current
-    val expected = template?.plan(file.uri, file.durationMs, file.hasAudio)
-    val subtitle = when {
-        file.status == BatchFileStatus.SAVED && file.outputExpectedDurationMs != null ->
-            formatTime(file.durationMs) + " → " + formatTime(file.outputExpectedDurationMs)
-        file.durationMs < 100 -> file.reason ?: "읽을 수 없는 영상"
-        expected is BatchPlan.Skip -> expected.reason
-        dateMode == SaveDateMode.ORIGINAL && file.originalDate == null -> "원본 날짜를 확인할 수 없습니다."
-        expected is BatchPlan.Ready ->
-            formatTime(file.durationMs) + " → " + formatTime(expected.timeline.totalDurationMs)
-        else -> ""
-    }
+    val subtitle = BatchPreviewEstimate.fileLabel(file, template, dateMode)
     Column(
         modifier = Modifier.fillMaxWidth().background(palette.surface, CutPanelShape)
             .border(1.dp, palette.border, CutPanelShape).padding(14.dp),

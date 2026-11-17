@@ -104,6 +104,14 @@ if [[ "${QUICKCUT_EMULATOR_API:-}" == 29 ]]; then
     else
       run_checked "Preserve API29 $phase XML" cp -- "${xmls[0]}" "$phase_dir/TEST-api29-$phase.xml"
     fi
+    # API29 can drop adb after completing most tests. Detect it before starting
+    # another 10-15 minute phase instead of compounding one emulator failure.
+    # A failed identity probe cannot approve any missing XML or PNG evidence.
+    if ! python3 "$SCRIPT_DIR/ci-android-health.py" --expected-api 29; then
+      echo "::error::API29 emulator lost its connection after phase $phase; stop remaining test phases."
+      if [[ "$phase_status" -ne 0 ]]; then exit "$phase_status"; fi
+      exit 86
+    fi
   }
   # API29: background-screen-off tests share MainActivity, native encoder and
   # Android Settings state. A 4GB emulator stalled after the batch-screen-off

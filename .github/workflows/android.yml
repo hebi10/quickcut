@@ -98,6 +98,8 @@ jobs:
           python3 scripts/test-emulator-startup.py
           python3 scripts/test-system-anr-watchdog.py
           python3 scripts/test-emulator-flow.py
+          python3 scripts/test-ci-android-health.py
+          python3 scripts/test-ci-native-cache.py
           python3 scripts/test-stage20-evidence.py
           python3 scripts/test-dialog-geometry.py
           python3 scripts/test-launcher-icon.py

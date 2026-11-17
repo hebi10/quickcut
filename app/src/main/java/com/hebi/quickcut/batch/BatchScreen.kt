@@ -96,6 +96,9 @@ import com.hebi.quickcut.ui.fastCutSuggestionText
 import com.hebi.quickcut.ui.OriginalActionEnableDialog
 import kotlinx.coroutines.launch
 
+internal fun canModifyBatchQueue(isRunning: Boolean, isRecovering: Boolean, isImporting: Boolean): Boolean =
+    !isRunning && !isRecovering && !isImporting
+
 @Composable
 fun BatchScreen(
     model: BatchViewModel,
@@ -109,6 +112,7 @@ fun BatchScreen(
     val lifecycleState by lifecycleOwner.lifecycle.currentStateFlow.collectAsState()
     val activity = context as? Activity
     val scope = rememberCoroutineScope()
+    val canModifyQueue = canModifyBatchQueue(model.isRunning, model.isRecovering, model.isImporting)
     var pendingOverview by remember { mutableStateOf<BatchExportOverview?>(null) }
     var pendingRetry by remember { mutableStateOf(false) }
     var inspecting by remember { mutableStateOf(false) }
@@ -118,7 +122,7 @@ fun BatchScreen(
     var inspectedPercent by remember { mutableStateOf<Int?>(null) }
     var showStopConfirmation by rememberSaveable { mutableStateOf(false) }
     val requestExport: (Boolean) -> Unit = { retry ->
-        if (!inspecting && !model.isRunning && !model.isRecovering && !model.hasUnresolvedRecovery) {
+        if (!inspecting && canModifyQueue && !model.hasUnresolvedRecovery) {
             inspecting = true
             inspectedCount = 0
             inspectedTotal = 0
@@ -181,7 +185,7 @@ fun BatchScreen(
                         items(model.files, key = { it.uri }) { file ->
                             BatchFileRow(
                                 file, model.previewTemplate(), model.saveDateMode, model.currentExportStage,
-                                !model.isRunning && !model.isRecovering, model::removeVideo
+                                canModifyQueue, model::removeVideo
                             )
                         }
                     }
@@ -207,7 +211,7 @@ fun BatchScreen(
                 items(model.files, key = { it.uri }) { file ->
                     BatchFileRow(
                         file, model.previewTemplate(), model.saveDateMode, model.currentExportStage,
-                        !model.isRunning && !model.isRecovering, model::removeVideo
+                        canModifyQueue, model::removeVideo
                     )
                 }
                 item { BatchProgress(model) }
@@ -877,6 +881,7 @@ private fun BatchActions(
     onCancel: () -> Unit,
 ) {
     val palette = LocalCutPalette.current
+    val canModifyQueue = canModifyBatchQueue(model.isRunning, model.isRecovering, model.isImporting)
     Column(
         Modifier.fillMaxWidth().background(palette.surface, CutPanelShape)
             .border(1.dp, palette.border, CutPanelShape).padding(14.dp),
@@ -941,13 +946,18 @@ private fun BatchActions(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(
                         onClick = { requestExport(true) },
-                        enabled = !model.isRecovering && !model.hasUnresolvedRecovery && !inspecting && model.previewTemplate() != null &&
+                        enabled = canModifyQueue && !model.hasUnresolvedRecovery && !inspecting && model.previewTemplate() != null &&
                             (model.failures > 0 || model.skips > 0),
                         modifier = Modifier.weight(1f).heightIn(min = 48.dp),
                         shape = CutShape,
                     ) { Text("실패 작업 재시도") }
-                    TextButton(enabled = !model.isRecovering, onClick = model::resetBatch,
+                    TextButton(enabled = canModifyQueue, onClick = model::resetBatch,
                         modifier = Modifier.heightIn(min = 48.dp)) { Text("새 작업") }
+                }
+                if (model.isImporting) {
+                    Text("영상 목록을 변경 중입니다. 완료 후 다시 시도해 주세요.",
+                        color = palette.secondaryText, style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.testTag("batch-queue-busy-reason"))
                 }
                 ExportDiagnosticButton()
             }

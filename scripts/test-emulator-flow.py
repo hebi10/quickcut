@@ -116,6 +116,12 @@ if name == "gradle":
     (reports / "index.html").write_text(phase + " report")
     sys.exit(status)
 if name == "adb":
+    if args == ["get-state"]:
+        print("device")
+        sys.exit(0)
+    if args == ["shell", "getprop", "ro.build.version.sdk"]:
+        print(os.environ.get("QUICKCUT_EMULATOR_API", "35"))
+        sys.exit(0)
     if args[:3] == ["exec-out", "run-as", "com.hebi.quickcut"]:
         if os.environ.get("STAGE13_CAPTURE_STATUS") == "1" and any("stage13_" in a for a in args):
             sys.exit(43)

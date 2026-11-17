@@ -1,0 +1,52 @@
+name: QuickCut fast developer feedback (advisory)
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/**"
+      - "scripts/**"
+      - "app/src/**"
+      - "native/**"
+      - "app/build.gradle.kts"
+      - "gradle/**"
+      - "gradle.properties"
+      - "build.gradle.kts"
+      - "settings.gradle.kts"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  fast-feedback:
+    name: Fast source, emulator-flow and native-cache checks (not full Android QA)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Static syntax of release and emulator scripts
+        run: |
+          bash -n scripts/android-emulator-check.sh scripts/android-instrumentation-check.sh \
+            scripts/android-dialog-geometry-check.sh scripts/build-native-smartcut.sh
+          python3 -m py_compile scripts/ci-native-cache.py scripts/ci-android-health.py \
+            scripts/test-ci-native-cache.py scripts/test-ci-android-health.py
+      - name: Fail-closed native cache and emulator identity tests
+        run: |
+          python3 scripts/test-ci-native-cache.py
+          python3 scripts/test-ci-android-health.py
+      - name: Offline full-suite flow tests without launching Android
+        run: |
+          python3 scripts/test-emulator-flow.py
+          python3 scripts/test-emulator-startup.py
+          python3 scripts/test-native-build-cache.py
+      - name: Required full Android QA remains separate
+        run: |
+          echo "::notice::Fast feedback passed. Android build, OPS-07, and API29/35/36 full emulator checks are still mandatory before merging."

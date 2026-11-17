@@ -185,6 +185,20 @@ gradle.projectsEvaluated {
                 }
             }
             new File(output, 'resolution.json').text = JsonOutput.prettyPrint(JsonOutput.toJson(rows))
+            // Audit-only metadata stays outside the temporary source archive on failure.
+            // Missing source JARs remain a hard release error; never grant a license exception.
+            def resolvedComponents = ids.collect { it.displayName }.unique().sort()
+            def missingSourceJars = missing.unique().sort()
+            def auditFile = app.rootProject.layout.buildDirectory
+                .file('runtime-source-audit/dependencies.json').get().asFile
+            auditFile.parentFile.mkdirs()
+            auditFile.text = JsonOutput.prettyPrint(JsonOutput.toJson([
+                schemaVersion: 1,
+                resolvedComponents: resolvedComponents,
+                missingSourceJars: missingSourceJars,
+                sourceJarCount: rows.size(),
+                sourceJarResolutionComplete: missingSourceJars.empty && !rows.empty
+            ]))
             if (!missing.empty) throw new GradleException('Missing runtime dependency sources: ' + missing.join(', '))
             if (rows.empty) throw new GradleException('No release runtime dependency sources were collected')
         }

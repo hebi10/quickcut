@@ -34,3 +34,10 @@
 - https://developers.google.com/admob/android/quick-start
 - https://developers.google.com/admob/android/privacy
 - https://developers.google.com/admob/android/banner
+
+
+## 2026-11-17 — GPLv3/SDK 대응 소스 검증 상태
+
+- SDK sources JAR 누락 11개가 광고 브랜치 CI의 소스 패키징 실패 원인입니다. `docs/AD_LICENSE_REVIEW.md`에 모듈별 목록 및 확인해야 할 권리를 정리했습니다.
+- CI 진단 아티팩트 `quickcut-runtime-source-audit`는 법적 승인 자료가 아니라 소스 JAR 해석 결과입니다. 누락 시 기존 릴리스 차단을 유지합니다.
+- 광고·구독은 승인된 권리 검토 및 전체 QA가 완료되기 전에는 병합·서명·Play 배포하지 않습니다.

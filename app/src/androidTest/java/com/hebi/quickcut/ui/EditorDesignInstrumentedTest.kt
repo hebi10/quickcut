@@ -172,6 +172,7 @@ class EditorDesignInstrumentedTest {
         compose.onNodeWithTag("batch-add-videos").performScrollTo().assertIsDisplayed()
             .assertHeightIsAtLeast(48.dp)
         compose.onNodeWithTag("batch-mode").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("batch-precise-input-toggle").performScrollTo().performClick()
         compose.onNodeWithTag("batch-leading-minutes").performScrollTo().assertIsDisplayed()
             .assertHeightIsAtLeast(56.dp)
         compose.onNodeWithTag("batch-leading-seconds").performScrollTo().assertIsDisplayed()

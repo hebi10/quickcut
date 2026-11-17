@@ -36,6 +36,7 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ContentCut
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
@@ -527,6 +528,7 @@ private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
     val palette = LocalCutPalette.current
     val disabled = model.isRunning || model.isRecovering
     var showAdvanced by rememberSaveable { mutableStateOf(false) }
+    var showPreciseInput by rememberSaveable { mutableStateOf(false) }
     var pendingOriginalAction by rememberSaveable { mutableStateOf<OriginalAction?>(null) }
     Column(
         modifier = Modifier.fillMaxWidth().background(palette.surface, CutPanelShape)
@@ -554,13 +556,14 @@ private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
                 style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.testTag("batch-selection-count"))
         }
+        HorizontalDivider(color = palette.border)
         PresetEditor(model, disabled)
         Text(
             "2. 자르기 설정",
             color = palette.primaryText,
             fontWeight = FontWeight.SemiBold,
         )
-        Text("마지막 사용값은 자동으로 복원됩니다.",
+        Text("각 영상에 같은 편집 시간을 적용합니다.",
             style = MaterialTheme.typography.bodySmall, color = palette.secondaryText)
         CutChoiceDropdown("편집 방식", model.draftMode, listOf(
             CutChoice(BatchClipMode.REMOVE_EDGES, "앞뒤 구간 자르기"),
@@ -568,15 +571,11 @@ private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
             CutChoice(BatchClipMode.KEEP_LAST, "마지막 구간만 남기기"),
             CutChoice(BatchClipMode.JOIN_EDGES, "처음 + 마지막 구간 연결"),
         ), enabled = !disabled, modifier = Modifier.testTag("batch-mode")) { model.draftMode = it }
-        Text("분·초 입력 · 예: 1분 5.5초 · 소수점 셋째 자리까지 입력 가능",
-            style = MaterialTheme.typography.bodySmall, color = palette.secondaryText)
         val useLeading = model.draftMode.usesLeading
         val useTrailing = model.draftMode.usesTrailing
         val removing = model.draftMode == BatchClipMode.REMOVE_EDGES
         Text("빠른 시간 설정", color = palette.primaryText,
             fontWeight = FontWeight.Medium)
-        Text("사용 중인 시간에 빠르게 적용합니다. 직접 입력도 계속 사용할 수 있습니다.",
-            color = palette.secondaryText, style = MaterialTheme.typography.bodySmall)
         FlowRow(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -613,6 +612,7 @@ private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
             enabled = !disabled && useLeading,
             used = useLeading,
             tag = "batch-leading",
+            showPreciseInput = showPreciseInput,
         )
         BatchDurationField(
             title = if (removing) "뒤에서 자를 시간" else "끝에서 남길 시간",
@@ -621,7 +621,18 @@ private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
             enabled = !disabled && useTrailing,
             used = useTrailing,
             tag = "batch-trailing",
+            showPreciseInput = showPreciseInput,
         )
+        TextButton(onClick = { showPreciseInput = !showPreciseInput },
+            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                .testTag("batch-precise-input-toggle"),
+            enabled = !disabled) {
+            Text(if (showPreciseInput) "분·초 직접 입력 접기" else "분·초 직접 입력 펼치기")
+        }
+        if (showPreciseInput) {
+            Text("분·초를 직접 입력하면 0.001초 단위까지 지정할 수 있습니다.",
+                style = MaterialTheme.typography.bodySmall, color = palette.secondaryText)
+        }
         val template = model.previewTemplate()
         Text(
             template?.let(BatchTimeInput::summary) ?: model.draftError().orEmpty(),
@@ -645,6 +656,7 @@ private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
             Text(if (model.draftMute) "원본 소리: 음소거" else "원본 소리: 유지", color = palette.primaryText,
                 modifier = Modifier.weight(1f).padding(vertical = 10.dp))
         }
+        HorizontalDivider(color = palette.border)
         TextButton(
             onClick = { showAdvanced = !showAdvanced },
             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
@@ -657,7 +669,7 @@ private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
                     OriginalAction.TRASH -> "휴지통"
                     OriginalAction.DELETE -> "영구 삭제"
                 },
-            color = palette.secondaryText,
+            color = if (model.originalAction == OriginalAction.KEEP) palette.secondaryText else palette.warning,
             style = MaterialTheme.typography.bodyMedium,
         )
         if (showAdvanced) {
@@ -709,24 +721,19 @@ private fun PresetEditor(model: BatchViewModel, disabled: Boolean) {
     val context = LocalContext.current
     var showManager by rememberSaveable { mutableStateOf(false) }
     val selected = model.templates.firstOrNull { it.id == model.selectedTemplateId }
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Column(
-            Modifier.fillMaxWidth().background(palette.panel, CutShape)
-                .border(1.dp, palette.border, CutShape)
-                .padding(12.dp).testTag("ui04b-template-summary"),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
+    Row(Modifier.fillMaxWidth().testTag("ui04b-template-summary"),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text("선택 템플릿", style = MaterialTheme.typography.bodySmall,
                 color = palette.secondaryText)
             Text(selected?.name ?: "직접 설정",
-                style = MaterialTheme.typography.titleMedium, color = palette.primaryText)
-            Text(selected?.let(BatchTimeInput::summary) ?: "현재 입력한 편집 설정을 사용합니다.",
-                style = MaterialTheme.typography.bodySmall, color = palette.secondaryText)
+                style = MaterialTheme.typography.titleMedium, color = palette.primaryText,
+                maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
         OutlinedButton(onClick = { showManager = true }, enabled = !disabled,
-            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("batch-template-manager")) {
-            Text("템플릿 관리")
-        }
+            modifier = Modifier.heightIn(min = 48.dp).testTag("batch-template-manager"),
+            shape = CutShape) { Text("템플릿 관리") }
     }
     if (showManager) Dialog(
         onDismissRequest = { showManager = false },
@@ -862,43 +869,24 @@ private fun BatchDurationField(
     enabled: Boolean,
     used: Boolean,
     tag: String,
+    showPreciseInput: Boolean,
 ) {
     val palette = LocalCutPalette.current
     val parts = BatchTimeInput.parts(value)
     val error = if (used) BatchTimeInput.error(parts) else null
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(title, color = if (used) palette.primaryText else palette.secondaryText,
-            fontWeight = FontWeight.Medium)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedTextField(
-                value = if (used) parts.minutes else "",
-                onValueChange = { onValueChange(it.take(16) + ":" + parts.seconds) },
-                enabled = enabled,
-                label = { Text("분") },
-                placeholder = { Text("0") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                isError = error != null,
-                modifier = Modifier.weight(1f).heightIn(min = 56.dp).testTag("$tag-minutes")
-                    .semantics { contentDescription = "$title, 분" },
-                singleLine = true,
-                shape = CutShape,
-            )
-            OutlinedTextField(
-                value = if (used) parts.seconds else "",
-                onValueChange = { onValueChange(parts.minutes + ":" + it.take(16)) },
-                enabled = enabled,
-                label = { Text("초") },
-                placeholder = { Text("0") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                isError = error != null,
-                modifier = Modifier.weight(1f).heightIn(min = 56.dp).testTag("$tag-seconds")
-                    .semantics { contentDescription = "$title, 초" },
-                singleLine = true,
-                shape = CutShape,
-            )
+    val milliseconds = BatchTimeInput.parse(value)
+    val minus = BatchTimeQuickControls.step(value, -1)
+    val plus = BatchTimeQuickControls.step(value, 1)
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(title, color = if (used) palette.primaryText else palette.secondaryText,
+                fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+            Text(if (!used) "미사용" else milliseconds?.let(BatchTimeInput::durationText) ?: "입력 확인",
+                color = if (error == null) palette.secondaryAccent else MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.testTag(tag + "-summary"))
         }
-        val minus = BatchTimeQuickControls.step(value, -1)
-        val plus = BatchTimeQuickControls.step(value, 1)
         if (used) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = { minus?.let(onValueChange) },
@@ -915,12 +903,38 @@ private fun BatchDurationField(
                     shape = CutShape) { Text("+1초") }
             }
         }
+        if (showPreciseInput) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = if (used) parts.minutes else "",
+                    onValueChange = { onValueChange(it.take(16) + ":" + parts.seconds) },
+                    enabled = enabled,
+                    label = { Text("분") },
+                    placeholder = { Text("0") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    isError = error != null,
+                    modifier = Modifier.weight(1f).heightIn(min = 56.dp).testTag("$tag-minutes")
+                        .semantics { contentDescription = "$title, 분" },
+                    singleLine = true, shape = CutShape,
+                )
+                OutlinedTextField(
+                    value = if (used) parts.seconds else "",
+                    onValueChange = { onValueChange(parts.minutes + ":" + it.take(16)) },
+                    enabled = enabled,
+                    label = { Text("초") },
+                    placeholder = { Text("0") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    isError = error != null,
+                    modifier = Modifier.weight(1f).heightIn(min = 56.dp).testTag("$tag-seconds")
+                        .semantics { contentDescription = "$title, 초" },
+                    singleLine = true, shape = CutShape,
+                )
+            }
+        }
         if (!used || error != null) {
-            Text(
-                if (!used) "이 편집 방식에서는 사용하지 않습니다." else error.orEmpty(),
+            Text(if (!used) "현재 편집 방식에서 사용하지 않습니다." else error.orEmpty(),
                 color = if (error != null) MaterialTheme.colorScheme.error else palette.secondaryText,
-                style = MaterialTheme.typography.bodySmall,
-            )
+                style = MaterialTheme.typography.bodySmall)
         }
     }
 }

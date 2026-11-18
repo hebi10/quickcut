@@ -81,6 +81,7 @@ fun CropEditorScreen(
     clip: VideoClip,
     onApply: (CropRegion?) -> Unit,
     onCancel: () -> Unit,
+    onHelp: (String) -> Unit = {},
 ) {
     val palette = LocalCutPalette.current
     BackHandler(onBack = onCancel)
@@ -132,10 +133,17 @@ fun CropEditorScreen(
                 Text("선택한 클립에만 적용", color = palette.secondaryText,
                     style = MaterialTheme.typography.bodySmall)
             }
-            IconButton(onClick = onCancel, modifier = Modifier.size(48.dp)) {
-                Icon(CutIcons.Back, contentDescription = "편집 화면으로")
+            Row {
+                IconButton(onClick = { onHelp("crop") }, modifier = Modifier.size(48.dp)
+                    .testTag("crop-help")) {
+                    Icon(CutIcons.Info, contentDescription = "크롭 사용법")
+                }
+                IconButton(onClick = onCancel, modifier = Modifier.size(48.dp)) {
+                    Icon(CutIcons.Back, contentDescription = "편집 화면으로")
+                }
             }
         }
+        FirstVisitGuideBanner("crop", onHelp)
 
         if (source == null) {
             Box(Modifier.fillMaxWidth().height(220.dp), contentAlignment = Alignment.Center) {

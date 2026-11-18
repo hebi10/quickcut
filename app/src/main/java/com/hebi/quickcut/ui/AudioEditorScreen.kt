@@ -67,6 +67,7 @@ fun AudioEditorScreen(
     clip: VideoClip,
     onApply: (AudioAdjustment, Boolean) -> Unit,
     onCancel: () -> Unit,
+    onHelp: (String) -> Unit = {},
 ) {
     val palette = LocalCutPalette.current
     BackHandler(onBack = onCancel)
@@ -133,10 +134,15 @@ fun AudioEditorScreen(
                 Text("현재 클립 · ${formatTime(clip.durationMs)}",
                     color = palette.secondaryText, style = MaterialTheme.typography.bodySmall)
             }
+            IconButton(onClick = { onHelp("audio") }, modifier = Modifier.size(48.dp)
+                .testTag("audio-help")) {
+                Icon(CutIcons.Info, contentDescription = "오디오 편집 사용법")
+            }
         }
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState())
             .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            FirstVisitGuideBanner("audio", onHelp)
             Text("오디오 미리보기", color = palette.primaryText,
                 style = MaterialTheme.typography.titleMedium)
             Box(Modifier.fillMaxWidth().height(200.dp).background(Color.Black)) {

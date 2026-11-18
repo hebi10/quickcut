@@ -45,6 +45,7 @@ jobs:
       - name: Offline full-suite flow tests without launching Android
         run: |
           python3 scripts/test-emulator-flow.py
+          python3 scripts/test-api35-complete-suite.py
           python3 scripts/test-emulator-startup.py
           python3 scripts/test-native-build-cache.py
       - name: Required full Android QA remains separate

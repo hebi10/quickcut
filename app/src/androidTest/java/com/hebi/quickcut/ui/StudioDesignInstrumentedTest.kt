@@ -35,7 +35,7 @@ class StudioDesignInstrumentedTest {
     @Test fun smallPhoneHomeAndTabsStayAccessible() {
         val events = mutableListOf<String>()
         showHome(320, 640, 1f, canRestore = true, events = events)
-        composeRule.onNodeWithText("+ 영상 편집 시작하기").assertIsDisplayed()
+        composeRule.onNodeWithText("빠른 자르기 시작").assertIsDisplayed()
         composeRule.onNodeWithText("전체 보기 >").assertIsDisplayed()
         composeRule.onNodeWithText("도구").performClick()
         composeRule.onNodeWithText("편집 도구").assertIsDisplayed()

@@ -64,6 +64,12 @@ internal fun SaveOptionsDialog(
             ) {
                 Text("저장 정보", color = palette.primaryText,
                     style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "편집 결과를 새 MP4 영상으로 갤러리에 저장합니다. " +
+                        "프로젝트(편집 내용) 보관과는 다른 작업입니다.",
+                    color = palette.secondaryText,
+                    style = MaterialTheme.typography.bodySmall,
+                )
                 Text((if (outputQuality.isAutomatic)
                     "자동 · 원본 해상도와 FPS를 유지하며 가능한 고속 저장을 사용합니다."
                 else "직접 설정 · 화질 변경 시 영상 변환이 필요할 수 있습니다.") +
@@ -252,22 +258,30 @@ internal fun ExportModeDialog(
                     title = "저장 방식 분석 결과",
                     message = assessment.explanation,
                 )
-                Text("정확한 위치로 저장", color = palette.primaryText,
+                Text("선택한 구간 그대로 저장", color = palette.primaryText,
                     style = MaterialTheme.typography.titleSmall)
                 Text(
-                    "지정한 시작·끝 시점을 유지합니다. 원본 복사·부분 처리를 우선 시도하고 " +
-                        "필요하면 전체 영상을 변환합니다. 실제 처리 방식은 완료 후 표시합니다.",
+                    "내가 설정한 시작·끝 시간은 바뀌지 않습니다. " +
+                        "필요하면 영상 또는 소리를 다시 변환하므로 저장 시간이 길어질 수 있습니다. " +
+                        "실제 처리 방식은 완료 후 확인할 수 있습니다.",
                     color = palette.secondaryText,
                     style = MaterialTheme.typography.bodySmall,
                 )
                 assessment.suggestion?.let { suggestion ->
-                    Text("고속 저장 추천 위치", style = MaterialTheme.typography.titleSmall,
+                    Text("추천 구간으로 빠르게 저장", style = MaterialTheme.typography.titleSmall,
                         color = palette.primaryText)
+                    Text(
+                        "추천 위치를 선택하면 시작·끝 시간이 바뀌고 장면이 추가로 잘릴 수 있습니다. " +
+                            "아래 변경 시간과 미리보기를 확인한 뒤 선택하세요.",
+                        color = palette.secondaryText, style = MaterialTheme.typography.bodySmall,
+                    )
                     Text(fastCutSuggestionText(suggestion))
                     FastCutPreview(suggestion)
-                    Text("추천 위치를 선택하면 시작·종료 시점이 변경됩니다. " +
-                        "고속 저장은 재인코딩 없이 영상을 복사하며 소리는 필요할 때 변환합니다.",
-                        color = palette.secondaryText, style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        "추천 구간은 가능한 경우 영상 재인코딩을 줄입니다. " +
+                            "소리는 필요할 때 변환할 수 있습니다.",
+                        color = palette.secondaryText, style = MaterialTheme.typography.bodySmall,
+                    )
                 }
             }
         },

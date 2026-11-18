@@ -1,5 +1,9 @@
 package com.hebi.quickcut.ui
 
+import android.content.Context
+import android.net.Uri
+import android.provider.OpenableColumns
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -30,16 +34,24 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hebi.quickcut.editor.SavedProject
+import com.hebi.quickcut.editor.formatTime
+import com.hebi.quickcut.media.MediaReader
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.text.DateFormat
 import java.util.Date
 
@@ -130,6 +142,25 @@ internal fun ProjectCard(
     }
 }
 
+internal data class GalleryVideoInfo(val displayName: String?, val durationMs: Long?)
+
+internal fun readGalleryVideoInfo(context: Context, source: String): GalleryVideoInfo {
+    val uri = Uri.parse(source)
+    val name = runCatching {
+        if (uri.scheme == "file") {
+            uri.lastPathSegment
+        } else {
+            context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+                ?.use { cursor ->
+                    val column = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    if (column >= 0 && cursor.moveToFirst()) cursor.getString(column) else null
+                }
+        }
+    }.getOrNull()?.takeIf { it.isNotBlank() }?.take(100)
+    val durationMs = runCatching { MediaReader.metadata(context, uri).durationMs }.getOrNull()
+    return GalleryVideoInfo(name, durationMs)
+}
+
 @Composable
 internal fun SelectedVideoGallery(
     uris: List<String>,
@@ -138,6 +169,7 @@ internal fun SelectedVideoGallery(
     onDismiss: () -> Unit,
 ) {
     val palette = LocalCutPalette.current
+    val context = LocalContext.current.applicationContext
     var selected by remember(uris) { mutableStateOf(uris.toSet()) }
     Column(
         Modifier.fillMaxSize().background(palette.background).padding(CutSpacing.lg),
@@ -168,6 +200,13 @@ internal fun SelectedVideoGallery(
             ) {
                 itemsIndexed(uris, key = { _, uri -> uri }) { index, uri ->
                     val isSelected = uri in selected
+                    val info by produceState<GalleryVideoInfo?>(initialValue = null, key1 = uri) {
+                        value = withContext(Dispatchers.IO) { readGalleryVideoInfo(context, uri) }
+                    }
+                    val title = info?.displayName ?: "영상 ${index + 1}"
+                    val duration = info?.durationMs?.let { "길이 ${formatTime(it)}" }
+                        ?: if (info == null) "영상 정보 확인 중" else "길이 확인 불가"
+                    val selectedOrder = uris.take(index + 1).count { it in selected }
                     Column(
                         Modifier.background(
                             if (isSelected) palette.accentMuted else palette.surface, CutShape
@@ -176,20 +215,31 @@ internal fun SelectedVideoGallery(
                             .testTag("gallery-item-$index")
                             .clickable {
                                 selected = if (isSelected) selected - uri else selected + uri
-                            }.padding(CutSpacing.xs),
+                            }
+                            .semantics {
+                                stateDescription = if (isSelected) "선택됨, ${selectedOrder}번째 영상"
+                                    else "선택 안 됨"
+                            }
+                            .padding(CutSpacing.xs),
                         verticalArrangement = Arrangement.spacedBy(CutSpacing.xs),
                     ) {
                         Box {
                             ClipThumbnail(uri, 0L, Modifier.fillMaxWidth().height(124.dp))
                             if (isSelected) {
-                                Text("✓", color = palette.onAccent,
+                                Text("✓ $selectedOrder", color = palette.onAccent,
                                     modifier = Modifier.align(Alignment.TopEnd)
                                         .background(palette.accent, CutSmallShape)
                                         .padding(horizontal = 8.dp, vertical = 3.dp))
                             }
                         }
-                        Text("영상 ${index + 1}", color = palette.primaryText,
-                            style = MaterialTheme.typography.labelMedium)
+                        Text(title, color = palette.primaryText,
+                            style = MaterialTheme.typography.labelMedium,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.testTag("gallery-video-title-$index"))
+                        Text(duration, color = palette.secondaryText,
+                            style = MaterialTheme.typography.labelSmall,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.testTag("gallery-video-length-$index"))
                     }
                 }
             }

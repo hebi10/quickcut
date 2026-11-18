@@ -303,6 +303,7 @@ fun EditorScreen(
                 showAudio = false
             },
             onCancel = { showAudio = false },
+            onHelp = onHelp,
         )
         return
     }
@@ -314,6 +315,7 @@ fun EditorScreen(
                 showText = false
             },
             onCancel = { showText = false },
+            onHelp = onHelp,
         )
         return
     }
@@ -326,6 +328,7 @@ fun EditorScreen(
                 showCrop = false
             },
             onCancel = { showCrop = false },
+            onHelp = onHelp,
         )
         return
     }

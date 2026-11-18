@@ -1,6 +1,7 @@
 package com.hebi.quickcut.segments
 
 import com.hebi.quickcut.ui.CutIcons
+import com.hebi.quickcut.ui.FirstVisitGuideBanner
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
@@ -89,6 +90,7 @@ fun ExtractionScreen(
     model: ExtractionViewModel,
     onSelectVideo: () -> Unit,
     onBack: () -> Unit,
+    onHelp: (String) -> Unit = {},
 ) {
     val palette = LocalCutPalette.current
     val context = LocalContext.current
@@ -139,8 +141,15 @@ fun ExtractionScreen(
                 Text("한 영상의 원하는 장면을 개별 MP4로 저장", style = MaterialTheme.typography.bodySmall,
                     color = palette.secondaryText)
             }
+            IconButton(onClick = { onHelp("extraction") }, enabled = !model.busy,
+                modifier = Modifier.size(48.dp).testTag("extraction-help")) {
+                Icon(CutIcons.Info, contentDescription = "여러 구간 추출 사용법")
+            }
             OutlinedButton(onClick = onSelectVideo, enabled = !model.busy && !model.blocked,
                 modifier = Modifier.heightIn(min = 48.dp)) { Text("영상 선택") }
+        }
+        if (!model.busy) {
+            FirstVisitGuideBanner("extraction", onHelp)
         }
 
         if (session == null) {

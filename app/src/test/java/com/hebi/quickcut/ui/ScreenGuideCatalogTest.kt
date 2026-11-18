@@ -8,7 +8,7 @@ class ScreenGuideCatalogTest {
     @Test
     fun everyScreenHasAStableVersionedAccessibleGuide() {
         val guides = QuickCutGuides.all
-        assertEquals(13, guides.size)
+        assertEquals(14, guides.size)
         assertEquals(guides.size, guides.map { it.id }.distinct().size)
         guides.forEach { guide ->
             assertTrue(guide.id.matches(Regex("[a-z]+")))

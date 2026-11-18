@@ -127,7 +127,10 @@ class ReleaseGateTest(unittest.TestCase):
                 self.assertFalse(self.check()[0])
 
     def test_pending_other_workflow_skips_without_polling(self):
-        self.runs['emulator-smoke.yml'] = [run_record('Android emulator smoke', status='in_progress', conclusion=None)]
+        self.runs['emulator-smoke.yml'] = [run_record(
+            'Android emulator smoke', event='workflow_dispatch',
+            status='in_progress', conclusion=None
+        )]
         ready, reason = self.check()
         self.assertFalse(ready)
         self.assertIn('in_progress', reason)

@@ -101,6 +101,7 @@ fun QuickTrimScreen(
     onDetailedEdit: () -> Unit,
     onSave: () -> Unit,
     onSaveOptions: () -> Unit,
+    onHelp: (String) -> Unit = {},
 ) {
     val palette = LocalCutPalette.current
     val clip = model.timeline.clips.singleOrNull() ?: return
@@ -302,6 +303,10 @@ fun QuickTrimScreen(
                     Text("빠른 자르기", color = palette.primaryText,
                         style = MaterialTheme.typography.titleLarge,
                         modifier = Modifier.weight(1f))
+                    IconButton(onClick = { onHelp("quick") },
+                        modifier = Modifier.size(48.dp).testTag("quick-help")) {
+                        Icon(CutIcons.Info, contentDescription = "빠른 자르기 사용법")
+                    }
                     if (!compactHeader) DetailedEditButton(openDetailed)
                 }
                 if (compactHeader) {
@@ -309,6 +314,8 @@ fun QuickTrimScreen(
                         Modifier.fillMaxWidth().padding(bottom = 8.dp))
                 }
             }
+            FirstVisitGuideBanner("quick", onHelp,
+                modifier = Modifier.padding(horizontal = CutSpacing.sm, vertical = 4.dp))
         previewFailure?.let { message ->
             PreviewRecoveryNotice(message, onRetry = retryPreview)
         }

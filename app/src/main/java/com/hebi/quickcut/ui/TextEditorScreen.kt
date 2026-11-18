@@ -90,6 +90,7 @@ fun TextEditorScreen(
     clip: VideoClip,
     onApply: (List<TextLayer>) -> Unit,
     onCancel: () -> Unit,
+    onHelp: (String) -> Unit = {},
 ) {
     val palette = LocalCutPalette.current
     BackHandler(onBack = onCancel)
@@ -164,11 +165,15 @@ fun TextEditorScreen(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Column {
+            Column(Modifier.weight(1f)) {
                 Text("텍스트 오버레이", color = palette.primaryText,
                     style = MaterialTheme.typography.titleLarge)
                 Text("현재 클립 · ${formatTime(clip.durationMs)}",
                     color = palette.secondaryText, style = MaterialTheme.typography.bodySmall)
+            }
+            TextButton(onClick = { onHelp("text") }, modifier = Modifier.heightIn(min = 48.dp)
+                .testTag("text-help")) {
+                Text("사용법")
             }
             TextButton(onClick = onCancel, modifier = Modifier.heightIn(min = 48.dp)) {
                 Text("취소")
@@ -178,6 +183,7 @@ fun TextEditorScreen(
             Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
+            FirstVisitGuideBanner("text", onHelp)
             BoxWithConstraints(
                 Modifier.fillMaxWidth().height(280.dp).background(Color.Black),
                 contentAlignment = Alignment.Center,

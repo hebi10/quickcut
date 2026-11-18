@@ -167,6 +167,7 @@ internal fun SelectedVideoGallery(
     onAdd: () -> Unit,
     onImport: (List<String>) -> Unit,
     onDismiss: () -> Unit,
+    onHelp: (String) -> Unit = {},
 ) {
     val palette = LocalCutPalette.current
     val context = LocalContext.current.applicationContext
@@ -189,6 +190,11 @@ internal fun SelectedVideoGallery(
         }
         Text("추가한 영상에서 편집할 항목을 선택하세요.",
             color = palette.secondaryText, style = MaterialTheme.typography.bodySmall)
+        FirstVisitGuideBanner("gallery", onHelp)
+        TextButton(onClick = { onHelp("gallery") },
+            modifier = Modifier.heightIn(min = 48.dp).testTag("gallery-help")) {
+            Text("영상 선택 사용법")
+        }
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
             val columns = if (maxWidth < 600.dp) GridCells.Fixed(2)
                 else GridCells.Adaptive(160.dp)

@@ -796,8 +796,6 @@ private fun ToolButtons(
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.testTag("editor-tool-hint"))
             }
-
-                style = MaterialTheme.typography.titleMedium)
             selected?.let {
                 Text("클립 " + (model.timeline.clips.indexOf(it) + 1) +
                     " · " + formatTime(it.durationMs),

@@ -31,15 +31,29 @@ class FinalPolicyTests(unittest.TestCase):
                 self.assertNotIn(forbidden, source)
         self.assertIn("permissions:\n  contents: read", source)
 
-    def test_policy_changes_retrigger_exact_main_android_matrix(self):
+    def test_exact_main_full_matrix_only_runs_by_manual_dispatch(self):
         source = (ROOT / ".github/workflows/emulator-smoke.yml").read_text(encoding="utf-8")
-        for path in (".github/workflows/ops07-safety.yml",
-                     ".github/workflows/ops08-final-policy.yml",
-                     "scripts/ops07/**", "scripts/ops08/**"):
-            with self.subTest(path=path):
-                self.assertEqual(source.count('      - "' + path + '"'), 2)
-        self.assertIn("  push:\n    branches: [main]", source)
+        self.assertEqual(audit.check_emulator_dispatch_policy(source), [])
         self.assertIn("api: [29, 35, 36]", source)
+        self.assertIn("expected_main_sha:", source)
+        self.assertIn("needs: validate-source", source)
+
+    def test_any_automatic_full_matrix_or_missing_source_guard_is_blocked(self):
+        source = (ROOT / ".github/workflows/emulator-smoke.yml").read_text(encoding="utf-8")
+        variants = (
+            source.replace("  workflow_dispatch:", "  pull_request:\n  workflow_dispatch:", 1),
+            source.replace("  workflow_dispatch:", "  push:\n    branches: [main]\n  workflow_dispatch:", 1),
+            source.replace("    needs: validate-source\n", "", 1),
+            source.replace("  validate-source:\n", "  unchecked-source:\n", 1),
+            source.replace("      expected_main_sha:\n", "      missing_expected_sha:\n", 1),
+            source.replace("          EXPECTED_MAIN_SHA: ", "          OTHER_SHA: ", 1),
+            source.replace('[[ "$EXPECTED_MAIN_SHA" != "$SOURCE_SHA" ]]', '[[ "$EXPECTED_MAIN_SHA" == "$SOURCE_SHA" ]]', 1),
+            source.replace("api: [29, 35, 36]", "api: [35, 36]", 1),
+        )
+        for index, candidate in enumerate(variants):
+            self.assertNotEqual(candidate, source, "Malformed negative test fixture")
+            with self.subTest(variant=index):
+                self.assertTrue(audit.check_emulator_dispatch_policy(candidate))
 
     def test_dirty_audited_worktree_is_not_attributed_to_head_sha(self):
         fixed_sha = "a" * 40

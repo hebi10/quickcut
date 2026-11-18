@@ -50,4 +50,4 @@ jobs:
           python3 scripts/test-native-build-cache.py
       - name: Required full Android QA remains separate
         run: |
-          echo "::notice::Fast feedback passed. Android build, OPS-07, and API29/35/36 full emulator checks are still mandatory before merging."
+          echo "::notice::PR fast feedback passed. Require Android build, OPS-07, security and relevant scoped QA before merging; after the development batch freezes, dispatch API29/35/36 full emulator QA once against exact main SHA before any release. High-risk changes may require pre-merge emulator QA."

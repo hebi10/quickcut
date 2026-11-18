@@ -75,6 +75,7 @@ class Stage17AudioScreensInstrumentedTest {
         assertTextVisibleAfterScroll("원본 음량 · 45%")
         compose.onNodeWithTag("ui05a-audio-summary").performScrollTo().assertIsDisplayed()
         assertTextVisibleAfterScroll("페이드 인 · 00:01.0")
+        compose.onNodeWithTag("audio-fade-toggle").performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("audio-fade-in").assertIsEnabled()
         compose.onNodeWithTag("audio-apply").assertIsDisplayed()
         capture("stage17_audio_fades.png")

@@ -96,7 +96,9 @@ class Stage18TextEditorScreensInstrumentedTest {
         compose.onNodeWithTag("text-layer-input").performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("text-apply").assertIsDisplayed().assertIsEnabled()
         capture("stage18_text_selected.png")
+        compose.onNodeWithTag("text-section-style").performScrollTo().performClick()
         compose.onNodeWithTag("text-color-YELLOW").performScrollTo().performClick()
+        compose.onNodeWithTag("text-section-timing").performScrollTo().performClick()
         hideImeAndWait()
         compose.onNodeWithTag("text-layer-timing").performScrollTo()
         compose.waitUntil(10_000L) {
@@ -134,6 +136,7 @@ class Stage18TextEditorScreensInstrumentedTest {
         compose.onNodeWithTag("text-apply").assertIsDisplayed()
         compose.onNodeWithTag("text-apply").assertIsEnabled()
         capture("stage18_text_largefont.png")
+        compose.onNodeWithTag("text-section-timing").performScrollTo().performClick()
         compose.onNodeWithTag("ui05a-text-timing-fields").performScrollTo().assertIsDisplayed()
     }
 

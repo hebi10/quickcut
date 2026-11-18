@@ -437,7 +437,7 @@ class TrimInputInstrumentedTest {
             click(center)
         }
         composeRule.onNodeWithText("영상 저장", substring = false).assertIsEnabled()
-        composeRule.onAllNodes(hasSetTextAction())[0].assertIsDisplayed()
+        composeRule.onAllNodes(hasSetTextAction())[0].performScrollTo().assertIsDisplayed()
     }
 
     @Test

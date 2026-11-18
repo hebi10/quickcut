@@ -18,6 +18,10 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
@@ -47,6 +51,7 @@ internal fun SaveOptionsDialog(
 ) {
     val palette = LocalCutPalette.current
     val qualityEvaluation = rememberExportQualityEvaluation(timeline, outputQuality)
+    var showQualityDetails by rememberSaveable { mutableStateOf(!outputQuality.isAutomatic) }
     AlertDialog(
         modifier = Modifier.fillMaxWidth().padding(horizontal = CutSpacing.lg).widthIn(max = 480.dp),
         properties = DialogProperties(usePlatformDefaultWidth = false),
@@ -60,19 +65,25 @@ internal fun SaveOptionsDialog(
                 Text("저장 정보", color = palette.primaryText,
                     style = MaterialTheme.typography.titleMedium)
                 Text((if (outputQuality.isAutomatic)
-                    "원본 영상의 해상도와 프레임 속도를 유지하며, 가능한 경우 고속 저장을 사용합니다."
-                else
-                    "선택한 출력 설정으로 변환합니다. 재인코딩을 승인한 뒤 저장할 수 있습니다.") +
-                    " 실제 처리 방식은 저장 전 분석합니다.",
+                    "자동 · 원본 해상도와 FPS를 유지하며 가능한 고속 저장을 사용합니다."
+                else "직접 설정 · 화질 변경 시 영상 변환이 필요할 수 있습니다.") +
+                    " 저장 방식은 시작 전에 확인합니다.",
                     color = palette.secondaryText,
                     style = MaterialTheme.typography.bodySmall)
                 if (!timeline.isEmpty) {
-                    ExportQualitySection(
-                        timeline = timeline,
-                        settings = outputQuality,
-                        evaluation = qualityEvaluation,
-                        onChange = onOutputQualityChange,
-                    )
+                    TextButton(onClick = { showQualityDetails = !showQualityDetails },
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                            .testTag("export-quality-toggle")) {
+                        Text(if (showQualityDetails) "고급 화질 설정 접기" else "고급 화질 설정 펼치기")
+                    }
+                    if (showQualityDetails) {
+                        ExportQualitySection(
+                            timeline = timeline,
+                            settings = outputQuality,
+                            evaluation = qualityEvaluation,
+                            onChange = onOutputQualityChange,
+                        )
+                    }
                 }
                 Text("저장 위치", color = palette.primaryText,
                     style = MaterialTheme.typography.titleSmall)

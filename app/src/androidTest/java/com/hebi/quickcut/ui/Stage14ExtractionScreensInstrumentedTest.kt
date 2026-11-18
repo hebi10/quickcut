@@ -16,6 +16,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
@@ -98,6 +99,7 @@ class Stage14ExtractionScreensInstrumentedTest {
             }
         }
         waitForImport()
+        compose.onNodeWithTag("extraction-manual-time-toggle").performScrollTo().performClick()
         compose.onNodeWithText("구간 적용").performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("ui04b-extraction-range-summary").performScrollTo().assertIsDisplayed()
         capture("stage14_extraction_tablet_largefont.png")

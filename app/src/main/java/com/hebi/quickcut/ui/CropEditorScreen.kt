@@ -119,6 +119,7 @@ fun CropEditorScreen(
     var preset by rememberSaveable(clip.id) {
         mutableStateOf(if (clip.crop == null) CropRatio.ORIGINAL else CropRatio.FREE)
     }
+    var showFineControls by rememberSaveable(clip.id) { mutableStateOf(false) }
 
     Column(Modifier.fillMaxSize().background(palette.background)) {
       Column(Modifier.weight(1f).verticalScroll(rememberScrollState())
@@ -252,6 +253,12 @@ fun CropEditorScreen(
                 color = palette.secondaryText,
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.testTag("ui05a-crop-selection"))
+            TextButton(
+                onClick = { showFineControls = !showFineControls },
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                    .testTag("crop-advanced-transform-toggle"),
+            ) { Text(if (showFineControls) "세부 위치 조절 접기" else "세부 위치 조절 펼치기") }
+            if (showFineControls) {
             BoxWithConstraints(Modifier.fillMaxWidth().testTag("ui05a-crop-controls")) {
                 if (maxWidth < 400.dp || LocalDensity.current.fontScale >= 1.5f) {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -288,6 +295,7 @@ fun CropEditorScreen(
                         }
                     }
                 }
+            }
             }
             if (preset == CropRatio.FREE) {
                 Text("자유 비율 크기", color = palette.primaryText,

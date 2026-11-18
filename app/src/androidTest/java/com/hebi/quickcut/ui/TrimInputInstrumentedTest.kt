@@ -11,6 +11,7 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.test.onNodeWithContentDescription
 import android.app.Application
@@ -433,11 +434,19 @@ class TrimInputInstrumentedTest {
         assertInvalidDetailedDraft()
         composeRule.onNodeWithText("영상 저장", substring = false).assertIsNotEnabled()
 
+        // A centered tap inside the already-selected interval does not move either
+        // RangeSlider thumb. Drag the actual start handle, then require a changed
+        // timeline AND a restored save action instead of accepting a no-op gesture.
         composeRule.onNodeWithTag("detailed-trim-range").performTouchInput {
-            click(center)
+            down(Offset(width * 0.04f, centerY))
+            moveBy(Offset(width * 0.25f, 0f), delayMillis = 350L)
+            up()
+        }
+        composeRule.waitUntil(10_000L) {
+            model.timeline.clips.single().startMs > 0L && model.canStartExport
         }
         composeRule.onNodeWithText("영상 저장", substring = false).assertIsEnabled()
-        composeRule.onAllNodes(hasSetTextAction())[0].assertIsDisplayed()
+        composeRule.onAllNodes(hasSetTextAction())[0].performScrollTo().assertIsDisplayed()
     }
 
     @Test

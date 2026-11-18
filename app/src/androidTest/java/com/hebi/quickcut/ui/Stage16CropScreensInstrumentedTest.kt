@@ -101,6 +101,7 @@ class Stage16CropScreensInstrumentedTest {
         }
         waitPreview()
         compose.onNodeWithTag("crop-apply").assertIsDisplayed()
+        compose.onNodeWithTag("crop-advanced-transform-toggle").performScrollTo().performClick()
         compose.onNodeWithTag("ui05a-crop-controls").performScrollTo().assertIsDisplayed()
         capture("stage16_crop_largefont.png")
         compose.onNodeWithTag("crop-apply").performClick()

@@ -480,7 +480,8 @@ fun EditorScreen(
                 else -> {
                     val inputScroll = rememberScrollState()
                     Column(Modifier.fillMaxSize().then(
-                        if (keyboardVisible) Modifier.verticalScroll(inputScroll) else Modifier,
+                        if (keyboardVisible || showTrim) Modifier.verticalScroll(inputScroll)
+                        else Modifier,
                     )) {
                         PreviewPanel(
                             player = player,
@@ -490,7 +491,9 @@ fun EditorScreen(
                             onPlay = onPlay,
                             onSeek = onSeek,
                             modifier = (if (keyboardVisible) Modifier.height(0.dp).clipToBounds()
-                                else Modifier.weight(1f)).fillMaxWidth().padding(horizontal = 12.dp),
+                                else if (showTrim) Modifier.height(220.dp)
+                                else Modifier.weight(1f))
+                                .fillMaxWidth().padding(horizontal = 12.dp),
                             compact = false,
                         )
                         TimelineStrip(
@@ -503,6 +506,13 @@ fun EditorScreen(
             onTrimStart = model::beginTrim,
             onTrimEnd = model::finishTrim,
                             modifier = Modifier.fillMaxWidth().heightIn(min = 148.dp),
+                        )
+                        ToolButtons(
+                            selected = selected,
+                            model = model,
+                            onAction = onAction,
+                            vertical = false,
+                            showTrim = showTrim,
                         )
                         if (showTrim && selected != null) {
                             TrimEditor(
@@ -519,13 +529,6 @@ fun EditorScreen(
                                     .padding(horizontal = 14.dp),
                             )
                         }
-                        ToolButtons(
-                            selected = selected,
-                            model = model,
-                            onAction = onAction,
-                            vertical = false,
-                            showTrim = showTrim,
-                        )
                     }
                 }
             }

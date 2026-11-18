@@ -682,6 +682,7 @@ fun QuickCutApp(
             timeline = model.timeline,
             outputQuality = draftOutputQuality,
             onOutputQualityChange = { draftOutputQuality = it },
+            onHelp = showGuide,
             canSave = model.canStartExport && !inspectingExport,
             onSave = {
                 if (model.canStartExport && !inspectingExport) {

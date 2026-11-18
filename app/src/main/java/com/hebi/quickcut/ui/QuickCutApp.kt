@@ -812,6 +812,7 @@ private fun StartScreen(
     onOpenProject: (String) -> Unit,
     onDeleteProject: (String) -> Unit,
     onGallery: () -> Unit,
+    onHelp: (String) -> Unit = {},
 ) {
     StudioStartScreen(
         onQuick = onQuick, onSelect = onSelect, onBatch = onBatch,
@@ -824,6 +825,7 @@ private fun StartScreen(
         onOpenProject = onOpenProject,
         onDeleteProject = onDeleteProject,
         onGallery = onGallery,
+        onHelp = onHelp,
     )
 }
 

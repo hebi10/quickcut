@@ -141,7 +141,7 @@ class Stage13ReferenceScreensInstrumentedTest {
             compose.onAllNodesWithText("quickcut_stage13_0.mp4", useUnmergedTree = true)
                 .fetchSemanticsNodes().isNotEmpty()
         }
-        compose.onNodeWithTag("gallery-video-length-0")
+        compose.onNodeWithTag("gallery-video-length-0", useUnmergedTree = true)
             .assertTextEquals("길이 ${formatTime(expectedLength)}")
             .assertIsDisplayed()
         compose.onNodeWithText("2개 선택").assertIsDisplayed()

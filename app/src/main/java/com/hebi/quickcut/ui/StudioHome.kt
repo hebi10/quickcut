@@ -88,6 +88,7 @@ internal fun StudioStartScreen(
     onGallery: () -> Unit = {},
     themeMode: QuickCutThemeMode = QuickCutThemeMode.SYSTEM,
     onThemeModeChange: (QuickCutThemeMode) -> Unit = {},
+    onHelp: (String) -> Unit = {},
 ) {
     val palette = LocalCutPalette.current
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
@@ -101,6 +102,20 @@ internal fun StudioStartScreen(
                 .padding(horizontal = CutSpacing.lg, vertical = CutSpacing.xl),
             verticalArrangement = Arrangement.spacedBy(CutSpacing.xl),
         ) {
+            val guideId = when (selectedTab) {
+                1 -> "projects"
+                2 -> "tools"
+                3 -> "save"
+                else -> "home"
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = { onHelp(guideId) },
+                    modifier = Modifier.heightIn(min = CutSizes.touchTarget)
+                        .testTag("screen-help-$guideId")) { Text("사용법") }
+            }
+            if (selectedTab != 3) {
+                FirstVisitGuideBanner(guideId, onHelp)
+            }
             when (selectedTab) {
                 0 -> {
                     StudioBrand()
@@ -175,6 +190,12 @@ internal fun StudioStartScreen(
                         }
                     }
                     if (canRestore) {
+                        Text(
+                            "‘이전 편집 이어서 진행’은 자동 복원한 최근 편집입니다. " +
+                                "직접 보관한 프로젝트는 위의 프로젝트 목록에서 열 수 있습니다.",
+                            color = palette.secondaryText,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
                         OutlinedButton(
                             onClick = onRestore,
                             modifier = Modifier.fillMaxWidth()
@@ -225,6 +246,12 @@ internal fun StudioStartScreen(
                         }
                     }
                     if (canRestore) {
+                        Text(
+                            "‘이전 편집 이어서 진행’은 자동 복원한 최근 편집입니다. " +
+                                "직접 보관한 프로젝트는 위의 프로젝트 목록에서 열 수 있습니다.",
+                            color = palette.secondaryText,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
                         OutlinedButton(
                             onClick = onRestore,
                             modifier = Modifier.fillMaxWidth()

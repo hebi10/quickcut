@@ -48,6 +48,7 @@ internal fun SaveOptionsDialog(
     timeline: EditTimeline = EditTimeline(),
     outputQuality: ExportQualitySettings = ExportQualitySettings(),
     onOutputQualityChange: (ExportQualitySettings) -> Unit = {},
+    onHelp: (String) -> Unit = {},
 ) {
     val palette = LocalCutPalette.current
     val qualityEvaluation = rememberExportQualityEvaluation(timeline, outputQuality)
@@ -70,6 +71,9 @@ internal fun SaveOptionsDialog(
                     color = palette.secondaryText,
                     style = MaterialTheme.typography.bodySmall,
                 )
+                TextButton(onClick = { onHelp("save") },
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                        .testTag("save-help")) { Text("영상 저장 사용법") }
                 Text((if (outputQuality.isAutomatic)
                     "자동 · 원본 해상도와 FPS를 유지하며 가능한 고속 저장을 사용합니다."
                 else "직접 설정 · 화질 변경 시 영상 변환이 필요할 수 있습니다.") +
@@ -353,8 +357,10 @@ internal fun TaskErrorDialog(message: String, onDismiss: () -> Unit) {
                     caution = true,
                 )
                 Text(
-                    "문제가 계속되면 아래 진단 기록에서 작업 상태를 확인할 수 있습니다. " +
-                        "진단은 사용자가 직접 복사하기 전에는 외부로 전송하지 않습니다.",
+                    "작업을 종료한 뒤 원본 영상이 열리는지 확인하고, " +
+                        "저장·복구 상태가 불확실하면 같은 영상을 바로 다시 저장하지 말고 " +
+                        "‘최근 작업 진단’에서 상태를 확인해 주세요. " +
+                        "진단은 사용자가 직접 선택하기 전에는 외부로 전송하지 않습니다.",
                     color = palette.secondaryText,
                     style = MaterialTheme.typography.bodySmall,
                 )

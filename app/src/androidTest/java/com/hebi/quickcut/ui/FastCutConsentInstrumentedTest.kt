@@ -37,6 +37,9 @@ class FastCutConsentInstrumentedTest {
 
     @Test fun onlyExplicitFastConsentChangesTheReviewedRange() {
         open()
+        compose.onNodeWithText("추천 구간으로 빠르게 저장").assertExists()
+        compose.onNodeWithText("시작·끝 시간이 바뀌고 장면이 추가로 잘릴 수 있습니다.", substring = true)
+            .assertExists()
         compose.onNodeWithText("추천 위치로 고속 저장").performClick()
         compose.runOnIdle {
             assertEquals(4_000L, timeline.clips.single().startMs)

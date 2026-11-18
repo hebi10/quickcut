@@ -118,12 +118,12 @@ internal fun StudioStartScreen(
                         Spacer(Modifier.width(CutSpacing.md))
                         Column(Modifier.weight(1f)) {
                             Text(
-                                "+ 영상 편집 시작하기",
+                                "빠른 자르기 시작",
                                 style = MaterialTheme.typography.titleMedium,
                                 color = palette.onAccent,
                             )
                             Text(
-                                "영상을 선택해 필요한 구간을 편집하세요.",
+                                "영상 1개에서 원하는 구간만 남겨 저장합니다.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = palette.onAccent,
                             )
@@ -164,7 +164,7 @@ internal fun StudioStartScreen(
                     }
                     if (projects.isEmpty()) {
                         Text(
-                            "저장한 프로젝트가 없습니다. 편집한 영상을 프로젝트로 저장하면 여기에서 다시 열 수 있습니다.",
+                            "저장한 프로젝트가 없습니다. 편집 내용을 프로젝트로 보관하면 나중에 다시 열 수 있습니다.",
                             color = palette.secondaryText,
                             style = MaterialTheme.typography.bodySmall,
                             modifier = Modifier.testTag("quickcut-home-empty-projects"),
@@ -211,14 +211,14 @@ internal fun StudioStartScreen(
                     if (projects.isEmpty()) {
                         CutInfoSection(
                             title = "프로젝트 없음",
-                            message = "영상 편집 후 프로젝트를 저장하면 여기에서 이어서 작업할 수 있습니다.",
+                            message = "편집 내용을 프로젝트로 보관하면 나중에 이어서 작업할 수 있습니다.",
                         )
                         Button(
                             onClick = onQuick,
                             modifier = Modifier.fillMaxWidth()
                                 .heightIn(min = CutSizes.primaryButton),
                             shape = CutShape,
-                        ) { Text("영상 편집 시작하기") }
+                        ) { Text("빠른 자르기 시작") }
                     } else {
                         projects.forEach { project ->
                             ProjectCard(project, onOpenProject, onDeleteProject)
@@ -334,19 +334,19 @@ private fun StudioModes(
         verticalArrangement = Arrangement.spacedBy(CutSpacing.md),
     ) {
         StudioModeCard(
-            "빠른 자르기", "영상 1개 · 필요한 구간만 빠르게 남기기",
+            "빠른 자르기", "영상 1개 · 원하는 구간만 남겨 저장",
             CutIcons.Trim, onClick = onQuick,
         )
         StudioModeCard(
-            "상세 편집", "자르기·분할·순서 변경을 자유롭게",
+            "상세 편집", "여러 클립 자르기·분할·순서 변경",
             CutIcons.Detailed, onClick = onSelect,
         )
         StudioModeCard(
-            "일괄 편집", "여러 영상 · 같은 설정으로 한 번에",
+            "일괄 편집", "여러 영상에 같은 자르기 설정을 적용",
             CutIcons.Batch, onClick = onBatch,
         )
         StudioModeCard(
-            "여러 구간 추출", "영상 1개 · 여러 장면을 각각 MP4로 저장",
+            "여러 구간 추출", "영상 1개에서 여러 구간을 개별 MP4로 저장",
             CutIcons.Segments, onClick = onExtraction,
         )
     }

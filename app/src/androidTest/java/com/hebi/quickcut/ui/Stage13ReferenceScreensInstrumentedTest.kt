@@ -18,10 +18,12 @@ import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.FontScale
 import androidx.compose.ui.test.ForcedSize
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
@@ -31,6 +33,8 @@ import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.hebi.quickcut.editor.SavedProject
+import com.hebi.quickcut.editor.formatTime
+import com.hebi.quickcut.media.MediaReader
 import com.hebi.quickcut.media.SaveDateMode
 import com.hebi.quickcut.settings.QuickTrimSettings
 import java.io.File
@@ -130,6 +134,16 @@ class Stage13ReferenceScreensInstrumentedTest {
         compose.onNodeWithTag("gallery-item-0").assertIsDisplayed()
         compose.onNodeWithTag("gallery-item-1").assertIsDisplayed()
         waitForDecodedThumbnails()
+        val expectedLength = MediaReader.metadata(
+            InstrumentationRegistry.getInstrumentation().targetContext, Uri.fromFile(clips[0]),
+        ).durationMs
+        compose.waitUntil(15_000L) {
+            compose.onAllNodesWithText("quickcut_stage13_0.mp4", useUnmergedTree = true)
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithTag("gallery-video-length-0")
+            .assertTextEquals("길이 ${formatTime(expectedLength)}")
+            .assertIsDisplayed()
         compose.onNodeWithText("2개 선택").assertIsDisplayed()
         capture("stage13_gallery_selected.png")
         Ui07aVisualEvidence.capture("ui07a_light_gallery.png")
@@ -163,7 +177,7 @@ class Stage13ReferenceScreensInstrumentedTest {
         }
         compose.onNodeWithText("프로젝트").performClick()
         compose.onNodeWithText("프로젝트 없음").assertIsDisplayed()
-        compose.onNodeWithText("영상 편집 시작하기").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("빠른 자르기 시작").performScrollTo().assertIsDisplayed()
         capture("stage13_projects_empty_large_font.png")
     }
 

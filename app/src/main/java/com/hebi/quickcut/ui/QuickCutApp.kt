@@ -328,20 +328,28 @@ fun QuickCutApp(
     if (showProjectSave) {
         AlertDialog(
             onDismissRequest = { showProjectSave = false },
-            title = { Text("프로젝트 저장") },
+            title = { Text("편집 내용 저장") },
             text = {
-                OutlinedTextField(
-                    value = projectName,
-                    onValueChange = { projectName = it.take(80) },
-                    label = { Text("프로젝트 이름") },
-                    singleLine = true,
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(CutSpacing.md)) {
+                    Text(
+                        "편집 내용을 프로젝트로 보관해 나중에 다시 편집할 수 있습니다. " +
+                            "MP4 영상 파일은 생성하지 않습니다.",
+                        color = palette.secondaryText,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    OutlinedTextField(
+                        value = projectName,
+                        onValueChange = { projectName = it.take(80) },
+                        label = { Text("프로젝트 이름") },
+                        singleLine = true,
+                    )
+                }
             },
             confirmButton = {
                 Button(onClick = {
                     model.saveCurrentProject(projectName)
                     showProjectSave = false
-                }, enabled = projectName.isNotBlank()) { Text("저장") }
+                }, enabled = projectName.isNotBlank()) { Text("프로젝트 보관") }
             },
             dismissButton = {
                 TextButton(onClick = { showProjectSave = false }) { Text("취소") }
@@ -471,7 +479,7 @@ fun QuickCutApp(
                         },
                         modifier = Modifier.fillMaxWidth()
                             .heightIn(min = CutSizes.touchTarget),
-                    ) { Text("프로젝트 저장") }
+                    ) { Text("편집 내용 저장") }
                 if (model.quickMode && model.timeline.clips.size == 1) {
                     QuickTrimScreen(
                         model = model,

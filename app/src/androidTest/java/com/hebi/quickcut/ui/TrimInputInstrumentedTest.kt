@@ -392,6 +392,11 @@ class TrimInputInstrumentedTest {
     fun invalidDetailedTimeDisablesTheHeaderSaveEntryPoint() {
         composeRule.runOnUiThread { model.changeQuickMode(false) }
         showApp()
+        composeRule.onNodeWithText("편집 내용 저장").assertIsDisplayed().performClick()
+        composeRule.onNodeWithText("MP4 영상 파일은 생성하지 않습니다.", substring = true)
+            .assertIsDisplayed()
+        composeRule.onNodeWithText("프로젝트 보관").assertIsDisplayed()
+        composeRule.onNodeWithText("취소", substring = false).performClick()
         composeRule.onNodeWithText("자르기").performClick()
         composeRule.onAllNodes(hasSetTextAction())[0].performTextReplacement("-")
         assertInvalidDetailedDraft()

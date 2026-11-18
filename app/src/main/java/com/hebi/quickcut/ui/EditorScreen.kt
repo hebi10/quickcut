@@ -132,6 +132,7 @@ fun EditorScreen(
     model: EditorViewModel,
     addVideos: () -> Unit,
     save: () -> Unit,
+    onHelp: (String) -> Unit = {},
 ) {
     val palette = LocalCutPalette.current
     val context = LocalContext.current
@@ -339,7 +340,9 @@ fun EditorScreen(
             canUndo = model.canUndo,
             canRedo = model.canRedo,
             canSave = model.canStartExport,
+            onHelp = { onHelp("editor") },
         )
+        FirstVisitGuideBanner("editor", onHelp)
         previewFailure?.let { message ->
             PreviewRecoveryNotice(message, onRetry = retryPreview)
         }
@@ -607,6 +610,7 @@ private fun EditorHeader(
     canUndo: Boolean,
     canRedo: Boolean,
     canSave: Boolean,
+    onHelp: () -> Unit = {},
 ) {
     val palette = LocalCutPalette.current
     BoxWithConstraints(Modifier.fillMaxWidth()
@@ -635,6 +639,10 @@ private fun EditorHeader(
                     style = MaterialTheme.typography.titleLarge,
                     modifier = Modifier.weight(1f))
                 if (!compactHeader) historyActions()
+                IconButton(onClick = onHelp, modifier = Modifier.size(48.dp)
+                    .testTag("editor-help")) {
+                    Icon(CutIcons.Info, contentDescription = "상세 편집 사용법")
+                }
                 Button(onClick = onSave, enabled = canSave,
                     modifier = Modifier.heightIn(min = 48.dp), shape = CutShape,
                     contentPadding = PaddingValues(horizontal = 14.dp),
@@ -773,9 +781,22 @@ private fun ToolButtons(
     showTrim: Boolean,
 ) {
     val palette = LocalCutPalette.current
+    val disabledReason = when {
+        selected == null -> "타임라인에서 클립을 먼저 선택해 주세요."
+        !model.canSplitSelected -> "분할은 클립의 시작·끝이 아닌 위치에서 사용할 수 있습니다."
+        !selected.hasAudio -> "이 클립에는 소리가 없어 오디오 도구를 사용할 수 없습니다."
+        else -> null
+    }
     if (vertical) {
         Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
             Text("편집 도구", color = palette.primaryText,
+                style = MaterialTheme.typography.titleMedium)
+            disabledReason?.let { reason ->
+                Text(reason, color = palette.secondaryText,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.testTag("editor-tool-hint"))
+            }
+
                 style = MaterialTheme.typography.titleMedium)
             selected?.let {
                 Text("클립 " + (model.timeline.clips.indexOf(it) + 1) +
@@ -827,6 +848,11 @@ private fun ToolButtons(
             ) {
                 Text("편집 도구", color = palette.primaryText,
                     style = MaterialTheme.typography.titleSmall)
+                disabledReason?.let { reason ->
+                    Text(reason, color = palette.secondaryText,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.testTag("editor-tool-hint"))
+                }
                 selected?.let {
                     Text("클립 " + (model.timeline.clips.indexOf(it) + 1) +
                         " · " + formatTime(it.durationMs),
@@ -853,7 +879,11 @@ private fun ToolButtons(
                         }
                     }
                 } else {
-                    Row(
+                    Column {
+                        Text("도구를 좌우로 밀어 더 보기", color = palette.secondaryText,
+                            style = MaterialTheme.typography.labelSmall,
+                            modifier = Modifier.padding(horizontal = CutSpacing.md))
+                        Row(
                         modifier = Modifier.fillMaxWidth()
                             .horizontalScroll(rememberScrollState())
                             .background(palette.surface)
@@ -863,6 +893,7 @@ private fun ToolButtons(
                         actions.forEach { item ->
                             ToolTile(item, selected, model, onAction, showTrim,
                                 modifier = Modifier.width(70.dp))
+                        }
                         }
                     }
                 }

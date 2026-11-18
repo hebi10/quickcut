@@ -333,8 +333,18 @@ fun QuickCutApp(
     LaunchedEffect(showBatch) {
         if (showBatch) batchModel.loadTemplates(context)
     }
-    LaunchedEffect(showBatch, showExtraction, model.page, selectedGalleryUris.isNotEmpty()) {
-        activeGuide = null
+    val guideRoute = when {
+        showBatch -> "batch"
+        selectedGalleryUris.isNotEmpty() && model.page == QuickCutPage.PICKER -> "gallery"
+        showExtraction && model.page == QuickCutPage.PICKER -> "extraction"
+        else -> model.page.name
+    }
+    var previousGuideRoute by remember { mutableStateOf(guideRoute) }
+    LaunchedEffect(guideRoute) {
+        if (previousGuideRoute != guideRoute) {
+            activeGuide = null
+            previousGuideRoute = guideRoute
+        }
     }
 
     if (showProjectSave) {

@@ -1,7 +1,7 @@
 package com.hebi.quickcut.ui
 
 import android.content.Context
-import androidx.compose.foundation.border
+import android.content.SharedPreferences
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -17,9 +17,11 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -60,7 +62,7 @@ internal object QuickCutGuides {
         )),
         GuideContent("gallery", "영상 선택", "편집할 영상을 고르는 화면입니다.", listOf(
             GuideStep("영상 확인", "썸네일 아래의 파일명과 재생 길이로 영상을 구별합니다."),
-            GuideStep("선택 순서", "선택 표시의 번호는 현재 선택한 순서입니다. 다시 누르면 선택이 해제됩니다."),
+            GuideStep("선택 순서", "선택한 영상에는 목록에 보이는 순서대로 번호가 붙습니다. 다시 누르면 선택이 해제됩니다."),
             GuideStep("편집 시작", "원하는 영상을 선택한 후 편집 버튼으로 이동합니다."),
         )),
         GuideContent("quick", "빠른 자르기", "한 영상에서 남길 구간을 지정합니다.", listOf(
@@ -116,10 +118,24 @@ internal object QuickCutGuideState {
     private const val PREFS = "quickcut_screen_guides"
     private fun key(guide: GuideContent) = "seen_${guide.id}_v${guide.version}"
 
-    fun hasSeen(context: Context, id: String): Boolean {
-        val guide = QuickCutGuides.find(id) ?: return true
-        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getBoolean(key(guide), false)
+    @Composable
+    fun isSeen(guide: GuideContent): Boolean {
+        val preferences = LocalContext.current.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val seenKey = key(guide)
+        var seen by remember(preferences, seenKey) {
+            mutableStateOf(preferences.getBoolean(seenKey, false))
+        }
+        DisposableEffect(preferences, seenKey) {
+            val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, changedKey ->
+                if (changedKey == seenKey || changedKey == null) {
+                    seen = preferences.getBoolean(seenKey, false)
+                }
+            }
+            preferences.registerOnSharedPreferenceChangeListener(listener)
+            seen = preferences.getBoolean(seenKey, false)
+            onDispose { preferences.unregisterOnSharedPreferenceChangeListener(listener) }
+        }
+        return seen
     }
 
     fun markSeen(context: Context, id: String) {
@@ -137,10 +153,7 @@ internal fun FirstVisitGuideBanner(
 ) {
     val guide = QuickCutGuides.find(screenId) ?: return
     val context = LocalContext.current
-    var dismissed by rememberSaveable(screenId) {
-        mutableStateOf(QuickCutGuideState.hasSeen(context, screenId))
-    }
-    if (dismissed) return
+    if (QuickCutGuideState.isSeen(guide)) return
 
     val palette = LocalCutPalette.current
     Surface(
@@ -156,16 +169,11 @@ internal fun FirstVisitGuideBanner(
             Text(guide.introduction, color = palette.secondaryText,
                 style = MaterialTheme.typography.bodySmall)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                TextButton(onClick = {
-                    QuickCutGuideState.markSeen(context, screenId)
-                    dismissed = true
-                    onHelp(screenId)
-                }, modifier = Modifier.heightIn(min = 48.dp)) {
+                TextButton(onClick = { onHelp(screenId) }, modifier = Modifier.heightIn(min = 48.dp)) {
                     Text("사용 방법")
                 }
                 TextButton(onClick = {
                     QuickCutGuideState.markSeen(context, screenId)
-                    dismissed = true
                 }, modifier = Modifier.heightIn(min = 48.dp)) {
                     Text("건너뛰기")
                 }

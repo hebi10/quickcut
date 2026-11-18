@@ -120,6 +120,7 @@ fun BatchScreen(
     var pendingOverview by remember { mutableStateOf<BatchExportOverview?>(null) }
     var pendingRetry by remember { mutableStateOf(false) }
     var inspecting by remember { mutableStateOf(false) }
+    val helpEnabled = canModifyQueue && !inspecting
     var inspectionJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     var inspectedCount by remember { mutableIntStateOf(0) }
     var inspectedTotal by remember { mutableIntStateOf(0) }
@@ -174,8 +175,8 @@ fun BatchScreen(
                         .verticalScroll(rememberScrollState()).padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
-                    BatchHeader(guardedBack) { onHelp("batch") }
-                    FirstVisitGuideBanner("batch", onHelp)
+                    BatchHeader(guardedBack, helpEnabled) { onHelp("batch") }
+                    if (helpEnabled) FirstVisitGuideBanner("batch", onHelp)
                     TemplateEditor(model, onSelectVideos)
                 }
                 Column(
@@ -210,8 +211,8 @@ fun BatchScreen(
                     .testTag("batch-file-list"),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                item { BatchHeader(guardedBack) { onHelp("batch") } }
-                item { FirstVisitGuideBanner("batch", onHelp) }
+                item { BatchHeader(guardedBack, helpEnabled) { onHelp("batch") } }
+                if (helpEnabled) item { FirstVisitGuideBanner("batch", onHelp) }
                 item { TemplateEditor(model, onSelectVideos) }
                 item { BatchFileHeader(model) }
                 items(model.files, key = { it.uri }) { file ->
@@ -508,7 +509,7 @@ private fun BatchReviewFile(
 }
 
 @Composable
-private fun BatchHeader(onBack: () -> Unit, onHelp: () -> Unit = {}) {
+private fun BatchHeader(onBack: () -> Unit, helpEnabled: Boolean, onHelp: () -> Unit) {
     val palette = LocalCutPalette.current
     Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -523,7 +524,7 @@ private fun BatchHeader(onBack: () -> Unit, onHelp: () -> Unit = {}) {
             Text("여러 영상을 같은 설정으로 정리하세요.",
                 color = palette.secondaryText, style = MaterialTheme.typography.bodySmall)
         }
-        IconButton(onClick = onHelp,
+        IconButton(onClick = onHelp, enabled = helpEnabled,
             modifier = Modifier.size(48.dp).testTag("batch-help")) {
             Icon(CutIcons.Info, contentDescription = "일괄 편집 사용법",
                 tint = palette.primaryText)

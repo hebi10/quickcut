@@ -288,7 +288,10 @@ jobs:
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: ${{ matrix.api }}
-          target: google_apis
+          # API29 Google APIs image crashed in the Android system ConfigUpdateInstallReceiver
+          # (16 MiB Java heap OOM) before instrumentation. Keep all 292 API29 tests
+          # and evidence gates on the AOSP image; API35/36 retain Google APIs.
+          target: ${{ matrix.api == 29 && 'default' || 'google_apis' }}
           arch: x86_64
           profile: pixel_6
           disk-size: 2048M

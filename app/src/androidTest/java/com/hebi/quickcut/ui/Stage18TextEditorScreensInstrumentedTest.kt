@@ -253,10 +253,12 @@ class Stage18TextEditorScreensInstrumentedTest {
             }
             return Triple(dark, light, pixels)
         }
-        // The header is fixed above the scrolling editor; the bottom action row
-        // stays pinned even when the black preview is scrolled completely away.
+        // The editor header is at the top of the real Android window, not in
+        // the 1/12..1/6 viewport band (which becomes blank when input scrolling
+        // moves the black preview offscreen). Check the actual fixed title row,
+        // and keep requiring contrasting pixels in the pinned bottom action row.
         val (headerDark, headerLight, headerPixels) =
-            countContrast(bitmap.height / 12, bitmap.height / 6)
+            countContrast(bitmap.height / 40, bitmap.height / 8)
         val (footerDark, footerLight, footerPixels) =
             countContrast(bitmap.height * 7 / 8, bitmap.height * 39 / 40)
         return headerPixels > 0 && footerPixels > 0 &&

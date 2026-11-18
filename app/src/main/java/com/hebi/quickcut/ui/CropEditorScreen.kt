@@ -127,7 +127,7 @@ fun CropEditorScreen(
         .padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically) {
-            Column {
+            Column(Modifier.weight(1f)) {
                 Text("화면 비율·크롭", color = palette.primaryText,
                     style = MaterialTheme.typography.titleLarge)
                 Text("선택한 클립에만 적용", color = palette.secondaryText,

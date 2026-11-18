@@ -105,7 +105,7 @@ internal fun StudioStartScreen(
             val guideId = when (selectedTab) {
                 1 -> "projects"
                 2 -> "tools"
-                3 -> "save"
+                3 -> "settings"
                 else -> "home"
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
@@ -113,9 +113,7 @@ internal fun StudioStartScreen(
                     modifier = Modifier.heightIn(min = CutSizes.touchTarget)
                         .testTag("screen-help-$guideId")) { Text("사용법") }
             }
-            if (selectedTab != 3) {
-                FirstVisitGuideBanner(guideId, onHelp)
-            }
+            FirstVisitGuideBanner(guideId, onHelp)
             when (selectedTab) {
                 0 -> {
                     StudioBrand()

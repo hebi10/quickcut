@@ -844,7 +844,7 @@ private fun StartScreen(
     onLicenses: () -> Unit,
     projects: List<com.hebi.quickcut.editor.SavedProject>,
     onOpenProject: (String) -> Unit,
-    onDeleteProject: (String) -> Unit,
+    onDeleteProject: (String) -> String?,
     onGallery: () -> Unit,
     onHelp: (String) -> Unit = {},
 ) {

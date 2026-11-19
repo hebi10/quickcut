@@ -67,13 +67,12 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun saveCurrentProject(title: String) {
-        if (page != QuickCutPage.EDITOR || timeline.isEmpty) return
+    fun saveCurrentProject(title: String): String? {
+        if (page != QuickCutPage.EDITOR || timeline.isEmpty) return "저장할 편집 내용이 없습니다."
         val saved = try {
             projectStore.save(snapshotSession(), title, activeProjectId)
         } catch (error: Exception) {
-            reportError(error.localizedMessage ?: "프로젝트를 저장하지 못했습니다.")
-            return
+            return error.localizedMessage ?: "프로젝트를 저장하지 못했습니다."
         }
         activeProjectId = saved.id
         val selection = runCatching { projectStore.setActiveId(saved.id) }
@@ -81,6 +80,7 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         if (selection.isFailure) {
             reportError("프로젝트는 저장했지만 마지막 선택 상태를 기록하지 못했습니다.")
         }
+        return null
     }
 
     fun openProject(context: Context, id: String) {
@@ -107,11 +107,18 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         loadSavedSession(context, snapshot)
     }
 
-    fun deleteProject(id: String) {
-        runCatching { projectStore.delete(id) }.onSuccess {
-            if (activeProjectId == id) activeProjectId = null
-            refreshProjects()
-        }.onFailure { reportError("프로젝트를 삭제하지 못했습니다.") }
+    fun deleteProject(id: String): String? {
+        val status = try {
+            projectStore.delete(id)
+        } catch (error: Exception) {
+            return error.localizedMessage ?: "프로젝트를 삭제하지 못했습니다. 기존 기록은 유지됩니다."
+        }
+        if (activeProjectId == id) activeProjectId = null
+        refreshProjects()
+        if (status == ProjectDeleteStatus.CLEANUP_PENDING) {
+            reportError("프로젝트 목록에서는 삭제했지만 편집 기록을 완전히 정리하지 못했습니다. 저장 공간을 확인해 주세요.")
+        }
+        return null
     }
 
     private val exportStore = SingleExportStore(application)

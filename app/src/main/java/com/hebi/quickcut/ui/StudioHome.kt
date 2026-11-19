@@ -84,7 +84,7 @@ internal fun StudioStartScreen(
     onLicenses: () -> Unit,
     projects: List<SavedProject> = emptyList(),
     onOpenProject: (String) -> Unit = {},
-    onDeleteProject: (String) -> Unit = {},
+    onDeleteProject: (String) -> String? = { null },
     onGallery: () -> Unit = {},
     themeMode: QuickCutThemeMode = QuickCutThemeMode.SYSTEM,
     onThemeModeChange: (QuickCutThemeMode) -> Unit = {},

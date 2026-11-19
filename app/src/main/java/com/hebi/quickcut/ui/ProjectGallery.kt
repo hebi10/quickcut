@@ -42,8 +42,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -158,6 +160,14 @@ internal fun ProjectCard(
     }
 }
 
+internal object GalleryLayoutPolicy {
+    fun singleColumn(widthDp: Float, fontScale: Float): Boolean =
+        widthDp < 400f && fontScale >= 1.6f
+
+    fun selectionDescription(title: String, duration: String, selected: Boolean, order: Int): String =
+        "$title, $duration, " + (if (selected) "선택됨, ${order}번째 영상" else "선택 안 됨")
+}
+
 internal data class GalleryVideoInfo(val displayName: String?, val durationMs: Long?)
 
 internal fun readGalleryVideoInfo(context: Context, source: String): GalleryVideoInfo {
@@ -212,8 +222,12 @@ internal fun SelectedVideoGallery(
             Text("영상 선택 사용법")
         }
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
-            val columns = if (maxWidth < 600.dp) GridCells.Fixed(2)
-                else GridCells.Adaptive(160.dp)
+            val fontScale = LocalDensity.current.fontScale
+            val columns = when {
+                GalleryLayoutPolicy.singleColumn(maxWidth.value, fontScale) -> GridCells.Fixed(1)
+                maxWidth < 600.dp -> GridCells.Fixed(2)
+                else -> GridCells.Adaptive(160.dp)
+            }
             LazyVerticalGrid(
                 columns = columns,
                 modifier = Modifier.fillMaxSize().testTag("gallery-grid"),
@@ -241,6 +255,9 @@ internal fun SelectedVideoGallery(
                             .semantics {
                                 stateDescription = if (isSelected) "선택됨, ${selectedOrder}번째 영상"
                                     else "선택 안 됨"
+                                contentDescription = GalleryLayoutPolicy.selectionDescription(
+                                    title, duration, isSelected, selectedOrder,
+                                )
                             }
                             .padding(CutSpacing.xs),
                         verticalArrangement = Arrangement.spacedBy(CutSpacing.xs),
@@ -256,7 +273,8 @@ internal fun SelectedVideoGallery(
                         }
                         Text(title, color = palette.primaryText,
                             style = MaterialTheme.typography.labelMedium,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            maxLines = if (fontScale >= 2f) 3 else 2,
+                            overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.testTag("gallery-video-title-$index"))
                         Text(duration, color = palette.secondaryText,
                             style = MaterialTheme.typography.labelSmall,

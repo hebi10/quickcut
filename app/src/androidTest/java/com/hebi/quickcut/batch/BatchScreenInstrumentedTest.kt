@@ -53,8 +53,26 @@ class BatchScreenInstrumentedTest {
         val previous = composeRule.runOnIdle {
             Triple(model.draftMode, model.draftLeadingSeconds, model.draftTrailingSeconds)
         }
+        val guidePreferences = composeRule.activity.getSharedPreferences(
+            "quickcut_screen_guides", android.content.Context.MODE_PRIVATE,
+        )
+        val seenKey = "seen_batch_v1"
+        val previouslySeen = composeRule.runOnIdle {
+            val previousValue = guidePreferences.all[seenKey] as? Boolean
+            guidePreferences.edit().remove(seenKey).apply()
+            previousValue
+        }
         try {
             openBatchEditor()
+            composeRule.onNodeWithTag("first-guide-batch").assertExists()
+            composeRule.onNodeWithTag("batch-help").performClick()
+            composeRule.onNodeWithTag("guide-step-description").assertExists()
+            repeat(3) { composeRule.onNodeWithTag("guide-next").performClick() }
+            composeRule.onNodeWithTag("first-guide-batch").assertDoesNotExist()
+            composeRule.onNodeWithTag("batch-help").performClick()
+            composeRule.onNodeWithTag("guide-step-description").assertExists()
+            composeRule.onNodeWithText("건너뛰기").performClick()
+            composeRule.onNodeWithTag("guide-step-description").assertDoesNotExist()
             choose("batch-mode", "앞뒤 구간 자르기")
             composeRule.onNodeWithTag("batch-time-preset-5").performScrollTo().performClick()
             composeRule.onNodeWithText("각 영상의 앞 5초와 뒤 5초를 자릅니다.")
@@ -79,6 +97,10 @@ class BatchScreenInstrumentedTest {
                 .performScrollTo().assertExists()
         } finally {
             composeRule.runOnIdle {
+                val guideEditor = guidePreferences.edit()
+                if (previouslySeen == null) guideEditor.remove(seenKey)
+                else guideEditor.putBoolean(seenKey, previouslySeen)
+                guideEditor.apply()
                 model.draftMode = previous.first
                 model.draftLeadingSeconds = previous.second
                 model.draftTrailingSeconds = previous.third

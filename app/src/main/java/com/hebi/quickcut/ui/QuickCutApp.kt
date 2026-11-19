@@ -135,6 +135,15 @@ fun QuickCutApp(
 
     var showLastSettings by rememberSaveable { mutableStateOf(false) }
     var showLicenses by rememberSaveable { mutableStateOf(false) }
+    var activeGuide by rememberSaveable { mutableStateOf<String?>(null) }
+    val showGuide: (String) -> Unit = { id ->
+        if (QuickCutGuides.find(id) != null && !ExportWorkMonitor.isRunning &&
+            !model.isRecoveringExport && !model.hasUnresolvedExport &&
+            !batchModel.isRunning && !batchModel.isRecovering &&
+            !extractionModel.busy) {
+            activeGuide = id
+        }
+    }
     var exportReview by remember { mutableStateOf<ExportReview?>(null) }
     var inspectingExport by remember { mutableStateOf(false) }
     var inspectionProgress by remember { mutableStateOf<Int?>(null) }
@@ -324,6 +333,19 @@ fun QuickCutApp(
     LaunchedEffect(showBatch) {
         if (showBatch) batchModel.loadTemplates(context)
     }
+    val guideRoute = when {
+        showBatch -> "batch"
+        selectedGalleryUris.isNotEmpty() && model.page == QuickCutPage.PICKER -> "gallery"
+        showExtraction && model.page == QuickCutPage.PICKER -> "extraction"
+        else -> model.page.name
+    }
+    var previousGuideRoute by remember { mutableStateOf(guideRoute) }
+    LaunchedEffect(guideRoute) {
+        if (previousGuideRoute != guideRoute) {
+            activeGuide = null
+            previousGuideRoute = guideRoute
+        }
+    }
 
     if (showProjectSave) {
         AlertDialog(
@@ -401,6 +423,7 @@ fun QuickCutApp(
                     model.importVideos(context, selections.map(android.net.Uri::parse))
                 },
                 onDismiss = { selectedGalleryUris = emptyList() },
+                onHelp = showGuide,
             )
         } else if (!onboardingComplete && model.page == QuickCutPage.PICKER && !showBatch) {
             QuickCutWelcome(onFinish = {
@@ -412,6 +435,7 @@ fun QuickCutApp(
                 model = extractionModel,
                 onSelectVideo = { extractionPicker.launch(arrayOf("video/*")) },
                 onBack = { if (!extractionModel.busy) showExtraction = false },
+                onHelp = showGuide,
             )
         } else if (showBatch) {
             BatchScreen(
@@ -422,6 +446,7 @@ fun QuickCutApp(
                     selectedSaveDateMode = batchModel.saveDateMode
                     showBatch = false
                 },
+                onHelp = showGuide,
                 onApproveOriginals = { sources, outputUri, action ->
                     try {
                         val request = OriginalMediaActions.prepareRequest(
@@ -466,6 +491,7 @@ fun QuickCutApp(
                         )
                     )
                 },
+                onHelp = showGuide,
             )
             QuickCutPage.IMPORTING -> ImportingStatus(onCancel = model::cancelImport)
             QuickCutPage.EDITOR -> {
@@ -488,12 +514,14 @@ fun QuickCutApp(
                         onDetailedEdit = { model.changeQuickMode(false) },
                         onSave = { beginExportAfterReview() },
                         onSaveOptions = openSaveOptions,
+                        onHelp = showGuide,
                     )
                 } else {
                     EditorScreen(
                         model = model,
                         addVideos = { picker.launch(arrayOf("video/*")) },
                         save = openSaveOptions,
+                        onHelp = showGuide,
                     )
                 }
                 }
@@ -579,7 +607,8 @@ fun QuickCutApp(
                     )
                     Text(
                         "확인되지 않은 저장 결과는 자동으로 다시 등록하지 않습니다. " +
-                            "진단 기록에서 이전 작업 상태를 확인할 수 있습니다.",
+                            "원본 영상은 자동 삭제하지 않으며, 먼저 ‘다시 확인’을 누르세요. " +
+                            "결과가 계속 불명확하면 아래 진단 기록을 확인해 주세요.",
                         color = palette.secondaryText,
                         style = MaterialTheme.typography.bodySmall,
                     )
@@ -603,6 +632,7 @@ fun QuickCutApp(
     }?.let { notice ->
         RestoreRecoveryDialog(
             notice = notice,
+            onHelp = showGuide,
             canReconnect = model.hasSourceReconnect,
             onRetry = { model.restoreSavedSession(context) },
             onReconnect = { reconnectPicker.launch(arrayOf("video/*")) },
@@ -656,6 +686,7 @@ fun QuickCutApp(
             timeline = model.timeline,
             outputQuality = draftOutputQuality,
             onOutputQualityChange = { draftOutputQuality = it },
+            onHelp = showGuide,
             canSave = model.canStartExport && !inspectingExport,
             onSave = {
                 if (model.canStartExport && !inspectingExport) {
@@ -737,7 +768,7 @@ fun QuickCutApp(
     }
 
     model.errorMessage?.let { message ->
-        TaskErrorDialog(message, model::dismissError)
+        TaskErrorDialog(message, model::dismissError, onHelp = showGuide)
     }
 
     if (model.showExitConfirmation) {
@@ -766,6 +797,13 @@ fun QuickCutApp(
             shape = CutDialogShape,
         )
     }
+
+    if (activeGuide != null && !ExportWorkMonitor.isRunning &&
+        model.page != QuickCutPage.EXPORTING && !model.isRecoveringExport &&
+        !model.hasUnresolvedExport && !batchModel.isRunning && !batchModel.isRecovering &&
+        !extractionModel.busy && !inspectingExport) {
+        ScreenGuideDialog(screenId = activeGuide!!, onDismiss = { activeGuide = null })
+    }
 }
 
 @Composable
@@ -786,6 +824,7 @@ private fun StartScreen(
     onOpenProject: (String) -> Unit,
     onDeleteProject: (String) -> Unit,
     onGallery: () -> Unit,
+    onHelp: (String) -> Unit = {},
 ) {
     StudioStartScreen(
         onQuick = onQuick, onSelect = onSelect, onBatch = onBatch,
@@ -798,6 +837,7 @@ private fun StartScreen(
         onOpenProject = onOpenProject,
         onDeleteProject = onDeleteProject,
         onGallery = onGallery,
+        onHelp = onHelp,
     )
 }
 
@@ -902,6 +942,7 @@ internal fun RestoreRecoveryDialog(
     onReconnect: () -> Unit,
     onDismiss: () -> Unit,
     onResetUnreadable: (() -> Unit)? = null,
+    onHelp: (String) -> Unit = {},
 ) {
     val palette = LocalCutPalette.current
     AlertDialog(
@@ -934,6 +975,10 @@ internal fun RestoreRecoveryDialog(
                         modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
                         Text("손상된 편집 기록 삭제")
                     }
+                }
+                TextButton(onClick = { onHelp("recovery") },
+                    modifier = Modifier.heightIn(min = 48.dp).testTag("restore-help")) {
+                    Text("복구 사용법")
                 }
                 ExportDiagnosticButton()
             }

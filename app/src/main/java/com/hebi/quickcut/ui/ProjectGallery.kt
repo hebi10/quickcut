@@ -59,10 +59,11 @@ import java.util.Date
 internal fun ProjectCard(
     item: SavedProject,
     onOpen: (String) -> Unit,
-    onDelete: (String) -> Unit,
+    onDelete: (String) -> String?,
 ) {
     val palette = LocalCutPalette.current
     var confirmDelete by remember(item.id) { mutableStateOf(false) }
+    var deleteError by remember(item.id) { mutableStateOf<String?>(null) }
     Row(
         Modifier.fillMaxWidth().heightIn(min = 96.dp)
             .background(palette.surface, CutShape)
@@ -114,7 +115,10 @@ internal fun ProjectCard(
     }
     if (confirmDelete) {
         AlertDialog(
-            onDismissRequest = { confirmDelete = false },
+            onDismissRequest = {
+                confirmDelete = false
+                deleteError = null
+            },
             title = { QuickCutDialogHeading("프로젝트 삭제") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(CutSpacing.sm)) {
@@ -129,13 +133,25 @@ internal fun ProjectCard(
                         color = palette.secondaryText,
                         style = MaterialTheme.typography.bodySmall,
                     )
+                    deleteError?.let { message ->
+                        Text(message, color = palette.secondaryText,
+                            style = MaterialTheme.typography.bodySmall)
+                    }
                 }
             },
             confirmButton = { TextButton(onClick = {
-                onDelete(item.id)
-                confirmDelete = false
+                val failure = onDelete(item.id)
+                if (failure == null) {
+                    confirmDelete = false
+                    deleteError = null
+                } else {
+                    deleteError = failure
+                }
             }) { Text("삭제") } },
-            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("취소") } },
+            dismissButton = { TextButton(onClick = {
+                confirmDelete = false
+                deleteError = null
+            }) { Text("취소") } },
             containerColor = palette.panel,
             shape = CutDialogShape,
         )

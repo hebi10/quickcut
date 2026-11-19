@@ -132,6 +132,7 @@ fun QuickCutApp(
     var selectedGalleryUris by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
     var showProjectSave by rememberSaveable { mutableStateOf(false) }
     var projectName by rememberSaveable { mutableStateOf("") }
+    var projectSaveError by rememberSaveable { mutableStateOf<String?>(null) }
 
     var showLastSettings by rememberSaveable { mutableStateOf(false) }
     var showLicenses by rememberSaveable { mutableStateOf(false) }
@@ -349,7 +350,10 @@ fun QuickCutApp(
 
     if (showProjectSave) {
         AlertDialog(
-            onDismissRequest = { showProjectSave = false },
+            onDismissRequest = {
+                showProjectSave = false
+                projectSaveError = null
+            },
             title = { Text("편집 내용 저장") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(CutSpacing.md)) {
@@ -361,20 +365,37 @@ fun QuickCutApp(
                     )
                     OutlinedTextField(
                         value = projectName,
-                        onValueChange = { projectName = it.take(80) },
+                        onValueChange = {
+                            projectName = it.take(80)
+                            projectSaveError = null
+                        },
                         label = { Text("프로젝트 이름") },
                         singleLine = true,
                     )
+                    projectSaveError?.let { message ->
+                        Text(message, color = palette.secondaryText,
+                            style = MaterialTheme.typography.bodySmall)
+                    }
                 }
             },
             confirmButton = {
                 Button(onClick = {
-                    model.saveCurrentProject(projectName)
-                    showProjectSave = false
+                    val error = model.saveCurrentProject(projectName)
+                    if (error == null) {
+                        showProjectSave = false
+                        projectSaveError = null
+                        android.widget.Toast.makeText(context, "프로젝트를 저장했습니다.",
+                            android.widget.Toast.LENGTH_SHORT).show()
+                    } else {
+                        projectSaveError = error
+                    }
                 }, enabled = projectName.isNotBlank()) { Text("프로젝트 보관") }
             },
             dismissButton = {
-                TextButton(onClick = { showProjectSave = false }) { Text("취소") }
+                TextButton(onClick = {
+                    showProjectSave = false
+                    projectSaveError = null
+                }) { Text("취소") }
             },
             containerColor = palette.panel,
             shape = CutDialogShape,
@@ -501,6 +522,7 @@ fun QuickCutApp(
                             projectName = model.savedProjects
                                 .firstOrNull { it.id == model.activeProjectId }?.title
                                 ?: "새 프로젝트"
+                            projectSaveError = null
                             showProjectSave = true
                         },
                         modifier = Modifier.fillMaxWidth()
@@ -822,7 +844,7 @@ private fun StartScreen(
     onLicenses: () -> Unit,
     projects: List<com.hebi.quickcut.editor.SavedProject>,
     onOpenProject: (String) -> Unit,
-    onDeleteProject: (String) -> Unit,
+    onDeleteProject: (String) -> String?,
     onGallery: () -> Unit,
     onHelp: (String) -> Unit = {},
 ) {

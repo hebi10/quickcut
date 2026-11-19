@@ -1,6 +1,7 @@
 package com.hebi.quickcut.editor
 
 import android.content.Context
+import java.io.IOException
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertEquals
@@ -80,6 +81,7 @@ class ProjectStoreInstrumentedTest {
         assertNull(projects.activeId())
         verifyCorruptIndexCannotHideOrReplaceExistingProject(context)
         verifyCorruptNamedProjectCannotBeOverwritten(context)
+        verifyFailedIndexWritePreservesPreviousSnapshot(context)
     }
 
     private fun verifyCorruptIndexCannotHideOrReplaceExistingProject(context: Context) {
@@ -130,4 +132,44 @@ class ProjectStoreInstrumentedTest {
             preferences.edit().clear().commit()
         }
     }
+    private fun verifyFailedIndexWritePreservesPreviousSnapshot(context: Context) {
+        val preferencesName = "quickcut_copy_on_write_test_" + System.nanoTime()
+        val preferences = context.getSharedPreferences(preferencesName, Context.MODE_PRIVATE)
+        val store = ProjectStore(context, preferencesName)
+        val clip = VideoClip(3L, "content://fixture/copy-on-write", 4_000L)
+        val original = EditorSessionSnapshot(EditTimeline(listOf(clip)), clip.id, 300L, false)
+        val changed = original.copy(playPositionMs = 1_500L)
+        val project = store.save(original, "변경 전")
+        val originalIndex = preferences.getString("index", null)
+
+        try {
+            assertNull(store.list().single().storageVersion)
+            val failingStore = ProjectStore(context, preferencesName, beforeIndexCommit = {
+                throw IOException("테스트: 프로젝트 목록 기록 실패")
+            })
+            assertThrows(IOException::class.java) {
+                failingStore.save(changed, "변경 후", project.id)
+            }
+            assertEquals(originalIndex, preferences.getString("index", null))
+            assertEquals(original, ProjectStore(context, preferencesName).load(project.id))
+            assertThrows(IOException::class.java) { failingStore.delete(project.id) }
+            assertEquals(originalIndex, preferences.getString("index", null))
+            assertEquals(original, store.load(project.id))
+
+            store.setActiveId(project.id)
+            val updated = store.save(changed, "변경 후", project.id)
+            assertNotNull(updated.storageVersion)
+            assertEquals(changed, ProjectStore(context, preferencesName).load(project.id))
+            assertEquals("변경 후", ProjectStore(context, preferencesName).list().single().title)
+            assertEquals(project.id, store.activeId())
+            assertNull(EditorSessionStore(context, "quickcut_project_" + project.id).load())
+            assertEquals(ProjectDeleteStatus.DELETED, store.delete(project.id))
+            assertNull(store.activeId())
+            assertNull(store.load(project.id))
+        } finally {
+            store.delete(project.id)
+            preferences.edit().clear().commit()
+        }
+    }
+
 }

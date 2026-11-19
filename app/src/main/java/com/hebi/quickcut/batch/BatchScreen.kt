@@ -166,9 +166,11 @@ fun BatchScreen(
     BackHandler(onBack = guardedBack)
 
     BoxWithConstraints(Modifier.fillMaxSize().background(palette.background)) {
+        val fontScale = LocalDensity.current.fontScale
+        val singleScroll = BatchLayoutPolicy.singleScroll(maxHeight.value, fontScale)
         val actionsMaxHeight = maxHeight * 0.45f
-        if (maxWidth >= 840.dp &&
-            maxWidth / LocalDensity.current.fontScale >= 700.dp) {
+        if (!singleScroll && maxWidth >= 840.dp &&
+            maxWidth / fontScale >= 700.dp) {
             Row(Modifier.fillMaxSize()) {
                 Column(
                     modifier = Modifier.width(390.dp)
@@ -202,6 +204,29 @@ fun BatchScreen(
                         BatchProgress(model)
                         BatchActions(model, requestExport, inspecting) { showStopConfirmation = true }
                     }
+                }
+            }
+        } else if (singleScroll) {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp)
+                    .testTag("batch-file-list"),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                item { BatchHeader(guardedBack, helpEnabled) { onHelp("batch") } }
+                if (helpEnabled) item { FirstVisitGuideBanner("batch", onHelp) }
+                item { TemplateEditor(model, onSelectVideos) }
+                item { BatchFileHeader(model) }
+                item { BatchProgress(model) }
+                item {
+                    Column(Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
+                        BatchActions(model, requestExport, inspecting) { showStopConfirmation = true }
+                    }
+                }
+                items(model.files, key = { it.uri }) { file ->
+                    BatchFileRow(
+                        file, model.previewTemplate(), model.saveDateMode, model.currentExportStage,
+                        canModifyQueue, model::removeVideo
+                    )
                 }
             }
         } else {
@@ -976,6 +1001,17 @@ private fun BatchActions(
             BatchRunState.SETUP -> {
                 Text("3. 저장", color = palette.primaryText,
                     style = MaterialTheme.typography.titleMedium)
+                val preview = BatchPreviewEstimate.counts(
+                    model.files, model.previewTemplate(), model.saveDateMode,
+                )
+                val previewText = when {
+                    model.files.isEmpty() -> "선택 영상 0개"
+                    preview == null -> "선택 영상 ${model.files.size}개 · 편집 설정 확인 필요"
+                    else -> "선택 ${model.files.size}개 · 예상 저장 ${preview.ready}개 · 제외 ${preview.unavailable}개"
+                }
+                Text(previewText, color = palette.secondaryText,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.testTag("batch-save-summary"))
                 val disabledReason = when {
                     inspecting -> "저장할 영상을 확인 중입니다."
                     model.isImporting -> "영상을 불러온 뒤 저장할 수 있습니다."

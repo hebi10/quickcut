@@ -15,7 +15,7 @@
 - **PR 필수 검사:** 변경 파일·코드 리뷰, Android 컴파일/빌드·단위 테스트·Lint·정적 검사, 보안·라이선스·배포 정책 및 변경 기능 관련 계측은 유지한다. UI 문구·README 등 저위험 수정만으로 전체 3 API 에뮬레이터 매트릭스를 매번 시작하지 않는다.
 - **고위험 변경 예외:** 원본 파일 삭제/저장/복구, 편집 미디어 코덱·네이티브 스마트 컷, 데이터 이관, CI 검증 스크립트/정책 변경 등은 병합 전 필요한 기기별 계측을 별도로 실행한다. 위험도와 기존 필수 체크를 근거로 전체 PR 계측이 필요하다면 유지하고 사유를 PR에 남긴다.
 - **전체 검증 유지:** QuickCut의 API 29(AOSP)·35·36 전체 계측, 실제 PNG·MP4·XML 증빙, 각각 292개 기존 테스트, 누락·중복·실패·건너뛰기 차단, 원본 보존·실기기 QA를 축소하거나 우회하지 않는다. AOSP API 29 통과를 Google Play 서비스 탑재 실기기 검증으로 대체하지 않는다.
-- **트리거 변경 전제:** `.github/workflows/emulator-smoke.yml`의 `pull_request`·`push(main)` 중복 자동 실행은 장차 PR 빠른 검사와 배치 종료 후 `main`의 `workflow_dispatch` 또는 단일 승인된 실행으로 분리한다. 단 GitHub 필수 체크/브랜치 보호·ruleset/앱별 기존 안전 정책을 먼저 확인하고, 보호 규칙의 무단 우회 없이 동등한 배포 차단을 보장한다. 이 `AGENTS.md` 수정만으로 Actions 트리거가 변경되지는 않는다.
+- **적용 상태 (2026-11-19):** `.github/workflows/emulator-smoke.yml`은 이미 `workflow_dispatch`로만 동작하며 정확한 최종 `main` SHA 입력을 요구한다. `android.yml`의 PR/main 빌드·단위·Lint 자동 검증은 유지한다. `scripts/verify-release-gate.py`가 같은 `main` SHA의 Android build 성공과 수동 API 29·35·36 전체 계측 3환경·완전한 job 증빙 성공을 모두 확인하지 않으면 릴리스를 차단한다. 브랜치 보호·필수 체크는 우회하지 않는다.
 - **실패 및 승인:** 최종 `main` 전체 테스트/증빙 미완료·실패 시 릴리스 동결, 수정 후 새 SHA 재검증을 우선한다. PR 빠른 CI 성공만으로 전체 QA 성공을 주장하거나 AAB 서명·Play 제출을 진행하지 않는다. 동일 Actions 반복 실행을 피하고 SHA/실행 URL/소요 시간/재시도 사유를 기록한다.
 - 공통 기준: [Google Drive Android 운영 지침 제16장](https://docs.google.com/document/d/1ZYG5oBcR7q2ZhCRbUfTNZSMuV6EaeWjvkBOWdJd3PYs/edit) · [앱 프로젝트 공통 AGENTS.md](https://drive.google.com/file/d/1z_Yw4bb5-GxM1ZlmOPyUW93Y3WGFSUZW/view).
 

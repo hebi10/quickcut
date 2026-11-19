@@ -148,6 +148,7 @@ class Stage13ReferenceScreensInstrumentedTest {
                 .fetchSemanticsNodes().isNotEmpty()
         }
         compose.onNodeWithTag("gallery-video-length-0", useUnmergedTree = true)
+            .performScrollTo()
             .assertTextEquals("길이 ${formatTime(expectedLength)}")
             .assertIsDisplayed()
         compose.onNodeWithText("2개 선택").assertIsDisplayed()

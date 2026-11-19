@@ -286,6 +286,7 @@ fun QuickTrimScreen(
         val compactHeader = maxWidth < 400.dp || (fontScale >= 1.5f && maxWidth < 600.dp)
         val sideBySide = maxWidth >= 480.dp && maxWidth > maxHeight &&
             maxWidth / fontScale >= 480.dp
+        val showFirstVisitBanner = maxHeight >= 480.dp
         Column(Modifier.fillMaxSize()) {
             Column(Modifier.fillMaxWidth()
                 .background(palette.surface)
@@ -314,8 +315,10 @@ fun QuickTrimScreen(
                         Modifier.fillMaxWidth().padding(bottom = 8.dp))
                 }
             }
-            FirstVisitGuideBanner("quick", onHelp,
-                modifier = Modifier.padding(horizontal = CutSpacing.sm, vertical = 4.dp))
+            if (showFirstVisitBanner) {
+                FirstVisitGuideBanner("quick", onHelp,
+                    modifier = Modifier.padding(horizontal = CutSpacing.sm, vertical = 4.dp))
+            }
         previewFailure?.let { message ->
             PreviewRecoveryNotice(message, onRetry = retryPreview)
         }

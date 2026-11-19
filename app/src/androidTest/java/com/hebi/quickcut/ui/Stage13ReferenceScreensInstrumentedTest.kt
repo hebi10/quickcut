@@ -106,7 +106,7 @@ class Stage13ReferenceScreensInstrumentedTest {
         compose.onNodeWithText("테스트 영상 2").assertIsDisplayed()
         capture("stage13_projects_populated.png")
         Ui07aVisualEvidence.capture("ui07a_light_projects.png")
-        compose.onAllNodesWithContentDescription("프로젝트 삭제").onFirst().performClick()
+        compose.onAllNodesWithContentDescription("프로젝트 삭제")[0].performClick()
         compose.onNodeWithText("삭제").performClick()
         compose.onNodeWithText("저장 오류로 프로젝트를 삭제하지 못했습니다.").assertIsDisplayed()
         compose.onNodeWithText("취소").performClick()

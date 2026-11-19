@@ -314,8 +314,10 @@ fun QuickTrimScreen(
                         Modifier.fillMaxWidth().padding(bottom = 8.dp))
                 }
             }
-            FirstVisitGuideBanner("quick", onHelp,
-                modifier = Modifier.padding(horizontal = CutSpacing.sm, vertical = 4.dp))
+            if (maxHeight >= 480.dp) {
+                FirstVisitGuideBanner("quick", onHelp,
+                    modifier = Modifier.padding(horizontal = CutSpacing.sm, vertical = 4.dp))
+            }
         previewFailure?.let { message ->
             PreviewRecoveryNotice(message, onRetry = retryPreview)
         }

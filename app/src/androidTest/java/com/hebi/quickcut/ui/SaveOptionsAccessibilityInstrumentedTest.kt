@@ -55,7 +55,8 @@ class SaveOptionsAccessibilityInstrumentedTest {
                     {}, true, {}, {})
             }
         }
-        compose.onNodeWithContentDescription("저장 완료 후 원본 동영상 처리: 원본 유지 (기본값)").performClick()
+        compose.onNodeWithContentDescription("저장 완료 후 원본 동영상 처리: 원본 유지 (기본값)")
+            .performScrollTo().assertIsDisplayed().performClick()
         compose.onNodeWithText("원본 영구 삭제").performClick()
         compose.runOnIdle { assertEquals(OriginalAction.DELETE, requested) }
         compose.onNodeWithContentDescription("저장 완료 후 원본 동영상 처리: 원본 유지 (기본값)").assertIsDisplayed()

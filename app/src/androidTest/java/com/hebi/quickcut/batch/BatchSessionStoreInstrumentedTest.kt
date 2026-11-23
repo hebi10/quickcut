@@ -25,7 +25,7 @@ class BatchSessionStoreInstrumentedTest {
         val store = BatchSessionStore(base)
         val id = java.util.UUID.randomUUID().toString()
         val recorded = snapshot("content://media/external/video/media/123").let {
-            it.copy(files = it.files.map { row -> row.copy(diagnosticId = id) })
+            it.copy(files = it.files.map { row -> row.copy(diagnosticId = id, edgeTrim = BatchEdgeTrim(250, 750)) })
         }
         try {
             store.save(recorded)
@@ -33,10 +33,14 @@ class BatchSessionStoreInstrumentedTest {
             for (value in listOf<String?>(null, "private source content://source/1", "123", "00000000-0-0-0-0")) {
                 val data = org.json.JSONObject(base.readText())
                 val row = data.getJSONArray("files").getJSONObject(0)
-                if (value == null) row.remove("diagnosticId") else row.put("diagnosticId", value)
+                if (value == null) {
+                    row.remove("diagnosticId")
+                    row.remove("edgeTrim")
+                } else row.put("diagnosticId", value)
                 base.writeText(data.toString())
                 val restored = store.load()!!.files.single()
                 assertNull(restored.diagnosticId)
+                assertEquals(if (value == null) null else BatchEdgeTrim(250, 750), restored.edgeTrim)
                 assertEquals(recorded.files.single().savedOutputUri, restored.savedOutputUri)
             }
         } finally { store.clear() }

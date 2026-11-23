@@ -63,6 +63,7 @@ data class BatchFile(
     val exportReport: ExportReport? = null,
     val diagnosticId: String? = null,
     val reencodeRefusal: BatchReencodeRefusal? = null,
+    val edgeTrim: BatchEdgeTrim? = null,
 )
 
 data class BatchExportOverview(
@@ -202,7 +203,7 @@ class BatchViewModel internal constructor(
                     unavailableReason = "원본 날짜가 없어 건너뛰었습니다.")
                 continue
             }
-            when (val plan = template.plan(file.uri, file.durationMs, file.hasAudio)) {
+            when (val plan = template.plan(file)) {
                 is BatchPlan.Skip -> {
                     skipped++
                     skippedFiles += file.displayName + " · " + plan.reason
@@ -635,7 +636,8 @@ class BatchViewModel internal constructor(
                         outputExpectedDurationMs = previous.outputExpectedDurationMs,
                         outputExpectedAudio = previous.outputExpectedAudio,
                         outputExpectedDateMs = previous.outputExpectedDateMs,
-                        diagnosticId = fresh.diagnosticId ?: previous.diagnosticId) } ?: previous
+                        diagnosticId = fresh.diagnosticId ?: previous.diagnosticId,
+                        edgeTrim = previous.edgeTrim) } ?: previous
                 } + refreshed.values
                 val nextState = if (runState == BatchRunState.FINISHED) BatchRunState.SETUP else runState
                 // Match the existing UI contract on storage failure: keep imported
@@ -661,6 +663,19 @@ class BatchViewModel internal constructor(
                 schedulePassivePersist()
             }
         }
+    }
+
+    internal fun setEdgeTrim(uri: String, trim: BatchEdgeTrim?): Boolean {
+        if (isRunning || isRecovering || isImporting || hasUnresolvedRecovery ||
+            draftMode != BatchClipMode.REMOVE_EDGES) return false
+        val file = files.firstOrNull { it.uri == uri && it.status != BatchFileStatus.SAVED } ?: return false
+        if (file.edgeTrim == trim) return true
+        val proposed = file.copy(edgeTrim = trim)
+        if (trim != null && currentDraft()?.plan(proposed) !is BatchPlan.Ready) return false
+        invalidateReview()
+        files = files.map { if (it.uri == uri) proposed else it }
+        schedulePassivePersist()
+        return true
     }
 
     fun removeVideo(uri: String) {
@@ -790,7 +805,7 @@ class BatchViewModel internal constructor(
                         }
                         continue
                     }
-                    when (val plan = template.plan(row.uri, row.durationMs, row.hasAudio)) {
+                    when (val plan = template.plan(row)) {
                         is BatchPlan.Skip -> {
                             update(row.uri) {
                                 it.copy(status=BatchFileStatus.SKIPPED,reason=plan.reason)

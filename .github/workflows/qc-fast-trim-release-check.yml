@@ -62,6 +62,17 @@ jobs:
               notices.parent.mkdir(parents=True, exist_ok=True)
               notices.write_bytes(apk.read("assets/licenses/NATIVE-DEPENDENCIES.txt"))
           PYCODE
+      - name: Install FFmpeg when missing
+        timeout-minutes: 12
+        run: |
+          set -euo pipefail
+          if ! command -v ffmpeg >/dev/null; then
+            if [[ -f /etc/apt/apt-mirrors.txt ]] && grep -q '^https://archive\.ubuntu\.com/ubuntu/' /etc/apt/apt-mirrors.txt; then
+              sudo sed -i '\|^http://azure\.archive\.ubuntu\.com/ubuntu/[[:space:]]*priority:1$|d' /etc/apt/apt-mirrors.txt
+            fi
+            sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 update -qq
+            sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 install -y --no-install-recommends ffmpeg
+          fi
       - name: Prepare the existing full-suite video fixtures
         run: |
           set -euo pipefail

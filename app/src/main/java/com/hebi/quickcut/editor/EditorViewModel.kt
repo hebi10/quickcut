@@ -885,8 +885,12 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
                 if (page != QuickCutPage.EDITOR || timeline != requested) return@launch
                 val nearby = if (allowNearby && !assessment.fastAvailable && !needsReencodeConsent) {
                     listOfNotNull(assessment.suggestion, assessment.lessTrimSuggestion)
+                        .filter { suggestion ->
+                            val adjusted = suggestion.adjusted.clips.singleOrNull()
+                            adjusted != null && adjusted.durationUs < adjusted.sourceDurationMs * 1_000L &&
+                                kotlin.math.abs(suggestion.extraRemovedUs) <= 1_000_000L
+                        }
                         .minByOrNull { kotlin.math.abs(it.extraRemovedUs) }
-                        ?.takeIf { kotlin.math.abs(it.extraRemovedUs) <= 1_000_000L }
                 } else null
                 exportReview = EditorExportReview(
                     assessment, requested, originalAction, dateMode, quality,

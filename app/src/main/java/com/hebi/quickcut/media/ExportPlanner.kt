@@ -1,11 +1,7 @@
 package com.hebi.quickcut.media
 
 import android.content.Context
-import android.media.MediaExtractor
-import android.media.MediaFormat
-import android.net.Uri
 import com.hebi.quickcut.editor.EditTimeline
-import com.hebi.quickcut.editor.VideoClip
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -20,6 +16,7 @@ data class ExportAssessment(
     val explanation: String,
     val suggestion: FastCutSuggestion? = null,
     val directCopy: Boolean = false,
+    val lessTrimSuggestion: FastCutSuggestion? = null,
 ) {
     val suggestedStartMs: Long? get() {
         val review = suggestion ?: return null
@@ -58,11 +55,8 @@ object ExportPlanner {
                         fastAvailable = false,
                         explanation = inspection.reason?.explanation
                             ?: "현재 영상에서 고속 저장을 사용할 수 없습니다.",
-                        suggestion = if (inspection.reason == FastMp4Trimmer.UnavailableReason.KEYFRAME) {
-                            nearbyKeyframe(context, clip)?.let {
-                                FastCutSuggestion.createUs(timeline, listOf(it to clip.endUs))
-                            }
-                        } else null,
+                        suggestion = validatedCopySuggestion(context, timeline, outward = false),
+                        lessTrimSuggestion = validatedCopySuggestion(context, timeline, outward = true),
                     )
                 }
             }
@@ -88,31 +82,16 @@ object ExportPlanner {
         )
     }
 
-    private fun nearbyKeyframe(context: Context, clip: VideoClip): Long? {
-        if (clip.startUs <= 0L) return null
-        val extractor = MediaExtractor()
-        return try {
-            extractor.setDataSource(context, Uri.parse(clip.uri), null)
-            val video = (0 until extractor.trackCount).firstOrNull {
-                extractor.getTrackFormat(it).getString(MediaFormat.KEY_MIME)
-                    ?.startsWith("video/") == true
-            } ?: return null
-            extractor.selectTrack(video)
-            extractor.seekTo(clip.startUs, MediaExtractor.SEEK_TO_NEXT_SYNC)
-            val candidateUs = extractor.sampleTime
-            if (candidateUs < clip.startUs ||
-                candidateUs > clip.endUs - 100_000L
-            ) return null
-            val candidate = clip.withRangeUs(candidateUs, clip.endUs)
-            if (FastMp4Trimmer.prepare(context, candidate) != null &&
-                candidateUs != clip.startUs
-            ) candidateUs else null
-        } catch (_: Exception) {
-            null
-        } finally {
-            extractor.release()
+    private fun validatedCopySuggestion(
+        context: Context,
+        timeline: EditTimeline,
+        outward: Boolean,
+    ): FastCutSuggestion? {
+        val clip = timeline.clips.single()
+        return KeyframeFinder.copyCandidates(context, clip, outward).firstNotNullOfOrNull { range ->
+            val candidate = if (outward) FastCutSuggestion.createOutwardUs(timeline, range)
+                else FastCutSuggestion.createUs(timeline, listOf(range))
+            candidate?.takeIf { FastMp4Trimmer.prepare(context, it.adjusted.clips.single()) != null }
         }
     }
 }
-
-

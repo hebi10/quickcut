@@ -748,7 +748,16 @@ fun QuickCutApp(
     exportReview?.takeIf {
         model.page == QuickCutPage.EDITOR && model.timeline == it.timeline
     }?.let { review ->
-        val suggestion = review.assessment.suggestion
+        fun saveSuggested(suggestion: com.hebi.quickcut.media.FastCutSuggestion?): (() -> Unit)? {
+            if (suggestion == null || review.retryingFastExport) return null
+            return {
+                if (model.canStartExport && model.timeline == review.timeline &&
+                    model.applyFastCutSuggestion(suggestion)) {
+                    exportReview = null
+                    model.startExport(context, review.originalAction, review.dateMode, ExportMode.FAST_ONLY)
+                }
+            }
+        }
         ExportModeDialog(
             assessment = if (review.retryingFastExport) review.assessment.copy(
                 explanation = model.exportDiagnostics.explanation().ifBlank {
@@ -764,15 +773,8 @@ fun QuickCutApp(
                         ExportMode.ALLOW_REENCODE, outputQuality = review.outputQuality)
                 }
             },
-            onSuggestedCut = if (suggestion != null && !review.retryingFastExport) {
-                {
-                    if (model.canStartExport && model.timeline == review.timeline &&
-                        model.applyFastCutSuggestion(suggestion)) {
-                        exportReview = null
-                        model.startExport(context, review.originalAction, review.dateMode, ExportMode.FAST_ONLY)
-                    }
-                }
-            } else null,
+            onSuggestedCut = saveSuggested(review.assessment.suggestion),
+            onLessTrim = saveSuggested(review.assessment.lessTrimSuggestion),
             onDismiss = {
                 exportReview = null
             },

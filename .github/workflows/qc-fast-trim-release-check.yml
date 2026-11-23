@@ -6,6 +6,7 @@ on:
       - ".github/workflows/qc-fast-trim-release-check.yml"
 
 permissions:
+  actions: read
   contents: read
 
 jobs:
@@ -36,32 +37,35 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "9.4.1"
-      - name: Install missing native build and fixture tools
+      - name: Reuse the verified native engine from the successful build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN: "45151375622"
+          SOURCE_SHA: 11815bcb1e949544563a1bed5fb485d8bd6b2ac7
         run: |
           set -euo pipefail
-          missing=()
-          for tool in cmake nasm pkg-config ffmpeg; do
-            command -v "$tool" >/dev/null || missing+=("$tool")
-          done
-          if (( ${#missing[@]} > 0 )); then
-            sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 update -qq
-            sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 install -y --no-install-recommends "${missing[@]}"
-          fi
-      - name: Install Android SDK and NDK
-        run: sdkmanager --install "platforms;android-36" "build-tools;36.0.0" "ndk;27.3.13750724"
-      - name: Restore the pinned native build
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            build/native-smartcut
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: native-smartcut-${{ runner.os }}-${{ hashFiles('scripts/build-native-smartcut.sh', 'scripts/native-smartcut-sources.json') }}-${{ hashFiles('native/**') }}
-      - name: Build the native engine from pinned sources
-        run: bash scripts/build-native-smartcut.sh
+          git diff --exit-code "$SOURCE_SHA" HEAD -- native scripts/build-native-smartcut.sh scripts/native-smartcut-sources.json
+          gh run view "$SOURCE_RUN" --repo "$GITHUB_REPOSITORY" --json headSha,conclusion |
+            jq -e --arg sha "$SOURCE_SHA" '.headSha == $sha and .conclusion == "success"'
+          gh run download "$SOURCE_RUN" --repo "$GITHUB_REPOSITORY" --name quickcut-debug-apk --dir "$RUNNER_TEMP/source-apk"
+          python3 - <<'PYCODE'
+          import os
+          from pathlib import Path
+          from zipfile import ZipFile
+          with ZipFile(Path(os.environ["RUNNER_TEMP"]) / "source-apk/app-debug.apk") as apk:
+              for abi in ("arm64-v8a", "x86_64"):
+                  library = f"{abi}/libquickcut_smartcut.so"
+                  target = Path("app/build/generated/nativeLibs") / library
+                  target.parent.mkdir(parents=True, exist_ok=True)
+                  target.write_bytes(apk.read("lib/" + library))
+              notices = Path("build/generated/smartcutAssets/licenses/NATIVE-DEPENDENCIES.txt")
+              notices.parent.mkdir(parents=True, exist_ok=True)
+              notices.write_bytes(apk.read("assets/licenses/NATIVE-DEPENDENCIES.txt"))
+          PYCODE
       - name: Prepare the existing full-suite video fixtures
         run: |
           set -euo pipefail
+          sdkmanager --install "platforms;android-36" "build-tools;36.0.0"
           awk '/^mkdir -p app\/src\/androidTest\/assets$/ {emit=1}
                /^# CI hardware keyboard/ {exit}
                emit' scripts/android-emulator-check.sh > "$RUNNER_TEMP/quickcut-fixtures.sh"
@@ -88,8 +92,9 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -no-metrics -partition-size 2048
           disable-animations: true
           script: >-
-            gradle --no-daemon :app:connectedDebugAndroidTest
+            bash -c 'gradle --no-daemon :app:connectedDebugAndroidTest
             -Pandroid.testInstrumentationRunnerArguments.class=com.hebi.quickcut.media.FastBFrameInstrumentedTest,com.hebi.quickcut.media.FastCutExportInstrumentedTest,com.hebi.quickcut.media.NativeSmartCutInstrumentedTest#originalDateDoesNotForceFullVideoEncoding,com.hebi.quickcut.media.NativeSmartCutInstrumentedTest#originalDateCopyRemainsAvailableInFastOnlyMode,com.hebi.quickcut.media.PendingCleanupInstrumentedTest,com.hebi.quickcut.batch.BatchSessionStoreInstrumentedTest
+            || { adb logcat -d -s QuickCutExport SmartCutFailureDiagnostics | tail -140; exit 1; }'
       - name: Keep instrumentation evidence
         if: always()
         uses: actions/upload-artifact@v4

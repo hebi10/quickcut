@@ -102,6 +102,7 @@ fun QuickTrimScreen(
     onSave: () -> Unit,
     onSaveOptions: () -> Unit,
     onHelp: (String) -> Unit = {},
+    onFastSave: (() -> Unit)? = null,
 ) {
     val palette = LocalCutPalette.current
     val clip = model.timeline.clips.singleOrNull() ?: return
@@ -340,6 +341,7 @@ fun QuickTrimScreen(
                         onSnap = model::snapTrim,
                         onSave = { saveValidated(onSave) },
                         onSaveOptions = { saveValidated(onSaveOptions) },
+                        onFastSave = onFastSave?.let { { saveValidated(it) } },
                         modifier = Modifier.weight(1f).fillMaxHeight(),
                     )
                 }
@@ -363,6 +365,7 @@ fun QuickTrimScreen(
                     onSnap = model::snapTrim,
                     onSave = { saveValidated(onSave) },
                     onSaveOptions = { saveValidated(onSaveOptions) },
+                    onFastSave = onFastSave?.let { { saveValidated(it) } },
                     modifier = Modifier.fillMaxWidth().weight(1.4f),
                 )
             }
@@ -471,6 +474,7 @@ private fun QuickTrimControls(
     onSnap: (VideoClip, Long, Long) -> Boolean,
     onSave: () -> Unit,
     onSaveOptions: () -> Unit,
+    onFastSave: (() -> Unit)?,
     modifier: Modifier,
 ) {
     val palette = LocalCutPalette.current
@@ -650,6 +654,14 @@ private fun QuickTrimControls(
                     }
                 }
                 KeyframeTrimControls(clip, valid, onSnap)
+                if (onFastSave != null) {
+                    OutlinedButton(
+                        onClick = onFastSave, enabled = canSave,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp), shape = CutShape,
+                    ) { Text("가까운 구간으로 고속 저장") }
+                    Text("최대 1초 차이의 추천 구간을 적용할 수 있습니다. 원본은 유지합니다.",
+                        color = palette.secondaryText, style = MaterialTheme.typography.bodySmall)
+                }
                 Text("저장 전 처리 방식을 확인합니다. 마지막 시간 설정은 자동으로 저장됩니다.",
                     color = palette.secondaryText, style = MaterialTheme.typography.bodySmall)
                 OutlinedButton(

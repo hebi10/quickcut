@@ -22,6 +22,23 @@ class BatchPreviewEstimateTest {
             .startsWith("저장 불가"))
     }
 
+    @Test fun perVideoEdgesAffectOnlyThatVideoAndOnlyInEdgeTrimMode() {
+        val template = BatchTemplate(leadingMs = 3_000, trailingMs = 3_000)
+        val first = file(1, 20_000).copy(edgeTrim = BatchEdgeTrim(2_000, 4_500))
+        val second = file(2, 20_000).copy(edgeTrim = BatchEdgeTrim(0, 1_000))
+        val common = file(3, 20_000)
+        val clips = listOf(first, second, common).map {
+            (template.plan(it) as BatchPlan.Ready).timeline.clips.single()
+        }
+        assertEquals(listOf(2_000L to 15_500L, 0L to 19_000L, 3_000L to 17_000L),
+            clips.map { it.startMs to it.endMs })
+        assertEquals("예상 결과 · 20초 → 13.5초",
+            BatchPreviewEstimate.fileLabel(first, template, SaveDateMode.CURRENT))
+        assertTrue(template.plan(first.copy(durationMs = 6_550)) is BatchPlan.Skip)
+        val keep = (template.copy(mode = BatchClipMode.KEEP_FIRST).plan(first) as BatchPlan.Ready)
+        assertEquals(3_000L, keep.timeline.totalDurationMs)
+    }
+
     @Test fun countsExcludeAlreadySavedFilesAndTreatShortOrUncertainSourcesAsUnavailable() {
         val template = BatchTemplate()
         val files = listOf(file(1, 20_000L), file(2, 5_000L),

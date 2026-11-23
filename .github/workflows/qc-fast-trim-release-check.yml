@@ -1,0 +1,105 @@
+name: QuickCut fast trim release preflight
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/qc-fast-trim-release-check.yml"
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  preflight:
+    name: Fast trim and gallery recovery (API ${{ matrix.api }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - api: 29
+            target: default
+          - api: 35
+            target: google_apis
+    env:
+      SOURCE_RUN: "45148318179"
+      SOURCE_SHA: 7e27b07f16a6240d217f8388363a45569495033c
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.4.1"
+      - name: Verify and acquire native libraries from the exact media PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git diff --exit-code "$SOURCE_SHA" HEAD -- native scripts/build-native-smartcut.sh scripts/native-smartcut-sources.json
+          timeout 1200 gh run watch "$SOURCE_RUN" --repo "$GITHUB_REPOSITORY" --interval 30 --exit-status
+          gh run view "$SOURCE_RUN" --repo "$GITHUB_REPOSITORY" --json headSha,conclusion |
+            jq -e --arg sha "$SOURCE_SHA" '.headSha == $sha and .conclusion == "success"'
+          gh run download "$SOURCE_RUN" --repo "$GITHUB_REPOSITORY" --name quickcut-debug-apk --dir "$RUNNER_TEMP/source-apk"
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+          import os
+          with ZipFile(Path(os.environ["RUNNER_TEMP"]) / "source-apk/app-debug.apk") as apk:
+              for abi in ("arm64-v8a", "x86_64"):
+                  library = f"{abi}/libquickcut_smartcut.so"
+                  target = Path("app/build/generated/nativeLibs") / library
+                  target.parent.mkdir(parents=True, exist_ok=True)
+                  target.write_bytes(apk.read("lib/" + library))
+              notices = Path("build/generated/smartcutAssets/licenses/NATIVE-DEPENDENCIES.txt")
+              notices.parent.mkdir(parents=True, exist_ok=True)
+              notices.write_bytes(apk.read("assets/licenses/NATIVE-DEPENDENCIES.txt"))
+          PY
+      - name: Prepare the existing full-suite video fixtures
+        run: |
+          set -euo pipefail
+          sdkmanager --install "platforms;android-36" "build-tools;36.0.0"
+          awk '/^mkdir -p app\/src\/androidTest\/assets$/ {emit=1}
+               /^# CI hardware keyboard/ {exit}
+               emit' scripts/android-emulator-check.sh > "$RUNNER_TEMP/quickcut-fixtures.sh"
+          bash -euo pipefail "$RUNNER_TEMP/quickcut-fixtures.sh"
+          test -s app/src/androidTest/assets/quickcut_vfr_closed_gop.mp4
+          test -s app/src/androidTest/assets/quickcut_bframes.mp4
+          test -s app/src/androidTest/assets/quickcut_open_gop.mp4
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Cover B-frame and VFR copy, pending publication, dates and recovery
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api }}
+          target: ${{ matrix.target }}
+          arch: x86_64
+          profile: pixel_6
+          disk-size: 2048M
+          ram-size: 3072M
+          heap-size: 256M
+          emulator-boot-timeout: 300
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -no-metrics -partition-size 2048
+          disable-animations: true
+          script: >-
+            gradle --no-daemon :app:connectedDebugAndroidTest
+            -Pandroid.testInstrumentationRunnerArguments.class=com.hebi.quickcut.media.FastBFrameInstrumentedTest,com.hebi.quickcut.media.FastCutExportInstrumentedTest,com.hebi.quickcut.media.NativeSmartCutInstrumentedTest#originalDateDoesNotForceFullVideoEncoding,com.hebi.quickcut.media.NativeSmartCutInstrumentedTest#originalDateCopyRemainsAvailableInFastOnlyMode,com.hebi.quickcut.media.PendingCleanupInstrumentedTest,com.hebi.quickcut.batch.BatchSessionStoreInstrumentedTest
+      - name: Keep instrumentation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: focused-fast-trim-api-${{ matrix.api }}
+          path: app/build/outputs/androidTest-results/connected/**/*.xml
+          if-no-files-found: warn

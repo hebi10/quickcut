@@ -17,8 +17,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.ContinuationInterceptor
 
 internal data class NativeSmartCutResult(val copiedPackets: Long, val encodedPackets: Long)
 
@@ -48,6 +50,7 @@ internal object NativeSmartCutTrimmer {
         onProgress: (Int?) -> Unit,
         onUnavailable: (FastExportReason) -> Unit = {},
         copyVideoOnly: Boolean = false,
+        openPendingDestinationFd: (suspend () -> Int)? = null,
     ): NativeSmartCutResult? = withContext(Dispatchers.IO) {
         val jobContext = currentCoroutineContext()
         jobContext.ensureActive()
@@ -76,13 +79,21 @@ internal object NativeSmartCutTrimmer {
                 Os.lseek(descriptor.fileDescriptor, position, OsConstants.SEEK_SET)
                 jobContext.ensureActive()
                 failureReason = FastExportReason.PROCESSING_FAILED
-                val callbacks = NativeSmartCutCallbacks(jobContext, onProgress)
+                val callbacks = NativeSmartCutCallbacks(jobContext, onProgress, openPendingDestinationFd)
                 val result = try {
-                    if (copyVideoOnly) NativeSmartCutBridge.cutRangesCopyVideo(
-                        "/proc/self/fd/${descriptor.fd}", destination.absolutePath, ranges, clip.muted, callbacks,
-                    ) else NativeSmartCutBridge.cutRanges(
-                        "/proc/self/fd/${descriptor.fd}", destination.absolutePath, ranges, clip.muted, callbacks,
-                    )
+                    val input = "/proc/self/fd/${descriptor.fd}"
+                    when {
+                        openPendingDestinationFd != null -> NativeSmartCutBridge.cutRangesToPending(
+                            input, destination.absolutePath, ranges,
+                            clip.muted, copyVideoOnly, callbacks,
+                        )
+                        copyVideoOnly -> NativeSmartCutBridge.cutRangesCopyVideo(
+                            input, destination.absolutePath, ranges, clip.muted, callbacks,
+                        )
+                        else -> NativeSmartCutBridge.cutRanges(
+                            input, destination.absolutePath, ranges, clip.muted, callbacks,
+                        )
+                    }
                 } finally {
                     callbacks.close()
                 }
@@ -102,6 +113,9 @@ internal object NativeSmartCutTrimmer {
             throw cancelled
         } catch (error: Exception) {
             jobContext.ensureActive()
+            if (openPendingDestinationFd != null && error is PendingOutputCallbackException) {
+                throw error.cause ?: error
+            }
             Log.w("QuickCutExport", "Native smart cut declined; keeping the exact Media3 path", error)
             unavailable(failureReason)
         }
@@ -153,6 +167,16 @@ internal object NativeSmartCutBridge {
         muted: Boolean, callbacks: NativeSmartCutCallbacks): LongArray
 
     @JvmStatic
+    external fun cutRangesToPending(
+        inputPath: String,
+        stagingPath: String,
+        rangesUs: LongArray,
+        muted: Boolean,
+        copyVideoOnly: Boolean,
+        callbacks: NativeSmartCutCallbacks,
+    ): LongArray
+
+    @JvmStatic
     external fun cutRangesCopyVideo(inputPath: String, outputPath: String, rangesUs: LongArray,
         muted: Boolean, callbacks: NativeSmartCutCallbacks): LongArray
 
@@ -181,7 +205,11 @@ internal object NativeSmartCutBridge {
 internal class NativeSmartCutCallbacks(
     private val jobContext: CoroutineContext,
     private val consumer: (Int?) -> Unit,
+    private val openPendingDestinationFd: (suspend () -> Int)?,
 ) {
+    constructor(jobContext: CoroutineContext, consumer: (Int?) -> Unit) :
+        this(jobContext, consumer, null)
+
     private val main = Handler(Looper.getMainLooper())
     @Volatile private var closed = false
     private var lastProgress = -1
@@ -201,8 +229,21 @@ internal class NativeSmartCutCallbacks(
         }, this, now)
     }
 
+    fun requestOutputFd(): Int = try {
+        val open = checkNotNull(openPendingDestinationFd)
+        // JNI requests the output synchronously after validating the private
+        // intermediate. The same export job owns the descriptor and rollback.
+        runBlocking(jobContext.minusKey(ContinuationInterceptor)) { open() }
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (error: Exception) {
+        throw PendingOutputCallbackException(error)
+    }
+
     fun close() {
         closed = true
         main.removeCallbacksAndMessages(this)
     }
 }
+
+private class PendingOutputCallbackException(cause: Exception) : RuntimeException(cause)

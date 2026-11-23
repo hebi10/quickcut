@@ -77,6 +77,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.hebi.quickcut.editor.OriginalAction
+import com.hebi.quickcut.editor.TrimInput
 import com.hebi.quickcut.editor.OriginalActionStatus
 import com.hebi.quickcut.editor.formatTime
 import com.hebi.quickcut.media.SaveDateMode
@@ -125,6 +126,10 @@ fun BatchScreen(
     var inspectedCount by remember { mutableIntStateOf(0) }
     var inspectedTotal by remember { mutableIntStateOf(0) }
     var inspectedPercent by remember { mutableStateOf<Int?>(null) }
+    var editingUri by rememberSaveable { mutableStateOf<String?>(null) }
+    val visibleTemplate = model.previewTemplate()
+    val canEditTimes = canModifyQueue && !inspecting && !model.hasUnresolvedRecovery &&
+        model.draftMode == BatchClipMode.REMOVE_EDGES && visibleTemplate != null
     var showStopConfirmation by rememberSaveable { mutableStateOf(false) }
     val requestExport: (Boolean) -> Unit = { retry ->
         if (!inspecting && canModifyQueue && !model.hasUnresolvedRecovery) {
@@ -192,8 +197,9 @@ fun BatchScreen(
                     ) {
                         items(model.files, key = { it.uri }) { file ->
                             BatchFileRow(
-                                file, model.previewTemplate(), model.saveDateMode, model.currentExportStage,
-                                canModifyQueue, model::removeVideo
+                                file, visibleTemplate, model.saveDateMode, model.currentExportStage,
+                                canModifyQueue, model::removeVideo,
+                                onEditTimes = if (canEditTimes) ({ editingUri = it }) else null
                             )
                         }
                     }
@@ -224,8 +230,9 @@ fun BatchScreen(
                 }
                 items(model.files, key = { it.uri }) { file ->
                     BatchFileRow(
-                        file, model.previewTemplate(), model.saveDateMode, model.currentExportStage,
-                        canModifyQueue, model::removeVideo
+                        file, visibleTemplate, model.saveDateMode, model.currentExportStage,
+                        canModifyQueue, model::removeVideo,
+                        onEditTimes = if (canEditTimes) ({ editingUri = it }) else null
                     )
                 }
             }
@@ -242,8 +249,9 @@ fun BatchScreen(
                 item { BatchFileHeader(model) }
                 items(model.files, key = { it.uri }) { file ->
                     BatchFileRow(
-                        file, model.previewTemplate(), model.saveDateMode, model.currentExportStage,
-                        canModifyQueue, model::removeVideo
+                        file, visibleTemplate, model.saveDateMode, model.currentExportStage,
+                        canModifyQueue, model::removeVideo,
+                        onEditTimes = if (canEditTimes) ({ editingUri = it }) else null
                     )
                 }
                 item { BatchProgress(model) }
@@ -256,6 +264,18 @@ fun BatchScreen(
             }
             }
         }
+    }
+
+    val editingFile = model.files.firstOrNull { it.uri == editingUri }
+    if (canEditTimes && editingFile != null && visibleTemplate != null) {
+        BatchEdgeTrimDialog(
+            file = editingFile,
+            template = visibleTemplate,
+            onDismiss = { editingUri = null },
+            onApply = { trim ->
+                if (model.setEdgeTrim(editingFile.uri, trim)) editingUri = null
+            },
+        )
     }
 
     if (showStopConfirmation) {
@@ -1115,6 +1135,7 @@ private fun BatchFileRow(
     stage: com.hebi.quickcut.media.ExportStage,
     canRemove: Boolean,
     onRemove: (String) -> Unit,
+    onEditTimes: ((String) -> Unit)?,
 ) {
     val palette = LocalCutPalette.current
     val subtitle = BatchPreviewEstimate.fileLabel(file, template, dateMode)
@@ -1146,6 +1167,21 @@ private fun BatchFileRow(
                         .background(palette.panel, CutShape),
                 ) { Icon(CutIcons.Close, contentDescription = "선택 영상 제거") }
             }
+        }
+        if (onEditTimes != null && file.status != BatchFileStatus.SAVED && file.durationMs >= 100L) {
+            file.edgeTrim?.let {
+                Text(
+                    "개별 설정 · 앞 ${BatchTimeInput.durationText(it.leadingMs)} · 뒤 ${BatchTimeInput.durationText(it.trailingMs)}",
+                    color = palette.secondaryText,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            TextButton(
+                onClick = { onEditTimes(file.uri) },
+                modifier = Modifier.heightIn(min = 48.dp).semantics {
+                    contentDescription = "${file.displayName}, 앞뒤 시간 조정"
+                },
+            ) { Text("앞뒤 시간 조정") }
         }
         if (file.status == BatchFileStatus.RUNNING && file.progress != null) {
             LinearProgressIndicator(
@@ -1179,6 +1215,58 @@ private fun BatchFileRow(
             ExportDiagnosticButton(operationId = operationId, label = "저장 진단")
         }
     }
+}
+
+@Composable
+private fun BatchEdgeTrimDialog(
+    file: BatchFile,
+    template: BatchTemplate,
+    onDismiss: () -> Unit,
+    onApply: (BatchEdgeTrim?) -> Unit,
+) {
+    var leading by rememberSaveable(file.uri) {
+        mutableStateOf(TrimInput.secondsText(file.edgeTrim?.leadingMs ?: template.leadingMs))
+    }
+    var trailing by rememberSaveable(file.uri) {
+        mutableStateOf(TrimInput.secondsText(file.edgeTrim?.trailingMs ?: template.trailingMs))
+    }
+    val leadingMs = BatchTimeInput.parse(leading)
+    val trailingMs = BatchTimeInput.parse(trailing)
+    val trim = if (leadingMs != null && trailingMs != null) BatchEdgeTrim(leadingMs, trailingMs) else null
+    val plan = trim?.let { template.plan(file.copy(edgeTrim = it)) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { QuickCutDialogHeading("영상별 앞뒤 시간") },
+        text = {
+            Column(
+                Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(file.displayName)
+                BatchDurationField("앞에서 자를 시간", leading, { leading = it }, true, true, "batch-file-leading", true)
+                BatchDurationField("뒤에서 자를 시간", trailing, { trailing = it }, true, true, "batch-file-trailing", true)
+                when (plan) {
+                    is BatchPlan.Ready -> Text("편집 후 ${BatchTimeInput.durationText(plan.timeline.totalDurationMs)}")
+                    is BatchPlan.Skip -> Text(plan.reason, color = MaterialTheme.colorScheme.error)
+                    null -> Unit
+                }
+                if (file.edgeTrim != null) {
+                    TextButton(onClick = { onApply(null) }, modifier = Modifier.heightIn(min = 48.dp)) {
+                        Text("공통 시간 사용")
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onApply(trim) }, enabled = plan is BatchPlan.Ready,
+                modifier = Modifier.heightIn(min = 48.dp)) { Text("적용") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, modifier = Modifier.heightIn(min = 48.dp)) { Text("취소") }
+        },
+        containerColor = LocalCutPalette.current.panel,
+        shape = CutDialogShape,
+    )
 }
 
 @Composable

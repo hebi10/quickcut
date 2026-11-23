@@ -60,6 +60,10 @@ class BatchSessionStore internal constructor(
                 outputExpectedDurationMs = if (row.isNull("expectedDuration")) null else row.getLong("expectedDuration"),
                 outputExpectedAudio = if (row.isNull("expectedAudio")) null else row.getBoolean("expectedAudio"),
                 outputExpectedDateMs = if (row.isNull("expectedDate")) null else row.getLong("expectedDate"),
+                edgeTrim = if (row.isNull("edgeTrim")) null else {
+                    val trim = row.getJSONObject("edgeTrim")
+                    BatchEdgeTrim(trim.getLong("leading"), trim.getLong("trailing"))
+                },
                 exportReport = readReport(row.optJSONObject("exportReport")),
                 diagnosticId = safeDiagnosticId(row.optString("diagnosticId")),
                 reencodeRefusal = if (!row.has("reencodeRefusal") || row.isNull("reencodeRefusal")) null
@@ -98,6 +102,9 @@ class BatchSessionStore internal constructor(
         val rows = JSONArray()
         snapshot.files.forEach { row ->
             rows.put(JSONObject().apply {
+                put("edgeTrim", row.edgeTrim?.let {
+                    JSONObject().put("leading", it.leadingMs).put("trailing", it.trailingMs)
+                } ?: JSONObject.NULL)
                 put("uri", row.uri)
                 put("name", row.displayName)
                 put("duration", row.durationMs)

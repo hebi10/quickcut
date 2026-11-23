@@ -32,6 +32,7 @@ object ExportPlanner {
         timeline: EditTimeline,
         dateMode: SaveDateMode,
         onProgress: (Int?) -> Unit = {},
+        deepCopyReview: Boolean = true,
     ): ExportAssessment = withContext(Dispatchers.IO) {
         var assessment = when {
             timeline.isEmpty -> ExportAssessment(false, "편집할 영상이 없습니다.")
@@ -62,7 +63,7 @@ object ExportPlanner {
             }
         }
         if (timeline.isEmpty) return@withContext assessment
-        if (!assessment.fastAvailable && assessment.suggestion == null &&
+        if (deepCopyReview && !assessment.fastAvailable && assessment.suggestion == null &&
             timeline.clips.none { it.crop != null || it.textLayers.isNotEmpty() ||
                 (it.hasAudio && !it.muted && !it.audio.isDefault) }) {
             NativeSmartCutTrimmer.suggestCopyRangesUs(context, timeline, onProgress)?.let { ranges ->
@@ -73,6 +74,10 @@ object ExportPlanner {
                     assessment = assessment.copy(suggestion = FastCutSuggestion.createUs(timeline, ranges))
                 }
             }
+        }
+        if (!deepCopyReview && !assessment.fastAvailable && assessment.suggestion == null) {
+            assessment = assessment.copy(explanation = assessment.explanation +
+                "\n선택한 위치로 자동 저장하면 저장 단계에서 부분 처리 가능 여부를 확인합니다.")
         }
         val direct = assessment.directCopy && dateMode != SaveDateMode.ORIGINAL
         val estimatedBytes = ExportStorage.estimateOutputBytes(context, timeline, direct)

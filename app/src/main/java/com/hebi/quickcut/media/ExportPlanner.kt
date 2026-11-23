@@ -62,7 +62,7 @@ object ExportPlanner {
             }
         }
         if (timeline.isEmpty) return@withContext assessment
-        if (!assessment.fastAvailable && assessment.suggestion == null && assessment.lessTrimSuggestion == null &&
+        if (!assessment.fastAvailable && assessment.suggestion == null &&
             timeline.clips.none { it.crop != null || it.textLayers.isNotEmpty() ||
                 (it.hasAudio && !it.muted && !it.audio.isDefault) }) {
             NativeSmartCutTrimmer.suggestCopyRangesUs(context, timeline, onProgress)?.let { ranges ->

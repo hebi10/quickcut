@@ -272,20 +272,26 @@ internal fun ExportModeDialog(
                     color = palette.secondaryText,
                     style = MaterialTheme.typography.bodySmall,
                 )
-                val choices = listOf(
-                    Triple(assessment.suggestion, onSuggestedCut, "추천 위치로 고속 저장"),
-                    Triple(assessment.lessTrimSuggestion, onLessTrim, "덜 자르고 고속 저장"),
-                )
-                choices.forEach { (suggestion, action, label) ->
-                    if (suggestion != null && action != null) {
-                        Text(if (suggestion.retainsMore) "장면을 더 남기는 추천 구간" else "장면을 더 자르는 추천 구간",
-                            color = palette.primaryText, style = MaterialTheme.typography.titleSmall)
+                if (onSuggestedCut != null) {
+                    assessment.suggestion?.let { suggestion ->
+                        Text("추천 구간으로 빠르게 저장", style = MaterialTheme.typography.titleSmall,
+                            color = palette.primaryText)
+                        Text("시작·끝 시간이 바뀌고 장면이 추가로 잘릴 수 있습니다.",
+                            color = palette.secondaryText, style = MaterialTheme.typography.bodySmall)
+                        Text(fastCutSuggestionText(suggestion))
+                        FastCutPreview(suggestion)
+                    }
+                }
+                if (onLessTrim != null) {
+                    assessment.lessTrimSuggestion?.let { suggestion ->
+                        Text("장면을 더 남기는 추천 구간", color = palette.primaryText,
+                            style = MaterialTheme.typography.titleSmall)
                         Text(fastCutSuggestionText(suggestion))
                         FastCutPreview(suggestion)
                         OutlinedButton(
-                            onClick = action, enabled = canSave,
+                            onClick = onLessTrim, enabled = canSave,
                             modifier = Modifier.fillMaxWidth().heightIn(min = CutSizes.primaryButton), shape = CutShape,
-                        ) { Text(label) }
+                        ) { Text("덜 자르고 고속 저장") }
                     }
                 }
             }
@@ -296,6 +302,12 @@ internal fun ExportModeDialog(
                     onClick = onAllowReencode, enabled = canSave,
                     modifier = Modifier.fillMaxWidth().heightIn(min = CutSizes.primaryButton), shape = CutShape,
                 ) { Text("정확한 위치로 자동 저장") }
+                if (onSuggestedCut != null) {
+                    OutlinedButton(
+                        onClick = onSuggestedCut, enabled = canSave,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = CutSizes.primaryButton), shape = CutShape,
+                    ) { Text("추천 위치로 고속 저장") }
+                }
                 TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth().heightIn(min = CutSizes.touchTarget), shape = CutShape) {
                     Text("취소")
                 }

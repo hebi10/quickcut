@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -84,6 +85,7 @@ import com.hebi.quickcut.media.SaveDateMode
 import com.hebi.quickcut.media.ExportMode
 import com.hebi.quickcut.media.ExportStage
 import com.hebi.quickcut.media.MediaOperationDiagnostics
+import com.hebi.quickcut.ui.ClipThumbnail
 import com.hebi.quickcut.ui.CutChoice
 import com.hebi.quickcut.ui.CutChoiceDropdown
 import com.hebi.quickcut.ui.LocalCutPalette
@@ -1230,6 +1232,7 @@ private fun BatchEdgeTrimDialog(
     var trailing by rememberSaveable(file.uri) {
         mutableStateOf(TrimInput.secondsText(file.edgeTrim?.trailingMs ?: template.trailingMs))
     }
+    var showPreview by rememberSaveable(file.uri) { mutableStateOf(false) }
     val leadingMs = BatchTimeInput.parse(leading)
     val trailingMs = BatchTimeInput.parse(trailing)
     val trim = if (leadingMs != null && trailingMs != null) BatchEdgeTrim(leadingMs, trailingMs) else null
@@ -1246,7 +1249,21 @@ private fun BatchEdgeTrimDialog(
                 BatchDurationField("앞에서 자를 시간", leading, { leading = it }, true, true, "batch-file-leading", true)
                 BatchDurationField("뒤에서 자를 시간", trailing, { trailing = it }, true, true, "batch-file-trailing", true)
                 when (plan) {
-                    is BatchPlan.Ready -> Text("편집 후 ${BatchTimeInput.durationText(plan.timeline.totalDurationMs)}")
+                    is BatchPlan.Ready -> {
+                        val clip = plan.timeline.clips.single()
+                        Text("편집 후 ${BatchTimeInput.durationText(clip.durationMs)}")
+                        TextButton(onClick = { showPreview = !showPreview }, modifier = Modifier.heightIn(min = 48.dp)) {
+                            Text(if (showPreview) "장면 미리보기 닫기" else "남길 시작·끝 장면 보기")
+                        }
+                        if (showPreview) {
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text("시작 · " + formatTime(clip.startMs))
+                                ClipThumbnail(clip.uri, clip.startMs, Modifier.fillMaxWidth().height(96.dp))
+                                Text("끝 · " + formatTime(clip.endMs))
+                                ClipThumbnail(clip.uri, clip.endMs - 1L, Modifier.fillMaxWidth().height(96.dp))
+                            }
+                        }
+                    }
                     is BatchPlan.Skip -> Text(plan.reason, color = MaterialTheme.colorScheme.error)
                     null -> Unit
                 }

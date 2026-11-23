@@ -221,7 +221,7 @@ class BatchViewModel internal constructor(
                         continue
                     }
                     val assessment = ExportPlanner.analyze(context, plan.timeline, dateMode,
-                        onProgress = onFileProgress)
+                        onProgress = onFileProgress, deepCopyReview = targets.size <= 4)
                     val suggestion = assessment.suggestion?.takeIf { it.applyTo(plan.timeline) != null }
                     reviewedFiles += BatchReviewedFile(file.uri, file.displayName, plan.timeline,
                         suggestion, assessment.fastAvailable, explanation = assessment.explanation)

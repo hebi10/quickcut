@@ -5,6 +5,7 @@ import android.content.Context
 import android.net.Uri
 import android.os.Environment
 import android.os.ParcelFileDescriptor
+import android.system.ErrnoException
 import android.system.Os
 import android.provider.MediaStore
 import java.io.File
@@ -157,8 +158,10 @@ class GalleryWriter(private val context: Context) {
                     val descriptor = checkNotNull(opened) { "Writer did not create a pending video" }
                     if (originalTimestampMs != null) {
                         try {
-                            Mp4HeaderDates.update(File("/proc/self/fd/${descriptor.fd}"), originalTimestampMs)
+                            updatePendingDate(descriptor.fileDescriptor, originalTimestampMs)
                         } catch (error: IOException) {
+                            throw FastTrimUnavailableException("Could not update the pending MP4 date", error)
+                        } catch (error: ErrnoException) {
                             throw FastTrimUnavailableException("Could not update the pending MP4 date", error)
                         }
                     }
@@ -171,6 +174,30 @@ class GalleryWriter(private val context: Context) {
             onCommitted = onCommitted,
             onValidating = onValidating,
         )
+    }
+
+    private fun updatePendingDate(descriptor: FileDescriptor, timestampMs: Long) {
+        Mp4HeaderDates.update(
+            Os.fstat(descriptor).st_size,
+            timestampMs,
+            read = { offset, bytes ->
+                var count = 0
+                while (count < bytes.size) {
+                    val read = Os.pread(descriptor, bytes, count, bytes.size - count, offset + count)
+                    if (read <= 0) throw IOException("잘린 MP4 날짜 헤더입니다.")
+                    count += read
+                }
+            },
+            write = { offset, bytes ->
+                var count = 0
+                while (count < bytes.size) {
+                    val written = Os.pwrite(descriptor, bytes, count, bytes.size - count, offset + count)
+                    if (written <= 0) throw IOException("MP4 날짜 헤더를 기록할 수 없습니다.")
+                    count += written
+                }
+            },
+        )
+        Os.fsync(descriptor)
     }
 
     private suspend fun savePending(

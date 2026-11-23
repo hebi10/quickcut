@@ -707,6 +707,19 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         return true
     }
 
+    internal fun snapTrim(clip: VideoClip, startUs: Long, endUs: Long): Boolean {
+        if (page != QuickCutPage.EDITOR || isRecoveringExport || hasUnresolvedExport ||
+            selectedClip != clip || endUs - startUs < TrimInput.MIN_DURATION_MS * 1_000L) return false
+        val adjusted = clip.withRangeUs(startUs, endUs)
+        recordChange()
+        timeline = timeline.copy(clips = timeline.clips.map { if (it.id == clip.id) adjusted else it })
+        needsReencodeConsent = false
+        isTrimInputValid = true
+        playPositionMs = playPositionMs.coerceIn(0L, timeline.totalDurationMs)
+        saveSessionSoon()
+        return true
+    }
+
     fun trimClip(id: Long, startMs: Long, endMs: Long) {
         if (isRecoveringExport || hasUnresolvedExport) return
         if (timeline.clipAt(id) == null) return

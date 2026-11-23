@@ -239,6 +239,7 @@ internal fun ExportModeDialog(
     onAllowReencode: () -> Unit,
     onSuggestedCut: (() -> Unit)?,
     onDismiss: () -> Unit,
+    onLessTrim: (() -> Unit)? = null,
 ) {
     val palette = LocalCutPalette.current
     AlertDialog(
@@ -271,41 +272,30 @@ internal fun ExportModeDialog(
                     color = palette.secondaryText,
                     style = MaterialTheme.typography.bodySmall,
                 )
-                assessment.suggestion?.let { suggestion ->
-                    Text("추천 구간으로 빠르게 저장", style = MaterialTheme.typography.titleSmall,
-                        color = palette.primaryText)
-                    Text(
-                        "추천 위치를 선택하면 시작·끝 시간이 바뀌고 장면이 추가로 잘릴 수 있습니다. " +
-                            "아래 변경 시간과 미리보기를 확인한 뒤 선택하세요.",
-                        color = palette.secondaryText, style = MaterialTheme.typography.bodySmall,
-                    )
-                    Text(fastCutSuggestionText(suggestion))
-                    FastCutPreview(suggestion)
-                    Text(
-                        "추천 구간은 가능한 경우 영상 재인코딩을 줄입니다. " +
-                            "소리는 필요할 때 변환할 수 있습니다.",
-                        color = palette.secondaryText, style = MaterialTheme.typography.bodySmall,
-                    )
+                val choices = listOf(
+                    Triple(assessment.suggestion, onSuggestedCut, "추천 위치로 고속 저장"),
+                    Triple(assessment.lessTrimSuggestion, onLessTrim, "덜 자르고 고속 저장"),
+                )
+                choices.forEach { (suggestion, action, label) ->
+                    if (suggestion != null && action != null) {
+                        Text(if (suggestion.retainsMore) "장면을 더 남기는 추천 구간" else "장면을 더 자르는 추천 구간",
+                            color = palette.primaryText, style = MaterialTheme.typography.titleSmall)
+                        Text(fastCutSuggestionText(suggestion))
+                        FastCutPreview(suggestion)
+                        OutlinedButton(
+                            onClick = action, enabled = canSave,
+                            modifier = Modifier.fillMaxWidth().heightIn(min = CutSizes.primaryButton), shape = CutShape,
+                        ) { Text(label) }
+                    }
                 }
             }
         },
         confirmButton = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (onSuggestedCut != null) {
-                    Button(
-                        onClick = onAllowReencode, enabled = canSave,
-                        modifier = Modifier.fillMaxWidth().heightIn(min = CutSizes.primaryButton), shape = CutShape,
-                    ) { Text("정확한 위치로 자동 저장") }
-                    OutlinedButton(
-                        onClick = onSuggestedCut, enabled = canSave,
-                        modifier = Modifier.fillMaxWidth().heightIn(min = CutSizes.primaryButton), shape = CutShape,
-                    ) { Text("추천 위치로 고속 저장") }
-                } else {
-                    Button(
-                        onClick = onAllowReencode, enabled = canSave,
-                        modifier = Modifier.fillMaxWidth().heightIn(min = CutSizes.primaryButton), shape = CutShape,
-                    ) { Text("정확한 위치로 자동 저장") }
-                }
+                Button(
+                    onClick = onAllowReencode, enabled = canSave,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = CutSizes.primaryButton), shape = CutShape,
+                ) { Text("정확한 위치로 자동 저장") }
                 TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth().heightIn(min = CutSizes.touchTarget), shape = CutShape) {
                     Text("취소")
                 }

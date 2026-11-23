@@ -337,6 +337,7 @@ fun QuickTrimScreen(
                             model.toggleMute()
                             settings.saveQuick(settings.loadQuick().copy(muteAudio = !clip.muted))
                         },
+                        onSnap = model::snapTrim,
                         onSave = { saveValidated(onSave) },
                         onSaveOptions = { saveValidated(onSaveOptions) },
                         modifier = Modifier.weight(1f).fillMaxHeight(),
@@ -359,6 +360,7 @@ fun QuickTrimScreen(
                         model.toggleMute()
                         settings.saveQuick(settings.loadQuick().copy(muteAudio = !clip.muted))
                     },
+                    onSnap = model::snapTrim,
                     onSave = { saveValidated(onSave) },
                     onSaveOptions = { saveValidated(onSaveOptions) },
                     modifier = Modifier.fillMaxWidth().weight(1.4f),
@@ -466,6 +468,7 @@ private fun QuickTrimControls(
     onTrailingChange: (String) -> Unit,
     onRangeChange: (Long, Long) -> Unit,
     onToggleMute: () -> Unit,
+    onSnap: (VideoClip, Long, Long) -> Boolean,
     onSave: () -> Unit,
     onSaveOptions: () -> Unit,
     modifier: Modifier,
@@ -646,6 +649,7 @@ private fun QuickTrimControls(
                         Text(if (clip.muted) "소리 복원" else "음소거")
                     }
                 }
+                KeyframeTrimControls(clip, valid, onSnap)
                 Text("저장 전 처리 방식을 확인합니다. 마지막 시간 설정은 자동으로 저장됩니다.",
                     color = palette.secondaryText, style = MaterialTheme.typography.bodySmall)
                 OutlinedButton(

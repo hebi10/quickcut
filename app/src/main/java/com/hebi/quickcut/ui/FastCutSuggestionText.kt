@@ -7,14 +7,16 @@ internal fun fastCutSuggestionText(suggestion: FastCutSuggestion): String = buil
     suggestion.requested.clips.zip(suggestion.adjusted.clips).forEachIndexed { index, (before, after) ->
         if (before.startUs != after.startUs) {
             append("구간 ${index + 1} 시작\n요청 ${preciseTime(before.startUs)} → 추천 ${preciseTime(after.startUs)}\n")
-            append("앞에서 ${preciseSeconds(after.startUs - before.startUs)}초 추가 삭제\n\n")
+            append("앞에서 ${preciseSeconds(kotlin.math.abs(after.startUs - before.startUs))}초 ${if (suggestion.retainsMore) "더 남김" else "추가 삭제"}\n\n")
         }
         if (before.endUs != after.endUs) {
             append("구간 ${index + 1} 끝\n요청 ${preciseTime(before.endUs)} → 추천 ${preciseTime(after.endUs)}\n")
-            append("뒤에서 ${preciseSeconds(before.endUs - after.endUs)}초 추가 삭제\n\n")
+            append("뒤에서 ${preciseSeconds(kotlin.math.abs(before.endUs - after.endUs))}초 ${if (suggestion.retainsMore) "더 남김" else "추가 삭제"}\n\n")
         }
     }
-    append("총 ${preciseSeconds(suggestion.extraRemovedUs)}초가 추가로 삭제됩니다.")
+    val difference = preciseSeconds(kotlin.math.abs(suggestion.extraRemovedUs))
+    append(if (suggestion.retainsMore) "총 ${difference}초를 더 남깁니다."
+        else "총 ${difference}초가 추가로 삭제됩니다.")
 }
 
 internal fun preciseSeconds(us: Long): String =

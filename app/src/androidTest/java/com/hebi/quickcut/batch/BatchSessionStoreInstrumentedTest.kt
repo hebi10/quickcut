@@ -30,8 +30,9 @@ class BatchSessionStoreInstrumentedTest {
         try {
             store.save(recorded)
             assertEquals(id, store.load()!!.files.single().diagnosticId)
+            val baseline = base.readText()
             for (value in listOf<String?>(null, "private source content://source/1", "123", "00000000-0-0-0-0")) {
-                val data = org.json.JSONObject(base.readText())
+                val data = org.json.JSONObject(baseline)
                 val row = data.getJSONArray("files").getJSONObject(0)
                 if (value == null) {
                     row.remove("diagnosticId")

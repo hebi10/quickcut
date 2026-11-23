@@ -205,8 +205,11 @@ internal object NativeSmartCutBridge {
 internal class NativeSmartCutCallbacks(
     private val jobContext: CoroutineContext,
     private val consumer: (Int?) -> Unit,
-    private val openPendingDestinationFd: (suspend () -> Int)? = null,
+    private val openPendingDestinationFd: (suspend () -> Int)?,
 ) {
+    constructor(jobContext: CoroutineContext, consumer: (Int?) -> Unit) :
+        this(jobContext, consumer, null)
+
     private val main = Handler(Looper.getMainLooper())
     @Volatile private var closed = false
     private var lastProgress = -1

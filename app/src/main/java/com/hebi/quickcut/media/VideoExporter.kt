@@ -222,7 +222,12 @@ class VideoExporter(private val context: Context) {
             var nativeReason: FastExportReason? = null
             val nativeEligible = outputPlan == null && !hasEffects
             if (nativeEligible) onStage(ExportStage.NATIVE_PROCESSING)
-            if (nativeEligible && NativeSmartCutPlan.unavailableReason(timeline) == null) {
+            // The native muxer reopens its output by path. On newer Android,
+            // MediaStore can deny that reopen even while its descriptor is writable.
+            val supportsNativePendingOutput = Build.VERSION.SDK_INT == Build.VERSION_CODES.Q
+            if (nativeEligible && supportsNativePendingOutput &&
+                NativeSmartCutPlan.unavailableReason(timeline) == null
+            ) {
                 var pendingResult: NativeSmartCutResult? = null
                 val direct = try {
                     GalleryWriter(context).saveLazyDescriptor(

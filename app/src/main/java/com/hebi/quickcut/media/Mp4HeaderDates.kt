@@ -4,7 +4,7 @@ import java.io.File
 import java.io.IOException
 import java.io.RandomAccessFile
 
-/** Edits only header dates in a private, completed MP4; never moves media bytes. */
+/** Edits only header dates in a private or unpublished MP4; never moves media bytes. */
 internal object Mp4HeaderDates {
     private data class Field(val offset: Long, val wide: Boolean)
 

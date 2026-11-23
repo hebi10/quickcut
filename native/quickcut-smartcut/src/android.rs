@@ -25,7 +25,7 @@ struct JavaCallbacks {
 }
 
 impl JavaCallbacks {
-    fn invoke(&self, name: &str, signature: &str, args: &[JValue]) -> Option<bool> {
+    fn invoke(&self, name: &str, signature: &str, args: &[JValue]) -> Option<i32> {
         if self.failure.lock().unwrap_or_else(|p| p.into_inner()).is_some() { return None; }
         let mut env = match self.vm.attach_current_thread() {
             Ok(env) => env,
@@ -35,7 +35,11 @@ impl JavaCallbacks {
             }
         };
         match env.call_method(self.object.as_obj(), name, signature, args) {
-            Ok(value) => Some(if signature == "()Z" { value.z().unwrap_or(true) } else { false }),
+            Ok(value) => Some(match signature {
+                "()Z" => if value.z().unwrap_or(true) { 1 } else { 0 },
+                "()I" => value.i().unwrap_or(-1),
+                _ => 0,
+            }),
             Err(error) => {
                 // Store and rethrow on the original JNI thread. Clearing here
                 // only makes it legal to create the throwable's global ref;
@@ -62,7 +66,7 @@ impl JavaCallbacks {
 impl Callbacks for JavaCallbacks {
     fn is_cancelled(&self) -> bool {
         if self.cancelled.load(Ordering::Relaxed) { return true; }
-        let stopped = self.invoke("isCancelled", "()Z", &[]).unwrap_or(true);
+        let stopped = self.invoke("isCancelled", "()Z", &[]).unwrap_or(1) != 0;
         if stopped { self.cancelled.store(true, Ordering::Relaxed); }
         stopped
     }
@@ -70,6 +74,10 @@ impl Callbacks for JavaCallbacks {
         if !self.cancelled.load(Ordering::Relaxed) {
             let _ = self.invoke("onProgress", "(I)V", &[JValue::Int(percent)]);
         }
+    }
+
+    fn pending_output_fd(&self) -> Option<i32> {
+        self.invoke("requestOutputFd", "()I", &[])
     }
 }
 
@@ -97,6 +105,16 @@ pub extern "system" fn Java_com_hebi_quickcut_media_NativeSmartCutBridge_cutRang
     run_operation(env, input, Ranges::Multiple(ranges), muted, callbacks, Operation::Cut(output, true))
 }
 
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_com_hebi_quickcut_media_NativeSmartCutBridge_cutRangesToPending(
+    env: JNIEnv, _class: JClass, input: JString, staging: JString,
+    ranges: JLongArray, muted: jboolean, copy_only: jboolean, callbacks: JObject,
+) -> jlongArray {
+    run_operation(env, input, Ranges::Multiple(ranges), muted, callbacks,
+        Operation::CutPending(staging, copy_only != 0))
+}
+
 #[no_mangle]
 pub extern "system" fn Java_com_hebi_quickcut_media_NativeSmartCutBridge_suggestCopyRanges(
     env: JNIEnv, _class: JClass, input: JString, ranges: JLongArray,
@@ -106,7 +124,12 @@ pub extern "system" fn Java_com_hebi_quickcut_media_NativeSmartCutBridge_suggest
 }
 
 enum Ranges<'a> { Single(i64, i64), Multiple(JLongArray<'a>) }
-enum Operation<'a> { Cut(JString<'a>, bool), Suggest(i64) }
+enum Operation<'a> {
+    Cut(JString<'a>, bool),
+    #[cfg(target_os = "android")]
+    CutPending(JString<'a>, bool),
+    Suggest(i64),
+}
 
 fn run_operation(
     mut env: JNIEnv, input: JString,
@@ -136,6 +159,13 @@ fn run_operation(
                 let output: String = env.get_string(&output)?.into();
                 let cut = if copy_only { cut_ranges_copy_video } else { cut_ranges };
                 cut(&input, &output, &ranges, muted != 0, callback.clone()).map(|report|
+                    vec![1, report.copied_video_packets as i64, report.encoded_video_packets as i64])
+            },
+            #[cfg(target_os = "android")]
+            Operation::CutPending(staging, copy_only) => {
+                let staging: String = env.get_string(&staging)?.into();
+                crate::cut_ranges_to_pending(&input, &staging, &ranges, muted != 0,
+                    copy_only, callback.clone()).map(|report|
                     vec![1, report.copied_video_packets as i64, report.encoded_video_packets as i64])
             },
             Operation::Suggest(source_end) => {

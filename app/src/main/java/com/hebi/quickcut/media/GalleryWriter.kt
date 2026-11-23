@@ -4,6 +4,7 @@ import android.content.ContentValues
 import android.content.Context
 import android.net.Uri
 import android.os.Environment
+import android.os.ParcelFileDescriptor
 import android.system.Os
 import android.provider.MediaStore
 import java.io.File
@@ -45,7 +46,8 @@ class GalleryWriter(private val context: Context) {
             expectedDurationMs = expectedDurationMs,
             expectAudio = expectAudio,
             fastValidation = false,
-            writer = { uri ->
+            writer = { create ->
+                val uri = create()
                 val stream = context.contentResolver.openOutputStream(uri)
                     ?: throw IOException("갤러리 파일을 열 수 없습니다.")
                 stream.use { sink ->
@@ -81,6 +83,49 @@ class GalleryWriter(private val context: Context) {
         onOutputCreated: (Uri) -> Unit = {},
         onCommitted: (Uri) -> Unit = {},
         onValidating: () -> Unit = {},
+    ): Uri = saveDirectDescriptor(
+        outputBaseName, expectedDurationMs, expectAudio,
+        writer = { writer(it.fileDescriptor) },
+        onFinalizing = onFinalizing,
+        estimatedOutputBytes = estimatedOutputBytes,
+        onOutputCreated = onOutputCreated,
+        onCommitted = onCommitted,
+        onValidating = onValidating,
+    )
+
+    internal suspend fun saveDirectDescriptor(
+        outputBaseName: String?,
+        expectedDurationMs: Long,
+        expectAudio: Boolean,
+        writer: suspend (ParcelFileDescriptor) -> Unit,
+        onFinalizing: () -> Unit,
+        estimatedOutputBytes: Long? = null,
+        onOutputCreated: (Uri) -> Unit = {},
+        onCommitted: (Uri) -> Unit = {},
+        onValidating: () -> Unit = {},
+        originalTimestampMs: Long? = null,
+    ): Uri = saveLazyDescriptor(
+        outputBaseName, expectedDurationMs, expectAudio,
+        writer = { open -> writer(open()) },
+        onFinalizing = onFinalizing,
+        estimatedOutputBytes = estimatedOutputBytes,
+        onOutputCreated = onOutputCreated,
+        onCommitted = onCommitted,
+        onValidating = onValidating,
+        originalTimestampMs = originalTimestampMs,
+    )
+
+    internal suspend fun saveLazyDescriptor(
+        outputBaseName: String?,
+        expectedDurationMs: Long,
+        expectAudio: Boolean,
+        writer: suspend (suspend () -> ParcelFileDescriptor) -> Unit,
+        onFinalizing: () -> Unit,
+        estimatedOutputBytes: Long?,
+        onOutputCreated: (Uri) -> Unit,
+        onCommitted: (Uri) -> Unit,
+        onValidating: () -> Unit,
+        originalTimestampMs: Long?,
     ): Uri {
         withContext(Dispatchers.IO) {
             val estimate = estimatedOutputBytes ?: ExportStoragePolicy.estimateOutputBytes(
@@ -91,14 +136,35 @@ class GalleryWriter(private val context: Context) {
         }
         return savePending(
             outputBaseName = outputBaseName,
-            originalTimestampMs = null,
+            originalTimestampMs = originalTimestampMs,
             expectedDurationMs = expectedDurationMs,
             expectAudio = expectAudio,
             fastValidation = true,
-            writer = { uri ->
-                val descriptor = context.contentResolver.openFileDescriptor(uri, "rw")
-                    ?: throw IOException("갤러리 파일을 열 수 없습니다.")
-                descriptor.use { writer(it.fileDescriptor) }
+            writer = { create ->
+                var opened: ParcelFileDescriptor? = null
+                try {
+                    writer {
+                        check(opened == null) { "Pending video descriptor already opened" }
+                        val uri = create()
+                        val descriptor = try {
+                            context.contentResolver.openFileDescriptor(uri, "rw")
+                        } catch (error: IOException) {
+                            throw FastTrimUnavailableException("Could not open the pending video", error)
+                        } ?: throw FastTrimUnavailableException("Could not open the pending video")
+                        opened = descriptor
+                        descriptor
+                    }
+                    val descriptor = checkNotNull(opened) { "Writer did not create a pending video" }
+                    if (originalTimestampMs != null) {
+                        try {
+                            Mp4HeaderDates.update(File("/proc/self/fd/${descriptor.fd}"), originalTimestampMs)
+                        } catch (error: IOException) {
+                            throw FastTrimUnavailableException("Could not update the pending MP4 date", error)
+                        }
+                    }
+                } finally {
+                    opened?.close()
+                }
             },
             onFinalizing = onFinalizing,
             onOutputCreated = onOutputCreated,
@@ -113,7 +179,7 @@ class GalleryWriter(private val context: Context) {
         expectedDurationMs: Long?,
         expectAudio: Boolean?,
         fastValidation: Boolean,
-        writer: suspend (Uri) -> Unit,
+        writer: suspend (suspend () -> Uri) -> Unit,
         onFinalizing: () -> Unit,
         onOutputCreated: (Uri) -> Unit,
         onCommitted: (Uri) -> Unit,
@@ -124,13 +190,17 @@ class GalleryWriter(private val context: Context) {
         var committed = false
         try {
             val uri = withContext(Dispatchers.IO) {
-                // Assign before a dispatcher switch so cancellation cannot lose the
-                // cleanup handle. The journal must succeed while this URI is pending.
-                val created = createPendingUri(outputBaseName)
-                pendingUri = created
-                runCallback { onOutputCreated(created) }
-                currentCoroutineContext().ensureActive()
-                writer(created)
+                writer {
+                    check(pendingUri == null) { "Pending video already created" }
+                    currentCoroutineContext().ensureActive()
+                    val created = createPendingUri(outputBaseName)
+                    pendingUri = created
+                    // The journal must succeed before any bytes are written.
+                    runCallback { onOutputCreated(created) }
+                    currentCoroutineContext().ensureActive()
+                    created
+                }
+                val created = checkNotNull(pendingUri) { "Output writer did not create a pending video" }
                 currentCoroutineContext().ensureActive()
                 if (originalTimestampMs != null) {
                     // DATE_TAKEN is indexed from the embedded timestamp. Preserve

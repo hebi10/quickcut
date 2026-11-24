@@ -62,3 +62,11 @@ https://docs.google.com/document/d/1hyNminChkLsX3MHes3xM_m4KuuHTHD1gC0K8O5UnRCo/
 - PR #55~#61: https://github.com/hebi10/quickcut/pulls
 - Actions: https://github.com/hebi10/quickcut/actions
 - 기획 Drive 폴더: https://drive.google.com/drive/folders/1V8N0OS1j57eoD0OGDtZfcBtwIWxKjMA5
+
+## 2026-11-24 통합 기준선 및 후속 게이트
+
+- 기준선 `422c3f5cfbd21085efe8dfaccb4e8a23a97ebb01`에서 [Android build](https://github.com/hebi10/quickcut/actions/runs/45323539447), [OPS-08](https://github.com/hebi10/quickcut/actions/runs/45323539352), [API29/35/36 전체 292개 계측 및 미디어/PNG 검증](https://github.com/hebi10/quickcut/actions/runs/45333380462)이 성공했다. 이는 해당 SHA의 자동 검증 이력이며 후속 병합 커밋의 통과 증거가 아니다.
+- [PR #125](https://github.com/hebi10/quickcut/pull/125)에서 실제 캡처의 좁은 추출 화면 겹침을 보완한다. [PR #126](https://github.com/hebi10/quickcut/pull/126)은 보조 미리보기 생명주기 보완 작업이다. 이 문서 갱신 시점에 후속 PR 검증 및 병합은 완료되지 않았다.
+- [실제 캡처 보관](https://drive.google.com/drive/folders/1P9CrFjk_5UAVxwbhBWjdVNu-AuhA2Kby)은 수정 전 기준선을 보존한다. 수정 후 UI는 새 실제 캡처와 사람이 확인한 결과로 판단한다.
+- 개발 배치의 관련 PR별 필수 CI/집중 QA → 병합 → 동결된 최종 main SHA의 기본 CI와 API29/35/36 전체 QA 1회 → 승인된 OPS-09 내부 테스트 배포 순서. 전체 계측을 PR마다 중복하지 않는다. 서명/배포 단계는 기존 AGENTS.md 및 fail-closed 검증 정책을 그대로 따른다.
+- 내부 테스트 설치본에서 [실기기 QA 체크리스트](27_LARGE_SOURCE_DEVICE_QA.md#내부-테스트-설치본의-최종-확인-2026-11-24-추가)를 기록한다. 실제 버전 및 기기 검증이 완료되기 전 비공개 테스트/정식 출시로 승격하지 않는다. 광고 PR #77과 라이선스 이슈 #80은 별도다.

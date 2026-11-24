@@ -23,6 +23,24 @@ class ScreenGuideCatalogTest {
     }
 
     @Test
+    fun updatedGuidesDescribePerFileTrimAndBothFastSaveDirections() {
+        val batch = requireNotNull(QuickCutGuides.find("batch"))
+        val quick = requireNotNull(QuickCutGuides.find("quick"))
+        val save = requireNotNull(QuickCutGuides.find("save"))
+        val tools = requireNotNull(QuickCutGuides.find("tools"))
+        assertEquals(2, batch.version)
+        assertEquals(2, quick.version)
+        assertEquals(2, save.version)
+        assertEquals(2, tools.version)
+        assertTrue(batch.steps.any { "앞뒤 시간 조정" in it.description && "공통 시간 사용" in it.description })
+        assertTrue(quick.steps.any { "키프레임" in it.description })
+        assertTrue(quick.steps.any { "최대 1초" in it.description && "원본은 유지" in it.description })
+        assertTrue(save.steps.any { "덜 자르고 고속 저장" in it.description })
+        assertTrue(tools.steps.any { "영상별 시간" in it.description })
+        assertEquals(1, requireNotNull(QuickCutGuides.find("projects")).version)
+    }
+
+    @Test
     fun guidesDistinguishLocalProjectsAndVideoExports() {
         val project = requireNotNull(QuickCutGuides.find("projects"))
         val export = requireNotNull(QuickCutGuides.find("save"))

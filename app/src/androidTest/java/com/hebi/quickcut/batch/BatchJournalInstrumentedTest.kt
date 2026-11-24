@@ -38,10 +38,16 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class BatchJournalInstrumentedTest {
     private var model: BatchViewModel? = null
+    private lateinit var journalFile: File
+    private lateinit var sessionStore: BatchSessionStore
     private lateinit var oldDraft: BatchDraftSettings
     private lateinit var oldDate: SaveDateMode
     @Before fun captureSettings() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
+        journalFile = File.createTempFile("quickcut_journal_test_", ".json", context.cacheDir).apply {
+            check(delete())
+        }
+        sessionStore = BatchSessionStore(journalFile)
         val settings = QuickCutSettings(context)
         oldDraft = settings.loadBatch()
         oldDate = settings.loadSaveDate()
@@ -49,7 +55,7 @@ class BatchJournalInstrumentedTest {
     @After fun restoreSettings() = runBlocking {
         withContext(Dispatchers.Main) { model?.let { ViewModelStore().apply { put("test", it) }.clear() } }
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        BatchSessionStore(context).clear()
+        sessionStore.clear()
         QuickCutSettings(context).apply { saveBatch(oldDraft); saveSaveDate(oldDate) }
         Unit
     }
@@ -61,16 +67,16 @@ class BatchJournalInstrumentedTest {
         try {
             output = GalleryWriter(context).save(input)
             val metadata = MediaReader.metadata(context, output)
-            seed(context, input, output, metadata.durationMs, metadata.hasAudio)
+            seed(input, output, metadata.durationMs, metadata.hasAudio)
             val restored = restore(context)
             assertEquals(BatchFileStatus.SAVED, restored.files.single().status)
             assertEquals(output.toString(), restored.files.single().savedOutputUri)
             assertEquals(OriginalAction.KEEP, restored.performedOriginalAction)
             assertTrue(restored.originalCandidates.isEmpty())
             withContext(Dispatchers.Main) { restored.resetBatch() }
+            withTimeout(30_000L) { while (restored.isImporting) delay(50L) }
         } finally {
             output?.let { context.contentResolver.delete(it, null, null) }
-            BatchSessionStore(context).clear()
             input.delete()
         }
     }
@@ -91,7 +97,7 @@ class BatchJournalInstrumentedTest {
             val saved = GalleryWriter(context).save(input)
             output = saved
             val metadata = MediaReader.metadata(context, saved)
-            seed(context, input, saved, metadata.durationMs, metadata.hasAudio,
+            seed(input, saved, metadata.durationMs, metadata.hasAudio,
                 status = BatchFileStatus.SAVED)
             assertEquals(1, context.contentResolver.update(saved, ContentValues().apply {
                 put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/QuickCutMoved")
@@ -111,7 +117,6 @@ class BatchJournalInstrumentedTest {
             assertTrue("Queue changes must preserve the original", input.exists())
         } finally {
             output?.let { context.contentResolver.delete(it, null, null) }
-            BatchSessionStore(context).clear()
             input.delete()
         }
     }
@@ -127,7 +132,7 @@ class BatchJournalInstrumentedTest {
                 put(MediaStore.Video.Media.IS_PENDING, 1)
             })!!
         try {
-            seed(context, input, pending, 2_000L, true)
+            seed(input, pending, 2_000L, true)
             assertProtectedTrackedOutput(context, pending)
             assertEquals(1, context.contentResolver.query(pending, arrayOf(MediaStore.Video.Media._ID),
                 null, null, null)?.use { it.count })
@@ -151,7 +156,7 @@ class BatchJournalInstrumentedTest {
         provider.attachInfo(context, ProviderInfo().apply { authority = "media"; exported = true })
         val application = ResolverApplication(context, ContentResolver.wrap(provider))
         try {
-            seed(context, input, pending, 2_000L, true)
+            seed(input, pending, 2_000L, true)
             assertProtectedTrackedOutput(context, pending, application)
             assertTrue("Owner mismatch must be observed during recovery", provider.ownerReads > 0)
             assertEquals("Owner mismatch must never delegate deletion", 0, provider.deleteAttempts)
@@ -172,7 +177,7 @@ class BatchJournalInstrumentedTest {
         val provider = OwnerMismatchProvider(context.contentResolver, output, nullQuery = true)
         provider.attachInfo(context, ProviderInfo().apply { authority = "media"; exported = true })
         try {
-            seed(context, input, output, 2_000L, true)
+            seed(input, output, 2_000L, true)
             val restored = restore(context, ResolverApplication(context, ContentResolver.wrap(provider)))
             assertEquals(output.toString(), restored.files.single().savedOutputUri)
             withContext(Dispatchers.Main) { restored.addVideos(context, listOf(Uri.fromFile(additional))) }
@@ -184,15 +189,13 @@ class BatchJournalInstrumentedTest {
             withTimeout(30_000L) { while (restored.isImporting) delay(50L) }
             assertEquals(2, restored.files.size)
             assertEquals(0, provider.deleteAttempts)
-            assertEquals(output.toString(), BatchSessionStore(context).load()!!.files.first().savedOutputUri)
+            assertEquals(output.toString(), sessionStore.load()!!.files.first().savedOutputUri)
         } finally { input.delete(); additional.delete() }
     }
 
     @Test fun corruptJournalSurvivesInitialObserversImportResetAndRetry() = runBlocking {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val base = File(context.filesDir, "quickcut_batch_session_v1.json")
-        BatchSessionStore(context).clear()
-        base.writeText("{truncated")
+        journalFile.writeText("{truncated")
         val input = fixture(context)
         try {
             val restored = restore(context)
@@ -205,20 +208,19 @@ class BatchJournalInstrumentedTest {
             delay(400L)
             assertFalse(restored.isRunning)
             assertTrue(restored.files.isEmpty())
-            assertEquals("{truncated", base.readText())
+            assertEquals("{truncated", journalFile.readText())
         } finally { input.delete() }
     }
 
     @Test fun repairedJournalRetryRestoresRecipeAndDateBeforePersisting() = runBlocking {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        BatchSessionStore(context).clear()
-        File(context.filesDir, "quickcut_batch_session_v1.json").writeText("{truncated")
+        journalFile.writeText("{truncated")
         val restored = restore(context)
         val template = BatchTemplate(id = "recovered-recipe", name = "복구한 사용자 설정",
             mode = BatchClipMode.JOIN_EDGES, leadingMs = 1_250L, trailingMs = 750L, muteAudio = true)
         val snapshot = BatchSessionSnapshot(listOf(BatchFile("content://missing/source/42", "source")),
             template, SaveDateMode.ORIGINAL, BatchRunState.FINISHED)
-        BatchSessionStore(context).save(snapshot)
+        sessionStore.save(snapshot)
         withContext(Dispatchers.Main) { restored.retryRecovery() }
         withTimeout(30_000L) { while (restored.isRecovering) delay(50L) }
         assertEquals(template.name, restored.draftName)
@@ -228,17 +230,14 @@ class BatchJournalInstrumentedTest {
         assertTrue(restored.draftMute)
         assertEquals(template.id, restored.selectedTemplateId)
         assertEquals(SaveDateMode.ORIGINAL, restored.saveDateMode)
-        assertEquals(template, BatchSessionStore(context).load()!!.template)
-        assertEquals(SaveDateMode.ORIGINAL, BatchSessionStore(context).load()!!.dateMode)
+        assertEquals(template, sessionStore.load()!!.template)
+        assertEquals(SaveDateMode.ORIGINAL, sessionStore.load()!!.dateMode)
     }
 
     @Test fun corruptJournalReadIsNotAbsence() {
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
-        BatchSessionStore(context).clear()
-        val base = File(context.filesDir, "quickcut_batch_session_v1.json")
-        base.writeText("{truncated")
-        assertTrue(runCatching { BatchSessionStore(context).load() }.isFailure)
-        assertEquals("{truncated", base.readText())
+        journalFile.writeText("{truncated")
+        assertTrue(runCatching { sessionStore.load() }.isFailure)
+        assertEquals("{truncated", journalFile.readText())
     }
 
     @Test fun foreignPublishedOwnerAndUnknownPendingStateRetainRecoveryHandles() = runBlocking {
@@ -251,7 +250,7 @@ class BatchJournalInstrumentedTest {
                 val provider = OwnerMismatchProvider(context.contentResolver, output,
                     reportedOwner = owner, pendingState = pendingState)
                 provider.attachInfo(context, ProviderInfo().apply { authority = "media"; exported = true })
-                seed(context, input, output, 2_000L, true)
+                seed(input, output, 2_000L, true)
                 assertProtectedTrackedOutput(context, output,
                     ResolverApplication(context, ContentResolver.wrap(provider)))
                 assertEquals(0, provider.deleteAttempts)
@@ -335,7 +334,7 @@ class BatchJournalInstrumentedTest {
                 put(MediaStore.Video.Media.IS_PENDING, 1)
             })!!
         try {
-            seed(context, input, pending, 2_000L, true)
+            seed(input, pending, 2_000L, true)
             val restored = restore(context)
             assertEquals(BatchFileStatus.SKIPPED, restored.files.single().status)
             assertNull(restored.files.single().savedOutputUri)
@@ -345,9 +344,9 @@ class BatchJournalInstrumentedTest {
                 null, null, null)?.use { it.count } ?: 0)
             assertTrue(input.exists())
             withContext(Dispatchers.Main) { restored.resetBatch() }
+            withTimeout(30_000L) { while (restored.isImporting) delay(50L) }
         } finally {
             runCatching { context.contentResolver.delete(pending, null, null) }
-            BatchSessionStore(context).clear()
             input.delete()
         }
     }
@@ -356,7 +355,7 @@ class BatchJournalInstrumentedTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val input = File(context.cacheDir, "quickcut_missing_recovery.mp4")
         input.delete()
-        seed(context, input, null, 2_000L, true)
+        seed(input, null, 2_000L, true)
         try {
             val restored = restore(context)
             assertEquals(0L, restored.files.single().durationMs)
@@ -371,12 +370,13 @@ class BatchJournalInstrumentedTest {
             assertTrue(restored.files.single().durationMs >= 3_000L)
             assertEquals(BatchFileStatus.WAITING, restored.files.single().status)
             withContext(Dispatchers.Main) { restored.resetBatch() }
-        } finally { BatchSessionStore(context).clear(); input.delete() }
+            withTimeout(30_000L) { while (restored.isImporting) delay(50L) }
+        } finally { input.delete() }
     }
 
-    private fun seed(context: Context, input: File, output: Uri?, duration: Long, audio: Boolean,
+    private fun seed(input: File, output: Uri?, duration: Long, audio: Boolean,
         status: BatchFileStatus = BatchFileStatus.RUNNING) {
-        BatchSessionStore(context).save(BatchSessionSnapshot(
+        sessionStore.save(BatchSessionSnapshot(
             files = listOf(BatchFile(Uri.fromFile(input).toString(), input.name, 3_000L, true,
                 status=status, savedOutputUri=output?.toString(),
                 outputExpectedDurationMs=duration, outputExpectedAudio=audio)),
@@ -387,7 +387,8 @@ class BatchJournalInstrumentedTest {
 
     private suspend fun restore(context: Context,
         application: Application = context.applicationContext as Application): BatchViewModel {
-        val model = withContext(Dispatchers.Main) { BatchViewModel(application) }.also { this.model = it }
+        val model = withContext(Dispatchers.Main) { BatchViewModel(application, sessionStore) }
+            .also { this.model = it }
         withTimeout(30_000L) { while (model.isRecovering) delay(50L) }
         return model
     }

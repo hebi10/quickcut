@@ -63,6 +63,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.media3.common.util.ExperimentalApi
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.common.Player
@@ -103,12 +104,21 @@ fun TextEditorScreen(
     var selectedId by remember(clip.id) { mutableStateOf(layers.firstOrNull()?.id) }
     var positionMs by remember(clip.id) { mutableStateOf(0L) }
     var previewFailure by remember(clip.id) { mutableStateOf<String?>(null) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val previewActive = rememberAuxiliaryPreviewActive(
+        player,
+        onInactive = {
+            if (player.isPlaying) positionMs = player.currentPosition.coerceIn(0L, clip.durationMs)
+            player.pause()
+        },
+        onError = { previewFailure = "영상 미리보기를 정지하지 못했습니다." },
+    )
     val current = layers.firstOrNull { it.id == selectedId }
     val valid = layers.all { TextLayerPolicy.isValid(it, clip.durationMs) }
     val previewLayers = layers.filter { TextLayerPolicy.isValid(it, clip.durationMs) }
 
     fun seekWhenReady(targetMs: Long) {
-        if (player.playbackState == Player.STATE_READY) {
+        if (previewCanLoadMedia(lifecycleOwner) && player.playbackState == Player.STATE_READY) {
             runCatching { player.seekTo(targetMs) }
                 .onFailure { previewFailure = "영상 미리보기 위치를 변경하지 못했습니다." }
         }
@@ -132,8 +142,10 @@ fun TextEditorScreen(
         }
     }
 
-    LaunchedEffect(clip.id, clip.uri, clip.startMs, clip.endMs, previewLayers) {
+    LaunchedEffect(clip.id, clip.uri, clip.startMs, clip.endMs, previewLayers, previewActive) {
+        if (!previewActive) return@LaunchedEffect
         delay(180)
+        if (!previewCanLoadMedia(lifecycleOwner)) return@LaunchedEffect
         val at = positionMs.coerceIn(0L, clip.durationMs)
         player.pause()
         try {
@@ -229,6 +241,7 @@ fun TextEditorScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
                     onClick = {
+                        if (!previewCanLoadMedia(lifecycleOwner)) return@OutlinedButton
                         if (player.playbackState == Player.STATE_READY) {
                             runCatching {
                                 if (player.isPlaying) player.pause() else player.play()
@@ -237,6 +250,7 @@ fun TextEditorScreen(
                             previewFailure = "영상 미리보기가 준비된 후 다시 시도해 주세요."
                         }
                     },
+                    enabled = previewActive,
                     modifier = Modifier.heightIn(min = 48.dp).testTag("text-preview-play"),
                 ) { Text(if (player.isPlaying) "정지" else "재생") }
                 Text(formatTime(positionMs), color = palette.secondaryText)

@@ -45,6 +45,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.media3.common.util.ExperimentalApi
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.transformer.CompositionPlayer
@@ -85,8 +86,14 @@ fun AudioEditorScreen(
     var previewFailure by remember(clip.id) { mutableStateOf<String?>(null) }
     val player = remember(context) { CompositionPlayer.Builder(context.applicationContext).build() }
     DisposableEffect(player) { onDispose { player.release() } }
-    LaunchedEffect(clip.id, clip.uri, clip.startMs, clip.endMs, previewAdjustment, previewMuted) {
-        if (!clip.hasAudio) return@LaunchedEffect
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val previewActive = rememberAuxiliaryPreviewActive(
+        player,
+        onInactive = { player.pause() },
+        onError = { previewFailure = "소리 미리보기를 정지하지 못했습니다." },
+    )
+    LaunchedEffect(clip.id, clip.uri, clip.startMs, clip.endMs, previewAdjustment, previewMuted, previewActive) {
+        if (!clip.hasAudio || !previewActive || !previewCanLoadMedia(lifecycleOwner)) return@LaunchedEffect
         val previousPosition = player.currentPosition.coerceIn(0L, clip.durationMs)
         player.pause()
         try {
@@ -285,9 +292,11 @@ fun AudioEditorScreen(
             horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             OutlinedButton(
                 onClick = {
-                    runCatching { if (player.isPlaying) player.pause() else player.play() }
-                        .onFailure { previewFailure = "소리 미리보기를 시작하지 못했습니다." }
-                }, enabled = clip.hasAudio && previewFailure == null,
+                    if (previewCanLoadMedia(lifecycleOwner)) {
+                        runCatching { if (player.isPlaying) player.pause() else player.play() }
+                            .onFailure { previewFailure = "소리 미리보기를 시작하지 못했습니다." }
+                    }
+                }, enabled = previewActive && clip.hasAudio && previewFailure == null,
                 modifier = Modifier.weight(1f).heightIn(min = 52.dp).testTag("audio-play-preview"),
                 shape = CutShape,
             ) { Text("미리보기") }

@@ -21,8 +21,11 @@ class FullApi35Coverage(unittest.TestCase):
             root = ET.Element("testsuites", tests=str(count), errors="0", failures="0", skipped="0")
             suite = ET.SubElement(root, "testsuite", tests=str(count), errors="0", failures="0", skipped="0")
             for index in range(count):
-                classname, name = (gate.ISOLATED[phase] if phase in gate.ISOLATED
-                                   else ("com.hebi.quickcut.test.Regular", f"test{index}"))
+                if phase in gate.ISOLATED:
+                    classname, name = gate.ISOLATED[phase]
+                else:
+                    classname = gate.NATIVE if phase == "native" else "com.hebi.quickcut.test.Regular"
+                    name = f"test{index}"
                 ET.SubElement(suite, "testcase", classname=classname, name=name)
             ET.ElementTree(root).write(self.root / f"TEST-api35-{phase}.xml")
 
@@ -39,7 +42,15 @@ class FullApi35Coverage(unittest.TestCase):
         root = ET.parse(p)
         root.getroot().find("testsuite").remove(root.getroot().find("testsuite/testcase"))
         root.write(p)
-        with self.assertRaisesRegex(ValueError, "290"):
+        with self.assertRaisesRegex(ValueError, "267"):
+            gate.verify(self.root)
+
+    def test_wrong_class_in_native_phase_is_rejected(self):
+        path = self.root / "TEST-api35-native.xml"
+        document = ET.parse(path)
+        document.getroot().find("testsuite/testcase").set("classname", "com.hebi.quickcut.test.Regular")
+        document.write(path)
+        with self.assertRaisesRegex(ValueError, "unexpected native test identity"):
             gate.verify(self.root)
 
     def test_media3_wrong_test_name_rejected(self):

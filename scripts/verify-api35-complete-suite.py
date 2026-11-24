@@ -5,10 +5,12 @@ import sys
 import xml.etree.ElementTree as ET
 
 MEDIA3 = "com.hebi.quickcut.export.BackgroundMedia3ExportInstrumentedTest"
+NATIVE = "com.hebi.quickcut.media.NativeSmartCutInstrumentedTest"
 PUBLISH = "media3ProcessingPublishesAValidOutputAfterAppSwitchAndScreenOff"
 CANCEL = "cancellingOffscreenMedia3ProcessingLeavesNoGalleryOutputOrStagedWriter"
 EXPECTED = {
-    "regular": 290,
+    "native": 23,
+    "regular": 267,
     "media3_publish": 1,
     "media3_cancel": 1,
 }
@@ -51,8 +53,10 @@ def verify(folder):
                 raise ValueError(f"{phase}: duplicate or invalid test identity: {identity}")
             if any(case.find(k) is not None for k in ("failure", "error", "skipped")):
                 raise ValueError(f"{phase}: a test failed or skipped: {identity}")
-            if phase == "regular" and identity[0] == MEDIA3:
-                raise ValueError("Media3 stress test leaked into regular process")
+            if phase == "regular" and identity[0] in (MEDIA3, NATIVE):
+                raise ValueError("Isolated codec test leaked into regular process")
+            if phase == "native" and identity[0] != NATIVE:
+                raise ValueError(f"{phase}: unexpected native test identity: {identity}")
             if phase in ISOLATED and identity != ISOLATED[phase]:
                 raise ValueError(f"{phase}: unexpected Media3 test identity: {identity}")
             seen.add(identity)

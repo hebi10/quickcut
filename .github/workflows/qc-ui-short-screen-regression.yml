@@ -5,6 +5,12 @@ on:
     paths:
       - ".github/workflows/qc-ui-short-screen-regression.yml"
       - "app/src/main/java/com/hebi/quickcut/ui/QuickTrimScreen.kt"
+      - "app/src/main/java/com/hebi/quickcut/ui/PreviewLifecycle.kt"
+      - "app/src/main/java/com/hebi/quickcut/ui/AudioEditorScreen.kt"
+      - "app/src/main/java/com/hebi/quickcut/ui/TextEditorScreen.kt"
+      - "app/src/androidTest/java/com/hebi/quickcut/ui/PreviewLifecycleInstrumentedTest.kt"
+      - "app/src/androidTest/java/com/hebi/quickcut/ui/Stage17AudioScreensInstrumentedTest.kt"
+      - "app/src/androidTest/java/com/hebi/quickcut/ui/Stage18TextEditorScreensInstrumentedTest.kt"
       - "app/src/androidTest/java/com/hebi/quickcut/ui/TrimInputInstrumentedTest.kt"
       - "app/src/androidTest/java/com/hebi/quickcut/ui/SaveOptionsAccessibilityInstrumentedTest.kt"
 
@@ -88,7 +94,7 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-      - name: Test large font trim and destructive save dropdown
+      - name: Test large font trim, destructive save dropdown and editor preview lifecycle
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
@@ -103,7 +109,7 @@ jobs:
           disable-animations: true
           script: >-
             gradle --no-daemon :app:connectedDebugAndroidTest
-            -Pandroid.testInstrumentationRunnerArguments.class=com.hebi.quickcut.ui.SaveOptionsAccessibilityInstrumentedTest#destructiveSelectionCanWaitForConfirmationBeforeChangingCurrentValue,com.hebi.quickcut.ui.TrimInputInstrumentedTest#narrowQuickTrimWithLargeFontKeepsSaveOptionsReachable,com.hebi.quickcut.ui.TrimInputInstrumentedTest#landscapeQuickTrimWithLargeFontKeepsSaveOptionsReachable
+            -Pandroid.testInstrumentationRunnerArguments.class=com.hebi.quickcut.ui.SaveOptionsAccessibilityInstrumentedTest#destructiveSelectionCanWaitForConfirmationBeforeChangingCurrentValue,com.hebi.quickcut.ui.TrimInputInstrumentedTest#narrowQuickTrimWithLargeFontKeepsSaveOptionsReachable,com.hebi.quickcut.ui.TrimInputInstrumentedTest#landscapeQuickTrimWithLargeFontKeepsSaveOptionsReachable,com.hebi.quickcut.ui.PreviewLifecycleInstrumentedTest,com.hebi.quickcut.ui.Stage17AudioScreensInstrumentedTest,com.hebi.quickcut.ui.Stage18TextEditorScreensInstrumentedTest
       - name: Preserve scoped instrumentation XML
         if: always()
         uses: actions/upload-artifact@v4

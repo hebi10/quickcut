@@ -2,9 +2,9 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, call, patch
 
-from internal_release_pipeline import CONFIG, MANUAL_NAME, Orchestrator, initial_settings
+from internal_release_pipeline import CONFIG, MANUAL_NAME, GitHubApiError, Orchestrator, initial_settings
 
 
 SHA = "a" * 40
@@ -80,6 +80,36 @@ class InternalReleaseSafetyTests(unittest.TestCase):
                 pipe.api = lambda path, payload=None: {}
                 with self.assertRaisesRegex(RuntimeError, "no exact run ID"):
                     pipe.dispatch("emulator-smoke.yml", {"expected_main_sha": SHA})
+
+    def test_first_child_read_retries_only_transient_visibility_errors(self):
+        path = "/repos/hebi10/quickcut/actions/runs/45"
+        run = {"id": 45, "head_sha": SHA, "head_branch": "main", "event": "workflow_dispatch",
+               "repository": {"full_name": "hebi10/quickcut"}, "path": ".github/workflows/emulator-smoke.yml",
+               "status": "completed", "conclusion": "success"}
+        missing = GitHubApiError(path, 404)
+        forbidden = GitHubApiError(path, 403)
+        for responses, reads, delays, expected_error in (
+            ([missing, missing, run], 3, [4, 4], None),
+            ([missing] * 4, 4, [4, 4, 4], 404),
+            ([forbidden], 1, [], 403),
+            ([{**run, "status": "in_progress"}, missing], 2, [25], 404),
+        ):
+            with self.subTest(responses=responses), tempfile.TemporaryDirectory() as tmp:
+                env = settings(GITHUB_STEP_SUMMARY=str(Path(tmp) / "summary"))
+                with patch.dict(os.environ, env), patch("internal_release_pipeline.time.sleep") as sleep:
+                    pipe = Orchestrator(env)
+                    pipe.api = Mock(side_effect=responses)
+                    pipe.current_main = Mock()
+                    if expected_error is None:
+                        self.assertEqual(pipe.wait("emulator-smoke.yml", 45), run)
+                        pipe.current_main.assert_called_once_with()
+                    else:
+                        with self.assertRaises(GitHubApiError) as error:
+                            pipe.wait("emulator-smoke.yml", 45)
+                        self.assertEqual(error.exception.status, expected_error)
+                        pipe.current_main.assert_not_called()
+                    self.assertEqual(pipe.api.call_args_list, [call(path)] * reads)
+                    self.assertEqual(sleep.call_args_list, [call(delay) for delay in delays])
 
     def test_only_successful_qa_and_signed_aab_allow_publisher_dispatch(self):
         with tempfile.TemporaryDirectory() as tmp:

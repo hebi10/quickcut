@@ -82,7 +82,9 @@ def execute(args):
     description = probe(source)
     duration_us = round(float(description["format"]["duration"]) * 1_000_000)
     start_us = args.start_us if args.start_us is not None else max(0, duration_us - 9_000_000)
-    end_us = args.end_us if args.end_us is not None else duration_us - 2_000_000
+    end_us = args.end_us
+    if end_us is None:
+        end_us = duration_us - 2_000_000 if duration_us > 2_000_000 else duration_us
     if not 0 <= start_us < end_us <= duration_us:
         raise RuntimeError("Requested range must be within the source duration")
     preparation_ms = (time.monotonic_ns() - before) // 1_000_000

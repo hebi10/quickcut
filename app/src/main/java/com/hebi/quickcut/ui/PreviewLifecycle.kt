@@ -52,3 +52,34 @@ internal fun rememberPreviewActive(
     }
     return active
 }
+
+/** Secondary editor previews pause on visibility loss without changing draft edit values. */
+@Composable
+internal fun rememberAuxiliaryPreviewActive(
+    identity: Any,
+    onInactive: () -> Unit,
+    onError: (Exception) -> Unit = {},
+): Boolean {
+    val owner = LocalLifecycleOwner.current
+    val pause by rememberUpdatedState(onInactive)
+    val failed by rememberUpdatedState(onError)
+    val exporting = ExportWorkMonitor.isRunning
+    var active by remember(identity, owner) { mutableStateOf(previewCanLoadMedia(owner)) }
+    DisposableEffect(identity, owner, exporting) {
+        fun update() {
+            active = previewCanLoadMedia(owner)
+            if (!active) {
+                try {
+                    pause()
+                } catch (error: Exception) {
+                    failed(error)
+                }
+            }
+        }
+        val observer = LifecycleEventObserver { _, _ -> update() }
+        owner.lifecycle.addObserver(observer)
+        update()
+        onDispose { owner.lifecycle.removeObserver(observer) }
+    }
+    return active
+}

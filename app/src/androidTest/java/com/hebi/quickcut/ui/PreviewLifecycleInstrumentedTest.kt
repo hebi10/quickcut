@@ -28,6 +28,7 @@ class PreviewLifecycleInstrumentedTest {
     private var position = 500L
     private var failures = 0
     private var stopped = 0
+    private var auxiliaryPlaying = false
     private var workId: String? = null
 
     @Before fun createAnInitiallyInvisiblePreview() {
@@ -47,6 +48,7 @@ class PreviewLifecycleInstrumentedTest {
         compose.setContent {
             CompositionLocalProvider(LocalLifecycleOwner provides owner) {
                 rememberPreviewActive(preview, onStopped = { stopped++ }, onError = { failures++ })
+                rememberAuxiliaryPreviewActive(player, onInactive = { auxiliaryPlaying = false })
             }
         }
     }
@@ -65,8 +67,10 @@ class PreviewLifecycleInstrumentedTest {
             assertTrue(player.resourcesAllocated)
             player.positionMs = 2_345L
             player.playing = true
+            auxiliaryPlaying = true
 
             owner.registry.currentState = Lifecycle.State.CREATED
+            assertFalse("Audio/text preview must pause when the Activity stops", auxiliaryPlaying)
             assertFalse(player.resourcesAllocated)
             assertFalse(player.playing)
             assertEquals(2_345L, position)
@@ -76,6 +80,7 @@ class PreviewLifecycleInstrumentedTest {
             assertTrue(player.resourcesAllocated)
             assertEquals(2_345L, player.positionMs)
             assertFalse("Visibility cannot automatically resume playback", player.playing)
+            assertFalse("Returning must not resume an auxiliary preview", auxiliaryPlaying)
         }
     }
 
@@ -83,12 +88,14 @@ class PreviewLifecycleInstrumentedTest {
         compose.runOnIdle {
             owner.registry.currentState = Lifecycle.State.STARTED
             player.positionMs = 3_456L
+            auxiliaryPlaying = true
             workId = ExportWorkMonitor.begin(compose.activity, "Preview resource regression", {})
             // These callbacks happen before Compose can replace an observer that
             // was installed while isRunning=false. It must read the live lease.
             owner.registry.currentState = Lifecycle.State.CREATED
             owner.registry.currentState = Lifecycle.State.STARTED
             assertFalse(player.resourcesAllocated)
+            assertFalse("An active export must pause auxiliary previews", auxiliaryPlaying)
             assertEquals(3_456L, position)
         }
         compose.waitForIdle()

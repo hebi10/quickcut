@@ -129,6 +129,8 @@ fun BatchScreen(
     var inspectedTotal by remember { mutableIntStateOf(0) }
     var inspectedPercent by remember { mutableStateOf<Int?>(null) }
     var editingUri by rememberSaveable { mutableStateOf<String?>(null) }
+    var showTemplateManager by rememberSaveable { mutableStateOf(false) }
+    var showPreciseInput by rememberSaveable { mutableStateOf(false) }
     val visibleTemplate = model.previewTemplate()
     val canEditTimes = canModifyQueue && !inspecting && !model.hasUnresolvedRecovery &&
         model.draftMode == BatchClipMode.REMOVE_EDGES && visibleTemplate != null
@@ -172,6 +174,10 @@ fun BatchScreen(
     }
     BackHandler(onBack = guardedBack)
 
+    val templateEditor: @Composable () -> Unit = {
+        TemplateEditor(model, onSelectVideos, { showTemplateManager = true },
+            showPreciseInput, { showPreciseInput = !showPreciseInput })
+    }
     BoxWithConstraints(Modifier.fillMaxSize().background(palette.background)) {
         val fontScale = LocalDensity.current.fontScale
         val singleScroll = BatchLayoutPolicy.singleScroll(maxHeight.value, fontScale)
@@ -186,7 +192,7 @@ fun BatchScreen(
                 ) {
                     BatchHeader(guardedBack, helpEnabled) { onHelp("batch") }
                     if (helpEnabled) FirstVisitGuideBanner("batch", onHelp)
-                    TemplateEditor(model, onSelectVideos)
+                    templateEditor()
                 }
                 Column(
                     Modifier.weight(1f).padding(16.dp),
@@ -222,7 +228,7 @@ fun BatchScreen(
             ) {
                 item { BatchHeader(guardedBack, helpEnabled) { onHelp("batch") } }
                 if (helpEnabled) item { FirstVisitGuideBanner("batch", onHelp) }
-                item { TemplateEditor(model, onSelectVideos) }
+                item { templateEditor() }
                 item { BatchFileHeader(model) }
                 item { BatchProgress(model) }
                 item {
@@ -247,7 +253,7 @@ fun BatchScreen(
             ) {
                 item { BatchHeader(guardedBack, helpEnabled) { onHelp("batch") } }
                 if (helpEnabled) item { FirstVisitGuideBanner("batch", onHelp) }
-                item { TemplateEditor(model, onSelectVideos) }
+                item { templateEditor() }
                 item { BatchFileHeader(model) }
                 items(model.files, key = { it.uri }) { file ->
                     BatchFileRow(
@@ -268,6 +274,11 @@ fun BatchScreen(
         }
     }
 
+    if (showTemplateManager) {
+        BatchTemplateManagerDialog(model, model.isRunning || model.isRecovering) {
+            showTemplateManager = false
+        }
+    }
     val editingFile = model.files.firstOrNull { it.uri == editingUri }
     if (canEditTimes && editingFile != null && visibleTemplate != null) {
         BatchEdgeTrimDialog(
@@ -580,11 +591,16 @@ private fun BatchHeader(onBack: () -> Unit, helpEnabled: Boolean, onHelp: () -> 
 }
 
 @Composable
-private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
+private fun TemplateEditor(
+    model: BatchViewModel,
+    onSelectVideos: () -> Unit,
+    onManageTemplates: () -> Unit,
+    showPreciseInput: Boolean,
+    onTogglePreciseInput: () -> Unit,
+) {
     val palette = LocalCutPalette.current
     val disabled = model.isRunning || model.isRecovering
     var showAdvanced by rememberSaveable { mutableStateOf(false) }
-    var showPreciseInput by rememberSaveable { mutableStateOf(false) }
     var pendingOriginalAction by rememberSaveable { mutableStateOf<OriginalAction?>(null) }
     Column(
         modifier = Modifier.fillMaxWidth().background(palette.surface, CutPanelShape)
@@ -613,7 +629,7 @@ private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
                 modifier = Modifier.testTag("batch-selection-count"))
         }
         HorizontalDivider(color = palette.border)
-        PresetEditor(model, disabled)
+        PresetEditor(model, disabled, onManageTemplates)
         Text(
             "2. 자르기 설정",
             color = palette.primaryText,
@@ -679,7 +695,7 @@ private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
             tag = "batch-trailing",
             showPreciseInput = showPreciseInput,
         )
-        TextButton(onClick = { showPreciseInput = !showPreciseInput },
+        TextButton(onClick = onTogglePreciseInput,
             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
                 .testTag("batch-precise-input-toggle"),
             enabled = !disabled) {
@@ -772,10 +788,8 @@ private fun TemplateEditor(model: BatchViewModel, onSelectVideos: () -> Unit) {
 
 
 @Composable
-private fun PresetEditor(model: BatchViewModel, disabled: Boolean) {
+private fun PresetEditor(model: BatchViewModel, disabled: Boolean, onManageTemplates: () -> Unit) {
     val palette = LocalCutPalette.current
-    val context = LocalContext.current
-    var showManager by rememberSaveable { mutableStateOf(false) }
     val selected = model.templates.firstOrNull { it.id == model.selectedTemplateId }
     Row(Modifier.fillMaxWidth().testTag("ui04b-template-summary"),
         verticalAlignment = Alignment.CenterVertically,
@@ -787,12 +801,18 @@ private fun PresetEditor(model: BatchViewModel, disabled: Boolean) {
                 style = MaterialTheme.typography.titleMedium, color = palette.primaryText,
                 maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
-        OutlinedButton(onClick = { showManager = true }, enabled = !disabled,
+        OutlinedButton(onClick = onManageTemplates, enabled = !disabled,
             modifier = Modifier.heightIn(min = 48.dp).testTag("batch-template-manager"),
             shape = CutShape) { Text("템플릿 관리") }
     }
-    if (showManager) Dialog(
-        onDismissRequest = { showManager = false },
+}
+
+@Composable
+private fun BatchTemplateManagerDialog(model: BatchViewModel, disabled: Boolean, onDismiss: () -> Unit) {
+    val palette = LocalCutPalette.current
+    val context = LocalContext.current
+    Dialog(
+        onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
         Surface(Modifier.padding(horizontal = 16.dp).widthIn(max = 480.dp)
@@ -910,7 +930,7 @@ private fun PresetEditor(model: BatchViewModel, disabled: Boolean) {
                             enabled = !disabled, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("선택 템플릿 수정 저장") }
                     }
                 }
-                TextButton(onClick = { showManager = false },
+                TextButton(onClick = onDismiss,
                     modifier = Modifier.align(Alignment.End).heightIn(min = 48.dp)) { Text("닫기") }
             }
         }

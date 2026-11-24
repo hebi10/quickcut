@@ -51,6 +51,14 @@ MANUAL_NAME = {
 ANDROID = "{http://schemas.android.com/apk/res/android}"
 BUNDLETOOL_URI = "https://github.com/google/bundletool/releases/download/1.18.3/bundletool-all-1.18.3.jar"
 BUNDLETOOL_SHA256 = "a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29"
+RUN_VISIBILITY_RETRIES = 3
+RUN_VISIBILITY_DELAY_SECONDS = 4
+
+
+class GitHubApiError(RuntimeError):
+    def __init__(self, path, status):
+        super().__init__(f"GitHub API rejected {path.split('?')[0]} (HTTP {status})")
+        self.status = status
 
 
 def require(condition, message):
@@ -127,7 +135,7 @@ class Orchestrator:
                 require(response.status == 200, "Expected JSON API response; refusing uncertain mutation")
                 return json.load(response)
         except urllib.error.HTTPError as exc:
-            raise RuntimeError(f"GitHub API rejected {path.split('?')[0]} (HTTP {exc.code})") from None
+            raise GitHubApiError(path, exc.code) from None
 
     def current_main(self):
         main = self.api(f"/repos/{self.repo}/git/ref/heads/main")
@@ -165,8 +173,18 @@ class Orchestrator:
     def wait(self, workflow, run_id):
         url = f"https://github.com/{self.repo}/actions/runs/{run_id}"
         self.write(stage="running_" + workflow, url=url)
+        path = f"/repos/{self.repo}/actions/runs/{run_id}"
+        visibility_retries = RUN_VISIBILITY_RETRIES
         while time.monotonic() < self.deadline:
-            run = self.api(f"/repos/{self.repo}/actions/runs/{run_id}")
+            try:
+                run = self.api(path)
+            except GitHubApiError as error:
+                if error.status != 404 or visibility_retries == 0:
+                    raise
+                visibility_retries -= 1
+                time.sleep(RUN_VISIBILITY_DELAY_SECONDS)
+                continue
+            visibility_retries = 0
             expected_path = ".github/workflows/" + workflow
             require(run.get("id") == run_id and run.get("head_sha") == self.sha
                     and run.get("head_branch") == "main"

@@ -124,6 +124,14 @@ ffmpeg -hide_banner -loglevel error -y \
   -c:a aac -b:a 64k -shortest \
   app/src/androidTest/assets/quickcut_bframes.mp4
 
+# Retain irregular presentation intervals and closed two-second GOPs.
+ffmpeg -hide_banner -loglevel error -y \
+  -f lavfi -i testsrc2=size=320x240:rate=30:duration=8 \
+  -vf "select=not(eq(mod(n\,5)\,1))" -fps_mode passthrough \
+  -c:v libx264 -preset medium -pix_fmt yuv420p -bf 2 \
+  -g 48 -keyint_min 48 -sc_threshold 0 -flags +cgop -an \
+  app/src/androidTest/assets/quickcut_vfr_closed_gop.mp4
+
 # Preserve a phone-style display transform without rotating encoded pixels.
 ffmpeg -hide_banner -loglevel error -y \
   -display_rotation:v:0 -90 -i app/src/androidTest/assets/quickcut_bframes.mp4 -c copy \

@@ -23,6 +23,7 @@ import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
@@ -92,6 +93,7 @@ class Stage13ReferenceScreensInstrumentedTest {
                             dateMode = SaveDateMode.ORIGINAL,
                             onPreferences = {}, onLicenses = {},
                             projects = samples,
+                            onDeleteProject = { "저장 오류로 프로젝트를 삭제하지 못했습니다." },
                         )
                     }
                 }
@@ -104,6 +106,10 @@ class Stage13ReferenceScreensInstrumentedTest {
         compose.onNodeWithText("테스트 영상 2").assertIsDisplayed()
         capture("stage13_projects_populated.png")
         Ui07aVisualEvidence.capture("ui07a_light_projects.png")
+        compose.onAllNodesWithContentDescription("프로젝트 삭제")[0].performClick()
+        compose.onNodeWithText("삭제").performClick()
+        compose.onNodeWithText("저장 오류로 프로젝트를 삭제하지 못했습니다.").assertIsDisplayed()
+        compose.onNodeWithText("취소").performClick()
         compose.runOnIdle { theme = QuickCutThemeMode.DARK }
         compose.onNodeWithText("테스트 영상 2").assertIsDisplayed()
         Ui07aVisualEvidence.capture("ui07a_dark_projects.png")
@@ -142,6 +148,7 @@ class Stage13ReferenceScreensInstrumentedTest {
                 .fetchSemanticsNodes().isNotEmpty()
         }
         compose.onNodeWithTag("gallery-video-length-0", useUnmergedTree = true)
+            .performScrollTo()
             .assertTextEquals("길이 ${formatTime(expectedLength)}")
             .assertIsDisplayed()
         compose.onNodeWithText("2개 선택").assertIsDisplayed()

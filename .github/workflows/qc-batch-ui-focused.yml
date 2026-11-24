@@ -1,0 +1,107 @@
+name: QuickCut scoped batch layout Android QA
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/qc-batch-ui-focused.yml"
+      - "app/src/main/java/com/hebi/quickcut/batch/BatchScreen.kt"
+      - "app/src/main/java/com/hebi/quickcut/batch/BatchLayoutPolicy.kt"
+      - "app/src/androidTest/java/com/hebi/quickcut/ui/EditorDesignInstrumentedTest.kt"
+      - "app/src/androidTest/java/com/hebi/quickcut/batch/BatchRecoveryUiInstrumentedTest.kt"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  batch-layout:
+    name: Batch large-font and recovery UI (API 35)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.4.1"
+      - name: Reclaim disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/powershell
+          sudo rm -rf /usr/local/lib/android/sdk/ndk
+          sudo apt-get clean
+      - name: Install missing native and fixture tools
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          missing=()
+          for tool in cmake nasm pkg-config ffmpeg; do
+            command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
+          done
+          if (( ${#missing[@]} > 0 )); then
+            sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 update -qq
+            sudo DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 install -y --no-install-recommends "${missing[@]}"
+          fi
+      - name: Install Android SDK and NDK
+        run: sdkmanager --install "platforms;android-36" "build-tools;36.0.0" "ndk;27.3.13750724"
+      - name: Restore native engine cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            build/native-smartcut
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: native-smartcut-${{ runner.os }}-${{ hashFiles('scripts/build-native-smartcut.sh', 'scripts/native-smartcut-sources.json') }}-${{ hashFiles('native/**') }}
+          restore-keys: |
+            native-smartcut-${{ runner.os }}-${{ hashFiles('scripts/build-native-smartcut.sh', 'scripts/native-smartcut-sources.json') }}-
+            native-smartcut-${{ runner.os }}-
+      - name: Build pinned native smart-cut engine
+        run: bash scripts/build-native-smartcut.sh
+      - name: Generate source video for actual UI test
+        run: |
+          mkdir -p app/src/androidTest/assets
+          ffmpeg -hide_banner -loglevel error -y \
+            -f lavfi -i testsrc2=size=320x240:rate=30 \
+            -f lavfi -i sine=frequency=880:sample_rate=44100 \
+            -t 8 -c:v libx264 -preset ultrafast -pix_fmt yuv420p \
+            -g 60 -keyint_min 60 -sc_threshold 0 \
+            -c:a aac -b:a 64k -shortest \
+            app/src/androidTest/assets/quickcut_keyframes.mp4
+      - name: Assemble application and test APKs
+        run: gradle --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Run only changed batch layout and recovery UI tests
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disk-size: 2048M
+          ram-size: 3072M
+          heap-size: 256M
+          emulator-boot-timeout: 300
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -no-metrics -partition-size 2048
+          disable-animations: true
+          script: >-
+            gradle --no-daemon :app:connectedDebugAndroidTest
+            -Pandroid.testInstrumentationRunnerArguments.class=com.hebi.quickcut.ui.EditorDesignInstrumentedTest#largeFontBatchKeepsSelectionAndSaveReasonReachable,com.hebi.quickcut.ui.EditorDesignInstrumentedTest#extraLargeFontBatchKeepsInputsAndSaveReasonReachable,com.hebi.quickcut.batch.BatchRecoveryUiInstrumentedTest#emptyCorruptJournalShowsPersistentRecoveryActionAndBlocksStart
+      - name: Keep focused UI test XML
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quickcut-batch-layout-focused-api35
+          path: app/build/outputs/androidTest-results/connected/**/*.xml
+          if-no-files-found: warn

@@ -1,5 +1,6 @@
 package com.hebi.quickcut.segments
 
+import com.hebi.quickcut.ui.fastCutSuggestionText
 import com.hebi.quickcut.ui.CutIcons
 import com.hebi.quickcut.ui.FirstVisitGuideBanner
 import android.content.ActivityNotFoundException
@@ -266,11 +267,28 @@ fun ExtractionScreen(
     if (model.requiresReencodeApproval) {
         AlertDialog(
             onDismissRequest = model::declineReencode,
-            title = { Text("정확한 위치로 저장") },
+            title = { Text("구간 저장 방식 선택") },
             text = {
-                Text("일부 구간은 키프레임이 맞지 않아 재인코딩이 필요할 수 있습니다. " +
-                    "원래 선택한 시작·종료 시간을 유지하며 저장하지만 처리 시간이 늘어날 수 있습니다. " +
-                    "재인코딩을 허용하시겠습니까?")
+                Column(
+                    Modifier.heightIn(max = 380.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text("원래 시작·끝 시간을 유지하면 일부 구간을 재인코딩할 수 있습니다.")
+                    val suggestions = model.fastSuggestions
+                    if (suggestions.isNotEmpty()) {
+                        session?.items?.forEachIndexed { index, item ->
+                            suggestions[item.range.id]?.let { suggestion ->
+                                Text("구간 ${index + 1}", style = MaterialTheme.typography.titleSmall)
+                                Text(fastCutSuggestionText(suggestion))
+                            }
+                        }
+                        OutlinedButton(
+                            onClick = model::approveFastSuggestions,
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                        ) { Text("추천 적용 · ${model.fastSelectionCount}개 고속 저장") }
+                        Text("고속 저장이 어려운 구간은 이후 다시 선택할 수 있습니다.")
+                    }
+                }
             },
             confirmButton = {
                 Button(onClick = model::approveReencode) { Text("재인코딩 허용 후 저장") }

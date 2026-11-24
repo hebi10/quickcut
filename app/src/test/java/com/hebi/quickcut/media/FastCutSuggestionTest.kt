@@ -34,6 +34,17 @@ class FastCutSuggestionTest {
         }
     }
 
+    @Test fun outwardReviewRequiresOneClipAndNeverRemovesMoreFootage() {
+        val review = FastCutSuggestion.createOutwardUs(timeline, 2_900_123L to 17_100_321L)!!
+        assertTrue(review.retainsMore)
+        assertEquals(2_900_123L, review.adjusted.clips.single().startUs)
+        assertEquals(17_100_321L, review.adjusted.clips.single().endUs)
+        assertNull(FastCutSuggestion.createOutwardUs(timeline, 2_900_000L to 16_900_000L))
+        assertNull(FastCutSuggestion.createOutwardUs(timeline, 2_900_000L to 20_000_001L))
+        assertNull(FastCutSuggestion.createOutwardUs(timeline.append(listOf(clip.copy(id = 2))),
+            2_900_000L to 17_100_000L))
+    }
+
     @Test fun changingAnyReviewedClipInvalidatesConsent() {
         val review = FastCutSuggestion.create(timeline, listOf(4_000L to 16_000L))!!
         listOf(clip.copy(uri = "content://video/2"), clip.copy(startMs = 2_000),

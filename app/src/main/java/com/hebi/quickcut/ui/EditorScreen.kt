@@ -409,7 +409,7 @@ fun EditorScreen(
                                 if (showTrim && selected != null) {
                                     TrimEditor(selected, trimStartText, trimEndText, onTrimDraftChange,
                                         model::trimSelected, model::beginTrim,
-                                        model::finishTrim, model::setTrimInputValidity)
+                                        model::finishTrim, model::setTrimInputValidity, model::snapTrim)
                                 }
                             }
                         }
@@ -466,7 +466,7 @@ fun EditorScreen(
                                     Spacer(Modifier.height(8.dp))
                                     TrimEditor(selected, trimStartText, trimEndText, onTrimDraftChange,
                                         model::trimSelected, model::beginTrim,
-                                        model::finishTrim, model::setTrimInputValidity)
+                                        model::finishTrim, model::setTrimInputValidity, model::snapTrim)
                                 }
                             }
                         }
@@ -530,6 +530,7 @@ fun EditorScreen(
                                 model::beginTrim,
                                 model::finishTrim,
                                 model::setTrimInputValidity,
+                                model::snapTrim,
                                 modifier = Modifier.fillMaxWidth()
                                     .background(palette.surface, CutPanelShape)
                                     .padding(horizontal = 14.dp),
@@ -958,6 +959,7 @@ private fun TrimEditor(
     onBeginTrim: () -> Unit,
     onEndTrim: () -> Unit,
     onValidityChange: (Boolean) -> Unit,
+    onSnap: (VideoClip, Long, Long) -> Boolean,
     modifier: Modifier = Modifier,
 ) {
     val palette = LocalCutPalette.current
@@ -1027,6 +1029,7 @@ private fun TrimEditor(
             Text("시간을 확인해 주세요. 결과 영상은 최소 0.1초 이상이어야 합니다.",
                 color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
         }
+        KeyframeTrimControls(clip, valid, onSnap)
     }
 }
 

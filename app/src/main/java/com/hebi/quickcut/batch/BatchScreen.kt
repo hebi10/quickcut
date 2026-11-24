@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -77,12 +78,14 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.hebi.quickcut.editor.OriginalAction
+import com.hebi.quickcut.editor.TrimInput
 import com.hebi.quickcut.editor.OriginalActionStatus
 import com.hebi.quickcut.editor.formatTime
 import com.hebi.quickcut.media.SaveDateMode
 import com.hebi.quickcut.media.ExportMode
 import com.hebi.quickcut.media.ExportStage
 import com.hebi.quickcut.media.MediaOperationDiagnostics
+import com.hebi.quickcut.ui.ClipThumbnail
 import com.hebi.quickcut.ui.CutChoice
 import com.hebi.quickcut.ui.CutChoiceDropdown
 import com.hebi.quickcut.ui.LocalCutPalette
@@ -125,6 +128,10 @@ fun BatchScreen(
     var inspectedCount by remember { mutableIntStateOf(0) }
     var inspectedTotal by remember { mutableIntStateOf(0) }
     var inspectedPercent by remember { mutableStateOf<Int?>(null) }
+    var editingUri by rememberSaveable { mutableStateOf<String?>(null) }
+    val visibleTemplate = model.previewTemplate()
+    val canEditTimes = canModifyQueue && !inspecting && !model.hasUnresolvedRecovery &&
+        model.draftMode == BatchClipMode.REMOVE_EDGES && visibleTemplate != null
     var showStopConfirmation by rememberSaveable { mutableStateOf(false) }
     val requestExport: (Boolean) -> Unit = { retry ->
         if (!inspecting && canModifyQueue && !model.hasUnresolvedRecovery) {
@@ -166,9 +173,11 @@ fun BatchScreen(
     BackHandler(onBack = guardedBack)
 
     BoxWithConstraints(Modifier.fillMaxSize().background(palette.background)) {
+        val fontScale = LocalDensity.current.fontScale
+        val singleScroll = BatchLayoutPolicy.singleScroll(maxHeight.value, fontScale)
         val actionsMaxHeight = maxHeight * 0.45f
-        if (maxWidth >= 840.dp &&
-            maxWidth / LocalDensity.current.fontScale >= 700.dp) {
+        if (!singleScroll && maxWidth >= 840.dp &&
+            maxWidth / fontScale >= 700.dp) {
             Row(Modifier.fillMaxSize()) {
                 Column(
                     modifier = Modifier.width(390.dp)
@@ -190,8 +199,9 @@ fun BatchScreen(
                     ) {
                         items(model.files, key = { it.uri }) { file ->
                             BatchFileRow(
-                                file, model.previewTemplate(), model.saveDateMode, model.currentExportStage,
-                                canModifyQueue, model::removeVideo
+                                file, visibleTemplate, model.saveDateMode, model.currentExportStage,
+                                canModifyQueue, model::removeVideo,
+                                onEditTimes = if (canEditTimes) ({ editingUri = it }) else null
                             )
                         }
                     }
@@ -202,6 +212,30 @@ fun BatchScreen(
                         BatchProgress(model)
                         BatchActions(model, requestExport, inspecting) { showStopConfirmation = true }
                     }
+                }
+            }
+        } else if (singleScroll) {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp)
+                    .testTag("batch-file-list"),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                item { BatchHeader(guardedBack, helpEnabled) { onHelp("batch") } }
+                if (helpEnabled) item { FirstVisitGuideBanner("batch", onHelp) }
+                item { TemplateEditor(model, onSelectVideos) }
+                item { BatchFileHeader(model) }
+                item { BatchProgress(model) }
+                item {
+                    Column(Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
+                        BatchActions(model, requestExport, inspecting) { showStopConfirmation = true }
+                    }
+                }
+                items(model.files, key = { it.uri }) { file ->
+                    BatchFileRow(
+                        file, visibleTemplate, model.saveDateMode, model.currentExportStage,
+                        canModifyQueue, model::removeVideo,
+                        onEditTimes = if (canEditTimes) ({ editingUri = it }) else null
+                    )
                 }
             }
         } else {
@@ -217,8 +251,9 @@ fun BatchScreen(
                 item { BatchFileHeader(model) }
                 items(model.files, key = { it.uri }) { file ->
                     BatchFileRow(
-                        file, model.previewTemplate(), model.saveDateMode, model.currentExportStage,
-                        canModifyQueue, model::removeVideo
+                        file, visibleTemplate, model.saveDateMode, model.currentExportStage,
+                        canModifyQueue, model::removeVideo,
+                        onEditTimes = if (canEditTimes) ({ editingUri = it }) else null
                     )
                 }
                 item { BatchProgress(model) }
@@ -231,6 +266,18 @@ fun BatchScreen(
             }
             }
         }
+    }
+
+    val editingFile = model.files.firstOrNull { it.uri == editingUri }
+    if (canEditTimes && editingFile != null && visibleTemplate != null) {
+        BatchEdgeTrimDialog(
+            file = editingFile,
+            template = visibleTemplate,
+            onDismiss = { editingUri = null },
+            onApply = { trim ->
+                if (model.setEdgeTrim(editingFile.uri, trim)) editingUri = null
+            },
+        )
     }
 
     if (showStopConfirmation) {
@@ -976,6 +1023,17 @@ private fun BatchActions(
             BatchRunState.SETUP -> {
                 Text("3. 저장", color = palette.primaryText,
                     style = MaterialTheme.typography.titleMedium)
+                val preview = BatchPreviewEstimate.counts(
+                    model.files, model.previewTemplate(), model.saveDateMode,
+                )
+                val previewText = when {
+                    model.files.isEmpty() -> "선택 영상 0개"
+                    preview == null -> "선택 영상 ${model.files.size}개 · 편집 설정 확인 필요"
+                    else -> "선택 ${model.files.size}개 · 예상 저장 ${preview.ready}개 · 제외 ${preview.unavailable}개"
+                }
+                Text(previewText, color = palette.secondaryText,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.testTag("batch-save-summary"))
                 val disabledReason = when {
                     inspecting -> "저장할 영상을 확인 중입니다."
                     model.isImporting -> "영상을 불러온 뒤 저장할 수 있습니다."
@@ -1079,6 +1137,7 @@ private fun BatchFileRow(
     stage: com.hebi.quickcut.media.ExportStage,
     canRemove: Boolean,
     onRemove: (String) -> Unit,
+    onEditTimes: ((String) -> Unit)?,
 ) {
     val palette = LocalCutPalette.current
     val subtitle = BatchPreviewEstimate.fileLabel(file, template, dateMode)
@@ -1110,6 +1169,21 @@ private fun BatchFileRow(
                         .background(palette.panel, CutShape),
                 ) { Icon(CutIcons.Close, contentDescription = "선택 영상 제거") }
             }
+        }
+        if (onEditTimes != null && file.status != BatchFileStatus.SAVED && file.durationMs >= 100L) {
+            file.edgeTrim?.let {
+                Text(
+                    "개별 설정 · 앞 ${BatchTimeInput.durationText(it.leadingMs)} · 뒤 ${BatchTimeInput.durationText(it.trailingMs)}",
+                    color = palette.secondaryText,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            TextButton(
+                onClick = { onEditTimes(file.uri) },
+                modifier = Modifier.heightIn(min = 48.dp).semantics {
+                    contentDescription = "${file.displayName}, 앞뒤 시간 조정"
+                },
+            ) { Text("앞뒤 시간 조정") }
         }
         if (file.status == BatchFileStatus.RUNNING && file.progress != null) {
             LinearProgressIndicator(
@@ -1143,6 +1217,73 @@ private fun BatchFileRow(
             ExportDiagnosticButton(operationId = operationId, label = "저장 진단")
         }
     }
+}
+
+@Composable
+private fun BatchEdgeTrimDialog(
+    file: BatchFile,
+    template: BatchTemplate,
+    onDismiss: () -> Unit,
+    onApply: (BatchEdgeTrim?) -> Unit,
+) {
+    var leading by rememberSaveable(file.uri) {
+        mutableStateOf(TrimInput.secondsText(file.edgeTrim?.leadingMs ?: template.leadingMs))
+    }
+    var trailing by rememberSaveable(file.uri) {
+        mutableStateOf(TrimInput.secondsText(file.edgeTrim?.trailingMs ?: template.trailingMs))
+    }
+    var showPreview by rememberSaveable(file.uri) { mutableStateOf(false) }
+    val leadingMs = BatchTimeInput.parse(leading)
+    val trailingMs = BatchTimeInput.parse(trailing)
+    val trim = if (leadingMs != null && trailingMs != null) BatchEdgeTrim(leadingMs, trailingMs) else null
+    val plan = trim?.let { template.plan(file.copy(edgeTrim = it)) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { QuickCutDialogHeading("영상별 앞뒤 시간") },
+        text = {
+            Column(
+                Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(file.displayName)
+                BatchDurationField("앞에서 자를 시간", leading, { leading = it }, true, true, "batch-file-leading", true)
+                BatchDurationField("뒤에서 자를 시간", trailing, { trailing = it }, true, true, "batch-file-trailing", true)
+                when (plan) {
+                    is BatchPlan.Ready -> {
+                        val clip = plan.timeline.clips.single()
+                        Text("편집 후 ${BatchTimeInput.durationText(clip.durationMs)}")
+                        TextButton(onClick = { showPreview = !showPreview }, modifier = Modifier.heightIn(min = 48.dp)) {
+                            Text(if (showPreview) "장면 미리보기 닫기" else "남길 시작·끝 장면 보기")
+                        }
+                        if (showPreview) {
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text("시작 · " + formatTime(clip.startMs))
+                                ClipThumbnail(clip.uri, clip.startMs, Modifier.fillMaxWidth().height(96.dp))
+                                Text("끝 · " + formatTime(clip.endMs))
+                                ClipThumbnail(clip.uri, clip.endMs - 1L, Modifier.fillMaxWidth().height(96.dp))
+                            }
+                        }
+                    }
+                    is BatchPlan.Skip -> Text(plan.reason, color = MaterialTheme.colorScheme.error)
+                    null -> Unit
+                }
+                if (file.edgeTrim != null) {
+                    TextButton(onClick = { onApply(null) }, modifier = Modifier.heightIn(min = 48.dp)) {
+                        Text("공통 시간 사용")
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onApply(trim) }, enabled = plan is BatchPlan.Ready,
+                modifier = Modifier.heightIn(min = 48.dp)) { Text("적용") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, modifier = Modifier.heightIn(min = 48.dp)) { Text("취소") }
+        },
+        containerColor = LocalCutPalette.current.panel,
+        shape = CutDialogShape,
+    )
 }
 
 @Composable

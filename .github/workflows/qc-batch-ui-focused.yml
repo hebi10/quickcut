@@ -111,13 +111,9 @@ jobs:
           emulator-boot-timeout: 300
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -no-metrics -partition-size 2048
           disable-animations: true
-          script: |
-            cases="com.hebi.quickcut.ui.EditorDesignInstrumentedTest#largeFontBatchKeepsSelectionAndSaveReasonReachable"
-            cases="$cases,com.hebi.quickcut.ui.EditorDesignInstrumentedTest#extraLargeFontBatchKeepsInputsAndSaveReasonReachable"
-            cases="$cases,com.hebi.quickcut.batch.BatchRecoveryUiInstrumentedTest#emptyCorruptJournalShowsPersistentRecoveryActionAndBlocksStart"
-            cases="$cases,com.hebi.quickcut.batch.BatchScreenInstrumentedTest#modalSupportsMultipleTemplatesAndRemovingAnUnselectedRowPreservesDraft"
-            cases="$cases,com.hebi.quickcut.ui.TrimInputInstrumentedTest#acceptedRecommendationUsesRealEditorAndExporterWithoutChangingQuickDefaults"
-            gradle --no-daemon :app:connectedDebugAndroidTest "-Pandroid.testInstrumentationRunnerArguments.class=$cases"
+          script: >-
+            gradle --no-daemon :app:connectedDebugAndroidTest
+            -Pandroid.testInstrumentationRunnerArguments.class=com.hebi.quickcut.ui.EditorDesignInstrumentedTest#largeFontBatchKeepsSelectionAndSaveReasonReachable,com.hebi.quickcut.ui.EditorDesignInstrumentedTest#extraLargeFontBatchKeepsInputsAndSaveReasonReachable,com.hebi.quickcut.batch.BatchRecoveryUiInstrumentedTest#emptyCorruptJournalShowsPersistentRecoveryActionAndBlocksStart,com.hebi.quickcut.batch.BatchScreenInstrumentedTest#modalSupportsMultipleTemplatesAndRemovingAnUnselectedRowPreservesDraft,com.hebi.quickcut.ui.TrimInputInstrumentedTest#acceptedRecommendationUsesRealEditorAndExporterWithoutChangingQuickDefaults
       - name: Keep focused UI test XML
         if: always()
         uses: actions/upload-artifact@v4

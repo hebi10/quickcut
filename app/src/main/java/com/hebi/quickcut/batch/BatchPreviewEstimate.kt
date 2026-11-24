@@ -8,7 +8,7 @@ internal object BatchPreviewEstimate {
     private fun plan(file: BatchFile, template: BatchTemplate, dateMode: SaveDateMode): BatchPlan? =
         if (file.hasUnresolvedOutput() || file.durationMs < 100L ||
             (dateMode == SaveDateMode.ORIGINAL && file.originalDate == null)) null
-        else template.plan(file.uri, file.durationMs, file.hasAudio)
+        else template.plan(file)
 
     fun counts(files: List<BatchFile>, template: BatchTemplate?, dateMode: SaveDateMode): BatchPreviewCounts? {
         if (template == null) return null

@@ -84,9 +84,6 @@ import com.hebi.quickcut.media.OriginalMediaActions
 import com.hebi.quickcut.media.SaveDateMode
 import com.hebi.quickcut.media.ExportMode
 import com.hebi.quickcut.media.ExportQualitySettings
-import com.hebi.quickcut.media.ExportQualityInspector
-import com.hebi.quickcut.media.ExportPlanner
-import com.hebi.quickcut.media.ExportAssessment
 import com.hebi.quickcut.media.ExportReport
 import com.hebi.quickcut.media.ExportStage
 import com.hebi.quickcut.media.MediaOperationDiagnostics
@@ -94,17 +91,7 @@ import com.hebi.quickcut.settings.QuickCutSettings
 import com.hebi.quickcut.settings.QuickCutThemeMode
 import com.hebi.quickcut.settings.QuickTrimSettings
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.CancellationException
 import com.hebi.quickcut.editor.QuickCutPage
-
-private data class ExportReview(
-    val assessment: ExportAssessment,
-    val timeline: EditTimeline,
-    val originalAction: OriginalAction,
-    val dateMode: SaveDateMode,
-    val retryingFastExport: Boolean = false,
-    val outputQuality: ExportQualitySettings = ExportQualitySettings(),
-)
 
 @Composable
 fun QuickCutApp(
@@ -145,12 +132,10 @@ fun QuickCutApp(
             activeGuide = id
         }
     }
-    var exportReview by remember { mutableStateOf<ExportReview?>(null) }
-    var inspectingExport by remember { mutableStateOf(false) }
-    var inspectionProgress by remember { mutableStateOf<Int?>(null) }
+    val exportReview = model.exportReview
+    val inspectingExport = model.inspectingExport
     var dismissedRecoveryNotice by remember { mutableStateOf<String?>(null) }
     var confirmUnreadableSessionReset by rememberSaveable { mutableStateOf(false) }
-    var inspectionJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     var showExportCancelConfirmation by rememberSaveable { mutableStateOf(false) }
     var showSaveOptions by rememberSaveable { mutableStateOf(false) }
     val selectedSaveAction by remember(settings) { settings.observeOriginalAction() }
@@ -183,88 +168,22 @@ fun QuickCutApp(
     }
 
     val beginExportAfterReview: () -> Unit = {
-        if (model.canStartExport && !inspectingExport) {
-            val reviewedTimeline = model.timeline
-            val reviewedAction = selectedSaveAction
-            val reviewedDate = selectedSaveDateMode
-            val reviewedQuality = selectedOutputQuality
-            inspectingExport = true
-            inspectionProgress = null
-            inspectionJob = coroutineScope.launch {
-                val diagnostics = runCatching {
-                    MediaOperationDiagnostics.begin(context.applicationContext, ExportStage.REVIEWING,
-                        reviewedTimeline.clips.map { it.uri }.distinct().size)
-                }.getOrNull()
-                var diagnosticStatus = "실패"
-                var diagnosticError: Throwable? = null
-                try {
-                    val assessment = if (reviewedQuality.isAutomatic) {
-                        ExportPlanner.analyze(
-                            context.applicationContext, reviewedTimeline, reviewedDate,
-                            onProgress = { inspectionProgress = it },
-                        )
-                    } else {
-                        val evaluation = ExportQualityInspector.inspect(
-                            context.applicationContext, reviewedTimeline, reviewedQuality
-                        )
-                        val plan = evaluation.plan ?: error(
-                            evaluation.error ?: "내보내기 설정을 확인할 수 없습니다."
-                        )
-                        ExportAssessment(
-                            false, "선택한 출력: ${plan.detail}\n" +
-                                "선택한 화질을 적용하기 위해 영상을 재인코딩합니다."
-                        )
-                    }
-                    diagnosticStatus = "완료"
-                    if (!model.canStartExport || model.timeline != reviewedTimeline) return@launch
-                    if (assessment.fastAvailable && !model.needsReencodeConsent) {
-                        model.startExport(
-                            context,
-                            reviewedAction,
-                            reviewedDate,
-                            ExportMode.FAST_ONLY,
-                            outputQuality = reviewedQuality,
-                        )
-                    } else {
-                        exportReview = ExportReview(assessment, reviewedTimeline,
-                            reviewedAction, reviewedDate, outputQuality = reviewedQuality)
-                    }
-                } catch (cancelled: CancellationException) {
-                    diagnosticStatus = "취소"
-                    diagnosticError = cancelled
-                    throw cancelled
-                } catch (error: Exception) {
-                    diagnosticStatus = "실패"
-                    diagnosticError = error
-                    model.reportError(runCatching {
-                        MediaOperationDiagnostics.message(ExportStage.REVIEWING, error)
-                    }.getOrDefault("저장 방식을 확인하지 못했습니다. 다시 시도해 주세요."))
-                } finally {
-                    runCatching { diagnostics?.finish(diagnosticStatus, diagnosticError) }
-                    inspectingExport = false
-                    inspectionJob = null
-                }
-            }
-        }
+        model.inspectExport(selectedSaveAction, selectedSaveDateMode, selectedOutputQuality)
     }
     LaunchedEffect(model.needsReencodeConsent, model.page, model.timeline,
         model.isTrimInputValid, model.canStartExport) {
-        if (model.needsReencodeConsent && model.canStartExport) {
-            val reviewedTimeline = model.timeline
-            val reviewedAction = model.originalAction
-            val reviewedDate = model.savedDateMode
-            // A failed fast-only save already supplies its diagnostics. Do not
-            // rescan a long source to propose an action this retry cannot offer.
-            exportReview = ExportReview(
-                ExportAssessment(false, model.exportDiagnostics.explanation().ifBlank {
-                    "고속 저장을 완료하지 못했습니다. 정확한 위치로 자동 저장을 선택할 수 있습니다."
-                }), reviewedTimeline, reviewedAction, reviewedDate, retryingFastExport = true,
-            )
+        model.showFastExportRetry()
+    }
+    LaunchedEffect(exportReview, lifecycleState, model.canStartExport) {
+        val review = exportReview
+        if (review?.autoStart == true && lifecycleState.isAtLeast(Lifecycle.State.RESUMED)) {
+            model.commitExportReview(context, review, ExportMode.FAST_ONLY, review.autoSuggestion)
         }
     }
     LaunchedEffect(model.page) {
         if (model.page != QuickCutPage.EDITOR) {
-            exportReview = null
+            model.dismissExportReview()
+            model.cancelExportInspection()
             showSaveOptions = false
         }
         if (model.page == QuickCutPage.PICKER || model.page == QuickCutPage.COMPLETED) {
@@ -536,6 +455,10 @@ fun QuickCutApp(
                         onDetailedEdit = { model.changeQuickMode(false) },
                         onSave = { beginExportAfterReview() },
                         onSaveOptions = openSaveOptions,
+                        onFastSave = {
+                            model.inspectExport(OriginalAction.KEEP, selectedSaveDateMode,
+                                ExportQualitySettings(), allowNearby = true)
+                        },
                         onHelp = showGuide,
                     )
                 } else {
@@ -744,11 +667,16 @@ fun QuickCutApp(
         )
     }
 
-    if (inspectingExport) ExportInspectionDialog(progress = inspectionProgress, onCancel = { inspectionJob?.cancel() })
+    if (inspectingExport) ExportInspectionDialog(
+        progress = model.inspectionProgress, onCancel = model::cancelExportInspection,
+    )
     exportReview?.takeIf {
-        model.page == QuickCutPage.EDITOR && model.timeline == it.timeline
+        !it.autoStart && model.page == QuickCutPage.EDITOR && model.timeline == it.timeline
     }?.let { review ->
-        val suggestion = review.assessment.suggestion
+        fun saveSuggested(suggestion: com.hebi.quickcut.media.FastCutSuggestion?): (() -> Unit)? {
+            if (suggestion == null || review.retryingFastExport) return null
+            return { model.commitExportReview(context, review, ExportMode.FAST_ONLY, suggestion) }
+        }
         ExportModeDialog(
             assessment = if (review.retryingFastExport) review.assessment.copy(
                 explanation = model.exportDiagnostics.explanation().ifBlank {
@@ -757,25 +685,10 @@ fun QuickCutApp(
             ) else review.assessment,
             retryingFastExport = review.retryingFastExport,
             canSave = model.canStartExport,
-            onAllowReencode = {
-                if (model.canStartExport && model.timeline == review.timeline) {
-                    exportReview = null
-                    model.startExport(context, review.originalAction, review.dateMode,
-                        ExportMode.ALLOW_REENCODE, outputQuality = review.outputQuality)
-                }
-            },
-            onSuggestedCut = if (suggestion != null && !review.retryingFastExport) {
-                {
-                    if (model.canStartExport && model.timeline == review.timeline &&
-                        model.applyFastCutSuggestion(suggestion)) {
-                        exportReview = null
-                        model.startExport(context, review.originalAction, review.dateMode, ExportMode.FAST_ONLY)
-                    }
-                }
-            } else null,
-            onDismiss = {
-                exportReview = null
-            },
+            onAllowReencode = { model.commitExportReview(context, review, ExportMode.ALLOW_REENCODE) },
+            onSuggestedCut = saveSuggested(review.assessment.suggestion),
+            onLessTrim = saveSuggested(review.assessment.lessTrimSuggestion),
+            onDismiss = model::dismissExportReview,
         )
     }
 

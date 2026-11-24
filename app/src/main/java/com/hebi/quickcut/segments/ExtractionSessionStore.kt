@@ -15,6 +15,7 @@ data class ExtractionItem(
     val outputUri: String? = null,
     val message: String? = null,
     val reencodeNeeded: Boolean = false,
+    val outputDurationMs: Long? = null,
 )
 
 data class ExtractionSession(
@@ -28,7 +29,10 @@ data class ExtractionSession(
         require(sourceUri.isNotBlank() && durationMs >= 100 && sourceName.isNotBlank())
         require(items.size in 1..ExtractionPlanner.MAX_SEGMENTS)
         require(items.map { it.range.id }.distinct().size == items.size)
-        require(items.all { ExtractionPlanner.isValid(it.range, durationMs) })
+        require(items.all {
+            ExtractionPlanner.isValid(it.range, durationMs) &&
+                (it.outputDurationMs == null || it.outputDurationMs in 100L..durationMs)
+        })
     }
 }
 
@@ -56,6 +60,7 @@ class ExtractionSessionStore(context: Context, fileName: String = "quickcut_extr
                 outputUri = item.optString("output").takeIf { it.isNotBlank() },
                 message = item.optString("message").takeIf { it.isNotBlank() },
                 reencodeNeeded = item.optBoolean("reencodeNeeded", false),
+                outputDurationMs = if (item.isNull("outputDurationMs")) null else item.getLong("outputDurationMs"),
             )
         }
         return ExtractionSession(
@@ -113,6 +118,7 @@ class ExtractionSessionStore(context: Context, fileName: String = "quickcut_extr
                         put("output", item.outputUri ?: "")
                         put("message", item.message ?: "")
                         put("reencodeNeeded", item.reencodeNeeded)
+                        put("outputDurationMs", item.outputDurationMs ?: JSONObject.NULL)
                     })
                 }
             })

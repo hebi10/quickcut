@@ -178,6 +178,32 @@ fn h264_b_frames_and_aac_real_mixed_cut() {
         let report = cut(&fd_path, fd_output.to_str().unwrap(), 3_000_000, 7_500_000, false, Arc::new(Observer::default())).unwrap();
         assert_eq!(report.copied_video_packets, 60);
         assert_eq!(descriptor.stream_position().unwrap(), 123, "native reads must not change the caller's descriptor offset");
+        struct Pending(std::fs::File, AtomicI32);
+        impl Callbacks for Pending {
+            fn is_cancelled(&self) -> bool { false }
+            fn progress(&self, _: i32) {}
+            fn pending_output_fd(&self) -> Option<i32> {
+                self.1.fetch_add(1, Ordering::Relaxed);
+                Some(self.0.as_raw_fd())
+            }
+        }
+        let pending = directory.join("pending.mp4");
+        let pending_file = std::fs::File::create(&pending).unwrap();
+        let callback = Arc::new(Pending(pending_file, AtomicI32::new(0)));
+        let staging = directory.join("direct-staging.mp4");
+        let stem = staging.to_str().unwrap();
+        assert!(cut_ranges_impl(&fd_path, stem, &[(1_950_000, 5_500_000)], false,
+            true, callback.clone(), true).is_err());
+        assert_eq!(callback.1.load(Ordering::Relaxed), 0, "a refused cut must not request an output");
+        let report = cut_ranges_impl(&fd_path, stem, &[(1_950_000, 5_500_000)], false,
+            false, callback.clone(), true).unwrap();
+        assert_eq!(callback.1.load(Ordering::Relaxed), 1);
+        assert_eq!(report.copied_video_packets, 60);
+        assert_eq!(report.encoded_video_packets, 46);
+        assert!(!staging.exists());
+        assert!(!Path::new(&format!("{stem}.smartcut.mp4")).exists());
+        assert!(Command::new("ffmpeg").args(["-v", "error", "-xerror", "-i"]).arg(&pending)
+            .args(["-f", "null", "-"]).status().unwrap().success());
     }
     assert_eq!(std::fs::read(&input).unwrap(), before, "original input must remain unchanged");
     std::fs::remove_dir_all(directory).unwrap();

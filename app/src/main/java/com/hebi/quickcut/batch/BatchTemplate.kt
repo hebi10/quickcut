@@ -12,6 +12,12 @@ enum class BatchClipMode(val usesLeading: Boolean, val usesTrailing: Boolean) {
     JOIN_EDGES(true, true),
 }
 
+data class BatchEdgeTrim(val leadingMs: Long, val trailingMs: Long) {
+    init {
+        require(leadingMs in 0..7_200_000L && trailingMs in 0..7_200_000L)
+    }
+}
+
 data class BatchTemplate(
     val id: String = UUID.randomUUID().toString(),
     val name: String = "앞뒤 3초 자르기",
@@ -36,6 +42,14 @@ data class BatchTemplate(
                 if (leadingMs < 100L || trailingMs < 100L)
                     "앞뒤 연결은 두 구간 모두 최소 0.1초 이상이어야 합니다." else null
         }
+    }
+
+    fun plan(file: BatchFile): BatchPlan {
+        val trim = file.edgeTrim
+        val effective = if (mode == BatchClipMode.REMOVE_EDGES && trim != null) {
+            copy(leadingMs = trim.leadingMs, trailingMs = trim.trailingMs)
+        } else this
+        return effective.plan(file.uri, file.durationMs, file.hasAudio)
     }
 
     fun plan(sourceUri: String, durationMs: Long, hasAudio: Boolean): BatchPlan {

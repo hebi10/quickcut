@@ -25,8 +25,8 @@ with (root / "events.jsonl").open("a") as out:
 if name == "timeout":
     os.execvp(args[2], args[2:])
 if name == "gradle":
-    if any("NativeSmartCutInstrumentedTest" in a for a in args):
-        phase = "preflight"
+    if any("RunnerArguments.class=com.hebi.quickcut.media.NativeSmartCutInstrumentedTest" in a for a in args):
+        phase = "native_35" if (root / "quickcut-api35-full-suite").is_dir() else "preflight"
     elif any("android.testInstrumentationRunnerArguments.notClass=" in a for a in args) and any(
             "android.testInstrumentationRunnerArguments.package=com.hebi.quickcut.ui" in a for a in args):
         phase = "remaining_ui"
@@ -51,7 +51,8 @@ if name == "gradle":
         phase = "full"
     status = int(os.environ.get(phase.upper() + "_STATUS", os.environ.get("FULL_STATUS", "0")))
     count = {"preflight": 1, "date": 2, "remaining_ui": 140, "remaining_other": 146, "offscreen_single": 1,
-             "offscreen_batch": 1, "media3": 2, "regular_35": int(os.environ.get("REGULAR_35_COUNT", "290")),
+             "offscreen_batch": 1, "media3": 2, "native_35": 23,
+             "regular_35": int(os.environ.get("REGULAR_35_COUNT", "267")),
              "media3_publish35": 1, "media3_cancel35": 1}.get(
         phase, int(os.environ.get("FULL_COUNT", "152")))
     failed = status != 0 or (phase in ("full", "remaining_ui", "remaining_other", "regular_35") and os.environ.get("FULL_XML_FAILED") == "1")
@@ -89,7 +90,7 @@ if name == "gradle":
     )
     # API29 runs BackgroundExportInstrumentedTest in two isolated processes.
     # The 286-case "remaining" phase must never invent these identities.
-    # API35/36 instead run the complete unfiltered suite in one process.
+    # API35 keeps that class in the regular phase and API36 runs unfiltered.
     if phase in ("full", "regular_35"):
         required += ("com.hebi.quickcut.export.BackgroundExportInstrumentedTest",)
     elif phase == "remaining_ui":
@@ -100,7 +101,9 @@ if name == "gradle":
         prefix = "com.hebi.quickcut.ui." if phase == "remaining_ui" else phase + "."
         classname = required[i] if phase in ("full", "remaining_ui", "remaining_other", "regular_35") and i < len(required) else prefix + "Suite"
         testname = "case" + str(i)
-        if phase == "date":
+        if phase == "native_35":
+            classname = "com.hebi.quickcut.media.NativeSmartCutInstrumentedTest"
+        elif phase == "date":
             classname = "com.hebi.quickcut.media.BatchDateExportInstrumentedTest"
             testname = ("originalDatePreservesVideoCreationDate", "currentDateSavesAsNewVideo")[i]
         elif phase in ("offscreen_single", "offscreen_batch"):
@@ -264,8 +267,8 @@ class EmulatorFlowTest(unittest.TestCase):
             )
         events = [json.loads(line) for line in events_path.read_text().splitlines()]
         def gradle_phase(args):
-            if any("NativeSmartCutInstrumentedTest" in a for a in args):
-                return "preflight"
+            if any("RunnerArguments.class=com.hebi.quickcut.media.NativeSmartCutInstrumentedTest" in a for a in args):
+                return "native_35"
             if any("android.testInstrumentationRunnerArguments.notClass=" in a for a in args):
                 if any("android.testInstrumentationRunnerArguments.package=com.hebi.quickcut.ui" in a for a in args):
                     return "remaining_ui"
@@ -286,26 +289,29 @@ class EmulatorFlowTest(unittest.TestCase):
             if any("android.testInstrumentationRunnerArguments.class=com.hebi.quickcut.export.BackgroundMedia3ExportInstrumentedTest" in a for a in args):
                 return "media3"
             return "full"
-        phases = [gradle_phase(event) for event in events if event[0] == "gradle"]
+        gradle_calls = [event for event in events if event[0] == "gradle"]
+        phases = [gradle_phase(event) for event in gradle_calls]
+        if phases and phases[0] == "native_35":
+            phases[0] = "preflight"
         return result, root, events, phases
 
-    def test_api35_keeps_292_cases_and_isolates_both_media3_methods(self):
+    def test_api35_keeps_292_cases_and_isolates_codec_stress(self):
         result, root, _, phases = self.run_flow(QUICKCUT_EMULATOR_API="35")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(phases, ["preflight", "regular_35", "media3_publish35", "media3_cancel35"])
+        self.assertEqual(phases, ["preflight", "native_35", "regular_35", "media3_publish35", "media3_cancel35"])
         self.assertIn("All 292 distinct API35 tests passed", result.stdout)
         folder = root / "app/build/outputs/androidTest-results/connected/debug"
-        self.assertEqual(len(list(folder.glob("TEST-api35-*.xml"))), 3)
+        self.assertEqual(len(list(folder.glob("TEST-api35-*.xml"))), 4)
 
     def test_api35_missing_original_test_cannot_pass(self):
-        result, root, _, _ = self.run_flow(QUICKCUT_EMULATOR_API="35", REGULAR_35_COUNT=289)
+        result, root, _, _ = self.run_flow(QUICKCUT_EMULATOR_API="35", REGULAR_35_COUNT=266)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("regular: expected 290 original tests", result.stdout + result.stderr)
+        self.assertIn("regular: expected 267 original tests", result.stdout + result.stderr)
         self.assertFalse((root / "quickcut-stage20-evidence/verified-screens-and-tests.json").exists())
 
     def test_api35_codec_crash_does_not_allow_release(self):
-        result, root, _, phases = self.run_flow(QUICKCUT_EMULATOR_API="35", MEDIA3_CANCEL35_STATUS=47)
-        self.assertEqual(phases, ["preflight", "regular_35", "media3_publish35", "media3_cancel35"])
+        result, root, _, phases = self.run_flow(QUICKCUT_EMULATOR_API="35", NATIVE_35_STATUS=47)
+        self.assertEqual(phases, ["preflight", "native_35", "regular_35", "media3_publish35", "media3_cancel35"])
         self.assertEqual(result.returncode, 47, result.stdout + result.stderr)
         self.assertFalse((root / "quickcut-stage20-evidence/verified-screens-and-tests.json").exists())
 

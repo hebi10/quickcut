@@ -146,9 +146,8 @@ if [[ "${QUICKCUT_EMULATOR_API:-}" == 29 ]]; then
   run_checked "Require all 292 original API29 tests" \
     python3 "$SCRIPT_DIR/verify-api29-complete-suite.py" "$RESULTS/debug"
 elif [[ "${QUICKCUT_EMULATOR_API:-}" == 35 ]]; then
-  # An Android 15 emulator crashed inside the system CodecLooper while cancelling
-  # the second offscreen Media3 export. Run every original test, but isolate
-  # the two codec stress methods in fresh instrumentation processes.
+  # The native class passed on its own but its keyframe-boundary export stalled
+  # inside the regular API35 suite. Isolate it and both offscreen Media3 methods.
   api35_dir=quickcut-api35-full-suite
   rm -rf "$api35_dir"
   mkdir -p "$api35_dir"
@@ -160,6 +159,11 @@ elif [[ "${QUICKCUT_EMULATOR_API:-}" == 35 ]]; then
     run_checked "API35 full-suite phase $phase" timeout --kill-after=30s "$budget" gradle --no-daemon \
       -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true :app:connectedDebugAndroidTest \
       "$@"
+    if [[ "$last_status" -ne 0 ]]; then
+      timeout --kill-after=2s 15s adb logcat -d -t 1000 -v threadtime \
+        -s QuickCutExport:I TestRunner:I MediaCodec:W CCodec:W AndroidRuntime:E \
+        > "quickcut-host-diagnostics/api35-$phase-failure.log" || true
+    fi
     mapfile -d '' xmls < <(find "$RESULTS" -name 'TEST-*.xml' -print0 2>/dev/null)
     if [[ "${#xmls[@]}" -ne 1 ]]; then
       run_checked "Require one API35 $phase XML result" false
@@ -168,15 +172,18 @@ elif [[ "${QUICKCUT_EMULATOR_API:-}" == 35 ]]; then
         "$api35_dir/TEST-api35-$phase.xml"
     fi
   }
+  native_suite=com.hebi.quickcut.media.NativeSmartCutInstrumentedTest
+  run_api35_phase native 10m \
+    "-Pandroid.testInstrumentationRunnerArguments.class=$native_suite"
   run_api35_phase regular 20m \
-    "-Pandroid.testInstrumentationRunnerArguments.notClass=com.hebi.quickcut.export.BackgroundMedia3ExportInstrumentedTest"
+    "-Pandroid.testInstrumentationRunnerArguments.notClass=com.hebi.quickcut.export.BackgroundMedia3ExportInstrumentedTest,$native_suite"
   run_api35_phase media3_publish 10m \
     "-Pandroid.testInstrumentationRunnerArguments.class=com.hebi.quickcut.export.BackgroundMedia3ExportInstrumentedTest#media3ProcessingPublishesAValidOutputAfterAppSwitchAndScreenOff"
   run_api35_phase media3_cancel 10m \
     "-Pandroid.testInstrumentationRunnerArguments.class=com.hebi.quickcut.export.BackgroundMedia3ExportInstrumentedTest#cancellingOffscreenMedia3ProcessingLeavesNoGalleryOutputOrStagedWriter"
   rm -rf "$RESULTS"
   mkdir -p "$RESULTS/debug"
-  for phase in regular media3_publish media3_cancel; do
+  for phase in native regular media3_publish media3_cancel; do
     if [[ -f "$api35_dir/TEST-api35-$phase.xml" ]]; then
       run_checked "Restore API35 $phase XML" cp -- \
         "$api35_dir/TEST-api35-$phase.xml" "$RESULTS/debug/"

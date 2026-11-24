@@ -16,6 +16,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.test.onNodeWithContentDescription
 import android.app.Application
 import android.net.Uri
+import android.os.Build
 import android.view.KeyEvent
 import android.view.inputmethod.InputMethodManager
 import android.content.Context
@@ -216,7 +217,12 @@ class TrimInputInstrumentedTest {
             assertEquals(4_000L, model.timeline.clips.single().startMs)
             assertEquals(6_000L, model.timeline.clips.single().endMs)
             assertEquals(ExportMode.FAST_ONLY, model.requestedExportMode)
-            assertEquals(com.hebi.quickcut.media.ExportMethod.AUDIO_REENCODE, model.completedExportReport!!.method)
+            val expectedMethod = if (Build.VERSION.SDK_INT == Build.VERSION_CODES.Q) {
+                com.hebi.quickcut.media.ExportMethod.AUDIO_REENCODE
+            } else {
+                com.hebi.quickcut.media.ExportMethod.ORIGINAL_COPY
+            }
+            assertEquals(expectedMethod, model.completedExportReport!!.method)
             assertEquals(defaults, settings.loadQuick())
         }
         com.hebi.quickcut.media.MediaReader.validateExport(context, model.completedUri!!, 2_000L, true)

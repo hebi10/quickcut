@@ -16,7 +16,11 @@ import com.hebi.quickcut.settings.QuickCutSettings
 import com.hebi.quickcut.media.MediaReader
 import com.hebi.quickcut.media.VideoExporter
 import com.hebi.quickcut.media.SaveDateMode
+import com.hebi.quickcut.media.ExportAssessment
 import com.hebi.quickcut.media.ExportMode
+import com.hebi.quickcut.media.ExportPlanner
+import com.hebi.quickcut.media.ExportQualityInspector
+import com.hebi.quickcut.media.FastCutSuggestion
 import com.hebi.quickcut.media.ExportQualitySettings
 import com.hebi.quickcut.media.ExportReport
 import com.hebi.quickcut.media.MediaOperationDiagnostics
@@ -39,6 +43,17 @@ import kotlinx.coroutines.withContext
 enum class QuickCutPage {
     PICKER, IMPORTING, EDITOR, EXPORTING, COMPLETED,
 }
+
+internal data class EditorExportReview(
+    val assessment: ExportAssessment,
+    val timeline: EditTimeline,
+    val originalAction: OriginalAction,
+    val dateMode: SaveDateMode,
+    val outputQuality: ExportQualitySettings = ExportQualitySettings(),
+    val retryingFastExport: Boolean = false,
+    val autoStart: Boolean = false,
+    val autoSuggestion: FastCutSuggestion? = null,
+)
 
 private const val PROJECT_INDEX_PROTECTED =
     "프로젝트 목록을 읽지 못했습니다. 기존 기록은 유지되며 목록 확인 전에는 저장·삭제하지 않습니다."
@@ -707,6 +722,19 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         return true
     }
 
+    internal fun snapTrim(clip: VideoClip, startUs: Long, endUs: Long): Boolean {
+        if (page != QuickCutPage.EDITOR || isRecoveringExport || hasUnresolvedExport ||
+            selectedClip != clip || endUs - startUs < TrimInput.MIN_DURATION_MS * 1_000L) return false
+        val adjusted = clip.withRangeUs(startUs, endUs)
+        recordChange()
+        timeline = timeline.copy(clips = timeline.clips.map { if (it.id == clip.id) adjusted else it })
+        needsReencodeConsent = false
+        isTrimInputValid = true
+        playPositionMs = playPositionMs.coerceIn(0L, timeline.totalDurationMs)
+        saveSessionSoon()
+        return true
+    }
+
     fun trimClip(id: Long, startMs: Long, endMs: Long) {
         if (isRecoveringExport || hasUnresolvedExport) return
         if (timeline.clipAt(id) == null) return
@@ -813,6 +841,103 @@ class EditorViewModel(application: Application) : AndroidViewModel(application) 
         timeline = timeline.toggleMute(id)
         saveSessionSoon()
     }
+
+    internal var exportReview by mutableStateOf<EditorExportReview?>(null)
+        private set
+    internal var inspectingExport by mutableStateOf(false)
+        private set
+    internal var inspectionProgress by mutableStateOf<Int?>(null)
+        private set
+    private var inspectionJob: Job? = null
+
+    internal fun inspectExport(
+        originalAction: OriginalAction,
+        dateMode: SaveDateMode,
+        quality: ExportQualitySettings,
+        allowNearby: Boolean = false,
+    ) {
+        if (!canStartExport || inspectingExport) return
+        val requested = timeline
+        val app = getApplication<Application>()
+        dismissExportReview()
+        inspectingExport = true
+        inspectionProgress = null
+        inspectionJob = viewModelScope.launch {
+            val diagnostics = runCatching {
+                MediaOperationDiagnostics.begin(app, ExportStage.REVIEWING,
+                    requested.clips.map { it.uri }.distinct().size)
+            }.getOrNull()
+            var status = "실패"
+            var failure: Throwable? = null
+            try {
+                val assessment = if (quality.isAutomatic) {
+                    ExportPlanner.analyze(app, requested, dateMode,
+                        onProgress = { inspectionProgress = it })
+                } else {
+                    val evaluation = ExportQualityInspector.inspect(app, requested, quality)
+                    val plan = evaluation.plan ?: error(
+                        evaluation.error ?: "내보내기 설정을 확인할 수 없습니다."
+                    )
+                    ExportAssessment(false, "선택한 출력: ${plan.detail}\n" +
+                        "선택한 화질을 적용하기 위해 영상을 재인코딩합니다.")
+                }
+                status = "완료"
+                if (page != QuickCutPage.EDITOR || timeline != requested) return@launch
+                val nearby = if (allowNearby && !assessment.fastAvailable && !needsReencodeConsent) {
+                    listOfNotNull(assessment.suggestion, assessment.lessTrimSuggestion)
+                        .filter { suggestion ->
+                            val adjusted = suggestion.adjusted.clips.singleOrNull()
+                            adjusted != null && adjusted.durationUs < adjusted.sourceDurationMs * 1_000L &&
+                                kotlin.math.abs(suggestion.extraRemovedUs) <= 1_000_000L
+                        }
+                        .minByOrNull { kotlin.math.abs(it.extraRemovedUs) }
+                } else null
+                exportReview = EditorExportReview(
+                    assessment, requested, originalAction, dateMode, quality,
+                    autoStart = (assessment.fastAvailable && !needsReencodeConsent) || nearby != null,
+                    autoSuggestion = nearby,
+                )
+            } catch (cancelled: CancellationException) {
+                status = "취소"
+                failure = cancelled
+                throw cancelled
+            } catch (error: Exception) {
+                failure = error
+                reportError(runCatching {
+                    MediaOperationDiagnostics.message(ExportStage.REVIEWING, error)
+                }.getOrDefault("저장 방식을 확인하지 못했습니다. 다시 시도해 주세요."))
+            } finally {
+                runCatching { diagnostics?.finish(status, failure) }
+                inspectingExport = false
+                inspectionJob = null
+            }
+        }
+    }
+
+    internal fun showFastExportRetry() {
+        if (!canStartExport || !needsReencodeConsent || inspectingExport) return
+        exportReview = EditorExportReview(
+            ExportAssessment(false, exportDiagnostics.explanation().ifBlank {
+                "고속 저장을 완료하지 못했습니다. 정확한 위치로 자동 저장을 선택할 수 있습니다."
+            }),
+            timeline, originalAction, savedDateMode, retryingFastExport = true,
+        )
+    }
+
+    internal fun commitExportReview(
+        context: Context,
+        review: EditorExportReview,
+        mode: ExportMode,
+        suggestion: FastCutSuggestion? = null,
+    ) {
+        if (exportReview !== review || !canStartExport || timeline != review.timeline) return
+        if (suggestion != null && !applyFastCutSuggestion(suggestion)) return
+        dismissExportReview()
+        startExport(context, review.originalAction, review.dateMode, mode, review.outputQuality)
+    }
+
+    internal fun dismissExportReview() { exportReview = null }
+    internal fun cancelExportInspection() { inspectionJob?.cancel() }
 
     fun startExport(
         context: Context,

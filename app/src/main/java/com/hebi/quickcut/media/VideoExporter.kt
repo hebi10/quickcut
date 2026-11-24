@@ -159,24 +159,28 @@ class VideoExporter(private val context: Context) {
             if (plan != null) {
                 onStage(ExportStage.COPYING)
                 val output = try {
-                    if (originalDate != null) {
+                    try {
+                        GalleryWriter(context).saveDirectDescriptor(
+                            outputBaseName = outputBaseName,
+                            expectedDurationMs = clip.durationMs,
+                            expectAudio = !clip.muted && clip.hasAudio,
+                            writer = { destination ->
+                                FastMp4Trimmer.write(context, plan, destination.fileDescriptor, onProgress)
+                            },
+                            onFinalizing = onFinalizing,
+                            estimatedOutputBytes = withContext(Dispatchers.IO) {
+                                ExportStorage.estimateOutputBytes(context, timeline, directWrite = true)
+                            },
+                            onOutputCreated = onOutputCreated,
+                            onCommitted = onCommitted,
+                            onValidating = { onStage(ExportStage.VALIDATING) },
+                            originalTimestampMs = originalDate?.epochMs,
+                        )
+                    } catch (unsupported: FastTrimUnavailableException) {
+                        if (originalDate == null) throw unsupported
                         saveDatedCopy(timeline, plan, originalDate.epochMs, outputBaseName,
                             onProgress, onFinalizing, onOutputCreated, onCommitted, onStage)
-                    } else GalleryWriter(context).saveDirect(
-                        outputBaseName = outputBaseName,
-                        expectedDurationMs = clip.durationMs,
-                        expectAudio = !clip.muted && clip.hasAudio,
-                        writer = { destination ->
-                            FastMp4Trimmer.write(context, plan, destination, onProgress)
-                        },
-                        onFinalizing = onFinalizing,
-                        estimatedOutputBytes = withContext(Dispatchers.IO) {
-                            ExportStorage.estimateOutputBytes(context, timeline, directWrite = true)
-                        },
-                        onOutputCreated = onOutputCreated,
-                        onCommitted = onCommitted,
-                        onValidating = { onStage(ExportStage.VALIDATING) },
-                    )
+                    }
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (unsupported: FastTrimUnavailableException) {
@@ -216,8 +220,53 @@ class VideoExporter(private val context: Context) {
         val temporary = File(context.cacheDir, "quickcut_" + UUID.randomUUID().toString() + ".mp4")
         try {
             var nativeReason: FastExportReason? = null
-            if (outputPlan == null && !hasEffects) onStage(ExportStage.NATIVE_PROCESSING)
-            val nativeResult = if (outputPlan != null || hasEffects) null else try {
+            val nativeEligible = outputPlan == null && !hasEffects
+            if (nativeEligible) onStage(ExportStage.NATIVE_PROCESSING)
+            // The native muxer reopens its output by path. On newer Android,
+            // MediaStore can deny that reopen even while its descriptor is writable.
+            val supportsNativePendingOutput = Build.VERSION.SDK_INT == Build.VERSION_CODES.Q
+            if (nativeEligible && supportsNativePendingOutput &&
+                NativeSmartCutPlan.unavailableReason(timeline) == null
+            ) {
+                var pendingResult: NativeSmartCutResult? = null
+                val direct = try {
+                    GalleryWriter(context).saveLazyDescriptor(
+                        outputBaseName = outputBaseName,
+                        expectedDurationMs = expectedDurationMs,
+                        expectAudio = expectAudio,
+                        writer = { openDestination ->
+                            pendingResult = NativeSmartCutTrimmer.tryExport(
+                                context, timeline, temporary, onProgress,
+                                onUnavailable = { nativeReason = it },
+                                copyVideoOnly = exportMode == ExportMode.FAST_ONLY,
+                                openPendingDestinationFd = { openDestination().fd },
+                            ) ?: throw FastTrimUnavailableException("Native pending export declined")
+                        },
+                        onFinalizing = onFinalizing,
+                        estimatedOutputBytes = withContext(Dispatchers.IO) {
+                            ExportStorage.estimateOutputBytes(context, timeline, directWrite = true)
+                        },
+                        onOutputCreated = onOutputCreated,
+                        onCommitted = onCommitted,
+                        onValidating = { onStage(ExportStage.VALIDATING) },
+                        originalTimestampMs = originalDate?.epochMs,
+                    )
+                } catch (unsupported: FastTrimUnavailableException) {
+                    Log.d("QuickCutExport", "Native pending output declined", unsupported)
+                    null
+                }
+                if (direct != null) {
+                    reportPublished(ExportReport(
+                        nativeExportMethod(checkNotNull(pendingResult), expectAudio),
+                        SystemClock.elapsedRealtime() - startedAt, diagnostics = diagnostics,
+                    ), onReport)
+                    return direct
+                }
+            }
+            // A source-level refusal is independent of the output descriptor.
+            // Retry in private storage only when the destination may be the issue.
+            val stagedAllowed = nativeReason == null || nativeReason == FastExportReason.OUTPUT_VALIDATION
+            val nativeResult = if (!nativeEligible || !stagedAllowed) null else try {
                     NativeSmartCutTrimmer.tryExport(context, timeline, temporary, onProgress,
                         onUnavailable = { nativeReason = it },
                         copyVideoOnly = exportMode == ExportMode.FAST_ONLY)
@@ -283,11 +332,7 @@ class VideoExporter(private val context: Context) {
             reportPublished(
                 ExportReport(
                     if (nativeResult != null) {
-                        when {
-                            nativeResult.encodedPackets > 0 -> ExportMethod.PARTIAL_REENCODE
-                            expectAudio -> ExportMethod.AUDIO_REENCODE
-                            else -> ExportMethod.ORIGINAL_COPY
-                        }
+                        nativeExportMethod(nativeResult, expectAudio)
                     } else ExportReportMapper.method(
                         checkNotNull(media3Result).videoConversionProcess,
                         media3Result.audioConversionProcess,
@@ -305,6 +350,13 @@ class VideoExporter(private val context: Context) {
             }
         }
     }
+
+    private fun nativeExportMethod(result: NativeSmartCutResult, expectAudio: Boolean): ExportMethod =
+        when {
+            result.encodedPackets > 0 -> ExportMethod.PARTIAL_REENCODE
+            expectAudio -> ExportMethod.AUDIO_REENCODE
+            else -> ExportMethod.ORIGINAL_COPY
+        }
 
     /** Stage dated copies privately: malformed headers can never reach the gallery. */
     private suspend fun saveDatedCopy(

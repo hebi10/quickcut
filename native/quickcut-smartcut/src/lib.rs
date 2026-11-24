@@ -34,6 +34,7 @@ use decline::{explain, Reason};
 pub trait Callbacks: Send + Sync {
     fn is_cancelled(&self) -> bool;
     fn progress(&self, percent: i32);
+    fn pending_output_fd(&self) -> Option<i32> { None }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -210,13 +211,13 @@ pub fn cut(input: &str, output: &str, start_us: i64, end_us: i64, muted: bool,
 /// indexed once; every encoded boundary gets its own AVC parameter-set ID.
 pub fn cut_ranges(input: &str, output: &str, ranges: &[(i64, i64)], muted: bool,
     callbacks: Arc<dyn Callbacks>) -> Result<Report> {
-    cut_ranges_impl(input, output, ranges, muted, false, callbacks)
+    cut_ranges_impl(input, output, ranges, muted, false, callbacks, false)
 }
 
 /// The user's fast-only choice permits audio conversion, never video encoding.
 pub fn cut_ranges_copy_video(input: &str, output: &str, ranges: &[(i64, i64)], muted: bool,
     callbacks: Arc<dyn Callbacks>) -> Result<Report> {
-    cut_ranges_impl(input, output, ranges, muted, true, callbacks)
+    cut_ranges_impl(input, output, ranges, muted, true, callbacks, false)
 }
 
 /// Return inward-only ranges at the actual microsecond boundaries. These are
@@ -267,8 +268,14 @@ pub fn suggest_copy_ranges(input: &str, ranges: &[(i64, i64)], source_end_us: i6
     Ok(proposed)
 }
 
+#[cfg(target_os = "android")]
+fn cut_ranges_to_pending(input: &str, staging: &str, ranges: &[(i64, i64)],
+    muted: bool, copy_video_only: bool, callbacks: Arc<dyn Callbacks>) -> Result<Report> {
+    cut_ranges_impl(input, staging, ranges, muted, copy_video_only, callbacks, true)
+}
+
 fn cut_ranges_impl(input: &str, output: &str, ranges: &[(i64, i64)], muted: bool,
-    copy_video_only: bool, callbacks: Arc<dyn Callbacks>) -> Result<Report> {
+    copy_video_only: bool, callbacks: Arc<dyn Callbacks>, direct_pending: bool) -> Result<Report> {
     ensure!(Path::new(input).is_absolute() && Path::new(output).is_absolute(), "local absolute paths required");
     ensure!(!ranges.is_empty() && ranges.len() <= 256, "unsupported range count");
     ensure!(ranges.iter().all(|&(start, end)| start >= 0 && end > start), "invalid trim range");
@@ -323,11 +330,25 @@ fn cut_ranges_impl(input: &str, output: &str, ranges: &[(i64, i64)], muted: bool
         ensure_fast!(!copy_video_only || stats.encoded_video_packets == 0, OutputValidation,
             "fast-only output unexpectedly encoded video");
         ensure_fast!(stats.copied_video_packets + stats.encoded_video_packets == expected, OutputValidation, "retained picture count changed");
+        // Only the caller owns a pending MediaStore row. Native cleanup
+        // removes private staging paths and leaves rollback of the row to Android.
+        let pending_path;
+        let final_path = if direct_pending {
+            lease.verify(input, callbacks.as_ref())?;
+            let fd = callbacks.pending_output_fd()
+                .ok_or_else(|| anyhow::anyhow!("pending video descriptor unavailable"))?;
+            ensure_fast!(fd >= 0, OutputValidation, "invalid pending output descriptor");
+            pending_path = format!("/proc/self/fd/{fd}");
+            let metadata = explain(std::fs::metadata(&pending_path).map_err(Into::into), Reason::OutputValidation)?;
+            ensure_fast!(pending_path != input && metadata.is_file() && metadata.len() == 0,
+                OutputValidation, "pending output is not an empty regular file");
+            pending_path.as_str()
+        } else { output };
         let final_video_packets = if source.video.codec == "hevc" {
-            explain(hevc::remux(&intermediate_path, output, display, callbacks.as_ref(),
+            explain(hevc::remux(&intermediate_path, final_path, display, callbacks.as_ref(),
                 &stats.copied_segment_starts_us, source.video.frame_rate), Reason::OutputValidation)?
         } else {
-            explain(avc1::remux(&intermediate_path, output, display, callbacks.as_ref(),
+            explain(avc1::remux(&intermediate_path, final_path, display, callbacks.as_ref(),
                 source.video.frame_rate), Reason::OutputValidation)?
         };
         ensure_fast!(final_video_packets == expected, OutputValidation, "final remux changed the retained picture count");

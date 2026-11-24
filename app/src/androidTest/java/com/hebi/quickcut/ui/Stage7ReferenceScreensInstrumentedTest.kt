@@ -49,7 +49,7 @@ class Stage7ReferenceScreensInstrumentedTest {
                 }
             }
         }
-        compose.onNodeWithText("+ 영상 편집 시작하기").assertIsDisplayed()
+        compose.onNodeWithText("빠른 자르기 시작").assertIsDisplayed()
         capture("stage7_home.png")
         compose.onNodeWithText("프로젝트").performClick()
         compose.onNodeWithText("프로젝트 없음").assertIsDisplayed()

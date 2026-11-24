@@ -49,6 +49,8 @@ class DialogDesignInstrumentedTest {
         }
         compose.onNodeWithText("저장 설정").assertIsDisplayed()
         compose.onNodeWithText("저장 정보").assertExists()
+        compose.onNodeWithText("프로젝트(편집 내용) 보관과는 다른 작업입니다.", substring = true)
+            .assertExists()
         compose.onNodeWithText("기기 갤러리에 저장").assertExists()
         compose.onNodeWithText("저장 시작").assertIsDisplayed().assertHeightIsAtLeast(48.dp)
         compose.onNodeWithText("저장 정보").assertExists()
@@ -85,6 +87,9 @@ class DialogDesignInstrumentedTest {
                     onAllowReencode = {}, onSuggestedCut = null, onDismiss = {})
             }
         }
+        compose.onNodeWithText("선택한 구간 그대로 저장").assertExists()
+        compose.onNodeWithText("내가 설정한 시작·끝 시간은 바뀌지 않습니다.", substring = true)
+            .assertExists()
         compose.onNodeWithText("정확한 위치로 자동 저장")
             .assertIsDisplayed().assertHeightIsAtLeast(48.dp)
         capture("dialog_export_method")

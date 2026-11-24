@@ -39,15 +39,22 @@ if name == "gradle":
         phase = "offscreen_single"
     elif any("android.testInstrumentationRunnerArguments.class=com.hebi.quickcut.export.BackgroundExportInstrumentedTest#batchContinuesToTheSecondFileAndPublishesBothWhileScreenIsOff" in a for a in args):
         phase = "offscreen_batch"
+    elif any("android.testInstrumentationRunnerArguments.notClass=com.hebi.quickcut.export.BackgroundMedia3ExportInstrumentedTest" in a for a in args):
+        phase = "regular_35"
+    elif any("BackgroundMedia3ExportInstrumentedTest#media3ProcessingPublishes" in a for a in args):
+        phase = "media3_publish35"
+    elif any("BackgroundMedia3ExportInstrumentedTest#cancellingOffscreen" in a for a in args):
+        phase = "media3_cancel35"
     elif any("android.testInstrumentationRunnerArguments.class=com.hebi.quickcut.export.BackgroundMedia3ExportInstrumentedTest" in a for a in args):
         phase = "media3"
     else:
         phase = "full"
     status = int(os.environ.get(phase.upper() + "_STATUS", os.environ.get("FULL_STATUS", "0")))
     count = {"preflight": 1, "date": 2, "remaining_ui": 140, "remaining_other": 146, "offscreen_single": 1,
-             "offscreen_batch": 1, "media3": 2}.get(
+             "offscreen_batch": 1, "media3": 2, "regular_35": int(os.environ.get("REGULAR_35_COUNT", "290")),
+             "media3_publish35": 1, "media3_cancel35": 1}.get(
         phase, int(os.environ.get("FULL_COUNT", "152")))
-    failed = status != 0 or (phase in ("full", "remaining_ui", "remaining_other") and os.environ.get("FULL_XML_FAILED") == "1")
+    failed = status != 0 or (phase in ("full", "remaining_ui", "remaining_other", "regular_35") and os.environ.get("FULL_XML_FAILED") == "1")
     results = root / "app/build/outputs/androidTest-results/connected"
     results.mkdir(parents=True, exist_ok=True)
     # Detect stale preflight XML if shell forgot to clear it before full tests.
@@ -83,7 +90,7 @@ if name == "gradle":
     # API29 runs BackgroundExportInstrumentedTest in two isolated processes.
     # The 286-case "remaining" phase must never invent these identities.
     # API35/36 instead run the complete unfiltered suite in one process.
-    if phase == "full":
+    if phase in ("full", "regular_35"):
         required += ("com.hebi.quickcut.export.BackgroundExportInstrumentedTest",)
     elif phase == "remaining_ui":
         required = tuple(cls for cls in required if cls.startswith("com.hebi.quickcut.ui."))
@@ -91,7 +98,7 @@ if name == "gradle":
         required = tuple(cls for cls in required if not cls.startswith("com.hebi.quickcut.ui."))
     for i in range(count):
         prefix = "com.hebi.quickcut.ui." if phase == "remaining_ui" else phase + "."
-        classname = required[i] if phase in ("full", "remaining_ui", "remaining_other") and i < len(required) else prefix + "Suite"
+        classname = required[i] if phase in ("full", "remaining_ui", "remaining_other", "regular_35") and i < len(required) else prefix + "Suite"
         testname = "case" + str(i)
         if phase == "date":
             classname = "com.hebi.quickcut.media.BatchDateExportInstrumentedTest"
@@ -101,10 +108,15 @@ if name == "gradle":
             testname = ("actualExportFinishesOffscreenAndItsResultSurvivesActivityRecreation"
                         if phase == "offscreen_single" else
                         "batchContinuesToTheSecondFileAndPublishesBothWhileScreenIsOff")
-        elif phase == "media3":
+        elif phase in ("media3", "media3_publish35", "media3_cancel35"):
             classname = "com.hebi.quickcut.export.BackgroundMedia3ExportInstrumentedTest"
-            testname = ("media3ProcessingPublishesAValidOutputAfterAppSwitchAndScreenOff",
-                        "cancellingOffscreenMedia3ProcessingLeavesNoGalleryOutputOrStagedWriter")[i]
+            if phase == "media3_publish35":
+                testname = "media3ProcessingPublishesAValidOutputAfterAppSwitchAndScreenOff"
+            elif phase == "media3_cancel35":
+                testname = "cancellingOffscreenMedia3ProcessingLeavesNoGalleryOutputOrStagedWriter"
+            else:
+                testname = ("media3ProcessingPublishesAValidOutputAfterAppSwitchAndScreenOff",
+                            "cancellingOffscreenMedia3ProcessingLeavesNoGalleryOutputOrStagedWriter")[i]
         if classname.endswith("Stage20RecoveryInstrumentedTest") and os.environ.get("STAGE20_MISSING_SUITE") == "1":
             classname = phase + ".Suite"
         owner = suite if i < half else other_suite
@@ -116,6 +128,12 @@ if name == "gradle":
     (reports / "index.html").write_text(phase + " report")
     sys.exit(status)
 if name == "adb":
+    if args == ["get-state"]:
+        print("device")
+        sys.exit(0)
+    if args == ["shell", "getprop", "ro.build.version.sdk"]:
+        print(os.environ.get("QUICKCUT_EMULATOR_API", "35"))
+        sys.exit(0)
     if args[:3] == ["exec-out", "run-as", "com.hebi.quickcut"]:
         if os.environ.get("STAGE13_CAPTURE_STATUS") == "1" and any("stage13_" in a for a in args):
             sys.exit(43)
@@ -234,7 +252,7 @@ class EmulatorFlowTest(unittest.TestCase):
                    **{key: str(value) for key, value in settings.items()})
         # The CI unit-flow stub has no emulator matrix, but release evidence requires a device API.
         # Keep explicit API 29 scenarios unchanged and preserve the real runner's API when supplied.
-        env.setdefault("QUICKCUT_EMULATOR_API", "35")
+        env.setdefault("QUICKCUT_EMULATOR_API", "36")
         result = subprocess.run(["bash", str(SCRIPT)], cwd=root, env=env,
                                 capture_output=True, text=True, timeout=10)
         events_path = root / "events.jsonl"
@@ -259,11 +277,37 @@ class EmulatorFlowTest(unittest.TestCase):
                 return "offscreen_single"
             if any("android.testInstrumentationRunnerArguments.class=com.hebi.quickcut.export.BackgroundExportInstrumentedTest#batchContinuesToTheSecondFileAndPublishesBothWhileScreenIsOff" in a for a in args):
                 return "offscreen_batch"
+            if any("android.testInstrumentationRunnerArguments.notClass=com.hebi.quickcut.export.BackgroundMedia3ExportInstrumentedTest" in a for a in args):
+                return "regular_35"
+            if any("BackgroundMedia3ExportInstrumentedTest#media3ProcessingPublishes" in a for a in args):
+                return "media3_publish35"
+            if any("BackgroundMedia3ExportInstrumentedTest#cancellingOffscreen" in a for a in args):
+                return "media3_cancel35"
             if any("android.testInstrumentationRunnerArguments.class=com.hebi.quickcut.export.BackgroundMedia3ExportInstrumentedTest" in a for a in args):
                 return "media3"
             return "full"
         phases = [gradle_phase(event) for event in events if event[0] == "gradle"]
         return result, root, events, phases
+
+    def test_api35_keeps_292_cases_and_isolates_both_media3_methods(self):
+        result, root, _, phases = self.run_flow(QUICKCUT_EMULATOR_API="35")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(phases, ["preflight", "regular_35", "media3_publish35", "media3_cancel35"])
+        self.assertIn("All 292 distinct API35 tests passed", result.stdout)
+        folder = root / "app/build/outputs/androidTest-results/connected/debug"
+        self.assertEqual(len(list(folder.glob("TEST-api35-*.xml"))), 3)
+
+    def test_api35_missing_original_test_cannot_pass(self):
+        result, root, _, _ = self.run_flow(QUICKCUT_EMULATOR_API="35", REGULAR_35_COUNT=289)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("regular: expected 290 original tests", result.stdout + result.stderr)
+        self.assertFalse((root / "quickcut-stage20-evidence/verified-screens-and-tests.json").exists())
+
+    def test_api35_codec_crash_does_not_allow_release(self):
+        result, root, _, phases = self.run_flow(QUICKCUT_EMULATOR_API="35", MEDIA3_CANCEL35_STATUS=47)
+        self.assertEqual(phases, ["preflight", "regular_35", "media3_publish35", "media3_cancel35"])
+        self.assertEqual(result.returncode, 47, result.stdout + result.stderr)
+        self.assertFalse((root / "quickcut-stage20-evidence/verified-screens-and-tests.json").exists())
 
     def test_preflight_failure_still_runs_full_and_keeps_original_status_and_xml(self):
         result, root, _, phases = self.run_flow(preflight=23)
@@ -474,7 +518,7 @@ class EmulatorFlowTest(unittest.TestCase):
         self.assertIn("152 distinct tests", result.stdout)
         proof = root / "quickcut-stage20-evidence/verified-screens-and-tests.json"
         self.assertTrue(proof.is_file())
-        self.assertEqual(json.loads(proof.read_text())["androidApi"], "35")
+        self.assertEqual(json.loads(proof.read_text())["androidApi"], "36")
         matrix_path = root / "quickcut-ui07a-evidence/visual-matrix.json"
         self.assertTrue(matrix_path.is_file())
         matrix = json.loads(matrix_path.read_text(encoding="utf-8"))
@@ -484,7 +528,7 @@ class EmulatorFlowTest(unittest.TestCase):
         self.assertTrue(release_manifest.is_file())
         qa = json.loads(release_manifest.read_text(encoding="utf-8"))
         self.assertEqual(qa["contract"], "quickcut-ui08a-qa-v1")
-        self.assertEqual(qa["androidApi"], "35")
+        self.assertEqual(qa["androidApi"], "36")
         self.assertEqual(qa["pairedThemeScreenshots"], 40)
         self.assertEqual(qa["requiredMediaClassCount"], 8)
         self.assertFalse(qa["playDeployed"])

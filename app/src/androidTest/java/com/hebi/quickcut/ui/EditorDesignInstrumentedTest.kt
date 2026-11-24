@@ -32,6 +32,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.isSelected
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -40,6 +41,7 @@ import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModelStore
@@ -160,10 +162,13 @@ class EditorDesignInstrumentedTest {
         showBatch(fontScale = 1.6f)
         compose.onNodeWithTag("batch-add-videos").performScrollTo().assertIsDisplayed()
             .assertHeightIsAtLeast(48.dp)
-        compose.onNodeWithTag("batch-save-disabled-reason").assertIsDisplayed()
         compose.onNodeWithTag("batch-mode").performScrollTo().performClick()
         compose.onNodeWithText("처음 + 마지막 구간 연결").assertIsDisplayed().performClick()
         compose.runOnIdle { assertEquals(BatchClipMode.JOIN_EDGES, batch.draftMode) }
+        compose.onNodeWithTag("batch-file-list").performScrollToNode(
+            hasTestTag("batch-save-disabled-reason"))
+        compose.onNodeWithTag("batch-save-disabled-reason").assertIsDisplayed()
+        compose.onNodeWithTag("batch-save-summary").assertIsDisplayed()
         capture("editor_design_batch_large_font")
     }
 
@@ -172,11 +177,15 @@ class EditorDesignInstrumentedTest {
         compose.onNodeWithTag("batch-add-videos").performScrollTo().assertIsDisplayed()
             .assertHeightIsAtLeast(48.dp)
         compose.onNodeWithTag("batch-mode").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("batch-precise-input-toggle").performScrollTo().performClick()
         compose.onNodeWithTag("batch-leading-minutes").performScrollTo().assertIsDisplayed()
             .assertHeightIsAtLeast(56.dp)
         compose.onNodeWithTag("batch-leading-seconds").performScrollTo().assertIsDisplayed()
             .assertHeightIsAtLeast(56.dp)
+        compose.onNodeWithTag("batch-file-list").performScrollToNode(
+            hasTestTag("batch-save-disabled-reason"))
         compose.onNodeWithTag("batch-save-disabled-reason").assertIsDisplayed()
+        compose.onNodeWithTag("batch-save").assertIsNotEnabled()
         capture("editor_design_batch_extra_large_font")
     }
 

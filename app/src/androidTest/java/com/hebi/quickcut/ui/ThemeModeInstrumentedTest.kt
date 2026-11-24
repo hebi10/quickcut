@@ -44,11 +44,11 @@ class ThemeModeInstrumentedTest {
                 }
             }
         }
-        compose.onNodeWithText("+ 영상 편집 시작하기").assertIsDisplayed()
+        compose.onNodeWithText("빠른 자르기 시작").assertIsDisplayed()
         capture("theme_light_home.png", light = true)
         captureUi03aTabs("light", light = true)
         compose.runOnIdle { mode = QuickCutThemeMode.DARK }
-        compose.onNodeWithText("+ 영상 편집 시작하기").assertIsDisplayed()
+        compose.onNodeWithText("빠른 자르기 시작").assertIsDisplayed()
         capture("theme_dark_home.png", light = false)
         captureUi03aTabs("dark", light = false)
     }

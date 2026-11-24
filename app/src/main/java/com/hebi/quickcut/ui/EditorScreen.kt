@@ -132,6 +132,7 @@ fun EditorScreen(
     model: EditorViewModel,
     addVideos: () -> Unit,
     save: () -> Unit,
+    onHelp: (String) -> Unit = {},
 ) {
     val palette = LocalCutPalette.current
     val context = LocalContext.current
@@ -302,6 +303,7 @@ fun EditorScreen(
                 showAudio = false
             },
             onCancel = { showAudio = false },
+            onHelp = onHelp,
         )
         return
     }
@@ -313,6 +315,7 @@ fun EditorScreen(
                 showText = false
             },
             onCancel = { showText = false },
+            onHelp = onHelp,
         )
         return
     }
@@ -325,6 +328,7 @@ fun EditorScreen(
                 showCrop = false
             },
             onCancel = { showCrop = false },
+            onHelp = onHelp,
         )
         return
     }
@@ -339,7 +343,9 @@ fun EditorScreen(
             canUndo = model.canUndo,
             canRedo = model.canRedo,
             canSave = model.canStartExport,
+            onHelp = { onHelp("editor") },
         )
+        FirstVisitGuideBanner("editor", onHelp)
         previewFailure?.let { message ->
             PreviewRecoveryNotice(message, onRetry = retryPreview)
         }
@@ -403,7 +409,7 @@ fun EditorScreen(
                                 if (showTrim && selected != null) {
                                     TrimEditor(selected, trimStartText, trimEndText, onTrimDraftChange,
                                         model::trimSelected, model::beginTrim,
-                                        model::finishTrim, model::setTrimInputValidity)
+                                        model::finishTrim, model::setTrimInputValidity, model::snapTrim)
                                 }
                             }
                         }
@@ -460,7 +466,7 @@ fun EditorScreen(
                                     Spacer(Modifier.height(8.dp))
                                     TrimEditor(selected, trimStartText, trimEndText, onTrimDraftChange,
                                         model::trimSelected, model::beginTrim,
-                                        model::finishTrim, model::setTrimInputValidity)
+                                        model::finishTrim, model::setTrimInputValidity, model::snapTrim)
                                 }
                             }
                         }
@@ -480,7 +486,8 @@ fun EditorScreen(
                 else -> {
                     val inputScroll = rememberScrollState()
                     Column(Modifier.fillMaxSize().then(
-                        if (keyboardVisible) Modifier.verticalScroll(inputScroll) else Modifier,
+                        if (keyboardVisible || showTrim) Modifier.verticalScroll(inputScroll)
+                        else Modifier,
                     )) {
                         PreviewPanel(
                             player = player,
@@ -490,7 +497,9 @@ fun EditorScreen(
                             onPlay = onPlay,
                             onSeek = onSeek,
                             modifier = (if (keyboardVisible) Modifier.height(0.dp).clipToBounds()
-                                else Modifier.weight(1f)).fillMaxWidth().padding(horizontal = 12.dp),
+                                else if (showTrim) Modifier.height(220.dp)
+                                else Modifier.weight(1f))
+                                .fillMaxWidth().padding(horizontal = 12.dp),
                             compact = false,
                         )
                         TimelineStrip(
@@ -504,6 +513,13 @@ fun EditorScreen(
             onTrimEnd = model::finishTrim,
                             modifier = Modifier.fillMaxWidth().heightIn(min = 148.dp),
                         )
+                        ToolButtons(
+                            selected = selected,
+                            model = model,
+                            onAction = onAction,
+                            vertical = false,
+                            showTrim = showTrim,
+                        )
                         if (showTrim && selected != null) {
                             TrimEditor(
                                 selected,
@@ -514,18 +530,12 @@ fun EditorScreen(
                                 model::beginTrim,
                                 model::finishTrim,
                                 model::setTrimInputValidity,
+                                model::snapTrim,
                                 modifier = Modifier.fillMaxWidth()
                                     .background(palette.surface, CutPanelShape)
                                     .padding(horizontal = 14.dp),
                             )
                         }
-                        ToolButtons(
-                            selected = selected,
-                            model = model,
-                            onAction = onAction,
-                            vertical = false,
-                            showTrim = showTrim,
-                        )
                     }
                 }
             }
@@ -604,6 +614,7 @@ private fun EditorHeader(
     canUndo: Boolean,
     canRedo: Boolean,
     canSave: Boolean,
+    onHelp: () -> Unit = {},
 ) {
     val palette = LocalCutPalette.current
     BoxWithConstraints(Modifier.fillMaxWidth()
@@ -632,6 +643,10 @@ private fun EditorHeader(
                     style = MaterialTheme.typography.titleLarge,
                     modifier = Modifier.weight(1f))
                 if (!compactHeader) historyActions()
+                IconButton(onClick = onHelp, modifier = Modifier.size(48.dp)
+                    .testTag("editor-help")) {
+                    Icon(CutIcons.Info, contentDescription = "상세 편집 사용법")
+                }
                 Button(onClick = onSave, enabled = canSave,
                     modifier = Modifier.heightIn(min = 48.dp), shape = CutShape,
                     contentPadding = PaddingValues(horizontal = 14.dp),
@@ -770,10 +785,21 @@ private fun ToolButtons(
     showTrim: Boolean,
 ) {
     val palette = LocalCutPalette.current
+    val disabledReason = when {
+        selected == null -> "타임라인에서 클립을 먼저 선택해 주세요."
+        !model.canSplitSelected -> "분할은 클립의 시작·끝이 아닌 위치에서 사용할 수 있습니다."
+        !selected.hasAudio -> "이 클립에는 소리가 없어 오디오 도구를 사용할 수 없습니다."
+        else -> null
+    }
     if (vertical) {
         Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
             Text("편집 도구", color = palette.primaryText,
                 style = MaterialTheme.typography.titleMedium)
+            disabledReason?.let { reason ->
+                Text(reason, color = palette.secondaryText,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.testTag("editor-tool-hint"))
+            }
             selected?.let {
                 Text("클립 " + (model.timeline.clips.indexOf(it) + 1) +
                     " · " + formatTime(it.durationMs),
@@ -824,6 +850,11 @@ private fun ToolButtons(
             ) {
                 Text("편집 도구", color = palette.primaryText,
                     style = MaterialTheme.typography.titleSmall)
+                disabledReason?.let { reason ->
+                    Text(reason, color = palette.secondaryText,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.testTag("editor-tool-hint"))
+                }
                 selected?.let {
                     Text("클립 " + (model.timeline.clips.indexOf(it) + 1) +
                         " · " + formatTime(it.durationMs),
@@ -850,7 +881,11 @@ private fun ToolButtons(
                         }
                     }
                 } else {
-                    Row(
+                    Column {
+                        Text("도구를 좌우로 밀어 더 보기", color = palette.secondaryText,
+                            style = MaterialTheme.typography.labelSmall,
+                            modifier = Modifier.padding(horizontal = CutSpacing.md))
+                        Row(
                         modifier = Modifier.fillMaxWidth()
                             .horizontalScroll(rememberScrollState())
                             .background(palette.surface)
@@ -860,6 +895,7 @@ private fun ToolButtons(
                         actions.forEach { item ->
                             ToolTile(item, selected, model, onAction, showTrim,
                                 modifier = Modifier.width(70.dp))
+                        }
                         }
                     }
                 }
@@ -923,6 +959,7 @@ private fun TrimEditor(
     onBeginTrim: () -> Unit,
     onEndTrim: () -> Unit,
     onValidityChange: (Boolean) -> Unit,
+    onSnap: (VideoClip, Long, Long) -> Boolean,
     modifier: Modifier = Modifier,
 ) {
     val palette = LocalCutPalette.current
@@ -992,6 +1029,7 @@ private fun TrimEditor(
             Text("시간을 확인해 주세요. 결과 영상은 최소 0.1초 이상이어야 합니다.",
                 color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
         }
+        KeyframeTrimControls(clip, valid, onSnap)
     }
 }
 

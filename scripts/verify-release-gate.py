@@ -23,6 +23,7 @@ REQUIRED_WORKFLOWS = {
 REQUIRED_CI_JOBS = {
     'android.yml': frozenset({'build'}),
     'emulator-smoke.yml': frozenset({
+        'Require frozen main and exact source SHA',
         'emulator (29)', 'emulator (35)', 'emulator (36)',
     }),
 }
@@ -31,7 +32,10 @@ REQUIRED_CI_JOBS = {
 def trusted_run(run, repo, sha, name):
     return (run.get('name') == name and run.get('head_sha') == sha
             and run.get('head_branch') == 'main'
-            and run.get('event') in ('push', 'workflow_dispatch')
+            and run.get('event') == (
+                'workflow_dispatch' if name == REQUIRED_WORKFLOWS['emulator-smoke.yml']
+                else 'push'
+            )
             and run.get('head_repository', {}).get('full_name') == repo
             and run.get('repository', {}).get('full_name') == repo)
 

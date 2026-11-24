@@ -2,119 +2,46 @@ name: Android emulator smoke
 
 on:
   workflow_dispatch:
-  pull_request:
-    paths:
-      - ".github/workflows/play-listing-images.yml"
-      - "scripts/publish-play-listing-images.py"
-      - "scripts/test-play-listing-images.py"
-      - "store/google-play/**"
-      - ".github/workflows/emulator-smoke.yml"
-      - ".github/workflows/ops07-safety.yml"
-      - ".github/workflows/ops08-final-policy.yml"
-      - "scripts/ops07/**"
-      - "scripts/ops08/**"
-      - ".github/workflows/release.yml"
-      - ".github/workflows/android.yml"
-      - ".github/workflows/play-closed-test.yml"
-      - "scripts/publish-play-test.py"
-      - "scripts/test-play-publisher.py"
-      - "scripts/verify-play-bundle.py"
-      - "scripts/VerifyBundleSignatures.java"
-      - "scripts/test-play-bundle.py"
-      - "config/release-certificate.sha256"
-      - "docs/21_PLAY_TEST_AUTOMATION.md"
-      - "scripts/verify-release-gate.py"
-      - "scripts/require-app-release-change.py"
-      - "scripts/test-app-release-change.py"
-      - "scripts/test-release-gate.py"
-      - "scripts/runtime-publication-metadata.py"
-      - "scripts/test-runtime-publication-metadata.py"
-      - "scripts/package-smartcut-source.sh"
-      - "third_party/runtime-publication-metadata/**"
-      - "scripts/android-emulator-check.sh"
-      - "scripts/android-startup-check.py"
-      - "scripts/test-emulator-startup.py"
-      - "scripts/test-emulator-failure.py"
-      - "scripts/test-emulator-flow.py"
-      - "scripts/verify-ui08a-release-evidence.py"
-      - "scripts/android-instrumentation-check.sh"
-      - "scripts/android-dialog-geometry-check.sh"
-      - "scripts/test-dialog-geometry.py"
-      - "scripts/verify-android-main10.py"
-      - "scripts/build-native-smartcut.sh"
-      - "scripts/native-smartcut-sources.json"
-      - "native/**"
-      - "app/src/androidTest/**"
-      - "app/src/main/**"
-      - "app/build.gradle.kts"
-      - "build.gradle.kts"
-      - "settings.gradle.kts"
-      - "gradle.properties"
-      - "gradle/**"
-      - "gradlew"
-      - "gradlew.bat"
-  push:
-    branches: [main]
-    paths:
-      - ".github/workflows/play-listing-images.yml"
-      - "scripts/publish-play-listing-images.py"
-      - "scripts/test-play-listing-images.py"
-      - "store/google-play/**"
-      - ".github/workflows/emulator-smoke.yml"
-      - ".github/workflows/ops07-safety.yml"
-      - ".github/workflows/ops08-final-policy.yml"
-      - "scripts/ops07/**"
-      - "scripts/ops08/**"
-      - ".github/workflows/release.yml"
-      - ".github/workflows/android.yml"
-      - ".github/workflows/play-closed-test.yml"
-      - "scripts/publish-play-test.py"
-      - "scripts/test-play-publisher.py"
-      - "scripts/verify-play-bundle.py"
-      - "scripts/VerifyBundleSignatures.java"
-      - "scripts/test-play-bundle.py"
-      - "config/release-certificate.sha256"
-      - "docs/21_PLAY_TEST_AUTOMATION.md"
-      - "scripts/verify-release-gate.py"
-      - "scripts/require-app-release-change.py"
-      - "scripts/test-app-release-change.py"
-      - "scripts/test-release-gate.py"
-      - "scripts/runtime-publication-metadata.py"
-      - "scripts/test-runtime-publication-metadata.py"
-      - "scripts/package-smartcut-source.sh"
-      - "third_party/runtime-publication-metadata/**"
-      - "scripts/android-emulator-check.sh"
-      - "scripts/android-startup-check.py"
-      - "scripts/test-emulator-startup.py"
-      - "scripts/test-emulator-failure.py"
-      - "scripts/test-emulator-flow.py"
-      - "scripts/verify-ui08a-release-evidence.py"
-      - "scripts/android-instrumentation-check.sh"
-      - "scripts/android-dialog-geometry-check.sh"
-      - "scripts/test-dialog-geometry.py"
-      - "scripts/verify-android-main10.py"
-      - "scripts/build-native-smartcut.sh"
-      - "scripts/native-smartcut-sources.json"
-      - "native/**"
-      - "app/src/androidTest/**"
-      - "app/src/main/**"
-      - "app/build.gradle.kts"
-      - "build.gradle.kts"
-      - "settings.gradle.kts"
-      - "gradle.properties"
-      - "gradle/**"
-      - "gradlew"
-      - "gradlew.bat"
+    inputs:
+      expected_main_sha:
+        description: "Exact frozen main SHA (40 lowercase hex characters); mandatory for full 292-case API matrix"
+        type: string
+        required: true
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # A second manual request must not cancel a 40-minute evidence-producing run.
+  cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
+  validate-source:
+    name: Require frozen main and exact source SHA
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - name: Fail closed on wrong branch or requested SHA
+        env:
+          SOURCE_REF: ${{ github.ref }}
+          SOURCE_SHA: ${{ github.sha }}
+          EXPECTED_MAIN_SHA: ${{ inputs.expected_main_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$SOURCE_REF" != "refs/heads/main" ]]; then
+            echo "::error::Full emulator QA may run only on main."
+            exit 1
+          fi
+          if [[ ! "$EXPECTED_MAIN_SHA" =~ ^[0-9a-f]{40}$ ]] || [[ "$EXPECTED_MAIN_SHA" != "$SOURCE_SHA" ]]; then
+            echo "::error::Exact current main commit SHA is required; cannot validate an unrelated source."
+            exit 1
+          fi
+          echo "Validated frozen main SHA: $SOURCE_SHA"
+
   emulator:
+    needs: validate-source
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     strategy:
@@ -165,38 +92,60 @@ jobs:
             sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update -qq
             sudo DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends "${missing[@]}"
           fi
-      - name: Install Android NDK
-        run: sdkmanager --install "ndk;27.3.13750724"
-      - name: Restore native build cache
+      - name: Restore pinned native engine and dependencies
         id: native_cache
         uses: actions/cache/restore@v4
         with:
           path: |
             build/native-smartcut
+            app/build/generated/nativeLibs
+            build/generated/smartcutAssets
             ~/.cargo/registry
             ~/.cargo/git
-          key: native-smartcut-${{ runner.os }}-${{ hashFiles('scripts/build-native-smartcut.sh', 'scripts/native-smartcut-sources.json') }}-${{ hashFiles('native/**') }}
+          key: native-smartcut-${{ runner.os }}-${{ hashFiles('scripts/build-native-smartcut.sh', 'scripts/native-smartcut-sources.json', 'scripts/ci-native-cache.py') }}-${{ hashFiles('native/**') }}
           restore-keys: |
-            native-smartcut-${{ runner.os }}-${{ hashFiles('scripts/build-native-smartcut.sh', 'scripts/native-smartcut-sources.json') }}-
+            native-smartcut-${{ runner.os }}-${{ hashFiles('scripts/build-native-smartcut.sh', 'scripts/native-smartcut-sources.json', 'scripts/ci-native-cache.py') }}-
             native-smartcut-${{ runner.os }}-
-      - name: Reset Rust outputs from a different native dependency cache
+      - name: Verify native binary cache without trusting a partial restore
+        id: native_ready
+        env:
+          NATIVE_CACHE_HIT: ${{ steps.native_cache.outputs.cache-hit }}
+        run: |
+          if [[ "$NATIVE_CACHE_HIT" == true ]] && python3 scripts/ci-native-cache.py verify; then
+            echo "valid=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Reusing checksum-verified arm64/x86_64 native binaries and notices"
+          else
+            echo "valid=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No validated exact native binary cache; rebuilding from pinned source"
+          fi
+      - name: Install pinned Android NDK only for native rebuild
+        if: steps.native_ready.outputs.valid != 'true'
+        run: sdkmanager --install "ndk;27.3.13750724"
+      - name: Reset Rust outputs from an incompatible native dependency cache
+        if: steps.native_ready.outputs.valid != 'true'
         env:
           NATIVE_CACHE_MATCHED_KEY: ${{ steps.native_cache.outputs.cache-matched-key }}
-          NATIVE_CACHE_DEPENDENCY_PREFIX: native-smartcut-${{ runner.os }}-${{ hashFiles('scripts/build-native-smartcut.sh', 'scripts/native-smartcut-sources.json') }}-
+          NATIVE_CACHE_DEPENDENCY_PREFIX: native-smartcut-${{ runner.os }}-${{ hashFiles('scripts/build-native-smartcut.sh', 'scripts/native-smartcut-sources.json', 'scripts/ci-native-cache.py') }}-
         run: |
-          # Legacy/cross-dependency caches may retain C builds, validated by .build-key.
-          # Rebuild Rust from scratch so stale external static libraries cannot be linked.
           if [[ -n "$NATIVE_CACHE_MATCHED_KEY" && "$NATIVE_CACHE_MATCHED_KEY" != "$NATIVE_CACHE_DEPENDENCY_PREFIX"* ]]; then
             rm -rf build/native-smartcut/cargo-target
           fi
-      - name: Build native smart-cut engine
+      - name: Build pinned native smart-cut engine
+        if: steps.native_ready.outputs.valid != 'true'
         run: bash scripts/build-native-smartcut.sh
-      - name: Save native build cache
+      - name: Write and verify complete native cache evidence
+        if: steps.native_ready.outputs.valid != 'true'
+        run: |
+          python3 scripts/ci-native-cache.py write
+          python3 scripts/ci-native-cache.py verify
+      - name: Save native binaries and dependencies for future emulator jobs
         if: success() && steps.native_cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: |
             build/native-smartcut
+            app/build/generated/nativeLibs
+            build/generated/smartcutAssets
             ~/.cargo/registry
             ~/.cargo/git
           key: ${{ steps.native_cache.outputs.cache-primary-key }}
@@ -216,6 +165,9 @@ jobs:
           python3 scripts/test-emulator-startup.py
           python3 scripts/test-system-anr-watchdog.py
           python3 scripts/test-emulator-flow.py
+          python3 scripts/test-api35-complete-suite.py
+          python3 scripts/test-ci-android-health.py
+          python3 scripts/test-ci-native-cache.py
           python3 scripts/test-dialog-geometry.py
       - name: Start bounded emulator host resource monitor
         continue-on-error: true
@@ -263,7 +215,10 @@ jobs:
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: ${{ matrix.api }}
-          target: google_apis
+          # API29 Google APIs image crashed in the Android system ConfigUpdateInstallReceiver
+          # (16 MiB Java heap OOM) before instrumentation. Keep all 292 API29 tests
+          # and evidence gates on the AOSP image; API35/36 retain Google APIs.
+          target: ${{ matrix.api == 29 && 'default' || 'google_apis' }}
           arch: x86_64
           profile: pixel_6
           disk-size: 2048M

@@ -45,6 +45,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -89,6 +90,7 @@ fun TextEditorScreen(
     clip: VideoClip,
     onApply: (List<TextLayer>) -> Unit,
     onCancel: () -> Unit,
+    onHelp: (String) -> Unit = {},
 ) {
     val palette = LocalCutPalette.current
     BackHandler(onBack = onCancel)
@@ -163,11 +165,15 @@ fun TextEditorScreen(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Column {
+            Column(Modifier.weight(1f)) {
                 Text("텍스트 오버레이", color = palette.primaryText,
                     style = MaterialTheme.typography.titleLarge)
                 Text("현재 클립 · ${formatTime(clip.durationMs)}",
                     color = palette.secondaryText, style = MaterialTheme.typography.bodySmall)
+            }
+            TextButton(onClick = { onHelp("text") }, modifier = Modifier.heightIn(min = 48.dp)
+                .testTag("text-help")) {
+                Text("사용법")
             }
             TextButton(onClick = onCancel, modifier = Modifier.heightIn(min = 48.dp)) {
                 Text("취소")
@@ -177,6 +183,7 @@ fun TextEditorScreen(
             Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
+            FirstVisitGuideBanner("text", onHelp)
             BoxWithConstraints(
                 Modifier.fillMaxWidth().height(280.dp).background(Color.Black),
                 contentAlignment = Alignment.Center,
@@ -292,6 +299,7 @@ fun TextEditorScreen(
                 ) { Text("+ 텍스트 추가") }
             }
             if (current != null) {
+                var activeSection by rememberSaveable(current.id) { mutableStateOf("content") }
                 var startDraft by remember(current.id, current.startMs) {
                     mutableStateOf(TrimInput.secondsText(current.startMs))
                 }
@@ -306,6 +314,22 @@ fun TextEditorScreen(
                     color = palette.secondaryText,
                     style = MaterialTheme.typography.labelMedium,
                     modifier = Modifier.testTag("ui05a-selected-text-layer"))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("content" to "내용", "style" to "스타일", "timing" to "표시 시간").forEach { (id, label) ->
+                        val modifier = Modifier.weight(1f).heightIn(min = 48.dp)
+                            .testTag("text-section-" + id)
+                            .semantics { selected = activeSection == id }
+                        if (activeSection == id) {
+                            Button(onClick = { activeSection = id }, modifier = modifier, shape = CutShape) {
+                                Text(label)
+                            }
+                        } else {
+                            OutlinedButton(onClick = { activeSection = id }, modifier = modifier,
+                                shape = CutShape) { Text(label) }
+                        }
+                    }
+                }
+                if (activeSection == "content") {
                 Text("텍스트 내용", color = palette.primaryText,
                     style = MaterialTheme.typography.titleMedium)
                 OutlinedTextField(
@@ -319,6 +343,8 @@ fun TextEditorScreen(
                     minLines = 2, maxLines = 3,
                     supportingText = { Text("${current.text.length}/${TextLayerPolicy.MAX_CHARS}") },
                 )
+                }
+                if (activeSection == "style") {
                 Text("색상", color = palette.primaryText,
                     style = MaterialTheme.typography.titleSmall)
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
@@ -371,6 +397,8 @@ fun TextEditorScreen(
                         ) { Text(option.label) }
                     }
                 }
+                }
+                if (activeSection == "timing") {
                 Text("표시 시간: ${formatTime(current.startMs)} ~ ${formatTime(current.endMs)}",
                     color = palette.primaryText, style = MaterialTheme.typography.titleSmall)
                 RangeSlider(
@@ -420,6 +448,7 @@ fun TextEditorScreen(
                 Text("텍스트는 선택한 구간에서만 표시됩니다. 미리보기 위에서 드래그해 위치를 변경할 수 있습니다.",
                     color = palette.secondaryText,
                     style = MaterialTheme.typography.bodySmall)
+                }
                 OutlinedButton(
                     onClick = {
                         layers = layers.filterNot { it.id == current.id }

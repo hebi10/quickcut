@@ -139,6 +139,22 @@ class FastBFrameInstrumentedTest {
             assertTrue("Explain why trimming the tail prevents safe B-frame copy: ${assessment.explanation}",
                 assessment.explanation.contains("끝"))
         }
+        withFixture("quickcut_vfr_closed_gop.mp4") { context, source, clip ->
+            val requested = clip.copy(startMs = 2_000L, endMs = 6_000L, muted = true)
+            val sourceVideo = samples(source, "video/").filter { it.timeUs in requested.startUs until requested.endUs }
+            val presentationTimes = sourceVideo.map { it.timeUs }.sorted()
+            assertTrue(presentationTimes.zipWithNext().map { (a, b) -> b - a }.maxOrNull()!! > 60_000L)
+            assertTrue(sourceVideo.zipWithNext().any { (a, b) -> b.timeUs < a.timeUs })
+            val assessment = ExportPlanner.analyze(context, EditTimeline(listOf(requested)), SaveDateMode.CURRENT)
+            assertTrue(assessment.directCopy)
+            val plan = checkNotNull(FastMp4Trimmer.prepare(context, requested))
+            assertTrue(plan.closedEnd)
+            val output = File.createTempFile("vfr_closed_gop", ".mp4", context.cacheDir)
+            try {
+                FileOutputStream(output).use { FastMp4Trimmer.write(context, plan, it.fd, {}) }
+                assertCopiedSamples(sourceVideo, samples(output, "video/"), requested.startUs)
+            } finally { output.delete() }
+        }
     }
 
     @Test

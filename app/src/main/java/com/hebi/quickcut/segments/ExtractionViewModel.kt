@@ -16,6 +16,7 @@ import com.hebi.quickcut.editor.SingleExportSnapshot
 import com.hebi.quickcut.export.ExportWorkMonitor
 import com.hebi.quickcut.media.ExportMode
 import com.hebi.quickcut.media.ExportPlanner
+import com.hebi.quickcut.media.FastCutSuggestion
 import com.hebi.quickcut.media.ExportStage
 import com.hebi.quickcut.media.MediaReader
 import com.hebi.quickcut.media.OutputCleanupException
@@ -44,6 +45,10 @@ class ExtractionViewModel(
     private var job: Job? = null
     private var reviewedFast: Map<Long, Boolean>? = null
     private var reviewedRanges: List<ExtractionItem>? = null
+    internal var fastSuggestions by mutableStateOf<Map<Long, FastCutSuggestion>>(emptyMap())
+        private set
+    internal val fastSelectionCount: Int
+        get() = reviewedFast.orEmpty().count { (id, fast) -> fast || id in fastSuggestions }
     private var unjournaledOutput: Pair<Long, String>? = null
 
     var session by mutableStateOf<ExtractionSession?>(null)
@@ -214,12 +219,18 @@ class ExtractionViewModel(
         viewModelScope.launch {
             try {
                 val result = mutableMapOf<Long, Boolean>()
+                val suggestions = mutableMapOf<Long, FastCutSuggestion>()
                 for (item in pending) {
                     val timeline = ExtractionPlanner.timeline(
                         snapshot.sourceUri, snapshot.durationMs, snapshot.hasAudio, item.range
                     )
                     val plan = ExportPlanner.analyze(app, timeline, SaveDateMode.CURRENT)
                     result[item.range.id] = plan.fastAvailable && !item.reencodeNeeded
+                    if (!plan.fastAvailable && !item.reencodeNeeded) {
+                        listOfNotNull(plan.suggestion, plan.lessTrimSuggestion)
+                            .minByOrNull { kotlin.math.abs(it.extraRemovedUs) }
+                            ?.let { suggestions[item.range.id] = it }
+                    }
                 }
                 if (session != snapshot) {
                     notice = "구간이 변경되었습니다. 다시 저장 방식을 확인해 주세요."
@@ -227,6 +238,7 @@ class ExtractionViewModel(
                 }
                 reviewedRanges = pending
                 reviewedFast = result
+                fastSuggestions = suggestions.toMap()
                 if (result.values.all { it }) startReviewed(allowReencode = false)
                 else requiresReencodeApproval = true
             } catch (error: CancellationException) {
@@ -250,13 +262,23 @@ class ExtractionViewModel(
         startReviewed(allowReencode = true)
     }
 
-    private fun startReviewed(allowReencode: Boolean) {
+    internal fun approveFastSuggestions() {
+        if (!requiresReencodeApproval || fastSuggestions.isEmpty()) return
+        requiresReencodeApproval = false
+        startReviewed(allowReencode = false, useSuggestions = true)
+    }
+
+    private fun startReviewed(allowReencode: Boolean, useSuggestions: Boolean = false) {
         val snapshot = session ?: return
         val reviewed = reviewedRanges ?: return
         val fastMap = reviewedFast ?: return
+        val suggestions = if (useSuggestions) fastSuggestions else emptyMap()
+        val selected = if (useSuggestions) reviewed.filter {
+            fastMap[it.range.id] == true || it.range.id in suggestions
+        } else reviewed
         if (exporting || blocked || ExportWorkMonitor.isRunning ||
             reviewed.any { row -> snapshot.items.none { it.range.id == row.range.id && it == row } } ||
-            (!allowReencode && fastMap.values.any { !it })
+            selected.isEmpty() || (!allowReencode && !useSuggestions && fastMap.values.any { !it })
         ) {
             notice = "저장 구간 또는 실행 상태가 변경되었습니다. 다시 확인해 주세요."
             invalidateReview()
@@ -277,7 +299,7 @@ class ExtractionViewModel(
         job = viewModelScope.launch {
             try {
                 ExportWorkMonitor.awaitReady(workId)
-                val candidateIds = reviewed.map { it.range.id }
+                val candidateIds = selected.map { it.range.id }
                 for (id in candidateIds) {
                     currentCoroutineContext().ensureActive()
                     val row = session?.items?.firstOrNull { it.range.id == id } ?: continue
@@ -289,11 +311,17 @@ class ExtractionViewModel(
                     currentStage = ExportStage.PREPARING
                     finalizing = false
                     try {
-                        replaceItem(id) { it.copy(status = ExtractionStatus.SAVING, message = null) }
                         ExportWorkMonitor.update(workId, "${activeIndex}/${current.items.size} · 영상 저장 준비")
-                        val timeline = ExtractionPlanner.timeline(
+                        val requested = ExtractionPlanner.timeline(
                             current.sourceUri, current.durationMs, current.hasAudio, row.range
                         )
+                        val suggestion = suggestions[id]
+                        val timeline = if (suggestion == null) requested else
+                            checkNotNull(suggestion.applyTo(requested)) { "추천 구간을 다시 확인해 주세요." }
+                        replaceItem(id) { it.copy(
+                            status = ExtractionStatus.SAVING, message = null,
+                            outputDurationMs = timeline.totalDurationMs.takeIf { suggestion != null },
+                        ) }
                         val output = VideoExporter(app).export(
                             timeline = timeline,
                             onProgress = { percent ->
@@ -309,7 +337,7 @@ class ExtractionViewModel(
                             },
                             outputBaseName = ExtractionPlanner.outputName(current.sourceName, index + 1),
                             saveDateMode = SaveDateMode.CURRENT,
-                            exportMode = if (fastMap[id] == true) ExportMode.FAST_ONLY
+                            exportMode = if (fastMap[id] == true || suggestion != null) ExportMode.FAST_ONLY
                                 else ExportMode.ALLOW_REENCODE,
                             onOutputCreated = { uri ->
                                 replaceItem(id) { it.copy(outputUri = uri.toString()) }
@@ -378,6 +406,8 @@ class ExtractionViewModel(
                     blocked -> "일부 저장 결과를 확인하지 못했습니다. 복구 확인 후 재시도해 주세요."
                     session?.items?.any { it.status == ExtractionStatus.FAILED } == true ->
                         "일부 구간이 저장되지 않았습니다. 성공한 파일은 유지됩니다."
+                    selected.size < reviewed.size ->
+                        "고속 저장 가능한 구간을 저장했습니다. 남은 구간은 다시 검토할 수 있습니다."
                     else -> "여러 구간을 각각 MP4로 저장했습니다."
                 }
             } catch (cancelled: CancellationException) {
@@ -430,7 +460,7 @@ class ExtractionViewModel(
                             else item
                         } else {
                             try {
-                                val snapshot = SingleExportSnapshot(uri, item.range.durationMs, current.hasAudio)
+                                val snapshot = SingleExportSnapshot(uri, item.outputDurationMs ?: item.range.durationMs, current.hasAudio)
                                 when (access.inspect(snapshot)) {
                                     SingleExportOutputState.VERIFIED ->
                                         item.copy(status = ExtractionStatus.SAVED, message = null)
@@ -469,6 +499,7 @@ class ExtractionViewModel(
     private fun invalidateReview() {
         reviewedRanges = null
         reviewedFast = null
+        fastSuggestions = emptyMap()
         requiresReencodeApproval = false
     }
 

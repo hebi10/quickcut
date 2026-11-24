@@ -104,6 +104,14 @@ if [[ "${QUICKCUT_EMULATOR_API:-}" == 29 ]]; then
     else
       run_checked "Preserve API29 $phase XML" cp -- "${xmls[0]}" "$phase_dir/TEST-api29-$phase.xml"
     fi
+    # API29 can drop adb after completing most tests. Detect it before starting
+    # another 10-15 minute phase instead of compounding one emulator failure.
+    # A failed identity probe cannot approve any missing XML or PNG evidence.
+    if ! python3 "$SCRIPT_DIR/ci-android-health.py" --expected-api 29; then
+      echo "::error::API29 emulator lost its connection after phase $phase; stop remaining test phases."
+      if [[ "$phase_status" -ne 0 ]]; then exit "$phase_status"; fi
+      exit 86
+    fi
   }
   # API29: background-screen-off tests share MainActivity, native encoder and
   # Android Settings state. A 4GB emulator stalled after the batch-screen-off
@@ -137,12 +145,49 @@ if [[ "${QUICKCUT_EMULATOR_API:-}" == 29 ]]; then
   done
   run_checked "Require all 292 original API29 tests" \
     python3 "$SCRIPT_DIR/verify-api29-complete-suite.py" "$RESULTS/debug"
+elif [[ "${QUICKCUT_EMULATOR_API:-}" == 35 ]]; then
+  # An Android 15 emulator crashed inside the system CodecLooper while cancelling
+  # the second offscreen Media3 export. Run every original test, but isolate
+  # the two codec stress methods in fresh instrumentation processes.
+  api35_dir=quickcut-api35-full-suite
+  rm -rf "$api35_dir"
+  mkdir -p "$api35_dir"
+  run_api35_phase() {
+    local phase="$1" budget="$2"
+    shift 2
+    local xmls=()
+    rm -rf "$RESULTS" "$REPORTS"
+    run_checked "API35 full-suite phase $phase" timeout --kill-after=30s "$budget" gradle --no-daemon \
+      -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true :app:connectedDebugAndroidTest \
+      "$@"
+    mapfile -d '' xmls < <(find "$RESULTS" -name 'TEST-*.xml' -print0 2>/dev/null)
+    if [[ "${#xmls[@]}" -ne 1 ]]; then
+      run_checked "Require one API35 $phase XML result" false
+    else
+      run_checked "Preserve API35 $phase XML" cp -- "${xmls[0]}" \
+        "$api35_dir/TEST-api35-$phase.xml"
+    fi
+  }
+  run_api35_phase regular 20m \
+    "-Pandroid.testInstrumentationRunnerArguments.notClass=com.hebi.quickcut.export.BackgroundMedia3ExportInstrumentedTest"
+  run_api35_phase media3_publish 10m \
+    "-Pandroid.testInstrumentationRunnerArguments.class=com.hebi.quickcut.export.BackgroundMedia3ExportInstrumentedTest#media3ProcessingPublishesAValidOutputAfterAppSwitchAndScreenOff"
+  run_api35_phase media3_cancel 10m \
+    "-Pandroid.testInstrumentationRunnerArguments.class=com.hebi.quickcut.export.BackgroundMedia3ExportInstrumentedTest#cancellingOffscreenMedia3ProcessingLeavesNoGalleryOutputOrStagedWriter"
+  rm -rf "$RESULTS"
+  mkdir -p "$RESULTS/debug"
+  for phase in regular media3_publish media3_cancel; do
+    if [[ -f "$api35_dir/TEST-api35-$phase.xml" ]]; then
+      run_checked "Restore API35 $phase XML" cp -- \
+        "$api35_dir/TEST-api35-$phase.xml" "$RESULTS/debug/"
+    fi
+  done
+  run_checked "Require all 292 original API35 tests" \
+    python3 "$SCRIPT_DIR/verify-api35-complete-suite.py" "$RESULTS/debug"
+  rm -f quickcut-host-diagnostics/android-instrumentation-running
 else
   run_checked "Full instrumentation suite" timeout --kill-after=30s 20m gradle --no-daemon \
     -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true :app:connectedDebugAndroidTest
-  if [[ "${QUICKCUT_EMULATOR_API:-}" == "35" ]]; then
-    rm -f quickcut-host-diagnostics/android-instrumentation-running
-  fi
 fi
 run_checked "Pull full-suite Main10 evidence" timeout --kill-after=2s 10s adb pull /data/local/tmp/quickcut-main10 quickcut-main10-full
 run_checked "Verify full-suite Main10 evidence" python3 "$SCRIPT_DIR/verify-android-main10.py" quickcut-main10-full

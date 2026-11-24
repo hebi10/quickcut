@@ -13,6 +13,7 @@ data class SavedProject(
     val clipCount: Int,
     val thumbnailUri: String,
     val thumbnailTimeMs: Long,
+    val storageVersion: String? = null,
 )
 
 /** Preserve the index verbatim if its contents cannot be read safely. */
@@ -20,8 +21,15 @@ class ProjectIndexReadException(cause: Throwable) : IOException(
     "프로젝트 목록을 읽지 못했습니다. 기존 프로젝트를 보호하기 위해 저장·삭제를 중단했습니다.", cause,
 )
 
+enum class ProjectDeleteStatus { NOT_FOUND, DELETED, CLEANUP_PENDING }
+
 /** Separate durable snapshot per project; never overwrites the crash-recovery session. */
-class ProjectStore(context: Context, preferencesName: String = "quickcut_named_projects_v1") {
+class ProjectStore(
+    context: Context,
+    preferencesName: String = "quickcut_named_projects_v1",
+    private val beforeIndexCommit: (() -> Unit)? = null,
+) {
+    private val versionPattern = Regex("[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}")
     private val appContext = context.applicationContext
     private val preferences = appContext.getSharedPreferences(
         preferencesName, Context.MODE_PRIVATE,
@@ -35,6 +43,8 @@ class ProjectStore(context: Context, preferencesName: String = "quickcut_named_p
         val array = JSONArray(raw ?: "[]")
         val items = (0 until array.length()).map { i ->
             val row = array.getJSONObject(i)
+            val version = if (row.has("storageVersion")) row.getString("storageVersion") else null
+            require(version == null || versionPattern.matches(version)) { "잘못된 프로젝트 저장 버전입니다." }
             SavedProject(
                 id = row.getString("id"),
                 title = row.getString("title"),
@@ -42,6 +52,7 @@ class ProjectStore(context: Context, preferencesName: String = "quickcut_named_p
                 clipCount = row.getInt("clipCount"),
                 thumbnailUri = row.getString("thumbnailUri"),
                 thumbnailTimeMs = row.optLong("thumbnailTimeMs", 0L),
+                storageVersion = version,
             )
         }
         require(items.map { it.id }.distinct().size == items.size) { "중복된 프로젝트 ID입니다." }
@@ -61,8 +72,8 @@ class ProjectStore(context: Context, preferencesName: String = "quickcut_named_p
     }
 
     fun load(id: String): EditorSessionSnapshot? {
-        if (list().none { it.id == id }) return null
-        return EditorSessionStore(appContext, preferenceKey(id)).load()
+        val project = list().firstOrNull { it.id == id } ?: return null
+        return storeFor(project).load() ?: throw EditorSessionReadException()
     }
 
     fun save(snapshot: EditorSessionSnapshot, title: String, existingId: String? = null): SavedProject {
@@ -70,34 +81,53 @@ class ProjectStore(context: Context, preferencesName: String = "quickcut_named_p
         val cleanTitle = title.trim().take(80)
         require(cleanTitle.isNotEmpty()) { "프로젝트 이름을 입력해 주세요." }
         val current = list()
-        val id = existingId?.takeIf { candidate -> current.any { it.id == candidate } }
-            ?: UUID.randomUUID().toString()
+        val previous = current.firstOrNull { it.id == existingId }
+        if (previous != null && storeFor(previous).load() == null) {
+            throw EditorSessionReadException()
+        }
+        val id = previous?.id ?: UUID.randomUUID().toString()
         val first = snapshot.timeline.clips.first()
         val item = SavedProject(
             id = id, title = cleanTitle, modifiedAt = System.currentTimeMillis(),
             clipCount = snapshot.timeline.clips.size,
             thumbnailUri = first.uri, thumbnailTimeMs = first.startMs,
+            storageVersion = if (previous != null) UUID.randomUUID().toString() else null,
         )
-        val items = listOf(item) + current.filterNot { it.id == id }
-        val stored = EditorSessionStore(appContext, preferenceKey(id))
+        val stored = storeFor(item)
         stored.save(snapshot)
         try {
-            writeIndex(items)
+            writeIndex(listOf(item) + current.filterNot { it.id == id })
         } catch (error: Exception) {
-            if (existingId == null) runCatching { stored.clear() }
+            val referenced = runCatching {
+                list().any { it.id == id && it.storageVersion == item.storageVersion }
+            }.getOrNull()
+            if (referenced == false) {
+                runCatching { stored.clear() }.onFailure { error.addSuppressed(it) }
+            }
             throw error
         }
+        if (previous != null) runCatching { storeFor(previous).clear() }
         return item
     }
 
-    fun delete(id: String) {
+    fun delete(id: String): ProjectDeleteStatus {
         val items = list()
-        if (items.none { it.id == id }) return
-        val savedSession = EditorSessionStore(appContext, preferenceKey(id))
-        savedSession.load()
-        writeIndex(items.filterNot { it.id == id })
-        if (preferences.getString("activeId", null) == id) setActiveId(null)
-        runCatching { savedSession.clear() }
+        val project = items.firstOrNull { it.id == id } ?: return ProjectDeleteStatus.NOT_FOUND
+        val stored = storeFor(project)
+        if (stored.load() == null) throw EditorSessionReadException()
+        writeIndex(items.filterNot { it.id == id }, clearActiveId = id)
+        return if (runCatching { stored.clear() }.isSuccess) {
+            ProjectDeleteStatus.DELETED
+        } else {
+            ProjectDeleteStatus.CLEANUP_PENDING
+        }
+    }
+
+    private fun storeFor(project: SavedProject): EditorSessionStore {
+        val base = preferenceKey(project.id)
+        val version = project.storageVersion
+        require(version == null || versionPattern.matches(version)) { "잘못된 프로젝트 저장 버전입니다." }
+        return EditorSessionStore(appContext, if (version == null) base else "${base}_${version}")
     }
 
     private fun preferenceKey(id: String): String {
@@ -105,7 +135,7 @@ class ProjectStore(context: Context, preferencesName: String = "quickcut_named_p
         return "quickcut_project_$id"
     }
 
-    private fun writeIndex(items: List<SavedProject>) {
+    private fun writeIndex(items: List<SavedProject>, clearActiveId: String? = null) {
         val array = JSONArray()
         items.forEach { p ->
             array.put(JSONObject().apply {
@@ -115,9 +145,14 @@ class ProjectStore(context: Context, preferencesName: String = "quickcut_named_p
                 put("clipCount", p.clipCount)
                 put("thumbnailUri", p.thumbnailUri)
                 put("thumbnailTimeMs", p.thumbnailTimeMs)
+                if (p.storageVersion != null) put("storageVersion", p.storageVersion)
             })
         }
-        if (!preferences.edit().putString("index", array.toString()).commit())
-            throw IOException("프로젝트 목록을 저장하지 못했습니다.")
+        val edit = preferences.edit().putString("index", array.toString())
+        if (clearActiveId != null && preferences.getString("activeId", null) == clearActiveId) {
+            edit.remove("activeId")
+        }
+        beforeIndexCommit?.invoke()
+        if (!edit.commit()) throw IOException("프로젝트 목록을 저장하지 못했습니다.")
     }
 }

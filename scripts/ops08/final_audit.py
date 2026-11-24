@@ -62,6 +62,42 @@ def verified_head():
     return sha
 
 
+def check_emulator_dispatch_policy(content):
+    """Reject automatic full-suite duplication and unguarded manual dispatch."""
+    issues = []
+    if ops07().triggers(content) != {"workflow_dispatch"}:
+        issues.append("Full Android emulator QA must have workflow_dispatch only")
+    if not re.search(
+        r"(?m)^  workflow_dispatch:\s*$\n^    inputs:\s*$\n^      expected_main_sha:\s*$",
+        content,
+    ) or not re.search(
+        r"(?m)^        required: true\s*$",
+        content.split("      expected_main_sha:", 1)[-1].split("\nconcurrency:", 1)[0],
+    ):
+        issues.append("Full Android QA must require exact main SHA input")
+    if not re.search(r"(?m)^  validate-source:\s*$", content) or not re.search(
+        r"(?m)^    needs: validate-source\s*$", content
+    ) or not re.search(
+        r"(?m)^          SOURCE_REF: \${{ github.ref }}\s*$",
+        content,
+    ) or not re.search(
+        r"(?m)^          SOURCE_SHA: \${{ github.sha }}\s*$",
+        content,
+    ) or not re.search(
+        r"(?m)^          EXPECTED_MAIN_SHA: \${{ inputs.expected_main_sha }}\s*$",
+        content,
+    ):
+        issues.append("Full Android QA must gate emulator jobs on exact manual main source")
+    if ("refs/heads/main" not in content
+            or '[[ "$EXPECTED_MAIN_SHA" != "$SOURCE_SHA" ]]' not in content
+            or '[[ ! "$EXPECTED_MAIN_SHA" =~ ^[0-9a-f]{40}$ ]]' not in content
+            or "exit 1" not in content):
+        issues.append("Full Android QA main/commit guard must fail closed")
+    if "api: [29, 35, 36]" not in content:
+        issues.append("Full Android API29/35/36 matrix must remain intact")
+    return issues
+
+
 def audit():
     issues = []
     files = sorted((ROOT / ".github/workflows").glob("*.yml"))
@@ -88,13 +124,7 @@ def audit():
     emulator = ROOT / ".github/workflows/emulator-smoke.yml"
     if emulator.is_file():
         content = emulator.read_text(encoding="utf-8")
-        for path in (".github/workflows/ops07-safety.yml",
-                     ".github/workflows/ops08-final-policy.yml",
-                     "scripts/ops07/**", "scripts/ops08/**"):
-            if content.count('      - "' + path + '"') != 2:
-                issues.append("Exact-main emulator QA not triggered by policy path: " + path)
-        if "  push:\n    branches: [main]" not in content or "api: [29, 35, 36]" not in content:
-            issues.append("Exact-main Android emulator matrix trigger incomplete")
+        issues.extend(check_emulator_dispatch_policy(content))
     if os.getenv("GITHUB_REPOSITORY") and os.environ["GITHUB_REPOSITORY"] != REPOSITORY:
         issues.append("Repository identity mismatch")
     if (ROOT / "scripts/ops07/audit.py").is_file():

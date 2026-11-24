@@ -81,6 +81,7 @@ fun CropEditorScreen(
     clip: VideoClip,
     onApply: (CropRegion?) -> Unit,
     onCancel: () -> Unit,
+    onHelp: (String) -> Unit = {},
 ) {
     val palette = LocalCutPalette.current
     BackHandler(onBack = onCancel)
@@ -119,22 +120,30 @@ fun CropEditorScreen(
     var preset by rememberSaveable(clip.id) {
         mutableStateOf(if (clip.crop == null) CropRatio.ORIGINAL else CropRatio.FREE)
     }
+    var showFineControls by rememberSaveable(clip.id) { mutableStateOf(false) }
 
     Column(Modifier.fillMaxSize().background(palette.background)) {
       Column(Modifier.weight(1f).verticalScroll(rememberScrollState())
         .padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically) {
-            Column {
+            Column(Modifier.weight(1f)) {
                 Text("화면 비율·크롭", color = palette.primaryText,
                     style = MaterialTheme.typography.titleLarge)
                 Text("선택한 클립에만 적용", color = palette.secondaryText,
                     style = MaterialTheme.typography.bodySmall)
             }
-            IconButton(onClick = onCancel, modifier = Modifier.size(48.dp)) {
-                Icon(CutIcons.Back, contentDescription = "편집 화면으로")
+            Row {
+                IconButton(onClick = { onHelp("crop") }, modifier = Modifier.size(48.dp)
+                    .testTag("crop-help")) {
+                    Icon(CutIcons.Info, contentDescription = "크롭 사용법")
+                }
+                IconButton(onClick = onCancel, modifier = Modifier.size(48.dp)) {
+                    Icon(CutIcons.Back, contentDescription = "편집 화면으로")
+                }
             }
         }
+        FirstVisitGuideBanner("crop", onHelp)
 
         if (source == null) {
             Box(Modifier.fillMaxWidth().height(220.dp), contentAlignment = Alignment.Center) {
@@ -252,6 +261,12 @@ fun CropEditorScreen(
                 color = palette.secondaryText,
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.testTag("ui05a-crop-selection"))
+            TextButton(
+                onClick = { showFineControls = !showFineControls },
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                    .testTag("crop-advanced-transform-toggle"),
+            ) { Text(if (showFineControls) "세부 위치 조절 접기" else "세부 위치 조절 펼치기") }
+            if (showFineControls) {
             BoxWithConstraints(Modifier.fillMaxWidth().testTag("ui05a-crop-controls")) {
                 if (maxWidth < 400.dp || LocalDensity.current.fontScale >= 1.5f) {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -288,6 +303,7 @@ fun CropEditorScreen(
                         }
                     }
                 }
+            }
             }
             if (preset == CropRatio.FREE) {
                 Text("자유 비율 크기", color = palette.primaryText,

@@ -32,6 +32,7 @@ import androidx.compose.material.icons.outlined.ContentCut
 import androidx.compose.material.icons.outlined.VolumeOff
 import androidx.compose.material.icons.outlined.VolumeUp
 import androidx.compose.material3.Button
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -100,6 +101,8 @@ fun QuickTrimScreen(
     onDetailedEdit: () -> Unit,
     onSave: () -> Unit,
     onSaveOptions: () -> Unit,
+    onHelp: (String) -> Unit = {},
+    onFastSave: (() -> Unit)? = null,
 ) {
     val palette = LocalCutPalette.current
     val clip = model.timeline.clips.singleOrNull() ?: return
@@ -301,6 +304,10 @@ fun QuickTrimScreen(
                     Text("빠른 자르기", color = palette.primaryText,
                         style = MaterialTheme.typography.titleLarge,
                         modifier = Modifier.weight(1f))
+                    IconButton(onClick = { onHelp("quick") },
+                        modifier = Modifier.size(48.dp).testTag("quick-help")) {
+                        Icon(CutIcons.Info, contentDescription = "빠른 자르기 사용법")
+                    }
                     if (!compactHeader) DetailedEditButton(openDetailed)
                 }
                 if (compactHeader) {
@@ -308,6 +315,8 @@ fun QuickTrimScreen(
                         Modifier.fillMaxWidth().padding(bottom = 8.dp))
                 }
             }
+            FirstVisitGuideBanner("quick", onHelp,
+                modifier = Modifier.padding(horizontal = CutSpacing.sm, vertical = 4.dp))
         previewFailure?.let { message ->
             PreviewRecoveryNotice(message, onRetry = retryPreview)
         }
@@ -329,8 +338,10 @@ fun QuickTrimScreen(
                             model.toggleMute()
                             settings.saveQuick(settings.loadQuick().copy(muteAudio = !clip.muted))
                         },
+                        onSnap = model::snapTrim,
                         onSave = { saveValidated(onSave) },
                         onSaveOptions = { saveValidated(onSaveOptions) },
+                        onFastSave = onFastSave?.let { { saveValidated(it) } },
                         modifier = Modifier.weight(1f).fillMaxHeight(),
                     )
                 }
@@ -351,8 +362,10 @@ fun QuickTrimScreen(
                         model.toggleMute()
                         settings.saveQuick(settings.loadQuick().copy(muteAudio = !clip.muted))
                     },
+                    onSnap = model::snapTrim,
                     onSave = { saveValidated(onSave) },
                     onSaveOptions = { saveValidated(onSaveOptions) },
+                    onFastSave = onFastSave?.let { { saveValidated(it) } },
                     modifier = Modifier.fillMaxWidth().weight(1.4f),
                 )
             }
@@ -458,8 +471,10 @@ private fun QuickTrimControls(
     onTrailingChange: (String) -> Unit,
     onRangeChange: (Long, Long) -> Unit,
     onToggleMute: () -> Unit,
+    onSnap: (VideoClip, Long, Long) -> Boolean,
     onSave: () -> Unit,
     onSaveOptions: () -> Unit,
+    onFastSave: (() -> Unit)?,
     modifier: Modifier,
 ) {
     val palette = LocalCutPalette.current
@@ -507,34 +522,6 @@ private fun QuickTrimControls(
                             fontFamily = FontFamily.Monospace,
                             style = MaterialTheme.typography.labelMedium)
                     }
-                }
-                Text("삭제 시간 조절", color = palette.primaryText,
-                    style = MaterialTheme.typography.titleSmall)
-                TrimSecondsRow(
-                    label = "앞부분 삭제",
-                    value = leadingText,
-                    onValueChange = onLeadingChange,
-                    onStep = { delta ->
-                        onLeadingChange(secondsText(
-                            ((millisValue(leadingText) ?: clip.startMs) + delta)
-                                .coerceIn(0L, clip.sourceDurationMs)
-                        ))
-                    },
-                )
-                TrimSecondsRow(
-                    label = "뒷부분 삭제",
-                    value = trailingText,
-                    onValueChange = onTrailingChange,
-                    onStep = { delta ->
-                        onTrailingChange(secondsText(
-                            ((millisValue(trailingText) ?: (clip.sourceDurationMs - clip.endMs)) + delta)
-                                .coerceIn(0L, clip.sourceDurationMs)
-                        ))
-                    },
-                )
-                if (!valid) {
-                    Text("시간을 확인해 주세요. 결과 영상은 최소 0.1초 이상이어야 합니다.",
-                        color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
                 }
                 if (LocalDensity.current.fontScale >= 1.5f) {
                 Column(
@@ -615,6 +602,35 @@ private fun QuickTrimControls(
                     }
                 }
                 }
+                HorizontalDivider(color = palette.border)
+                Text("삭제 시간 조절", color = palette.primaryText,
+                    style = MaterialTheme.typography.titleSmall)
+                TrimSecondsRow(
+                    label = "앞부분 삭제",
+                    value = leadingText,
+                    onValueChange = onLeadingChange,
+                    onStep = { delta ->
+                        onLeadingChange(secondsText(
+                            ((millisValue(leadingText) ?: clip.startMs) + delta)
+                                .coerceIn(0L, clip.sourceDurationMs)
+                        ))
+                    },
+                )
+                TrimSecondsRow(
+                    label = "뒷부분 삭제",
+                    value = trailingText,
+                    onValueChange = onTrailingChange,
+                    onStep = { delta ->
+                        onTrailingChange(secondsText(
+                            ((millisValue(trailingText) ?: (clip.sourceDurationMs - clip.endMs)) + delta)
+                                .coerceIn(0L, clip.sourceDurationMs)
+                        ))
+                    },
+                )
+                if (!valid) {
+                    Text("시간을 확인해 주세요. 결과 영상은 최소 0.1초 이상이어야 합니다.",
+                        color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                }
                 Column(
                     Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -637,10 +653,17 @@ private fun QuickTrimControls(
                         Text(if (clip.muted) "소리 복원" else "음소거")
                     }
                 }
-                Text(
-                    "마지막 자르기 값은 자동 저장됩니다. 고속 저장 여부는 저장 전에 확인합니다.",
-                    color = palette.secondaryText, fontSize = 12.sp,
-                )
+                KeyframeTrimControls(clip, valid, onSnap)
+                if (onFastSave != null) {
+                    OutlinedButton(
+                        onClick = onFastSave, enabled = canSave,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp), shape = CutShape,
+                    ) { Text("가까운 구간으로 고속 저장") }
+                    Text("최대 1초 차이의 추천 구간을 적용할 수 있습니다. 원본은 유지합니다.",
+                        color = palette.secondaryText, style = MaterialTheme.typography.bodySmall)
+                }
+                Text("저장 전 처리 방식을 확인합니다. 마지막 시간 설정은 자동으로 저장됩니다.",
+                    color = palette.secondaryText, style = MaterialTheme.typography.bodySmall)
                 OutlinedButton(
                     onClick = onSaveOptions,
                     enabled = canSave,

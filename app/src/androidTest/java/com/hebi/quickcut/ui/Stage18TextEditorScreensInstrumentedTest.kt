@@ -96,7 +96,9 @@ class Stage18TextEditorScreensInstrumentedTest {
         compose.onNodeWithTag("text-layer-input").performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("text-apply").assertIsDisplayed().assertIsEnabled()
         capture("stage18_text_selected.png")
+        compose.onNodeWithTag("text-section-style").performScrollTo().performClick()
         compose.onNodeWithTag("text-color-YELLOW").performScrollTo().performClick()
+        compose.onNodeWithTag("text-section-timing").performScrollTo().performClick()
         hideImeAndWait()
         compose.onNodeWithTag("text-layer-timing").performScrollTo()
         compose.waitUntil(10_000L) {
@@ -134,6 +136,7 @@ class Stage18TextEditorScreensInstrumentedTest {
         compose.onNodeWithTag("text-apply").assertIsDisplayed()
         compose.onNodeWithTag("text-apply").assertIsEnabled()
         capture("stage18_text_largefont.png")
+        compose.onNodeWithTag("text-section-timing").performScrollTo().performClick()
         compose.onNodeWithTag("ui05a-text-timing-fields").performScrollTo().assertIsDisplayed()
     }
 
@@ -250,10 +253,12 @@ class Stage18TextEditorScreensInstrumentedTest {
             }
             return Triple(dark, light, pixels)
         }
-        // The header is fixed above the scrolling editor; the bottom action row
-        // stays pinned even when the black preview is scrolled completely away.
+        // The editor header is at the top of the real Android window, not in
+        // the 1/12..1/6 viewport band (which becomes blank when input scrolling
+        // moves the black preview offscreen). Check the actual fixed title row,
+        // and keep requiring contrasting pixels in the pinned bottom action row.
         val (headerDark, headerLight, headerPixels) =
-            countContrast(bitmap.height / 12, bitmap.height / 6)
+            countContrast(bitmap.height / 40, bitmap.height / 8)
         val (footerDark, footerLight, footerPixels) =
             countContrast(bitmap.height * 7 / 8, bitmap.height * 39 / 40)
         return headerPixels > 0 && footerPixels > 0 &&

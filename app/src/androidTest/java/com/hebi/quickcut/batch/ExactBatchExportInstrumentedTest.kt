@@ -301,7 +301,8 @@ class ExactBatchExportInstrumentedTest {
         assertTrue("The source audio must remain present", actual.hasAudio)
         assertEquals(requestedDuration,
             loadSessionOnMain()!!.files.single().outputExpectedDurationMs)
-        assertFileText(formatTime(row.durationMs) + " → " + formatTime(requestedDuration))
+        assertFileText("저장 결과 · " + BatchTimeInput.durationText(row.durationMs) +
+            " → " + BatchTimeInput.durationText(requestedDuration))
         assertFileText("처리 방식:", substring = true)
         assertNotNull("A successful export must report its actual method", row.exportReport)
         assertEquals(row.exportReport, loadSessionOnMain()!!.files.single().exportReport)

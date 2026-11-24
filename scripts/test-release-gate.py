@@ -77,7 +77,9 @@ class ReleaseGateTest(unittest.TestCase):
         }
         self.runs = {}
         for workflow, name in gate.REQUIRED_WORKFLOWS.items():
-            self.runs[workflow] = [run_record(name)]
+            self.runs[workflow] = [run_record(
+                name, event='workflow_dispatch' if workflow == 'emulator-smoke.yml' else 'push'
+            )]
         self.calls = []
         self.active_workflow = None
         self.job_changes = {}
@@ -125,7 +127,10 @@ class ReleaseGateTest(unittest.TestCase):
                 self.assertFalse(self.check()[0])
 
     def test_pending_other_workflow_skips_without_polling(self):
-        self.runs['emulator-smoke.yml'] = [run_record('Android emulator smoke', status='in_progress', conclusion=None)]
+        self.runs['emulator-smoke.yml'] = [run_record(
+            'Android emulator smoke', event='workflow_dispatch',
+            status='in_progress', conclusion=None
+        )]
         ready, reason = self.check()
         self.assertFalse(ready)
         self.assertIn('in_progress', reason)
@@ -143,7 +148,7 @@ class ReleaseGateTest(unittest.TestCase):
                 self.runs['android.yml'] = [run_record('Android build'), run_record('Android build', id=11, run_number=11, status=status, conclusion=conclusion)]
                 self.assertFalse(self.check()[0])
 
-    def test_exact_four_job_proof_is_required_for_success(self):
+    def test_exact_main_build_and_four_qa_jobs_required_for_success(self):
         self.assertTrue(self.check()[0])
         paths = [path for path in self.calls if '/jobs?per_page=100' in path]
         self.assertEqual(len(paths), 2)
@@ -152,7 +157,7 @@ class ReleaseGateTest(unittest.TestCase):
         self.job_changes['emulator-smoke.yml'] = lambda response: (
             response['jobs'].remove(next(job for job in response['jobs']
                                          if job['name'] == 'emulator (29)')),
-            response.__setitem__('total_count', 2))
+            response.__setitem__('total_count', 3))
         ready, reason = self.check()
         self.assertFalse(ready)
         self.assertIn('required job matrix', reason)
@@ -198,9 +203,29 @@ class ReleaseGateTest(unittest.TestCase):
         self.assertFalse(ready)
         self.assertIn('skipped', reason)
 
-    def test_manual_main_smoke_is_allowed(self):
-        self.runs['emulator-smoke.yml'][0]['event'] = 'workflow_dispatch'
+    def test_only_manual_main_smoke_is_allowed(self):
         self.assertTrue(self.check()[0])
+        self.runs['emulator-smoke.yml'][0]['event'] = 'push'
+        self.assertFalse(self.check()[0])
+
+    def test_missing_exact_source_guard_blocks_release(self):
+        self.job_changes['emulator-smoke.yml'] = lambda response: (
+            response['jobs'].remove(next(job for job in response['jobs']
+                if job['name'] == 'Require frozen main and exact source SHA')),
+            response.__setitem__('total_count', 3))
+        ready, reason = self.check()
+        self.assertFalse(ready)
+        self.assertIn('required job matrix', reason)
+
+    def test_failed_exact_source_guard_blocks_release(self):
+        def fail_guard(response):
+            guard = next(job for job in response['jobs']
+                if job['name'] == 'Require frozen main and exact source SHA')
+            guard['conclusion'] = 'failure'
+        self.job_changes['emulator-smoke.yml'] = fail_guard
+        ready, reason = self.check()
+        self.assertFalse(ready)
+        self.assertIn('Require frozen main and exact source SHA', reason)
 
     def test_outdated_main_never_publishes(self):
         self.responses[f'/repos/{REPO}/git/ref/heads/main']['object']['sha'] = 'b' * 40

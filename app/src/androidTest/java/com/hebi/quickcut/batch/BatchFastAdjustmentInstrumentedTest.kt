@@ -140,6 +140,7 @@ class BatchFastAdjustmentInstrumentedTest {
         openReview()
         composeRule.onNodeWithTag("batch-review-list").performScrollToNode(hasText("전체 자동 저장"))
         composeRule.onNodeWithText("전체 자동 저장").assertIsEnabled()
+        composeRule.onNodeWithText("자동 저장 확인").assertIsDisplayed()
         composeRule.onNodeWithText("고속 저장 가능한 영상만").assertDoesNotExist()
         composeRule.onNodeWithText("위치 조정 후 고속 저장").assertDoesNotExist()
         composeRule.onNodeWithText("추천 위치로 1개 고속 저장").assertIsEnabled()

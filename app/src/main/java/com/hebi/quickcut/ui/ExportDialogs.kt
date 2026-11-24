@@ -18,6 +18,10 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
@@ -44,9 +48,11 @@ internal fun SaveOptionsDialog(
     timeline: EditTimeline = EditTimeline(),
     outputQuality: ExportQualitySettings = ExportQualitySettings(),
     onOutputQualityChange: (ExportQualitySettings) -> Unit = {},
+    onHelp: (String) -> Unit = {},
 ) {
     val palette = LocalCutPalette.current
     val qualityEvaluation = rememberExportQualityEvaluation(timeline, outputQuality)
+    var showQualityDetails by rememberSaveable { mutableStateOf(!outputQuality.isAutomatic) }
     AlertDialog(
         modifier = Modifier.fillMaxWidth().padding(horizontal = CutSpacing.lg).widthIn(max = 480.dp),
         properties = DialogProperties(usePlatformDefaultWidth = false),
@@ -59,20 +65,35 @@ internal fun SaveOptionsDialog(
             ) {
                 Text("저장 정보", color = palette.primaryText,
                     style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "편집 결과를 새 MP4 영상으로 갤러리에 저장합니다. " +
+                        "프로젝트(편집 내용) 보관과는 다른 작업입니다.",
+                    color = palette.secondaryText,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                TextButton(onClick = { onHelp("save") },
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                        .testTag("save-help")) { Text("영상 저장 사용법") }
                 Text((if (outputQuality.isAutomatic)
-                    "원본 영상의 해상도와 프레임 속도를 유지하며, 가능한 경우 고속 저장을 사용합니다."
-                else
-                    "선택한 출력 설정으로 변환합니다. 재인코딩을 승인한 뒤 저장할 수 있습니다.") +
-                    " 실제 처리 방식은 저장 전 분석합니다.",
+                    "자동 · 원본 해상도와 FPS를 유지하며 가능한 고속 저장을 사용합니다."
+                else "직접 설정 · 화질 변경 시 영상 변환이 필요할 수 있습니다.") +
+                    " 저장 방식은 시작 전에 확인합니다.",
                     color = palette.secondaryText,
                     style = MaterialTheme.typography.bodySmall)
                 if (!timeline.isEmpty) {
-                    ExportQualitySection(
-                        timeline = timeline,
-                        settings = outputQuality,
-                        evaluation = qualityEvaluation,
-                        onChange = onOutputQualityChange,
-                    )
+                    TextButton(onClick = { showQualityDetails = !showQualityDetails },
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                            .testTag("export-quality-toggle")) {
+                        Text(if (showQualityDetails) "고급 화질 설정 접기" else "고급 화질 설정 펼치기")
+                    }
+                    if (showQualityDetails) {
+                        ExportQualitySection(
+                            timeline = timeline,
+                            settings = outputQuality,
+                            evaluation = qualityEvaluation,
+                            onChange = onOutputQualityChange,
+                        )
+                    }
                 }
                 Text("저장 위치", color = palette.primaryText,
                     style = MaterialTheme.typography.titleSmall)
@@ -218,6 +239,7 @@ internal fun ExportModeDialog(
     onAllowReencode: () -> Unit,
     onSuggestedCut: (() -> Unit)?,
     onDismiss: () -> Unit,
+    onLessTrim: (() -> Unit)? = null,
 ) {
     val palette = LocalCutPalette.current
     AlertDialog(
@@ -241,41 +263,50 @@ internal fun ExportModeDialog(
                     title = "저장 방식 분석 결과",
                     message = assessment.explanation,
                 )
-                Text("정확한 위치로 저장", color = palette.primaryText,
+                Text("선택한 구간 그대로 저장", color = palette.primaryText,
                     style = MaterialTheme.typography.titleSmall)
                 Text(
-                    "지정한 시작·끝 시점을 유지합니다. 원본 복사·부분 처리를 우선 시도하고 " +
-                        "필요하면 전체 영상을 변환합니다. 실제 처리 방식은 완료 후 표시합니다.",
+                    "내가 설정한 시작·끝 시간은 바뀌지 않습니다. " +
+                        "필요하면 영상 또는 소리를 다시 변환하므로 저장 시간이 길어질 수 있습니다. " +
+                        "실제 처리 방식은 완료 후 확인할 수 있습니다.",
                     color = palette.secondaryText,
                     style = MaterialTheme.typography.bodySmall,
                 )
-                assessment.suggestion?.let { suggestion ->
-                    Text("고속 저장 추천 위치", style = MaterialTheme.typography.titleSmall,
-                        color = palette.primaryText)
-                    Text(fastCutSuggestionText(suggestion))
-                    FastCutPreview(suggestion)
-                    Text("추천 위치를 선택하면 시작·종료 시점이 변경됩니다. " +
-                        "고속 저장은 재인코딩 없이 영상을 복사하며 소리는 필요할 때 변환합니다.",
-                        color = palette.secondaryText, style = MaterialTheme.typography.bodySmall)
+                if (onSuggestedCut != null) {
+                    assessment.suggestion?.let { suggestion ->
+                        Text("추천 구간으로 빠르게 저장", style = MaterialTheme.typography.titleSmall,
+                            color = palette.primaryText)
+                        Text("시작·끝 시간이 바뀌고 장면이 추가로 잘릴 수 있습니다.",
+                            color = palette.secondaryText, style = MaterialTheme.typography.bodySmall)
+                        Text(fastCutSuggestionText(suggestion))
+                        FastCutPreview(suggestion)
+                    }
+                }
+                if (onLessTrim != null) {
+                    assessment.lessTrimSuggestion?.let { suggestion ->
+                        Text("장면을 더 남기는 추천 구간", color = palette.primaryText,
+                            style = MaterialTheme.typography.titleSmall)
+                        Text(fastCutSuggestionText(suggestion))
+                        FastCutPreview(suggestion)
+                        OutlinedButton(
+                            onClick = onLessTrim, enabled = canSave,
+                            modifier = Modifier.fillMaxWidth().heightIn(min = CutSizes.primaryButton), shape = CutShape,
+                        ) { Text("덜 자르고 고속 저장") }
+                    }
                 }
             }
         },
         confirmButton = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = onAllowReencode, enabled = canSave,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = CutSizes.primaryButton), shape = CutShape,
+                ) { Text("정확한 위치로 자동 저장") }
                 if (onSuggestedCut != null) {
-                    Button(
-                        onClick = onAllowReencode, enabled = canSave,
-                        modifier = Modifier.fillMaxWidth().heightIn(min = CutSizes.primaryButton), shape = CutShape,
-                    ) { Text("정확한 위치로 자동 저장") }
                     OutlinedButton(
                         onClick = onSuggestedCut, enabled = canSave,
                         modifier = Modifier.fillMaxWidth().heightIn(min = CutSizes.primaryButton), shape = CutShape,
                     ) { Text("추천 위치로 고속 저장") }
-                } else {
-                    Button(
-                        onClick = onAllowReencode, enabled = canSave,
-                        modifier = Modifier.fillMaxWidth().heightIn(min = CutSizes.primaryButton), shape = CutShape,
-                    ) { Text("정확한 위치로 자동 저장") }
                 }
                 TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth().heightIn(min = CutSizes.touchTarget), shape = CutShape) {
                     Text("취소")
@@ -310,7 +341,11 @@ internal fun exportReportText(report: ExportReport?): String {
 }
 
 @Composable
-internal fun TaskErrorDialog(message: String, onDismiss: () -> Unit) {
+internal fun TaskErrorDialog(
+    message: String,
+    onDismiss: () -> Unit,
+    onHelp: (String) -> Unit = {},
+) {
     val palette = LocalCutPalette.current
     AlertDialog(
         modifier = Modifier.fillMaxWidth().padding(horizontal = CutSpacing.lg).widthIn(max = 480.dp),
@@ -328,11 +363,17 @@ internal fun TaskErrorDialog(message: String, onDismiss: () -> Unit) {
                     caution = true,
                 )
                 Text(
-                    "문제가 계속되면 아래 진단 기록에서 작업 상태를 확인할 수 있습니다. " +
-                        "진단은 사용자가 직접 복사하기 전에는 외부로 전송하지 않습니다.",
+                    "작업을 종료한 뒤 원본 영상이 열리는지 확인하고, " +
+                        "저장·복구 상태가 불확실하면 같은 영상을 바로 다시 저장하지 말고 " +
+                        "‘최근 작업 진단’에서 상태를 확인해 주세요. " +
+                        "진단은 사용자가 직접 선택하기 전에는 외부로 전송하지 않습니다.",
                     color = palette.secondaryText,
                     style = MaterialTheme.typography.bodySmall,
                 )
+                TextButton(onClick = { onHelp("recovery") },
+                    modifier = Modifier.heightIn(min = 48.dp).testTag("error-help")) {
+                    Text("오류·복구 사용법")
+                }
                 ExportDiagnosticButton()
             }
         },

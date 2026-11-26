@@ -291,8 +291,9 @@ fun EditorScreen(
             "text" -> { preview.pause(); showText = true }
         }
     }
+    val previewPlaying = isPlaying
     val onPlay: () -> Unit = {
-        if (previewFailure != null) retryPreview() else preview.togglePlayback()
+        if (previewFailure != null) retryPreview() else preview.togglePlayback(playingAtRender = previewPlaying)
     }
 
     if (showAudio && selectedClip != null) {
@@ -386,7 +387,7 @@ fun EditorScreen(
                         Row(Modifier.weight(1f).fillMaxWidth()) {
                             PreviewPanel(
                                 player = player,
-                                playing = isPlaying,
+                                playing = previewPlaying,
                                 timelineDuration = model.timeline.totalDurationMs,
                                 currentPosition = model.playPositionMs,
                                 onPlay = onPlay,
@@ -432,7 +433,7 @@ fun EditorScreen(
                         Row(Modifier.weight(1f).fillMaxWidth()) {
                             PreviewPanel(
                                 player = player,
-                                playing = isPlaying,
+                                playing = previewPlaying,
                                 timelineDuration = model.timeline.totalDurationMs,
                                 currentPosition = model.playPositionMs,
                                 onPlay = onPlay,
@@ -491,7 +492,7 @@ fun EditorScreen(
                     )) {
                         PreviewPanel(
                             player = player,
-                            playing = isPlaying,
+                            playing = previewPlaying,
                             timelineDuration = model.timeline.totalDurationMs,
                             currentPosition = model.playPositionMs,
                             onPlay = onPlay,

@@ -121,9 +121,10 @@ internal class EditorPreviewCoordinator(
         player.pause()
     }
 
-    fun togglePlayback() {
+    /** Honor the control shown to the user even if playback changes before the click is handled. */
+    fun togglePlayback(playingAtRender: Boolean? = null) {
         if (!active || !canPrepare() || loadedTimeline != timeline()) return
-        if (player.playing) {
+        if (playingAtRender ?: player.playing) {
             pause()
         } else {
             if (player.ended) seek(0L)

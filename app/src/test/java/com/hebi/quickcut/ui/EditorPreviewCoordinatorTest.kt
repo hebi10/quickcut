@@ -22,6 +22,19 @@ class EditorPreviewCoordinatorTest {
         assertTrue("A user pause keeps the visible preview ready", player.resourcesAllocated)
     }
 
+    @Test fun displayedPauseDoesNotRestartPlaybackWhenThePlayerStopsPlayingBeforeTheClick() {
+        preview.replaceTimeline(timeline)
+        player.positionMs = 4_321L
+        player.playing = false
+
+        preview.togglePlayback(playingAtRender = true)
+
+        assertFalse(player.playing)
+        assertEquals(4_321L, position)
+        assertTrue(player.resourcesAllocated)
+        assertTrue(player.seeks.isEmpty())
+    }
+
     @Test fun splitUsesTheLatestPlaybackPosition() {
         preview.replaceTimeline(timeline)
         player.positionMs = 3_457L

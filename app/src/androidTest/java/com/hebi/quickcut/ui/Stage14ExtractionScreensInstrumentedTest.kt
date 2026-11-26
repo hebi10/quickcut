@@ -27,6 +27,7 @@ import com.hebi.quickcut.segments.ExtractionScreen
 import com.hebi.quickcut.segments.ExtractionViewModel
 import java.io.File
 import org.junit.After
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -70,14 +71,20 @@ class Stage14ExtractionScreensInstrumentedTest {
         }
         waitForImport()
         compose.onNodeWithText("여러 구간 추출").assertIsDisplayed()
+        assertNarrowVerticalOrder()
+        compose.onNodeWithText("선택 구간 미리보기").performScrollTo().assertIsDisplayed()
         capture("stage14_extraction_one.png")
         compose.runOnIdle {
             val duration = requireNotNull(model.session).durationMs
             model.addSegment(duration / 3)
             model.addSegment(duration * 2 / 3)
         }
-        compose.onNodeWithText("추출할 구간 (3개)").performScrollTo().assertIsDisplayed()
+        assertNarrowVerticalOrder()
         compose.onNodeWithTag("ui04b-extraction-range-summary").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("extraction-manual-time-toggle").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("구간 추가").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("개별 저장 · 3개").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("추출할 구간 (3개)").performScrollTo().assertIsDisplayed()
         capture("stage14_extraction_three.png")
         capture("ui04b_extraction_three.png")
         Ui07aVisualEvidence.capture("ui07a_light_extraction.png")
@@ -104,6 +111,17 @@ class Stage14ExtractionScreensInstrumentedTest {
         compose.onNodeWithTag("ui04b-extraction-range-summary").performScrollTo().assertIsDisplayed()
         capture("stage14_extraction_tablet_largefont.png")
         capture("ui04b_extraction_largefont.png")
+    }
+
+    private fun assertNarrowVerticalOrder() {
+        compose.waitForIdle()
+        val preview = compose.onNodeWithTag("extraction-preview", useUnmergedTree = true).fetchSemanticsNode()
+        val editor = compose.onNodeWithTag("extraction-range-editor", useUnmergedTree = true).fetchSemanticsNode()
+        val rows = compose.onNodeWithTag("extraction-rows", useUnmergedTree = true).fetchSemanticsNode()
+        assertTrue("Preview and range editor must not overlap",
+            preview.positionInRoot.y + preview.size.height <= editor.positionInRoot.y + 1f)
+        assertTrue("Range editor and segment list must not overlap",
+            editor.positionInRoot.y + editor.size.height <= rows.positionInRoot.y + 1f)
     }
 
     private fun waitForImport() {

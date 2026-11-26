@@ -129,25 +129,40 @@ fun ExtractionScreen(
             .verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        Row(
-            Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            IconButton(onClick = onBack, enabled = !model.busy) {
-                Icon(CutIcons.Back, contentDescription = "뒤로가기")
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val compactHeader = maxWidth / LocalDensity.current.fontScale < 480.dp
+            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    IconButton(onClick = onBack, enabled = !model.busy) {
+                        Icon(CutIcons.Back, contentDescription = "뒤로가기")
+                    }
+                    Column(Modifier.weight(1f)) {
+                        Text("여러 구간 추출", style = MaterialTheme.typography.titleLarge,
+                            color = palette.primaryText)
+                        if (!compactHeader) {
+                            Text("한 영상의 원하는 장면을 개별 MP4로 저장",
+                                style = MaterialTheme.typography.bodySmall, color = palette.secondaryText)
+                        }
+                    }
+                    IconButton(onClick = { onHelp("extraction") }, enabled = !model.busy,
+                        modifier = Modifier.size(48.dp).testTag("extraction-help")) {
+                        Icon(CutIcons.Info, contentDescription = "여러 구간 추출 사용법")
+                    }
+                    if (!compactHeader) {
+                        OutlinedButton(onClick = onSelectVideo, enabled = !model.busy && !model.blocked,
+                            modifier = Modifier.heightIn(min = 48.dp)) { Text("영상 선택") }
+                    }
+                }
+                if (compactHeader) {
+                    Text("한 영상의 원하는 장면을 개별 MP4로 저장",
+                        style = MaterialTheme.typography.bodySmall, color = palette.secondaryText)
+                    OutlinedButton(onClick = onSelectVideo, enabled = !model.busy && !model.blocked,
+                        modifier = Modifier.align(Alignment.End).heightIn(min = 48.dp)) { Text("영상 선택") }
+                }
             }
-            Column(Modifier.weight(1f)) {
-                Text("여러 구간 추출", style = MaterialTheme.typography.titleLarge,
-                    color = palette.primaryText)
-                Text("한 영상의 원하는 장면을 개별 MP4로 저장", style = MaterialTheme.typography.bodySmall,
-                    color = palette.secondaryText)
-            }
-            IconButton(onClick = { onHelp("extraction") }, enabled = !model.busy,
-                modifier = Modifier.size(48.dp).testTag("extraction-help")) {
-                Icon(CutIcons.Info, contentDescription = "여러 구간 추출 사용법")
-            }
-            OutlinedButton(onClick = onSelectVideo, enabled = !model.busy && !model.blocked,
-                modifier = Modifier.heightIn(min = 48.dp)) { Text("영상 선택") }
         }
         if (!model.busy) {
             FirstVisitGuideBanner("extraction", onHelp)
@@ -206,11 +221,21 @@ fun ExtractionScreen(
                         }
                     }
                 } else {
-                    Text("선택 구간 미리보기", color = palette.primaryText,
-                        style = MaterialTheme.typography.titleSmall)
-                    ExtractionPlayer(player)
-                    ExtractionRangeEditor(model, selected)
-                    ExtractionRows(model)
+                    Column(
+                        Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                    ) {
+                        Column(
+                            Modifier.fillMaxWidth().testTag("extraction-preview"),
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            Text("선택 구간 미리보기", color = palette.primaryText,
+                                style = MaterialTheme.typography.titleSmall)
+                            ExtractionPlayer(player)
+                        }
+                        ExtractionRangeEditor(model, selected)
+                        ExtractionRows(model)
+                    }
                 }
             }
             if (model.importing || model.inspecting || model.recovering) {
@@ -376,8 +401,11 @@ private fun ExtractionRangeEditor(model: ExtractionViewModel, selected: Extracti
         (session.items.none { it.range.id != range.id &&
             it.range.startMs == startMs && it.range.endMs == endMs })
 
-    Surface(shape = CutShape, color = palette.surface,
-        border = BorderStroke(1.dp, palette.border)) {
+    Surface(
+        modifier = Modifier.fillMaxWidth().testTag("extraction-range-editor"),
+        shape = CutShape, color = palette.surface,
+        border = BorderStroke(1.dp, palette.border),
+    ) {
         Column(Modifier.fillMaxWidth().padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Column(Modifier.fillMaxWidth().testTag("ui04b-extraction-range-summary"),
@@ -471,7 +499,10 @@ private fun ExtractionRows(model: ExtractionViewModel) {
     val palette = LocalCutPalette.current
     val context = LocalContext.current
     val session = model.session ?: return
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(
+        Modifier.fillMaxWidth().testTag("extraction-rows"),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween) {
             Text("추출할 구간 (${session.items.size}개)",

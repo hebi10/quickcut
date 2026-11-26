@@ -6,6 +6,8 @@ on:
       - ".github/workflows/qc-batch-ui-focused.yml"
       - "app/src/main/java/com/hebi/quickcut/batch/BatchScreen.kt"
       - "app/src/main/java/com/hebi/quickcut/batch/BatchLayoutPolicy.kt"
+      - "app/src/main/java/com/hebi/quickcut/segments/ExtractionScreen.kt"
+      - "app/src/androidTest/java/com/hebi/quickcut/ui/Stage14ExtractionScreensInstrumentedTest.kt"
       - "app/src/androidTest/java/com/hebi/quickcut/ui/EditorDesignInstrumentedTest.kt"
       - "app/src/androidTest/java/com/hebi/quickcut/batch/BatchRecoveryUiInstrumentedTest.kt"
       - "app/src/androidTest/java/com/hebi/quickcut/batch/BatchScreenInstrumentedTest.kt"
@@ -41,7 +43,7 @@ jobs:
           sudo rm -rf /usr/local/lib/android/sdk/ndk
           sudo apt-get clean
       - name: Install missing native and fixture tools
-        timeout-minutes: 10
+        timeout-minutes: 25
         run: |
           set -euo pipefail
           missing=()
@@ -98,7 +100,7 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-      - name: Run focused batch, recovery and trim recommendation tests
+      - name: Run focused batch, recovery, trim recommendation and extraction UI tests
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
@@ -113,7 +115,7 @@ jobs:
           disable-animations: true
           script: >-
             gradle --no-daemon :app:connectedDebugAndroidTest
-            -Pandroid.testInstrumentationRunnerArguments.class=com.hebi.quickcut.ui.EditorDesignInstrumentedTest#largeFontBatchKeepsSelectionAndSaveReasonReachable,com.hebi.quickcut.ui.EditorDesignInstrumentedTest#extraLargeFontBatchKeepsInputsAndSaveReasonReachable,com.hebi.quickcut.batch.BatchRecoveryUiInstrumentedTest#emptyCorruptJournalShowsPersistentRecoveryActionAndBlocksStart,com.hebi.quickcut.batch.BatchScreenInstrumentedTest#modalSupportsMultipleTemplatesAndRemovingAnUnselectedRowPreservesDraft,com.hebi.quickcut.ui.TrimInputInstrumentedTest#acceptedRecommendationUsesRealEditorAndExporterWithoutChangingQuickDefaults
+            -Pandroid.testInstrumentationRunnerArguments.class=com.hebi.quickcut.ui.EditorDesignInstrumentedTest#largeFontBatchKeepsSelectionAndSaveReasonReachable,com.hebi.quickcut.ui.EditorDesignInstrumentedTest#extraLargeFontBatchKeepsInputsAndSaveReasonReachable,com.hebi.quickcut.batch.BatchRecoveryUiInstrumentedTest#emptyCorruptJournalShowsPersistentRecoveryActionAndBlocksStart,com.hebi.quickcut.batch.BatchScreenInstrumentedTest#modalSupportsMultipleTemplatesAndRemovingAnUnselectedRowPreservesDraft,com.hebi.quickcut.ui.TrimInputInstrumentedTest#acceptedRecommendationUsesRealEditorAndExporterWithoutChangingQuickDefaults,com.hebi.quickcut.ui.Stage14ExtractionScreensInstrumentedTest
       - name: Keep focused UI test XML
         if: always()
         uses: actions/upload-artifact@v4

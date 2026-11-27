@@ -83,14 +83,14 @@ def snapshot(label):
 
 
 def node_value(node):
-    return node.get("text") or node.get("content-desc") or ""
+    return (node.get("text") or node.get("content-desc") or "").split("\n", 1)[0]
 
 
 def find(nodes, labels, package=PACKAGE):
     for label in labels:
         for node in nodes:
             if (package is None or (node.get("package") or "").endswith(package)) and (
-                label == node.get("text") or label == node.get("content-desc")
+                label == node_value(node) or label == node.get("content-desc")
             ) and node.get("enabled") == "true":
                 if re.fullmatch(r"\[\d+,\d+\]\[\d+,\d+\]", node.get("bounds", "")):
                     return node
@@ -198,6 +198,12 @@ def device():
         ], timeout=25))
         assert {stream["codec_type"] for stream in probe["streams"]} == {"video", "audio"}, probe
         assert 8.75 <= float(probe["format"]["duration"]) <= 9.25, probe
+        subprocess.run(
+            ["ffmpeg", "-nostdin", "-v", "error", "-xerror", "-i", str(pulled),
+             "-map", "0:v:0", "-map", "0:a:0", "-f", "null", "-"],
+            check=True, timeout=45,
+        )
+        probe["output_decoded"] = True
         assert shell("sha256sum", FIXTURE).split()[0] == original_hash, "The source video changed"
         probe["preview_position"] = position
         export_log = adb("logcat", "-d", "-v", "brief", "QuickCutExport:I", "*:S").decode()

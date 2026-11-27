@@ -16,8 +16,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Verify provenance and wait for exact Android build
-        timeout-minutes: 45
+      - name: Verify provenance of the successful Android builds
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -26,17 +25,7 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/45746537175" > quickcut-dex03-evidence/baseline-run.json
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/45960284896" > quickcut-dex03-evidence/candidate-run.json
           jq -e '.head_sha=="ffead4310dce940453bff0f6b2372f6f364c79a2" and .conclusion=="success" and .path==".github/workflows/android.yml"' quickcut-dex03-evidence/baseline-run.json
-          jq -e '.head_sha=="8562eeb2a6a3c54c3699a5a526b9d15db49ac0d9" and .path==".github/workflows/android.yml" and .event=="pull_request"' quickcut-dex03-evidence/candidate-run.json
-          for ((attempt = 1; attempt <= 85; attempt++)); do
-            gh api "repos/$GITHUB_REPOSITORY/actions/runs/45960284896" > quickcut-dex03-evidence/candidate-run.json
-            if jq -e '.status == "completed"' quickcut-dex03-evidence/candidate-run.json >/dev/null; then
-              jq -e '.conclusion == "success"' quickcut-dex03-evidence/candidate-run.json
-              exit
-            fi
-            sleep 30
-          done
-          echo "::error::Candidate Android build did not finish in the bounded wait"
-          exit 1
+          jq -e '.head_sha=="8562eeb2a6a3c54c3699a5a526b9d15db49ac0d9" and .pull_requests[0].base.sha=="ffead4310dce940453bff0f6b2372f6f364c79a2" and .conclusion=="success" and .path==".github/workflows/android.yml" and .event=="pull_request"' quickcut-dex03-evidence/candidate-run.json
       - uses: actions/download-artifact@v4
         with:
           github-token: ${{ github.token }}
@@ -82,8 +71,11 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
           if ! command -v ffmpeg || ! command -v ffprobe; then
-            sudo apt-get -o Acquire::Retries=2 update -qq
-            sudo apt-get install -y --no-install-recommends ffmpeg
+            ubuntu_sources=/etc/apt/sources.list.d/ubuntu.sources
+            test -f "$ubuntu_sources"
+            apt_options=(-o "Dir::Etc::sourcelist=$ubuntu_sources" -o Dir::Etc::sourceparts=- -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30)
+            sudo apt-get "${apt_options[@]}" update -qq
+            sudo DEBIAN_FRONTEND=noninteractive apt-get "${apt_options[@]}" install -y --no-install-recommends ffmpeg
           fi
           ffmpeg -nostdin -hide_banner -loglevel error \
             -f lavfi -i testsrc2=size=320x240:rate=30 -f lavfi -i sine=frequency=440:sample_rate=44100 \

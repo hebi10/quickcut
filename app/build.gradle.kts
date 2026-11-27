@@ -40,6 +40,9 @@ android {
     }
     buildTypes {
         release {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
             // Without credentials this is deliberately unsigned, never debug-signed.
             if (!releaseStore.isNullOrBlank()) {
                 signingConfig = signingConfigs.getByName("stableRelease")

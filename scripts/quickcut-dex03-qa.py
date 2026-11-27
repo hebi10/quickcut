@@ -14,6 +14,8 @@ from zipfile import ZipFile
 EVIDENCE = Path("quickcut-dex03-evidence")
 PACKAGE = "com.hebi.quickcut"
 FIXTURE = "/sdcard/Download/QuickCutDex03.mp4"
+STARTUP = None
+SYSTEM_DIALOG_WAITS = 0
 MAPPING = "BUNDLE-METADATA/com.android.tools.build.obfuscation/proguard.map"
 DEX_ENTRY = re.compile(r"base/dex/classes\d*\.dex")
 SMARTCUT_LIBS = {
@@ -79,7 +81,7 @@ def snapshot(label):
     finally:
         shell("rm", "-f", remote)
     (EVIDENCE / f"{label}.xml").write_bytes(xml)
-    return list(ET.fromstring(xml).iter("node"))
+    return ET.fromstring(xml)
 
 
 def node_value(node):
@@ -97,15 +99,35 @@ def find(nodes, labels, package=PACKAGE):
     return None
 
 
+def crash_events():
+    return adb("logcat", "-d", "-b", "crash", "-b", "events", "-v", "brief",
+               "AndroidRuntime:E", "DEBUG:F", "libc:F", "am_crash:I", "am_anr:I", "*:S")
+
+
+def recover_system_dialog(hierarchy):
+    global SYSTEM_DIALOG_WAITS
+    coordinates = STARTUP.system_launcher_wait_target(hierarchy)
+    if coordinates is None:
+        return False
+    assert SYSTEM_DIALOG_WAITS < 3, "Emulator system ANR kept blocking QuickCut"
+    assert not STARTUP.app_failed(crash_events().decode(errors="replace")), "QuickCut crash or ANR observed"
+    shell("input", "tap", *(str(point) for point in coordinates))
+    SYSTEM_DIALOG_WAITS += 1
+    print("Acknowledged an allowlisted emulator launcher or System UI ANR dialog", flush=True)
+    return True
+
+
 def wait_for(label, predicate, timeout=32):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
-            nodes = snapshot(label)
+            hierarchy = snapshot(label)
         except (subprocess.SubprocessError, ET.ParseError):
             time.sleep(1)
             continue
-        match = predicate(nodes)
+        if recover_system_dialog(hierarchy):
+            continue
+        match = predicate(list(hierarchy.iter("node")))
         if match is not None:
             print(f"Verified {label}: {node_value(match) if isinstance(match, ET.Element) else match}", flush=True)
             return match
@@ -213,12 +235,16 @@ def export():
     else:
         raise AssertionError("Export never showed the completed state")
     screenshot("export-complete")
-    nodes = snapshot("export-complete")
+    nodes = snapshot("export-complete").iter("node")
     report = next((node_value(node) for node in nodes if node_value(node).startswith("처리 방식: ")), None)
     return report
 
 
 def device():
+    global STARTUP
+    spec = importlib.util.spec_from_file_location("startup", "scripts/android-startup-check.py")
+    STARTUP = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(STARTUP)
     original_hash = shell("sha256sum", FIXTURE).split()[0]
     try:
         start_import()
@@ -251,6 +277,7 @@ def device():
         }
         probe["export_mode"] = report
         probe["source_unchanged"] = True
+        probe["source_sha256"] = original_hash
         probe["output_sha256"] = hashlib.sha256(pulled.read_bytes()).hexdigest()
         emit("device.json", probe)
     except Exception:
@@ -259,13 +286,10 @@ def device():
     finally:
         export_log = adb("logcat", "-d", "-v", "brief", "QuickCutExport:I", "*:S")
         (EVIDENCE / "export-log.txt").write_bytes(export_log)
-        logs = adb("logcat", "-d", "-b", "crash", "-b", "events", "-v", "brief",
-                   "AndroidRuntime:E", "DEBUG:F", "libc:F", "am_crash:I", "am_anr:I", "*:S")
+        logs = crash_events()
         (EVIDENCE / "crash-anr.txt").write_bytes(logs)
-        spec = importlib.util.spec_from_file_location("startup", "scripts/android-startup-check.py")
-        startup = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(startup)
-        assert not startup.app_failed(logs.decode(errors="replace")), "App crash or ANR observed"
+        assert not STARTUP.app_failed(logs.decode(errors="replace")), "App crash or ANR observed"
+
 
 
 if __name__ == "__main__":

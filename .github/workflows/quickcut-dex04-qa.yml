@@ -1,0 +1,138 @@
+name: DEX-04 QuickCut release upgrade smoke
+
+on:
+  push:
+    branches: [qa/quickcut-dex-04]
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [29, 35, 36]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify provenance and wait for exact merged-main Android build
+        timeout-minutes: 45
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p quickcut-dex04-evidence
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/45746537175" > quickcut-dex04-evidence/baseline-run.json
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/45965630263" > quickcut-dex04-evidence/candidate-run.json
+          jq -e '.head_sha=="ffead4310dce940453bff0f6b2372f6f364c79a2" and .conclusion=="success" and .path==".github/workflows/android.yml"' quickcut-dex04-evidence/baseline-run.json
+          gh api "repos/$GITHUB_REPOSITORY/branches/main" --jq .commit.sha > quickcut-dex04-evidence/main-sha.txt
+          test "$(cat quickcut-dex04-evidence/main-sha.txt)" = 'b5231166c53118b3588d9049fb3696a48450ed38'
+          jq -e '.head_sha=="b5231166c53118b3588d9049fb3696a48450ed38" and .head_branch=="main" and .path==".github/workflows/android.yml" and .event=="push"' quickcut-dex04-evidence/candidate-run.json
+          for ((attempt = 1; attempt <= 85; attempt++)); do
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/45965630263" > quickcut-dex04-evidence/candidate-run.json
+            if jq -e '.status == "completed"' quickcut-dex04-evidence/candidate-run.json >/dev/null; then
+              jq -e '.conclusion == "success"' quickcut-dex04-evidence/candidate-run.json
+              exit
+            fi
+            sleep 30
+          done
+          echo "::error::Merged-main Android build did not finish in the bounded wait"
+          exit 1
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 45746537175
+          name: quickcut-play-bundle-unsigned
+          path: baseline
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 45746537175
+          name: quickcut-release-unsigned
+          path: baseline
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 45965630263
+          name: quickcut-play-bundle-unsigned
+          path: candidate
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 45965630263
+          name: quickcut-release-unsigned
+          path: candidate
+      - name: Measure release DEX and verify R8 mapping and SmartCut packaging
+        run: python3 scripts/quickcut-dex04-qa.py packages
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+      - name: Sign both APKs with the same disposable upgrade-test certificate
+        run: |
+          set -euo pipefail
+          sdkmanager --install 'build-tools;36.0.0'
+          keytool -genkeypair -keystore "$RUNNER_TEMP/quickcut-qa.p12" -storetype PKCS12 \
+            -alias dex04 -storepass qa-test-only -keypass qa-test-only \
+            -dname 'CN=QuickCut DEX-04 QA' -keyalg RSA -keysize 2048 -validity 2 -noprompt
+          signer="$ANDROID_HOME/build-tools/36.0.0/apksigner"
+          for build in baseline candidate; do
+            "$signer" sign --ks "$RUNNER_TEMP/quickcut-qa.p12" \
+              --ks-pass pass:qa-test-only --key-pass pass:qa-test-only \
+              --out "$RUNNER_TEMP/quickcut-$build-qa.apk" "$build/app-release-unsigned.apk"
+            "$signer" verify --print-certs "$RUNNER_TEMP/quickcut-$build-qa.apk" > "quickcut-dex04-evidence/$build-signing.txt"
+          done
+          diff <(rg '^Signer #1 certificate SHA-256 digest: ' quickcut-dex04-evidence/baseline-signing.txt) \
+            <(rg '^Signer #1 certificate SHA-256 digest: ' quickcut-dex04-evidence/candidate-signing.txt)
+      - name: Enable emulator and generate synthetic test clip
+        run: |
+          set -euo pipefail
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          if ! command -v ffmpeg || ! command -v ffprobe; then
+            ubuntu_sources=/etc/apt/sources.list.d/ubuntu.sources
+            test -f "$ubuntu_sources"
+            apt_options=(-o "Dir::Etc::sourcelist=$ubuntu_sources" -o Dir::Etc::sourceparts=- -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30)
+            sudo apt-get "${apt_options[@]}" update -qq
+            sudo DEBIAN_FRONTEND=noninteractive apt-get "${apt_options[@]}" install -y --no-install-recommends ffmpeg
+          fi
+          ffmpeg -nostdin -hide_banner -loglevel error \
+            -f lavfi -i testsrc2=size=320x240:rate=30 -f lavfi -i sine=frequency=440:sample_rate=44100 \
+            -t 13 -c:v libx264 -preset ultrafast -pix_fmt yuv420p -g 90 -keyint_min 90 -sc_threshold 0 \
+            -c:a aac -b:a 64k -shortest "$RUNNER_TEMP/QuickCutDex04.mp4"
+      - name: Verify installed release upgrade, media preview and native SmartCut
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          QUICKCUT_EMULATOR_API: ${{ matrix.api }}
+        with:
+          api-level: ${{ matrix.api }}
+          target: default
+          arch: x86_64
+          profile: pixel_6
+          disk-size: 2048M
+          ram-size: ${{ matrix.api == 29 && '4096M' || '3072M' }}
+          heap-size: ${{ matrix.api == 29 && '384M' || '256M' }}
+          emulator-boot-timeout: 300
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -no-metrics -partition-size 2048
+          disable-animations: true
+          script: bash scripts/quickcut-dex04-smoke.sh
+      - name: Upload DEX and device evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quickcut-dex04-release-evidence-api-${{ matrix.api }}
+          path: |
+            quickcut-dex04-evidence/
+            quickcut-startup-diagnostics/
+            quickcut-start.png
+          if-no-files-found: error
+          retention-days: 14

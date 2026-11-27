@@ -169,10 +169,22 @@ def preview():
 def export():
     tap(wait_for("save", lambda nodes: find(nodes, ("영상 저장",))))
     choices = ("저장 완료", "저장 시작", "정확한 위치로 자동 저장", "추천 위치로 고속 저장")
-    for _ in range(4):
-        node = wait_for("export", lambda nodes: find(nodes, choices), 70)
+
+    def export_action(nodes):
+        action = find(nodes, choices)
+        if action is not None:
+            return action
+        prompt = find(nodes, ("Allow QuickCut to send you notifications?",), "permissioncontroller")
+        if prompt is not None:
+            return find(nodes, ("Allow",), "permissioncontroller")
+        return None
+
+    for _ in range(5):
+        node = wait_for("export", export_action, 70)
         if node_value(node) == "저장 완료":
             break
+        if node_value(node) == "Allow":
+            screenshot("export-notification-permission")
         tap(node)
     else:
         raise AssertionError("Export never showed the completed state")

@@ -27,7 +27,16 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/45960284896" > quickcut-dex03-evidence/candidate-run.json
           jq -e '.head_sha=="ffead4310dce940453bff0f6b2372f6f364c79a2" and .conclusion=="success" and .path==".github/workflows/android.yml"' quickcut-dex03-evidence/baseline-run.json
           jq -e '.head_sha=="8562eeb2a6a3c54c3699a5a526b9d15db49ac0d9" and .path==".github/workflows/android.yml" and .event=="pull_request"' quickcut-dex03-evidence/candidate-run.json
-          gh run watch 45960284896 --repo "$GITHUB_REPOSITORY" --exit-status --interval 30
+          for ((attempt = 1; attempt <= 85; attempt++)); do
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/45960284896" > quickcut-dex03-evidence/candidate-run.json
+            if jq -e '.status == "completed"' quickcut-dex03-evidence/candidate-run.json >/dev/null; then
+              jq -e '.conclusion == "success"' quickcut-dex03-evidence/candidate-run.json
+              exit
+            fi
+            sleep 30
+          done
+          echo "::error::Candidate Android build did not finish in the bounded wait"
+          exit 1
       - uses: actions/download-artifact@v4
         with:
           github-token: ${{ github.token }}
@@ -78,7 +87,7 @@ jobs:
           fi
           ffmpeg -nostdin -hide_banner -loglevel error \
             -f lavfi -i testsrc2=size=320x240:rate=30 -f lavfi -i sine=frequency=440:sample_rate=44100 \
-            -t 9 -c:v libx264 -preset ultrafast -pix_fmt yuv420p -g 60 -keyint_min 60 -sc_threshold 0 \
+            -t 13 -c:v libx264 -preset ultrafast -pix_fmt yuv420p -g 90 -keyint_min 90 -sc_threshold 0 \
             -c:a aac -b:a 64k -shortest "$RUNNER_TEMP/QuickCutDex03.mp4"
       - name: Install minified release and smoke test video import, preview and export
         uses: reactivecircus/android-emulator-runner@v2

@@ -149,8 +149,13 @@ def preview():
     play = wait_for("preview-ready", lambda nodes: find(nodes, ("재생",)))
     tap(play)
 
+    # Accessibility dumps wait for idle. Pause after proving that the position advanced.
+    time.sleep(3)
+    screenshot("preview-playing")
+    tap(play)
+
     def advanced(nodes):
-        if find(nodes, ("일시정지",)) is None:
+        if find(nodes, ("재생",)) is None:
             return None
         return next((
             node_value(node) for node in nodes
@@ -158,12 +163,7 @@ def preview():
             and re.search(r"[1-9]", node_value(node))
         ), None)
 
-    position = wait_for("preview-playing", advanced, 25)
-    screenshot("preview-playing")
-    pause = find(snapshot("preview-controls"), ("일시정지",))
-    if pause is not None:
-        tap(pause)
-    return position
+    return wait_for("preview-advanced", advanced, 25)
 
 
 def export():
@@ -189,7 +189,7 @@ def device():
         position = preview()
         report = export()
         output = shell("find", "/sdcard/Movies/QuickCut", "-name", "*.mp4").splitlines()
-        assert len(output) == 1 and "/QuickCutDex03_QuickCut_" in output[0], output
+        assert len(output) == 1 and "/QuickCut_" in output[0], output
         pulled = Path(os.environ["RUNNER_TEMP"]) / "quickcut-output.mp4"
         adb("pull", output[0], str(pulled))
         probe = json.loads(subprocess.check_output([
@@ -197,9 +197,16 @@ def device():
             "-of", "json", str(pulled),
         ], timeout=25))
         assert {stream["codec_type"] for stream in probe["streams"]} == {"video", "audio"}, probe
-        assert 0.1 <= float(probe["format"]["duration"]) <= 9.25, probe
+        assert 8.75 <= float(probe["format"]["duration"]) <= 9.25, probe
         assert shell("sha256sum", FIXTURE).split()[0] == original_hash, "The source video changed"
         probe["preview_position"] = position
+        export_log = adb("logcat", "-d", "-v", "brief", "QuickCutExport:I", "*:S").decode()
+        (EVIDENCE / "export-log.txt").write_text(export_log, encoding="utf-8")
+        smartcut = re.search(r"method=native_smart_cut copiedVideoPackets=(\d+) encodedVideoPackets=(\d+)", export_log)
+        assert smartcut and all(int(count) > 0 for count in smartcut.groups()), export_log
+        probe["native_smartcut"] = {
+            "copied_video_packets": int(smartcut[1]), "encoded_video_packets": int(smartcut[2]),
+        }
         probe["export_mode"] = report
         probe["source_unchanged"] = True
         probe["output_sha256"] = hashlib.sha256(pulled.read_bytes()).hexdigest()

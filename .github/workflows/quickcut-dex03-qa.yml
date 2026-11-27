@@ -1,0 +1,109 @@
+name: DEX-03 QuickCut release smoke
+
+on:
+  push:
+    branches: [qa/quickcut-dex-03]
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify provenance and wait for exact Android build
+        timeout-minutes: 45
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p quickcut-dex03-evidence
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/45746537175" > quickcut-dex03-evidence/baseline-run.json
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/45960284896" > quickcut-dex03-evidence/candidate-run.json
+          jq -e '.head_sha=="ffead4310dce940453bff0f6b2372f6f364c79a2" and .conclusion=="success" and .path==".github/workflows/android.yml"' quickcut-dex03-evidence/baseline-run.json
+          jq -e '.head_sha=="8562eeb2a6a3c54c3699a5a526b9d15db49ac0d9" and .path==".github/workflows/android.yml" and .event=="pull_request"' quickcut-dex03-evidence/candidate-run.json
+          gh run watch 45960284896 --repo "$GITHUB_REPOSITORY" --exit-status --interval 30
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 45746537175
+          name: quickcut-play-bundle-unsigned
+          path: baseline
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 45960284896
+          name: quickcut-play-bundle-unsigned
+          path: candidate
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 45960284896
+          name: quickcut-release-unsigned
+          path: candidate
+      - name: Measure release DEX and verify R8 mapping and SmartCut packaging
+        run: python3 scripts/quickcut-dex03-qa.py packages
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+      - name: Sign test APK with a disposable test certificate
+        run: |
+          set -euo pipefail
+          sdkmanager --install 'build-tools;36.0.0'
+          keytool -genkeypair -keystore "$RUNNER_TEMP/quickcut-qa.p12" -storetype PKCS12 \
+            -alias dex03 -storepass qa-test-only -keypass qa-test-only \
+            -dname 'CN=QuickCut DEX-03 QA' -keyalg RSA -keysize 2048 -validity 2 -noprompt
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" sign --ks "$RUNNER_TEMP/quickcut-qa.p12" \
+            --ks-pass pass:qa-test-only --key-pass pass:qa-test-only \
+            --out "$RUNNER_TEMP/quickcut-qa.apk" candidate/app-release-unsigned.apk
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify "$RUNNER_TEMP/quickcut-qa.apk"
+      - name: Enable emulator and generate synthetic test clip
+        run: |
+          set -euo pipefail
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          if ! command -v ffmpeg || ! command -v ffprobe; then
+            sudo apt-get -o Acquire::Retries=2 update -qq
+            sudo apt-get install -y --no-install-recommends ffmpeg
+          fi
+          ffmpeg -nostdin -hide_banner -loglevel error \
+            -f lavfi -i testsrc2=size=320x240:rate=30 -f lavfi -i sine=frequency=440:sample_rate=44100 \
+            -t 9 -c:v libx264 -preset ultrafast -pix_fmt yuv420p -g 60 -keyint_min 60 -sc_threshold 0 \
+            -c:a aac -b:a 64k -shortest "$RUNNER_TEMP/QuickCutDex03.mp4"
+      - name: Install minified release and smoke test video import, preview and export
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          QUICKCUT_EMULATOR_API: '35'
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disk-size: 2048M
+          ram-size: 3072M
+          heap-size: 256M
+          emulator-boot-timeout: 300
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -no-metrics -partition-size 2048
+          disable-animations: true
+          script: bash scripts/quickcut-dex03-smoke.sh
+      - name: Upload DEX and device evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quickcut-dex03-release-evidence
+          path: |
+            quickcut-dex03-evidence/
+            quickcut-startup-diagnostics/
+            quickcut-start.png
+          if-no-files-found: error
+          retention-days: 14

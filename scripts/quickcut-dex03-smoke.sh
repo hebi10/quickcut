@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 adb install "$RUNNER_TEMP/quickcut-qa.apk"
+adb shell pm grant com.hebi.quickcut android.permission.POST_NOTIFICATIONS
 adb shell input keyevent 82
 adb logcat -c
 adb push "$RUNNER_TEMP/QuickCutDex03.mp4" /sdcard/Download/QuickCutDex03.mp4

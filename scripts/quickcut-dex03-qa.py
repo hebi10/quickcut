@@ -134,12 +134,36 @@ def start_import():
     else:
         raise AssertionError("QuickCut home not found after onboarding")
 
-    node = wait_for("document-picker", lambda nodes: find(
-        nodes, ("QuickCutDex03.mp4", "Show roots", "Open navigation drawer"), "documentsui"))
-    if node_value(node) != "QuickCutDex03.mp4":
-        tap(node)
-        tap(wait_for("picker-downloads", lambda nodes: find(nodes, ("Downloads",), "documentsui")))
-        node = wait_for("picker-video", lambda nodes: find(nodes, ("QuickCutDex03.mp4",), "documentsui"))
+    def visible_video(nodes):
+        if find(nodes, ("Open from",), "documentsui") is not None:
+            return None
+        return find(nodes, ("QuickCutDex03.mp4",), "documentsui")
+
+    try:
+        node = wait_for("picker-recent-video", visible_video, 24)
+    except AssertionError:
+        tap(wait_for("picker-roots", lambda nodes: find(
+            nodes, ("Show roots", "Open navigation drawer"), "documentsui")))
+
+        def downloads_row(nodes):
+            if find(nodes, ("Open from",), "documentsui") is not None:
+                return find(nodes, ("Downloads",), "documentsui")
+            return None
+
+        def download_video(nodes):
+            if find(nodes, ("Downloads",), "documentsui") is not None:
+                return visible_video(nodes)
+            return None
+
+        for _ in range(3):
+            tap(wait_for("picker-downloads", downloads_row))
+            try:
+                node = wait_for("picker-downloads-video", download_video, 22)
+                break
+            except AssertionError:
+                continue
+        else:
+            raise AssertionError("Downloads remained covered by the DocumentsUI navigation drawer")
     tap(node)
     wait_for("import", lambda nodes: find(nodes, ("영상 미리보기",)))
     screenshot("import")
@@ -233,6 +257,8 @@ def device():
         screenshot("device-failure")
         raise
     finally:
+        export_log = adb("logcat", "-d", "-v", "brief", "QuickCutExport:I", "*:S")
+        (EVIDENCE / "export-log.txt").write_bytes(export_log)
         logs = adb("logcat", "-d", "-b", "crash", "-b", "events", "-v", "brief",
                    "AndroidRuntime:E", "DEBUG:F", "libc:F", "am_crash:I", "am_anr:I", "*:S")
         (EVIDENCE / "crash-anr.txt").write_bytes(logs)

@@ -87,7 +87,7 @@ jobs:
           QUICKCUT_EMULATOR_API: '35'
         with:
           api-level: 35
-          target: google_apis
+          target: default
           arch: x86_64
           profile: pixel_6
           disk-size: 2048M

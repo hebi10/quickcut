@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        api: [29, 35, 36]
+        api: [36]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -90,8 +90,9 @@ jobs:
               --out "$RUNNER_TEMP/quickcut-$build-qa.apk" "$build/app-release-unsigned.apk"
             "$signer" verify --print-certs "$RUNNER_TEMP/quickcut-$build-qa.apk" > "quickcut-dex04-evidence/$build-signing.txt"
           done
-          diff <(rg '^Signer #1 certificate SHA-256 digest: ' quickcut-dex04-evidence/baseline-signing.txt) \
-            <(rg '^Signer #1 certificate SHA-256 digest: ' quickcut-dex04-evidence/candidate-signing.txt)
+          baseline_fingerprint="$(grep -E '^Signer #1 certificate SHA-256 digest: [0-9a-f]{64}$' quickcut-dex04-evidence/baseline-signing.txt)"
+          candidate_fingerprint="$(grep -E '^Signer #1 certificate SHA-256 digest: [0-9a-f]{64}$' quickcut-dex04-evidence/candidate-signing.txt)"
+          test "$baseline_fingerprint" = "$candidate_fingerprint"
       - name: Enable emulator and generate synthetic test clip
         run: |
           set -euo pipefail

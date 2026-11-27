@@ -263,14 +263,41 @@ def export():
     return report
 
 
+def enable_qa_launcher_recovery():
+    repository_dialog_target = STARTUP.system_launcher_wait_target
+
+    def known_launcher_dialog(hierarchy):
+        target = repository_dialog_target(hierarchy)
+        if target is not None:
+            return target
+
+        nodes = list(hierarchy.iter("node"))
+        title = find(nodes, ("Quickstep isn't responding",), "android")
+        close = find(nodes, ("Close app",), "android")
+        if (title is None or title.get("resource-id") != "android:id/alertTitle"
+                or close is None or close.get("resource-id") != "android:id/aerr_close"):
+            return None
+        log = crash_events().decode(errors="replace")
+        if STARTUP.app_failed(log) or not re.search(r"am_anr[^\n]*com\.android\.launcher3", log):
+            return None
+        left, top, right, bottom = map(int, re.findall(r"\d+", close.get("bounds")))
+        assert 0 <= left < right <= 10000 and 0 <= top < bottom <= 10000
+        print("Acknowledging the verified AOSP Quickstep ANR using its Android Close app control", flush=True)
+        return (left + right) // 2, (top + bottom) // 2
+
+    STARTUP.system_launcher_wait_target = known_launcher_dialog
+
+
 def device():
     global STARTUP
     spec = importlib.util.spec_from_file_location("startup", "scripts/android-startup-check.py")
     STARTUP = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(STARTUP)
+    enable_qa_launcher_recovery()
     original_hash = shell("sha256sum", FIXTURE).split()[0]
     api = int(os.environ["QUICKCUT_EMULATOR_API"])
     try:
+        STARTUP.check_startup(EVIDENCE / "baseline-startup")
         onboard()
         select_dark_theme()
         shell("am", "force-stop", PACKAGE)

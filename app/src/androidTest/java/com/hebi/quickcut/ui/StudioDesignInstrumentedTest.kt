@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.hebi.quickcut.media.SaveDateMode
+import com.hebi.quickcut.settings.QuickCutThemeMode
 import com.hebi.quickcut.settings.QuickTrimSettings
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -85,7 +86,7 @@ class StudioDesignInstrumentedTest {
         composeRule.setContent {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(width.dp, height.dp))) {
                 DeviceConfigurationOverride(DeviceConfigurationOverride.FontScale(fontScale)) {
-                    QuickCutTheme {
+                    QuickCutTheme(modeOverride = QuickCutThemeMode.LIGHT) {
                         Box(Modifier.fillMaxSize().background(LocalCutPalette.current.background)) {
                             StudioStartScreen(
                                 onQuick = { events += "quick" },

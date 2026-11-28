@@ -23,6 +23,7 @@ import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.hebi.quickcut.media.SaveDateMode
+import com.hebi.quickcut.settings.QuickCutThemeMode
 import com.hebi.quickcut.settings.QuickTrimSettings
 import java.io.File
 import org.junit.Rule
@@ -38,7 +39,7 @@ class Stage7ReferenceScreensInstrumentedTest {
     @Test fun homeAndProjectTabAreCaptured() {
         compose.setContent {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(360.dp, 640.dp))) {
-                QuickCutTheme {
+                QuickCutTheme(modeOverride = QuickCutThemeMode.LIGHT) {
                     StudioStartScreen(
                         onQuick = {}, onSelect = {}, onBatch = {},
                         canRestore = false, onRestore = {},

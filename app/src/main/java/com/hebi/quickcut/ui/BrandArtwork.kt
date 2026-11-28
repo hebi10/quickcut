@@ -31,8 +31,11 @@ import androidx.compose.ui.unit.dp
 
 /** The same flat film-frame cut mark is used by the launcher, splash and home. */
 @Composable
-internal fun QuickCutLogo(size: Dp, modifier: Modifier = Modifier) {
-    val palette = LocalCutPalette.current
+internal fun QuickCutLogo(
+    size: Dp,
+    modifier: Modifier = Modifier,
+    palette: CutPalette = LocalCutPalette.current,
+) {
     Box(
         modifier = modifier.size(size)
             .clip(CutShape)

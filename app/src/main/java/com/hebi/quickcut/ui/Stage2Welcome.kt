@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -19,6 +20,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -30,6 +32,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 
 private data class WelcomePage(val title: String, val detail: String)
 
@@ -45,23 +48,29 @@ internal fun QuickCutWelcome(onFinish: () -> Unit) {
     var index by rememberSaveable { mutableIntStateOf(0) }
     val page = welcomePages[index]
     val compactArtwork = LocalDensity.current.fontScale >= 1.6f
+    val openingLayout = index == 0 && !compactArtwork
+    val contentScroll = rememberScrollState()
+    LaunchedEffect(index) { contentScroll.scrollTo(0) }
 
     Column(Modifier.fillMaxSize().background(palette.background)) {
         Column(
             modifier = Modifier.weight(1f).fillMaxWidth()
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(contentScroll)
                 .padding(horizontal = CutSpacing.xl, vertical = CutSpacing.xl),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(CutSpacing.xl),
         ) {
-            Text(
-                "QUICKCUT · ${index + 1} / ${welcomePages.size}",
-                style = MaterialTheme.typography.labelMedium,
-                color = palette.secondaryText,
-            )
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(CutSpacing.sm)) {
+                QuickCutLogo(size = 32.dp)
+                Text("QuickCut", Modifier.weight(1f), color = palette.primaryText,
+                    style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Text("${index + 1} / ${welcomePages.size}",
+                    style = MaterialTheme.typography.titleSmall, color = palette.secondaryText)
+            }
             Box(
                 modifier = Modifier.fillMaxWidth()
-                    .height(if (compactArtwork) 120.dp else 168.dp)
+                    .height(if (compactArtwork) 120.dp else 180.dp)
                     .background(palette.surface, CutShape)
                     .border(1.dp, palette.border, CutShape)
                     .testTag("quickcut-onboarding-artwork"),
@@ -94,7 +103,7 @@ internal fun QuickCutWelcome(onFinish: () -> Unit) {
                         repeat(welcomePages.size) { step ->
                             Box(
                                 Modifier.width(if (compactArtwork) 46.dp else 60.dp)
-                                    .height(4.dp)
+                            .height(if (openingLayout) 12.dp else 4.dp)
                                     .background(
                                         if (step == index) palette.accent else palette.border,
                                         CutSmallShape,
@@ -107,15 +116,19 @@ internal fun QuickCutWelcome(onFinish: () -> Unit) {
             Text(
                 page.title,
                 color = palette.primaryText,
-                style = MaterialTheme.typography.headlineMedium,
+                style = if (openingLayout) MaterialTheme.typography.headlineMedium.copy(
+                    fontSize = 33.sp, lineHeight = 43.sp,
+                ) else MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Bold,
-                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
+                textAlign = TextAlign.Start,
             )
             Text(
                 page.detail,
                 color = palette.secondaryText,
                 style = MaterialTheme.typography.bodyLarge,
-                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
+                textAlign = TextAlign.Start,
             )
         }
 
@@ -142,7 +155,7 @@ internal fun QuickCutWelcome(onFinish: () -> Unit) {
             }
             Button(
                 onClick = { if (index == welcomePages.lastIndex) onFinish() else index++ },
-                modifier = Modifier.fillMaxWidth().height(CutSizes.primaryButton),
+                modifier = Modifier.fillMaxWidth().heightIn(min = CutSizes.primaryButton),
                 shape = CutShape,
             ) {
                 Text(

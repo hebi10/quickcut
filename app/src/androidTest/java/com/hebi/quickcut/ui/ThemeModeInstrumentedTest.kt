@@ -13,6 +13,7 @@ import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.hebi.quickcut.media.SaveDateMode
@@ -50,6 +51,9 @@ class ThemeModeInstrumentedTest {
         compose.runOnIdle { mode = QuickCutThemeMode.DARK }
         compose.onNodeWithText("빠른 자르기 시작").assertIsDisplayed()
         capture("theme_dark_home.png", light = false)
+        compose.onNodeWithText("일괄 편집 · 여러 영상").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("상세 편집").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("빠른 자르기 시작").performScrollTo()
         captureUi03aTabs("dark", light = false)
     }
 

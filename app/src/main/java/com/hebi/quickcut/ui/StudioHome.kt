@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -34,6 +35,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
@@ -45,15 +48,30 @@ import com.hebi.quickcut.media.SaveDateMode
 import com.hebi.quickcut.settings.QuickCutThemeMode
 import com.hebi.quickcut.settings.QuickTrimSettings
 
+private val darkStudioHome = CutPalettes.Dark.copy(
+    background = Color(0xFF101E1A),
+    surface = Color(0xFF13251D),
+    panel = Color(0xFF1B3126),
+    border = Color(0xFF34493E),
+    accent = Color(0xFFAEF0BD),
+    onAccent = Color(0xFF11291C),
+    accentMuted = Color(0xFF294638),
+    secondaryAccent = Color(0xFFD8C69F),
+    secondaryText = Color(0xFFB0C1B5),
+)
+
 @Composable
-internal fun StudioBrand(modifier: Modifier = Modifier) {
-    val palette = LocalCutPalette.current
+internal fun StudioBrand(
+    modifier: Modifier = Modifier,
+    palette: CutPalette = LocalCutPalette.current,
+    subtitle: String = "영상 편집 작업대",
+) {
     Row(
         modifier,
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(CutSpacing.md),
     ) {
-        QuickCutLogo(size = CutSizes.touchTarget)
+        QuickCutLogo(size = CutSizes.touchTarget, palette = palette)
         Column(verticalArrangement = Arrangement.spacedBy(CutSpacing.xs)) {
             Text(
                 "QuickCut",
@@ -62,7 +80,7 @@ internal fun StudioBrand(modifier: Modifier = Modifier) {
                 fontWeight = FontWeight.Bold,
             )
             Text(
-                "영상 편집 작업대",
+                subtitle,
                 color = palette.secondaryText,
                 fontSize = 12.sp,
             )
@@ -90,8 +108,10 @@ internal fun StudioStartScreen(
     onThemeModeChange: (QuickCutThemeMode) -> Unit = {},
     onHelp: (String) -> Unit = {},
 ) {
-    val palette = LocalCutPalette.current
+    val theme = LocalCutPalette.current
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
+    val darkHome = selectedTab == 0 && theme == CutPalettes.Dark
+    val palette = if (darkHome) darkStudioHome else theme
     val contentScroll = rememberScrollState()
     LaunchedEffect(selectedTab) { contentScroll.scrollTo(0) }
 
@@ -108,7 +128,9 @@ internal fun StudioStartScreen(
                 3 -> "settings"
                 else -> "home"
             }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically) {
+                if (darkHome) StudioBrand(Modifier.weight(1f), palette, "POCKET CUT STUDIO")
                 TextButton(onClick = { onHelp(guideId) },
                     modifier = Modifier.heightIn(min = CutSizes.touchTarget)
                         .testTag("screen-help-$guideId")) { Text("사용법") }
@@ -116,10 +138,13 @@ internal fun StudioStartScreen(
             FirstVisitGuideBanner(guideId, onHelp)
             when (selectedTab) {
                 0 -> {
-                    StudioBrand()
+                    if (darkHome) StudioHomeIntro(palette) else StudioBrand()
                     Button(
                         onClick = onQuick,
                         shape = CutShape,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = palette.accent, contentColor = palette.onAccent,
+                        ),
                         modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp)
                             .testTag("quickcut-home-start"),
                     ) {
@@ -139,6 +164,18 @@ internal fun StudioStartScreen(
                                 "영상 1개에서 원하는 구간만 남겨 저장합니다.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = palette.onAccent,
+                            )
+                        }
+                    }
+                    if (darkHome) {
+                        Column(verticalArrangement = Arrangement.spacedBy(CutSpacing.md)) {
+                            StudioModeCard(
+                                "일괄 편집 · 여러 영상", "같은 설정으로 여러 영상을 한 번에",
+                                CutIcons.Batch, palette = palette, onClick = onBatch,
+                            )
+                            StudioModeCard(
+                                "상세 편집", "분할 · 연결 · 순서 변경",
+                                CutIcons.Detailed, palette = palette, onClick = onSelect,
                             )
                         }
                     }
@@ -348,6 +385,24 @@ internal fun StudioStartScreen(
 }
 
 @Composable
+private fun StudioHomeIntro(palette: CutPalette) {
+    Column(
+        Modifier.fillMaxWidth()
+            .background(Brush.horizontalGradient(listOf(palette.panel, palette.surface)), CutPanelShape)
+            .border(1.dp, palette.border, CutPanelShape)
+            .padding(CutSpacing.lg),
+        verticalArrangement = Arrangement.spacedBy(CutSpacing.sm),
+    ) {
+        Text("나만의 작은 편집실", color = palette.secondaryAccent,
+            style = MaterialTheme.typography.labelMedium)
+        Text("좋은 장면만,\n가볍게 남기세요.", color = palette.primaryText,
+            style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        Text("필요한 구간만 빠르게 잘라 저장하세요.", color = palette.secondaryText,
+            style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+@Composable
 private fun StudioModes(
     onQuick: () -> Unit,
     onBatch: () -> Unit,
@@ -382,9 +437,9 @@ private fun StudioModeCard(
     title: String,
     subtitle: String,
     icon: ImageVector,
+    palette: CutPalette = LocalCutPalette.current,
     onClick: () -> Unit,
 ) {
-    val palette = LocalCutPalette.current
     Surface(
         onClick = onClick,
         shape = CutShape,
